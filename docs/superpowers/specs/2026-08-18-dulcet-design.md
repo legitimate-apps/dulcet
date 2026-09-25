@@ -2446,10 +2446,10 @@ account-removal path yet; when it gets one, its step 6 waits for the completion 
 `AndroidLibraryReader.closeCurrent`, which is bounded rather than exact. The close task first waits
 up to 10 s for cancelled work to unwind and then releases the store. After it ends, the completion
 waits until the thread's executor has terminated or 30 s have passed, and then until any reader
-still closing before this one has terminated or 45 s more have passed: about 85 s at worst. The
-bounds cover cooperative work only: a task queued before the close, or a release, that never
-finishes holds the completion indefinitely. And once a bound passes, step 6 may run while the old
-reader still writes seen-cache rows; how rarely that happens is **ASSUMED** (§28 revision 104
+still closing when this one was created has terminated or 45 s more have passed: about 85 s at
+worst. The bounds cover cooperative work only: a task queued before the close, or a release, that
+never finishes holds the completion indefinitely. And once a bound passes, step 6 may run while the
+old reader still writes seen-cache rows; how rarely that happens is **ASSUMED** (§28 revision 104
 item 30).
 
 ---
@@ -7682,8 +7682,10 @@ fresh disposable server before landing; items 11–14 are what that review chang
       reachability, a constrained network) is applied to the session built late. OBSERVED by a host
       test whose setup fails twice and then succeeds in the same reader: the screen opened while it
       failed was opened offline, as reported, with no request, and went live after the reconnect.
-    - **A call that a racing close cancels before its turn** answers as closed rather than never
-      completing.
+    - **A call that a racing close cancels before its turn** answers rather than never completing:
+      a reconnect or a window answers closed, a search answers reader-failed (which cannot be told
+      apart from a failed setup), the pending-change count answers "cannot be read" (null), and the
+      seen-cache's titles answer empty. A favourite or rating change it cancels reports no outcome.
     - **Restored Up Next titles.** `seenTracks` reads the titles of queued tracks from the seen-cache,
       never from the server. The mirror used to supply them, and without this a restored row had no
       title at launch.
@@ -7711,8 +7713,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - It reconnects on `start()` when there is a network.
 
     Reachability:
-    - **Offline.** Only the transport's own `unreachable` means offline. The first R3 version counted
-      a timeout as offline, and a review found it.
+    - **Offline.** The platform reporting no network means offline. Of a reconnect's failures, only
+      the transport's own `unreachable` does. The first R3 version counted a timeout as offline, and
+      a review found it.
     - **A failed reconnect** is any other failure: a timeout, credentials, TLS, or the server's own
       error. It leaves an offline reader offline, as §16.14 requires. The shell then states it as a
       connection failure with its reason and "Try again", because the screens' "you're offline"
@@ -7724,9 +7727,11 @@ fresh disposable server before landing; items 11–14 are what that review chang
       its screens read again. Live content in that state makes the shell reconnect, which settles it
       and gives the fresh reader its flush and epoch read.
     - **A reconnect's answer that arrives after the platform reported the network gone** leaves the
-      shell offline, whatever the answer.
-    - **A reader closed under the shell** (by an account change) is its own state, with no
-      connection line and no "Try again": nothing can reconnect it.
+      shell offline, whatever its connection answer. An answer that the reader is closed still
+      closes the shell, and a count of discarded changes it carries is still announced. Mutation
+      shows no test orders the answer after the loss (item 32), so this rests on reading the code.
+    - **A reader closed under the shell** (by an account change, or by `closeCurrent`) is its own
+      state, with no connection line and no "Try again": nothing can reconnect it.
     - **"Try again" with no network** stays offline. The reader is never told the server is reachable
       while the platform reports no network.
     - **The two account-level statements** are made once, on the library's first screen. One is a
@@ -7741,20 +7746,28 @@ fresh disposable server before landing; items 11–14 are what that review chang
         the windows are already open when `start()` runs.
     - **Change outcomes** are kept per entity, by kind and id, so an outcome about a track is never
       shown on an album that happens to share its id.
-    - **A search opened late** (after a failed setup succeeded) applies the latest query at once, in
-      order, so a query typed while setup ran supersedes it rather than the reverse.
+    - **A search opened late** (after a failed setup succeeded) is item 30's facade rule: it opens
+      with the last query typed while setup was failing, and a query typed after that supersedes
+      it.
     - **Each TV control is one focus target.** `focusable()` in front of `clickable()` made two, and
       the centre key on the first did nothing. A TV track row is focusable whatever its playability,
       with the centre key and an accessibility click only when it has something to say, so a row
       that becomes unplayable while focused keeps its focus. It is one accessibility node in both
       states, with its texts merged; the fifth review found that merge lost. CONF-76 on the TV now
-      reaches the unplayable track with the D-pad: it focuses the control above, steps down once,
-      asserts where focus landed, and presses the centre key. Before that, on both apps, it checks
+      reaches the unplayable track with the D-pad: it focuses the control above, steps down once and
+      asserts where focus landed, steps to the next track and back (which must exist), presses the
+      centre key, and asserts the row still holds focus. Before that, on both apps, it checks
       that the row is one node carrying the track's title and "Not available offline", with a click
       action.
-32. **R3's evidence.** OBSERVED 2026-09-24 against the local disposable Navidrome, through a
-    loopback forwarder that counts requests. The component under test was production throughout: the
-    app, its `LibrarySession`, and the process's `AndroidLibraryReader`, in Robolectric host tests.
+32. **R3's evidence.** OBSERVED against the local disposable Navidrome, through a loopback
+    forwarder that counts requests. The emulators ran on 2026-09-24. On 2026-09-25: the counts on
+    `aced180b`, and the live suites again on the final code, from which `aced180b` differs only in
+    comments and one TV test check. The mutation result is from the same day: most mutants ran on
+    the tree that `aced180b` amended, whose code differs from the final code only in comments and
+    the TV test's D-pad walk; two ran on a working tree between the two; and the unmutated
+    baseline and the TV nested-focus mutant ran on `aced180b`, whose TV walk has the focus check
+    that kills that mutant. The component under test was production throughout: the app, its
+    `LibrarySession`, and the process's `AndroidLibraryReader`, in Robolectric host tests.
     Each CONF id has its own test on `android` and on `androidtv`.
     - **CONF-76.**
       - After a cold relaunch, every home row's first publication is its cache, with no loading state,

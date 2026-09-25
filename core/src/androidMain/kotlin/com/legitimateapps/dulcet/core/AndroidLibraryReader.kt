@@ -73,8 +73,8 @@ public class AndroidLibraryReader internal constructor(
     private val readerDispatcher: CloseableCoroutineDispatcher,
     mainDispatcher: CoroutineDispatcher,
     /**
-     * The reader still closing when this one is created — the one it replaces, or one a sign-out
-     * closed: this one composes only once that has terminated, or 45 s have passed.
+     * The reader still closing when this one is created — the one it replaces, or one
+     * [closeCurrent] closed: this one composes only once that has terminated, or 45 s have passed.
      */
     predecessor: AndroidLibraryReader? = null,
 ) {
@@ -630,10 +630,15 @@ public class AndroidLibraryReader internal constructor(
         /**
          * Each wait for a predecessor: before opening the database, and before counting as
          * terminated. The first starts no earlier than about when the predecessor's close begins
-         * ([obtain] builds the new reader just before it closes the old one, and a sign-out's close
-         * has begun or is about to), and is longer than that close's own waits for cooperative work
-         * (10 s + 30 s), though not than those plus the predecessor's own wait for its predecessor;
-         * the second wait covers that. It bounds waiting, and does not guarantee that the
+         * ([obtain] builds the new reader just before it closes the old one, and a [closeCurrent]
+         * close has begun or is about to), and is longer than that close's own waits for
+         * cooperative work (10 s + 30 s), though not than those plus the predecessor's own wait for
+         * its predecessor. So this reader may open the database before its predecessor has
+         * terminated. The predecessor releases the store before that last wait if its work was
+         * cooperative and finished within the first wait, and otherwise may still hold it; either
+         * way, a reader further back whose work was not cooperative may still hold it. The second
+         * wait covers only whoever waits on this reader's termination, which comes after the
+         * predecessor's or 45 s more. It bounds waiting, and does not guarantee that the
          * predecessor has let go (see [close]).
          */
         private const val PREDECESSOR_WAIT_MILLIS = 45_000L
@@ -645,7 +650,8 @@ public class AndroidLibraryReader internal constructor(
 
         /**
          * The last reader closed, from its close until it has terminated (see [awaitTermination]):
-         * the next reader waits for it too, and so does a sign-out that finds no current reader.
+         * the next reader waits for it too, and so does a [closeCurrent] that finds no current
+         * reader.
          */
         private var closing: AndroidLibraryReader? = null
 

@@ -360,9 +360,10 @@ public class LibrarySession internal constructor(
     private fun reconnected(outcome: AndroidLibraryConnection, generation: Int) {
         if (closed) return
         if (outcome.closed) {
-            // The process's reader was closed under this session: the account changed, or the person
-            // signed out. Its screens receive nothing more and keep what they last showed until
-            // they are replaced; nothing here can reconnect it, so no line and no "Try again".
+            // The process's reader was closed under this session: the account changed, or
+            // closeCurrent closed it. Its screens receive nothing more and keep what they last
+            // showed until they are replaced; nothing here can reconnect it, so no line and no
+            // "Try again".
             setConnection(LibraryConnectionState.Closed)
             return
         }
@@ -370,7 +371,8 @@ public class LibrarySession internal constructor(
             discardedTold = true
             discarded.value = outcome.discardedPendingChanges
         }
-        // The platform reported the network gone while this ran: offline stands, whatever the answer.
+        // The platform reported the network gone while this ran: offline stands, whatever the
+        // connection answer (a closed reader and a discard count are acted on above).
         if (generation != reachabilityGeneration && lastReport == false) return
         when {
             outcome.epochRead -> setConnection(LibraryConnectionState.Online(outcome.serverReportsNoEpoch))
@@ -484,8 +486,8 @@ public sealed interface LibraryConnectionState {
     public data class Failed(val error: DomainError?, val readerOffline: Boolean) : LibraryConnectionState
 
     /**
-     * The process's reader was closed under this session (the account changed, or a sign-out). Final:
-     * no report or reconnect changes it.
+     * The process's reader was closed under this session (the account changed, or closeCurrent
+     * closed it). Final: no report or reconnect changes it.
      */
     public data object Closed : LibraryConnectionState
 }

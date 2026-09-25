@@ -61,10 +61,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
              * As a remote does it: focus on [from], one step down with the D-pad, then the centre key.
              * Where the step lands is the app's focus order, so a row that takes two steps to reach
              * or cannot be selected from where it lands fails here. A track row is also left for
-             * the next one and re-entered, one step each way (focus order between rows), and must
-             * still hold focus after the centre key: the row handles only the key's release, so its
-             * press reaches the platform, which moves focus into any focus target inside the row. A
-             * row that is two focus targets, one inside the other, therefore loses focus there.
+             * the next one, which must exist, and re-entered, one step each way (focus order
+             * between rows), and must still hold focus after the centre key: the row handles only
+             * the key's release, so its press reaches the platform, which moves focus into any
+             * focus target inside the row. A row that is two focus targets, one inside the other,
+             * therefore loses focus there.
              */
             override fun select(tag: String, from: String) {
                 compose.onNodeWithTag(from).performSemanticsAction(SemanticsActions.RequestFocus)
@@ -75,8 +76,10 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 compose.onNodeWithTag(tag).assertIsFocused()
                 val track = TRACK_ROW.matchEntire(tag)
                 val next = track?.let { "album.track.${it.groupValues[1].toInt() + 1}" }
-                    ?.takeIf { compose.onAllNodesWithTag(it).fetchSemanticsNodes().isNotEmpty() }
                 if (next != null) {
+                    check(compose.onAllNodesWithTag(next).fetchSemanticsNodes().isNotEmpty()) {
+                        "No $next to leave $tag for: the walk between rows needs an album with a track after it"
+                    }
                     compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
                     compose.waitForIdle()
                     compose.onNodeWithTag(next).assertIsFocused()
