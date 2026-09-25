@@ -208,6 +208,47 @@ class LibrarySyncTransportTest {
     }
 
     @Test
+    fun theArtistsWalkAdvancesByTheRowsTheServerReturnedNotTheArtistsItKept() = runTest {
+        withRepository { repository ->
+            // A `search3` artist page can repeat an artist. The offset is the SERVER's row
+            // position, so the walk has to advance by the rows the page consumed — as the songs
+            // walk already does for the rows it drops. Advancing by the artists kept after
+            // de-duplication re-reads the tail of every such page: more requests, and a page
+            // count that can reach the walk's termination bound and fail an import the server
+            // was serving correctly.
+            val rows = listOf("ar-1", "ar-1", "ar-2", "ar-2", "ar-3", "ar-3")
+            val offsets = mutableListOf<Long>()
+            val source = object : LibrarySyncSource by GeneratedSource(albumCount = 2) {
+                override suspend fun artistPage(offset: Long, size: Int): List<LibraryArtist> {
+                    offsets += offset
+                    val page = rows.drop(offset.toInt()).take(size).map { id ->
+                        jsonObject("id" to JsonPrimitive(id), "name" to JsonPrimitive("Artist $id"))
+                    }
+                    return parseEnumeratedArtists(SERVER, searchResponse("artist", page))
+                }
+            }
+
+            // Two rows a page: three data pages and the empty page ending the walk. Four is also
+            // the bound, so a walk re-reading any page's tail fails the import outright.
+            val completed = assertIs<LibrarySyncResult.Completed>(
+                LibrarySyncEngine(repository, enumerationPageSize = 2, maxEnumerationPages = 4)
+                    .synchronize(SERVER, source),
+            )
+
+            assertEquals(
+                listOf(0L, 2L, 4L, 6L, 0L, 2L, 4L, 6L),
+                offsets,
+                "each walk (fill, then witness) must advance by the rows each page returned",
+            )
+            assertEquals(LibrarySyncStability.Verified, completed.stability)
+            assertEquals(
+                listOf("ar-1", "ar-2", "ar-3"),
+                repository.readCommittedLibrary(SERVER).library.artists.map { it.id.rawId }.sorted(),
+            )
+        }
+    }
+
+    @Test
     fun anAlbumsWalkThatFindsAlbumsAndASongsWalkThatFindsNothingIsRejected() = runTest {
         withRepository { repository ->
             val noSongs = object : LibrarySyncSource by GeneratedSource(albumCount = 4) {

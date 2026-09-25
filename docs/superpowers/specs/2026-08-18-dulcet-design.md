@@ -2639,7 +2639,11 @@ disposable copy seeded to 1,208 albums): `size=499` returns 499, `size=500` retu
 truncation. Measured through the production client, a walk that believed a short page reported
 `Loaded` with **500 of 1,208 albums** — a truncated library presented as a complete one. So the
 walk advances by what the server **returned**, never by what was asked for, and ends only on an
-empty page or one shorter than the largest page that server has returned. The look-ahead window
+empty page or one shorter than the largest page that server has returned. "Returned" is the raw row
+count, taken before anything is dropped or de-duplicated: the offset is a position in the server's
+rows, so a walk that advances by the rows it *kept* re-reads the tail of every page it thinned —
+extra requests, and a page count that can reach the walk's termination bound on a library the
+server was serving correctly (`LibrarySyncTransportTest.theArtistsWalkAdvancesByTheRowsTheServerReturnedNotTheArtistsItKept`). The look-ahead window
 opens only after a page has come back at exactly the requested size. `size` is additionally capped
 at the documented protocol maximum of 500.
 
@@ -5140,6 +5144,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
+count is raw, before anything is dropped or de-duplicated. The songs walk already counted that way; the
+artists walk did not, because its page parser removed repeated artists before the walk saw the page,
+so a page holding a repeat advanced the offset by less than it consumed. The cost is re-read rows and
+extra pages; a test that sets the walk's page bound to exactly the pages the library needs shows the
+under-counting walk failing the import. The parser now returns every row and the artists stage
+removes repeats itself, recording the raw count. The albums and songs walks, the first-paint album
+pager and the reader's paged lists were checked for the same shape; none de-duplicates before its
+row count is taken. (Numbered
+after the highest revision on `main` when written; renumbers at merge.)
 
 **Revision 109 (2026-09-25)** — §18.12 records that `Capability.Unsupported` has no production origin on
 the account-connect path. CONF-09b ("every declared distinct account-connect render state is
