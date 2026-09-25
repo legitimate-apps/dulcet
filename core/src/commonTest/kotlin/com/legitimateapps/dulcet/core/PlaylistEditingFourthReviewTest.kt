@@ -19,7 +19,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * The fourth review round of the playlist editor and the favourites outbox (§18.6, §28 item 20). The
+ * The fourth review round of the playlist editor and the favourites outbox (§18.6, §28 revision 104 item 21). The
  * reviewer's probes r1–r12 are kept here as tests: each asserts what the maintainer decided, and each
  * rule that changed was shown failing on the round before first. A transport hook stands between the
  * editor and the fake server, so a test can act — delete, withdraw, commit late — while a request is

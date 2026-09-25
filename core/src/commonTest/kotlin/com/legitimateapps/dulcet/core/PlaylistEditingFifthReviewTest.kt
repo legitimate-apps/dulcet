@@ -19,7 +19,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * The fifth review round of the playlist editor and the favourites outbox (§18.6, §28 item 20). The
+ * The fifth review round of the playlist editor and the favourites outbox (§18.6, §28 revision 104 item 21). The
  * reviewer's probes (x1, x1b, x2, x3, x4, t6, t6b, c1, p8) are kept here as tests, each asserting
  * what the maintainer decided, with one test for each further edge of a rule. A transport hook
  * stands between the editor and the fake server, so a test can act — delete, withdraw, star — while

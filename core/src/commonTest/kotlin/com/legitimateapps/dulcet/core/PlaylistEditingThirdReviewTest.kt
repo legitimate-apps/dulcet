@@ -21,7 +21,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The third independent review of `feat/playlists-core` (spec §18.6, §28 revision 99 item 20): the
+ * The third independent review of `feat/playlists-core` (spec §18.6, §28 revision 104 item 21): the
  * reviewer's failing probes q1–q10 and fav403 as permanent tests (fav403 lives with the favourites,
  * in [MutationOutboxReviewTest]), under the maintainer's round-3 decisions — a lost create identified
  * by the playlists listed before its send and never sent again on a guess; a refusal of access held

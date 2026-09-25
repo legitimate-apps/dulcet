@@ -6403,7 +6403,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `LibrarySyncContract` reaches the sync engine; it borrows the sync controls' disposable-database
     factory, which R5 must keep (renamed) when it deletes the mirror.
 
-    **Item 20, review round — corrections after an independent review of the first cut.**
+    **Item 21, review round — corrections after an independent review of the first cut.**
     (a) **Blocker: deleting a create whose answer was lost could delete someone else's playlist.**
     What that create made was found by resemblance — one playlist of this account, of that name and
     song count, never seen by the device — so an older playlist of the same name (an empty
@@ -6452,7 +6452,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     survivors; each of the other 6 was killed by a new or strengthened test, and analysing one of
     them exposed the two in-doubt defects above.
 
-    **Item 20, second review round — an independent re-review of the round above.** (i) **Blocker:
+    **Item 21, second review round — an independent re-review of the round above.** (i) **Blocker:
     the lost-create "proof" had only a lower time bound.** A create that never arrived, then the same
     playlist made in another client 30 s later, then a delete of the stuck one here: the flush
     deleted the other client's playlist and told nobody. **Maintainer's decision: never delete on
@@ -6500,7 +6500,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     meant; `HttpStatus`'s documentation now says what each path actually maps; and `formPost` must
     come from the advertised extensions when the facades construct the session.
 
-    **Item 20, third review round — a re-review of the round above found one blocker and six
+    **Item 21, third review round — a re-review of the round above found one blocker and six
     should-fix items; the maintainer decided each.** (q) **Blocker (X1): a bare 403 answering one
     request held every change behind it indefinitely.** A proxy or firewall refusing one endpoint
     (the review's fake refused `deletePlaylist` alone) stopped both flushes at that change on every
@@ -6540,7 +6540,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `formPost` it was refused; on a short one it carried the whole-list overwrite exposure for
     nothing. When the server still holds exactly the list the append was sent onto, the edit is now
     an append. (u) Text corrected: the `Held` documentation listed an unreachable `HttpStatus` 401
-    (N3); 20(b)'s "same proof" (N5); and the round above's claim that the review accepted its
+    (N3); 21(b)'s "same proof" (N5); and the round above's claim that the review accepted its
     survivor as equivalent (N6). This round re-ran that mutant: it survives and is equivalent,
     because the playlist flush catches every failure except cancellation, which the guard rethrows
     too, and the reconnect composition runs on the reader's own thread, so the flush's confinement
@@ -6575,7 +6575,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     CONF-89 kills three of them: the pre-send set ignored, an automatic resend reinstated, and an
     exact-case owner compared while signed in as `DULCET-ADMIN`.
 
-    **Item 20, fourth review round — a re-review of the third round's head found no blocker; the
+    **Item 21, fourth review round — a re-review of the third round's head found no blocker; the
     maintainer's decisions on its findings.** (x) **S1: this device's own creates became candidates
     for each other.** Two creates of one name: the first answered 500 and not applied, the second
     landed, and the next flush adopted the second's playlist as the first's lone candidate — two
@@ -6652,7 +6652,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     signed in as `DULCET-ADMIN`, against the same server, which was then stopped and its data
     deleted.
 
-    **Item 20, fifth review round — a re-review of the fourth round's head found no blocker; the
+    **Item 21, fifth review round — a re-review of the fourth round's head found no blocker; the
     maintainer's decisions on its findings.** (ab) **Finding 1: two creates of one name in doubt.**
     The fourth round's claim that one create's playlist is never a candidate for another — in its
     commit title too — was false twice over. A playlist offered to the person for one create stayed
@@ -6730,7 +6730,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     indexes, and `cache_playlist` rows are compared from v7 on; each has a negative control.
     OBSERVED 2026-09-25: the gate passes over 7 fixture databases, every one upgraded to v7 equal to a fresh install (62 tables and indexes), 3 `cache_playlist` rows compared from v7 (2 with the added fields stated), and 14 destructive negative controls, each rejected for its stated reason; and SQLDelight's own migration verification rejects a `6.sqm` that omits `readonly` ("columns[cache_playlist.readonly] - ADDED"). (ak) **Failing first.** The 20 new tests (17 in `PlaylistEditingFifthReviewTest`, 3 in `PlaylistColumnsMigrationTest`), run against 43cbb7da: 16 fail on the JVM and the same 16 on `macosArm64`. The four that pass there pass by design: x3 pins the stated residual; p8 pins what 43cbb7da already did, and M8 is its mutant; one is the control that creates of different names in doubt together each adopt their own lone candidate; and the T6 test distinguishes only an uncancelled replaced retry, which 43cbb7da already cancelled while no test said so. (al) **Mutation run.** 54 mutants of the final code, 54 killed, against a baseline of 272 tests that all pass — among them T6 (the replaced retry not cancelled, which survived the fourth round) and M8 (the playlist flush counting a send when the wait stopped it). A 55th, a control that does not compile, is reported as such and counted as nothing. (am) **Live.** CONF-88..91 against one fresh disposable Navidrome 0.63.2: twice on the JVM, once on `macosArm64` and once more on the JVM with an upper-case user name, 6 of 6 each, the server holding no playlist before, between and after the runs; the server was then stopped and its data deleted.
 
-    **Item 20, sixth review round — a re-review of the fifth round's head found no blocker and
+    **Item 21, sixth review round — a re-review of the fifth round's head found no blocker and
     accepted its four departures; these are the maintainer's decisions on its findings.** (an)
     **SF1: a create deleted while its send was out.** Deleting a create whose send is out keeps its
     row as a tombstone, and the fifth round's "no longer queued" found that tombstone: a 429 for the

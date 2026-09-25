@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The second independent review of `feat/playlists-core` (spec §18.6, §28 revision 99 item 20): the
+ * The second independent review of `feat/playlists-core` (spec §18.6, §28 revision 104 item 21): the
  * reviewer's probes p3–p10 as permanent tests, and one test per surviving mutant (`s5a…`–`s5f…`).
  * Each probe was seen failing on the reviewed commit before its fix. The lost-create and access
  * sections are restated as round 3 decided them (the third review, [PlaylistEditingThirdReviewTest]).

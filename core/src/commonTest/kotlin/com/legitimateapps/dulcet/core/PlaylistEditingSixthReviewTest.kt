@@ -16,7 +16,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * The sixth review round of the playlist editor and the favourites outbox (§18.6, §28 item 20). The
+ * The sixth review round of the playlist editor and the favourites outbox (§18.6, §28 revision 104 item 21). The
  * reviewer's probes (q1, q2, q3, q4 and the control q4f) are kept as tests, each asserting what the
  * maintainer decided, with one test for each further edge of a rule. The transport hook of the fifth
  * round's tests lets a test act while a request is out and answer with a status the fake would not.

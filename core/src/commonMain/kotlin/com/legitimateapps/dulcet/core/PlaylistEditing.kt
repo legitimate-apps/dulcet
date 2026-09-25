@@ -1927,7 +1927,7 @@ internal class PlaylistEditor(
      * One write — on [slot] when the caller holds one. A failure that proves the request never
      * changed the server restores the row as it was before this send was marked, so a later decision
      * is shielded only by sends that may have landed — an earlier one in doubt stays recorded
-     * (§18.3, revision 99 item 19).
+     * (§18.3, revision 104 item 19).
      */
     private suspend fun writeChecked(
         row: PendingPlaylistRow,
