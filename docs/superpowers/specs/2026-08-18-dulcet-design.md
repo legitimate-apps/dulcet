@@ -4575,8 +4575,11 @@ because the median is above 75 minutes. Either reading adopts the split.
 4. **Artifacts carry the job id and the attempt, and the aggregator downloads each one by the
    attempt that produced it**, which is a leg output. "Re-run failed jobs" re-runs a failed leg and
    the aggregator, but not a green leg, so a name built from the aggregator's own attempt would ask
-   for evidence that was never uploaded. That GitHub preserves a non-re-run leg's outputs across a
-   partial re-run is ASSUMED until a partial re-run is observed.
+   for evidence that was never uploaded. **OBSERVED 2026-09-25**, run 36188503621: attempt 1's
+   conformance leg failed and its platform leg passed. "Re-run failed jobs" re-ran only the
+   conformance leg and the aggregator. Attempt 2's aggregator downloaded
+   `dulcet-apple-parity-evidence-apple-platform-36188503621-1` alongside the conformance leg's
+   `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
 5. **Each leg's timeout is 1.5 times its projected maximum, rounded up to a multiple of 5:** 95
    minutes for `apple-platform` (projected maximum 60.2) and 110 for `apple-conformance`
    (projected maximum 71.3). The aggregator gets 5. Per-step caps are unchanged, and the conformance leg's cap
@@ -4598,6 +4601,22 @@ for the aggregator: median ~62.5 and max ~72.3 minutes, against the single job's
 costs: each run holds 2 of the 5 hosted-macOS slots instead of 1. Runner-minutes rise by about
 16% (per-run median; range 13–22%), and they are free on this public repository (§21.1). Fail-fast across legs is lost, so
 a red leg no longer stops the other one. The red leg's own check run still turns red when it fails.
+
+**Measured on the adopting pull request, OBSERVED 2026-09-24..25** (standard `macos-26`). Every
+complete leg: `apple-platform` took 49.5 minutes in run 36178175847 and 44.0 in 36188503621;
+`apple-conformance` took 61.0 in 36036076261 and 44.6 in 36188503621 attempt 2. The three app
+builds the split added took 6.4 and 4.3 minutes in total, against the 9 assumed. The composite step
+alone took 42.4 and 30.7. The aggregator took 6 to 13 seconds. Both legs held a slot within 10
+seconds of the run starting, in every run. The partial reds, all outside the split: run 36036076261's
+platform leg hit the iPad destination failure ("Unable to find a device matching the provided
+destination specifier", zero concrete simulators listed). Run 36178175847's conformance leg stopped
+at minute 3 on a Homebrew `ca-certificates` pin drift (CLAUDE.md trap 36; rule 1 placed it there,
+where the single job used to reach it after its builds). Run 36188503621 attempt 1's conformance
+leg hit a 10-second loopback read timeout in `DarwinProxyAuthenticationConformanceTest` on
+iosSimulatorArm64, with one simulator booted and host pressure comparable to a green single-job run.
+That is rule 5's host-contention class. In 36036076261, the aggregator failed at its leg-result
+check, before reading any evidence. The run's wall time is the longer leg plus the aggregator, so
+two legs at these figures finish in 45–62 minutes, against the single job's 92–108.
 
 **Considered and NOT adopted — with the condition under which each becomes right.**
 
@@ -5251,9 +5270,12 @@ was written. Another branch may take the same number first, so it may be renumbe
 5. **Rule 2 now covers the app-host library-sync proofs.** The split moved their three devices'
    first boot into the composite, and those proofs had no isolation call before. Each now starts
    with one (§21.5).
-6. **Still ASSUMED:** that a partial "Re-run failed jobs" preserves a green leg's `attempt` output,
-   which the aggregator uses to name that leg's artifacts (§21.5 rule 4). Downloading a previous
-   attempt's artifact is documented by GitHub.
+6. **Measured on the adopting pull request, OBSERVED** (§21.5 lists each run). The platform leg took
+   49.5 and 44.0 minutes; the conformance leg took 61.0 and 44.6. A partial "Re-run failed jobs"
+   kept the green leg's `attempt` output, and the aggregator verified that attempt's evidence
+   (run 36188503621). The projection's 9 assumed minutes of app builds measured 6.4 and 4.3.
+   Wall time: longer leg plus a few seconds. Leg timeouts stay at 95 and 110 until the legs have a
+   history rather than two samples.
 
 **Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
 count is raw, before anything is dropped or de-duplicated. The songs walk already counted that way; the

@@ -1611,8 +1611,8 @@ jobs:
       # attempt would never have been written. Reading an earlier attempt's artifact is documented:
       # without a token, download-artifact reads "the current workflow run and any previous run
       # attempts" (GitHub blog, "Get started with v4 of GitHub Actions Artifacts", 2024-02-12).
-      # That a leg that is not re-run keeps its `attempt` output is ASSUMED until a partial re-run
-      # is observed.
+      # And a leg that is not re-run keeps its `attempt` output -- OBSERVED in run 36188503621: its
+      # attempt-2 aggregator downloaded the platform leg's `...-36188503621-1` artifact.
       # The JUnit directories land in RUNNER_TEMP and the conformance results in the workspace,
       # exactly where the evidence check below read them when this was one job.
       - name: Download platform parity evidence
