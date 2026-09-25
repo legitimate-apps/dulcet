@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -158,6 +159,93 @@ class ReaderReconnectStepsTest {
         assertEquals(2, outcomes.size)
         assertTrue(outcomes.all { it is ReaderConnectionOutcome.Read })
         assertEquals(1, outcomes.distinct().size, "the joined reconnects saw different readings")
+    }
+
+    /**
+     * An unreachable report cancels the reconnect in flight AND forgets it, so a reachable report
+     * straight after it starts a fresh reconnect instead of joining the cancelled one: the epoch is
+     * read again and the reader comes back online.
+     */
+    @Test
+    fun aReachableReportRightAfterAnUnreachableOneStartsAFreshReconnect() = sessionTest { env ->
+        val session = primed(env)
+        session.setOnline(false)
+        advanceUntilIdle()
+        env.server.holdBeforeApply += "getScanStatus"
+        val scans = env.server.count("getScanStatus")
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount, "fixture: the first reconnect waits on its epoch read")
+        session.setOnline(false)
+        session.setOnline(true) // before the cancelled reconnect has finished
+        env.server.holdBeforeApply.clear()
+        advanceUntilIdle()
+        env.server.release()
+        advanceUntilIdle()
+        assertEquals(1, env.server.cancelledWhileHeld, "fixture: the first reconnect was cancelled while it waited")
+        assertEquals(scans + 2, env.server.count("getScanStatus"), "no fresh reconnect read the epoch")
+        assertTrue(session.reader.online, "the reachable report joined the cancelled reconnect")
+    }
+
+    /**
+     * A reachable report whose reconnect fails leaves the reader offline and the platform's report
+     * standing as reachable. Another reachable report — the platform reporting a further change while
+     * the server stays reachable — runs the sequence again; it is not swallowed as a repeat.
+     */
+    @Test
+    fun aRepeatedReachableReportAfterAFailedReconnectRunsItAgain() = sessionTest { env ->
+        val session = primed(env)
+        session.setOnline(false)
+        advanceUntilIdle()
+        env.server.failWithError["getScanStatus"] = DomainError.Transport.Timeout
+        val scans = env.server.count("getScanStatus")
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(scans + 1, env.server.count("getScanStatus"), "fixture: the report's reconnect tried the epoch")
+        assertFalse(session.reader.online, "fixture: the failed reconnect left the reader offline")
+        assertTrue(session.reader.reachable, "fixture: the platform's report stands")
+        env.server.failWithError.clear()
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(scans + 2, env.server.count("getScanStatus"), "the repeated report was swallowed")
+        assertTrue(session.reader.online)
+    }
+
+    /**
+     * Cancelling a caller of `reconnect()` stops only that caller's wait: the caller is cancelled —
+     * never handed an outcome — and the reconnect runs on, so a caller still waiting gets the
+     * reading and the reader comes back online.
+     */
+    @Test
+    fun aCancelledCallerOfReconnectIsCancelledAndTheReconnectRunsOn() = sessionTest { env ->
+        val session = primed(env)
+        session.setOnline(false)
+        advanceUntilIdle()
+        env.server.holdBeforeApply += "getScanStatus"
+        var handedToTheCancelledCaller: ReaderConnectionOutcome? = null
+        var callerSawItsCancellation = false
+        var handedToTheWaitingCaller: ReaderConnectionOutcome? = null
+        val caller = env.scope.launch {
+            try {
+                handedToTheCancelledCaller = session.reader.reconnect()
+            } catch (cancellation: CancellationException) {
+                callerSawItsCancellation = true
+                throw cancellation
+            }
+        }
+        env.scope.launch { handedToTheWaitingCaller = session.reader.reconnect() }
+        advanceUntilIdle()
+        assertEquals(1, env.server.heldCount, "fixture: both callers wait on one epoch read")
+        caller.cancel()
+        advanceUntilIdle()
+        assertTrue(callerSawItsCancellation, "the cancelled caller was not cancelled")
+        assertNull(handedToTheCancelledCaller, "the cancelled caller was handed an outcome")
+        assertEquals(0, env.server.cancelledWhileHeld, "cancelling one caller cancelled the reconnect")
+        env.server.holdBeforeApply.clear()
+        env.server.release()
+        advanceUntilIdle()
+        assertIs<ReaderConnectionOutcome.Read>(handedToTheWaitingCaller, "the caller still waiting got no reading")
+        assertTrue(session.reader.online)
     }
 
     /** "Reachable, while online: no effect" — no request and no publication. */

@@ -80,7 +80,9 @@ internal class LibraryReader(
 
     /**
      * Whether the reader is CONNECTED (§16.14): every window, search and look-ahead reads the server
-     * only while this is true, and offline issues no request. It becomes true in exactly one place
+     * only while this is true, so offline none of them issues a request. Offline, the only requests
+     * are a running reconnect's epoch read and the outbox's sends, which [canSend] gates on the
+     * platform's report instead. It becomes true in exactly one place
      * — [reconnect], after the outbox flush and a successful epoch read — and false at once when the
      * platform reports the server unreachable, or when a step after that reconnect's transition
      * throws. A new reader starts connected.
@@ -100,8 +102,9 @@ internal class LibraryReader(
      * Whether the outbox may send now: the platform last reported the server [reachable], or the
      * reader is [online] (a successful reconnect made it so), or a reconnect is running — its flush
      * is its first step (§16.14 step 1), so user-authored data leaves before the epoch read and
-     * before anything else is read. False after a failed reconnect while the platform's last report
-     * said unreachable, so a tap is then kept, not sent.
+     * before anything else is read. False only while the platform's last report says unreachable,
+     * the reader is offline and no reconnect runs — after a failed reconnect, for instance — so a
+     * tap is then kept, not sent.
      */
     internal val canSend: Boolean get() = reachable || online || inFlightReconnect != null
 
@@ -195,8 +198,8 @@ internal class LibraryReader(
      * runs: no screen is revalidated or relabelled. If a step after the transition throws, the
      * reconnect returns [ReaderConnectionOutcome.InternalFailure] and takes the reader offline again
      * — exactly as an unreachable report does — so it is never left online with a screen that was
-     * not revalidated. Either way the next reachability report or reconnect runs the whole
-     * sequence again.
+     * not revalidated. A reader left offline either way runs the whole sequence again at the next
+     * reachability report or reconnect; a reader that is online runs it at the next reconnect.
      *
      * For its own run a reconnect lets the outbox send ([canSend]), but it never overwrites the
      * platform's [reachable] report. One reconnect runs at a time: a call made while one is
