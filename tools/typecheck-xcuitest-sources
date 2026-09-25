@@ -16,12 +16,20 @@ WHAT THIS IS NOT: it is not a build and not a substitute for ``apple-ci``. It re
 module of ours, links nothing, and runs no test. A clean result means these sources type-check
 under the project's own Swift language version; it makes no claim about anything else.
 
-The XCTest assertion functions do not resolve in a standalone ``-typecheck`` invocation against
-the framework search path (measured: XCTFail and seven XCTAssert overloads, and neither a plugin
-path nor a language-mode change resolves them). ``SHIM`` declares exactly those, so a real name
-or type error is not buried under hundreds of spurious ones. If a future toolchain resolves them
-for real, the shim collides and this tool fails loudly with an ambiguity error -- delete the
-shimmed declaration then; it never degrades into a pass.
+XCTest's global assertion functions do not resolve in a standalone ``-typecheck`` invocation
+against the framework search path, and neither a plugin path nor a language-mode change resolves
+them. ``SHIM`` declares stand-ins for the ones these sources call -- ``XCTFail``, ``XCTUnwrap`` and
+the ``XCTAssert*`` family -- so a real name or type error is not buried under hundreds of spurious
+ones. A call the shim does not cover is reported as ``SHIM GAP``, a fault in this tool.
+
+If a future toolchain does resolve XCTest's functions here, NOTHING here fails. A declaration in
+the files being checked shadows an imported one with the same signature, with no ambiguity error
+(measured with ``swiftc -typecheck``: a module exporting ``public func XCTAssertTrue`` and a file
+declaring the shim's identical signature exit 0, while two imported modules exporting it are
+correctly reported ambiguous). The shim would then silently stand in for the real functions, and
+a call that type-checks against a stand-in's signature is not proven to type-check against
+XCTest's. The shim is a workaround for a toolchain gap, to be deleted when the gap closes, and
+nothing here detects that it has closed.
 
     tools/typecheck-xcuitest-sources              # check
     tools/typecheck-xcuitest-sources --self-test  # prove the check fires, then check

@@ -195,7 +195,10 @@ Gradle build and no Xcode project. A one-character Swift mistake there otherwise
 resolves XCTest's global assertion functions through a shim, so a shim that has fallen behind would
 block merges on a change the compiler accepts. That staleness is reported as `SHIM GAP` — a fault in
 the tool, never as an error in the sources — and `--self-test` proves both that gate and the
-type-check itself can fire. It scans only the `*UITests` directories under `apple/`; every other
+type-check itself can fire. The shim does not retire itself: if a toolchain starts resolving those
+functions standalone, a same-signature declaration in the checked files **shadows** the imported
+one with no ambiguity error (measured), so nothing fails and the stand-ins silently keep answering
+for XCTest. Delete the shim when that happens; nothing here will say so. It scans only the `*UITests` directories under `apple/`; every other
 test directory is outside its scope (the app-hosted ones need a Gradle-built `DulcetCore` framework),
 and a `*UITests` directory that imports one of our modules is listed as NOT COVERED rather than
 silently skipped.
