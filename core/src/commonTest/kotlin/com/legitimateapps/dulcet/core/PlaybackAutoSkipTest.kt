@@ -218,8 +218,9 @@ class PlaybackAutoSkipTest {
     }
 
     /**
-     * Skip's availability and the automatic skip are one predicate: wherever the snapshot says
-     * Skip can reach another entry, a track failure skips, and wherever it says not, it stops.
+     * Skip's availability and a forward automatic skip agree: wherever the snapshot says Skip can
+     * reach another entry, a track failure reached travelling forward skips, and wherever it says
+     * not, it stops. (Reached by Previous, the automatic skip asks backward, and they can differ.)
      */
     @Test
     fun skipAvailabilityAndTheForwardSkipAgreeInEveryShape() {
@@ -429,6 +430,136 @@ class PlaybackAutoSkipTest {
         assertFalse(b.shouldAutoPlay, "a restored queue never starts sound on its own")
         val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
         assertFalse(c.shouldAutoPlay, "nor does the chain it starts")
+    }
+
+    /**
+     * A restore starts no sound; once the person plays, the queue plays on past a failed entry
+     * (rule 4). Play goes straight to the engine, so the core learns of it from the engine -- here
+     * from progress, the review's sequence: a restored track played for a minute, then failing as
+     * its own, must not leave the next one silent.
+     */
+    @Test
+    fun aRestoredQueueThePersonPlaysKeepsPlayingPastATrackFailure() = rig(listOf("a", "b", "c")) { rig ->
+        rig.start()
+        rig.relaunch()
+        val restored = assertNotNull(rig.apply(rig.controller.restoreCurrentPaused()).startDirective)
+        assertFalse(restored.shouldAutoPlay, "the restore itself starts no sound")
+        rig.play(restored, from = 0, to = 60)
+
+        val skip = rig.failAfterPartial(restored, at = 60, DomainError.Playback.NoPlayableSource)
+
+        val b = assertNotNull(skip.startDirective)
+        assertEquals("b", b.itemId.rawId)
+        assertTrue(b.shouldAutoPlay, "the person was listening, so the next entry plays")
+        val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
+        assertTrue(c.shouldAutoPlay, "and so does the rest of the chain")
+    }
+
+    /**
+     * The same, learned from the engine's `Resumed`: the person pressed Play on the restored entry
+     * and it failed before it progressed. The Apple engine reports that play as `Resumed`.
+     */
+    @Test
+    fun aRestoredEntryThePersonStartedPlaysOnEvenIfItNeverProgressed() = rig(listOf("a", "b")) { rig ->
+        rig.start()
+        rig.relaunch()
+        val restored = assertNotNull(rig.apply(rig.controller.restoreCurrentPaused()).startDirective)
+        rig.apply(
+            rig.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.Ready(restored.attemptId, DURATION, PlaybackSeekability.Seekable),
+            ),
+        )
+        rig.apply(rig.controller.recordPlaybackEvent(PlaybackEngineEvent.Resumed(restored.attemptId, 0.seconds)))
+
+        val skip = rig.failAfterPartial(restored, at = 0, DomainError.Playback.NoPlayableSource)
+
+        val b = assertNotNull(skip.startDirective, "the track's own failure still moves the queue")
+        assertTrue(b.shouldAutoPlay, "the person asked for sound")
+    }
+
+    /** Prepared is not played: `Ready` alone is not the person asking for sound. */
+    @Test
+    fun aRestoredEntryThatWasOnlyPreparedMovesOnStillPaused() = rig(listOf("a", "b")) { rig ->
+        rig.start()
+        rig.relaunch()
+        val restored = assertNotNull(rig.apply(rig.controller.restoreCurrentPaused()).startDirective)
+        rig.apply(
+            rig.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.Ready(restored.attemptId, DURATION, PlaybackSeekability.Seekable),
+            ),
+        )
+
+        val b = assertNotNull(rig.fail(restored, DomainError.Playback.NoPlayableSource).startDirective)
+
+        assertFalse(b.shouldAutoPlay, "nobody pressed Play")
+    }
+
+    // ---- what the chain counts ---------------------------------------------------------------
+
+    /**
+     * Rule 3 counts every entry that failed, whoever the failure belonged to: four entries stopped
+     * on a connection failure and stepped past by hand, then a fifth entry's own failure is
+     * presented rather than skipped.
+     */
+    @Test
+    fun connectionFailuresCountTowardTheGuard() = rig(listOf("a", "b", "c", "d", "e", "f", "g")) { rig ->
+        var current = rig.start()
+        repeat(4) {
+            assertNull(rig.fail(current, DomainError.Transport.Timeout).startDirective, "a connection failure stops")
+            current = assertNotNull(rig.apply(rig.controller.next()).startDirective)
+        }
+        assertEquals("e", current.itemId.rawId)
+
+        val fifth = rig.fail(current, DomainError.Playback.NoPlayableSource)
+
+        assertNull(fifth.startDirective, "the fifth consecutive failed entry is presented")
+        assertNull(fifth.skippedAfterFailure)
+        assertEquals(PlaybackAttemptPhase.Failed, fifth.snapshot.currentSession?.currentAttempt?.phase)
+    }
+
+    /** A withdrawn request is not a failure (rule 1), so it is not in the chain a cycle stops on. */
+    @Test
+    fun aWithdrawnRequestIsNotPartOfTheChain() = rig(listOf("a", "b", "c")) { rig ->
+        rig.repeat(QueueRepeatMode.All)
+        val a = rig.start()
+        val withdrawn = rig.fail(a, DomainError.Transport.Cancelled)
+        assertNull(withdrawn.startDirective)
+        assertNull(withdrawn.skippedAfterFailure)
+        val b = assertNotNull(rig.apply(rig.controller.next()).startDirective)
+        val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
+
+        val wrapped = rig.fail(c, DomainError.Playback.NoPlayableSource)
+
+        assertEquals("a", wrapped.startDirective?.itemId?.rawId, "a was withdrawn, never failed")
+    }
+
+    // ---- direction, kept and reset -----------------------------------------------------------
+
+    /** Try Again keeps the direction the entry was reached in (rule 2). */
+    @Test
+    fun tryAgainKeepsTheDirectionThatReachedTheEntry() = rig(listOf("a", "b", "c")) { rig ->
+        rig.start(startIndex = 2)
+        val b = assertNotNull(rig.apply(rig.controller.previous()).startDirective)
+        assertNull(rig.fail(b, DomainError.Transport.Timeout).startDirective)
+        val retried = rig.retry()
+
+        val skip = rig.fail(retried, DomainError.Playback.NoPlayableSource)
+
+        assertEquals("a", skip.startDirective?.itemId?.rawId, "Previous reached b; Try Again does not change that")
+    }
+
+    /** A transport restart of the current entry counts as reaching it forward (rule 2). */
+    @Test
+    fun aTransportRestartCountsAsReachingTheEntryForward() = rig(listOf("a", "b", "c")) { rig ->
+        rig.start(startIndex = 2)
+        val b = assertNotNull(rig.apply(rig.controller.previous()).startDirective)
+        assertEquals("b", b.itemId.rawId)
+        val restarted = assertNotNull(rig.apply(rig.controller.restartCurrent(SERVER)).startDirective)
+        assertEquals("b", restarted.itemId.rawId)
+
+        val skip = rig.fail(restarted, DomainError.Playback.NoPlayableSource)
+
+        assertEquals("c", skip.startDirective?.itemId?.rawId)
     }
 
     // ---- rig ---------------------------------------------------------------------------------

@@ -244,34 +244,56 @@ extension View {
     ///
     /// `isActive` false leaves it to another surface on top -- the shell under a presented player
     /// -- so one notice is shown and announced once, where the person is looking.
-    func dulcetPlaybackFeedback(store: DulcetPresentationStore, isActive: Bool = true) -> some View {
-        modifier(DulcetPlaybackFeedback(store: store, isActive: isActive))
+    ///
+    /// Where the notice is drawn is not decided here. It goes at the bottom of the page the
+    /// person is looking at, centred, above the now-playing bar and the tab bar, never over a
+    /// navigation control: so it is handed down to the page, whose now-playing bar placement
+    /// draws it (``DulcetNowPlayingBarPlacement``). A surface with no such page under it -- the
+    /// player, and tvOS -- passes `drawsNotices` and draws them along its own bottom edge.
+    func dulcetPlaybackFeedback(
+        store: DulcetPresentationStore,
+        isActive: Bool = true,
+        drawsNotices: Bool = false
+    ) -> some View {
+        modifier(DulcetPlaybackFeedback(store: store, isActive: isActive, drawsNotices: drawsNotices))
+    }
+}
+
+/// The playback feedback's notices on screen now, handed down to the page that draws them.
+struct DulcetPlaybackNotices: Equatable {
+    var showingRefusal = false
+    var skipMessage: String?
+}
+
+private struct DulcetPlaybackNoticesKey: EnvironmentKey {
+    static let defaultValue = DulcetPlaybackNotices()
+}
+
+extension EnvironmentValues {
+    var dulcetPlaybackNotices: DulcetPlaybackNotices {
+        get { self[DulcetPlaybackNoticesKey.self] }
+        set { self[DulcetPlaybackNoticesKey.self] = newValue }
     }
 }
 
 private struct DulcetPlaybackFeedback: ViewModifier {
     let store: DulcetPresentationStore
     let isActive: Bool
+    let drawsNotices: Bool
     @State private var showingRefusal = false
     @State private var refusalHideTask: Task<Void, Never>?
     @State private var skipMessage: String?
     @State private var skipHideTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
+        let notices = DulcetPlaybackNotices(showingRefusal: showingRefusal, skipMessage: skipMessage)
         content
-            .overlay(alignment: .top) {
-                VStack(spacing: DulcetSpacing.xs) {
-                    if showingRefusal {
-                        notice(DulcetStrings.queueEditRefused, systemImage: "exclamationmark.circle")
-                            .accessibilityIdentifier("dulcet.queue.edit-refused")
-                    }
-                    if let skipMessage {
-                        notice(skipMessage, systemImage: "forward.end")
-                            .accessibilityIdentifier("dulcet.playback.skipped-notice")
-                    }
+            // Drawn here, nothing beneath draws them again.
+            .environment(\.dulcetPlaybackNotices, drawsNotices ? DulcetPlaybackNotices() : notices)
+            .overlay(alignment: .bottom) {
+                if drawsNotices {
+                    DulcetPlaybackNoticeStack(notices: notices)
                 }
-                .padding(.top, DulcetSpacing.sm)
-                .allowsHitTesting(false)
             }
             .onChange(of: store.snapshot.refusedQueueEdits) { previous, current in
                 guard isActive, current > previous else { return }
@@ -285,7 +307,14 @@ private struct DulcetPlaybackFeedback: ViewModifier {
                 }
             }
             .onChange(of: store.snapshot.playbackSkipNotice) { previous, current in
-                guard isActive, let current, current.sequence != previous?.sequence else { return }
+                guard let current else {
+                    // Withdrawn -- the account disconnected, or signed out: the track it named
+                    // belongs to a queue that is gone.
+                    skipHideTask?.cancel()
+                    withAnimation(.easeInOut(duration: 0.2)) { skipMessage = nil }
+                    return
+                }
+                guard isActive, current.sequence != previous?.sequence else { return }
                 DulcetUIProofMarkers.record("skip-notice:\(current.sequence)")
                 AccessibilityNotification.Announcement(current.message).post()
                 withAnimation(.easeInOut(duration: 0.2)) { skipMessage = current.message }
@@ -297,13 +326,59 @@ private struct DulcetPlaybackFeedback: ViewModifier {
                 }
             }
     }
+}
 
-    private func notice(_ text: String, systemImage: String) -> some View {
+/// The notices, stacked at the bottom of the surface drawing them, centred, clear of its edges.
+/// Taps pass through them to whatever is under.
+struct DulcetPlaybackNoticeStack: View {
+    let notices: DulcetPlaybackNotices
+
+    var body: some View {
+        VStack(spacing: DulcetSpacing.xs) {
+            if notices.showingRefusal {
+                DulcetPlaybackNotice(text: DulcetStrings.queueEditRefused, systemImage: "exclamationmark.circle")
+                    .accessibilityIdentifier("dulcet.queue.edit-refused")
+            }
+            if let skipMessage = notices.skipMessage {
+                DulcetPlaybackNotice(text: skipMessage, systemImage: "forward.end")
+                    .accessibilityIdentifier("dulcet.playback.skipped-notice")
+            }
+        }
+        // Never edge to edge: a notice that wraps stays a card, clear of the screen's sides.
+        .padding(.horizontal, DulcetSpacing.lg)
+        .padding(.bottom, DulcetSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .bottom)
+        .allowsHitTesting(false)
+    }
+}
+
+/// One notice: its sentence on the regular material, the pair its colour was measured against
+/// (`primaryTextOnRegularMaterial`).
+///
+/// The material always contains the text, at every Dynamic Type size and however many lines a
+/// long title wraps to. The background is a rounded rectangle, not a capsule, whose corner
+/// radius would grow with a wrapped notice's height; and its continuous corners bend away from
+/// the straight edge over ``cornerExtent`` × the radius along each side, so a horizontal padding
+/// at least that wide keeps every line clear of every corner. The text is never truncated.
+struct DulcetPlaybackNotice: View {
+    static let cornerRadius: CGFloat = 10
+    /// How far along each edge a continuous corner curves, per point of radius.
+    static let cornerExtent: CGFloat = 1.528665
+    static let horizontalPadding: CGFloat = DulcetSpacing.md
+    let text: String
+    let systemImage: String
+
+    var body: some View {
         Label(text, systemImage: systemImage)
             .font(.callout.weight(.semibold))
-            .padding(.horizontal, DulcetSpacing.md)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, Self.horizontalPadding)
             .padding(.vertical, DulcetSpacing.xs)
-            .background(.regularMaterial, in: Capsule())
+            .background(
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+            )
             .dulcetForeground(.primaryTextOnRegularMaterial)
             // One element that reads as the sentence. The symbol is decoration, and its own
             // label ("Go To End" for the skip) would otherwise be read first.

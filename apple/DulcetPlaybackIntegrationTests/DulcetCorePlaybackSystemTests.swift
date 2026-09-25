@@ -469,6 +469,24 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(nowPlaying.queueEntries.prefix(2).map(\.track.id.rawID), ["a", "b"])
     }
 
+    /// A notice belongs to the session that produced it: disconnecting -- which signing out does
+    /// too, through account removal -- takes it away with everything else, so a later presentation
+    /// never carries a skip from an account that is gone.
+    func testDisconnectingClearsTheSkipNotice() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .undecodable))
+        _ = try await fixture.waitForPrepare(rawID: "b")
+        XCTAssertNotNil(fixture.controller.currentPresentation.skipNotice, "the case needs a notice up")
+
+        fixture.controller.disconnect()
+
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice)
+        await fixture.waitFor { fixture.store?.snapshot.playbackSkipNotice == nil }
+        XCTAssertNil(try XCTUnwrap(fixture.store).snapshot.playbackSkipNotice)
+    }
+
     /// A connection-class failure of the entry the engine advanced into stops there and is
     /// presented -- the same boundary as above, with the other side of the §12.12 rule.
     func testAnAutomaticAdvanceIntoAConnectionFailureStopsAndPresentsIt() async throws {

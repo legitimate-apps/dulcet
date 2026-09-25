@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+
+"""Add the opt-in "Skip Probe" album to a disposable server's music folder.
+
+The automatic-skip UI proof (spec §12.12) needs an album whose first track cannot be decoded and
+whose second one plays: `testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays` taps the first,
+and asserts the queue skips it with a notice, plays the second, and that the server never counted
+a play for the first. This generator makes that album, deterministically, from nothing committed:
+
+    Skip Probe/01 - Unplayable Probe.mp3     an ID3v2.4 tag, then 380 well-formed MPEG-1 Layer III
+                                             frame headers whose payloads are pseudo-random bytes.
+                                             A player can parse it and become ready, then cannot
+                                             decode it. Byte-for-byte fixed: its SHA-256 is pinned
+                                             below and checked on every run.
+    Skip Probe/02 - Playable After Skip.mp3  a 40-second synthesized tone, long enough that playing
+                                             it past half its length records a play -- the positive
+                                             control that shows the play-count read can see a play.
+
+It is deliberately NOT part of tools/seed-corpus. The default corpus is counted exactly: the health
+check requires its 314 files, and the conformance suites count its albums. An extra album there would
+change what those assert. So it is opt-in, and it goes into a server that has already passed the
+health check:
+
+    tools/seed-skip-probe --music <the server's music folder> --runtime native --ffmpeg <ffmpeg> \\
+        --base-url <the server's base URL>
+
+With --base-url it asks the server to rescan and waits until both tracks are listed on the album, so
+the UI harness can start as soon as it returns. Only the disposable conformance server's canary
+account is used; never point it at a personal or production server.
+
+Fails closed: an existing Skip Probe folder, a pin mismatch, a tag that does not read back, an
+ffprobe mismatch, or tracks the server never lists all exit non-zero.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+import time
+
+
+TOOLS = Path(__file__).resolve().parent
+seed_corpus = SourceFileLoader("seed_corpus", str(TOOLS / "seed-corpus")).load_module()
+read_play_count = SourceFileLoader("read_play_count", str(TOOLS / "read-play-count")).load_module()
+
+ALBUM = "Skip Probe"
+ARTIST = "Dulcet Fixtures"
+UNPLAYABLE_TITLE = "Unplayable Probe"
+PLAYABLE_TITLE = "Playable After Skip"
+PLAYABLE_SECONDS = 40.0
+FRAME_COUNT = 380
+# MPEG-1 Layer III, no CRC, 128 kbit/s, 44.1 kHz, no padding, joint stereo: 417 bytes a frame.
+FRAME_HEADER = bytes([0xFF, 0xFB, 0x90, 0x64])
+FRAME_PAYLOAD_BYTES = 413
+UNPLAYABLE_SHA256 = "a77cceb1a29400a4f45e2f55412426b607c966ee5c91c04e93e15c416d9ca567"
+
+
+def unplayable_bytes() -> bytes:
+    """The undecodable track: the same frames DulcetKit's engine test decodes to `decodeFailed`."""
+    tag = seed_corpus.id3v24_text_tag({
+        "TIT2": UNPLAYABLE_TITLE,
+        "TPE1": ARTIST,
+        "TALB": ALBUM,
+        "TPE2": ARTIST,
+        "TRCK": "1",
+        "TDRC": "2026",
+    })
+    frames = bytearray()
+    state = 12_345
+    for _ in range(FRAME_COUNT):
+        frames += FRAME_HEADER
+        for _ in range(FRAME_PAYLOAD_BYTES):
+            state = (state * 1_103_515_245 + 12_345) & 0xFFFF_FFFF
+            frames.append(((state & 0x7FFF_FFFF) >> 16) & 0xFF)
+    return tag + bytes(frames)
+
+
+def write_album(music: Path, tools) -> tuple[Path, Path]:
+    album = music / ALBUM
+    if album.exists():
+        raise SystemExit(f"{ALBUM!r} already exists in the music folder; it is added once, to a fresh server")
+    album.mkdir()
+    unplayable = album / f"01 - {UNPLAYABLE_TITLE}.mp3"
+    data = unplayable_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != UNPLAYABLE_SHA256:
+        raise SystemExit(f"unplayable track drifted from its pin: expected {UNPLAYABLE_SHA256}, built {digest}")
+    unplayable.write_bytes(data)
+    tags = seed_corpus.parse_id3v24_text(unplayable)
+    if tags.get("TIT2") != UNPLAYABLE_TITLE or tags.get("TALB") != ALBUM or tags.get("TRCK") != "1":
+        raise SystemExit(f"unplayable track's tag did not read back: {tags}")
+
+    playable = album / f"02 - {PLAYABLE_TITLE}.mp3"
+    seed_corpus.encode(
+        tools, playable, duration=PLAYABLE_SECONDS, frequency=660,
+        title=PLAYABLE_TITLE, album=ALBUM, track="2",
+    )
+    seed_corpus.assert_media(
+        tools, playable,
+        expected_tags={"title": PLAYABLE_TITLE, "album": ALBUM, "track": "2"},
+        duration=PLAYABLE_SECONDS,
+    )
+    return unplayable, playable
+
+
+def await_listed(base_url: str, timeout_seconds: float) -> dict[str, str]:
+    """Rescan, then wait until the server lists exactly one song of each title on the album."""
+    read_play_count.call(base_url, "startScan")
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    observed: dict[str, list[str]] = {}
+    while True:
+        attempts += 1
+        status = read_play_count.call(base_url, "getScanStatus").get("scanStatus", {})
+        found = read_play_count.call(
+            base_url, "search3", query=ALBUM, songCount="50", albumCount="0", artistCount="0",
+        )
+        songs = ((found.get("searchResult3") or {}).get("song")) or []
+        observed = {
+            title: [song.get("id") for song in songs if song.get("title") == title and song.get("album") == ALBUM]
+            for title in (UNPLAYABLE_TITLE, PLAYABLE_TITLE)
+        }
+        listed = all(len(ids) == 1 and ids[0] for ids in observed.values())
+        if listed and not status.get("scanning", True):
+            return {title: ids[0] for title, ids in observed.items()}
+        if time.monotonic() >= deadline:
+            raise SystemExit(
+                f"the server did not list the {ALBUM!r} album within {timeout_seconds:.0f}s "
+                f"(attempts={attempts}, scanning={status.get('scanning')!r}, "
+                f"matches={ {title: len(ids) for title, ids in observed.items()} })"
+            )
+        time.sleep(0.5)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--music", required=True, help="the disposable server's music folder")
+    parser.add_argument("--runtime", choices=("native", "docker"), required=True)
+    parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--image")
+    parser.add_argument("--base-url", help="rescan this server and wait until the album is listed")
+    parser.add_argument("--timeout-seconds", type=float, default=120)
+    args = parser.parse_args()
+
+    music = Path(args.music).resolve()
+    if not music.is_dir():
+        raise SystemExit("--music must be an existing folder")
+    tools = seed_corpus.MediaTools(music, args.runtime, args.ffmpeg, args.image)
+    write_album(music, tools)
+    listed = await_listed(args.base_url.rstrip("/"), args.timeout_seconds) if args.base_url else {}
+    print(
+        f"SKIP PROBE PASS album={ALBUM!r} files=2 unplayable-sha256={UNPLAYABLE_SHA256} "
+        f"playable-seconds={PLAYABLE_SECONDS:g} listed={'yes' if listed else 'not requested'}"
+    )
+
+
+if __name__ == "__main__":
+    main()

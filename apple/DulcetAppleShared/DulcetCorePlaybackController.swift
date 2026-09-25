@@ -463,6 +463,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         activeDirectiveIdentity = nil
         pendingStarts = [:]
         execute(.stop(commandID: commandID("disconnect")))
+        // A notice names a track of the queue just left, so it goes with it: signing out, or
+        // reaching another server, must not show the previous account's track.
+        skipNotice = nil
         currentPresentation = .unavailable
         emitPresentation()
     }
@@ -1263,8 +1266,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 providerInstanceID: entry.providerInstanceId,
                 rawID: entry.rawId
             )],
-            // The core's one Skip predicate (spec §12.12): the automatic skip asks the same
-            // question, so the shell never computes a second answer.
+            // The core's answer (spec §12.12), published with the queue, so the shell never
+            // computes a second one. Skip asks it forward; an automatic skip asks the same core
+            // function in its direction of travel.
             canSkip: snapshot.canSkipPastCurrent,
             canRetry: true,
             stoppedPartway: snapshot.currentSession?.failure == "afterPartial",

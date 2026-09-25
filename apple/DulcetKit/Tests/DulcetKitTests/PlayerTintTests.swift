@@ -147,6 +147,63 @@ func theGlowStaysWithinItsReachAndReduceTransparencyRemovesIt() throws {
     }
 }
 
+/// The cover as the player composes it (``DulcetPlayerCover``): artwork, shadow and glow, at a
+/// given scale, through SwiftUI's own renderer.
+@MainActor
+private func renderCover(size: CGFloat, margin: CGFloat, scale: CGFloat, reduceTransparency: Bool) throws -> RenderedPixels {
+    let artwork = DulcetArtwork(seed: "tint", palette: .emberRose)
+    let store = DulcetPresentationStore(source: DulcetDeterministicDataSource(initialState: .nowPlaying))
+    let canvas = size + 2 * margin
+    let content = ZStack {
+        Color.dulcetWindow
+        DulcetPlayerCover(artwork: artwork, size: size, isPlaying: scale == 1, scale: scale)
+    }
+    .frame(width: canvas, height: canvas)
+    .environment(store)
+    .environment(\.colorScheme, .light)
+    .environment(\.dulcetReduceTransparencyOverride, reduceTransparency)
+    let renderer = ImageRenderer(content: content)
+    renderer.scale = 2
+    let image = try #require(renderer.cgImage, "the renderer must produce an image")
+    return try RenderedPixels(image: image, scale: 2)
+}
+
+/// A presented player's cover shrinks while paused, and its glow shrinks with it: the glow still
+/// reaches no further than `reach` past the cover as drawn, so paused it ends further inside the
+/// cover's layout frame than it does playing, and every gap to text measured above still holds.
+/// The glow is isolated as the difference between the render with it and the render under Reduce
+/// Transparency, which share everything else, the shadow included.
+@Test @MainActor
+func thePausedCoversGlowShrinksWithTheCover() throws {
+    let reach = DulcetArtworkGlow.reach
+    let margin = reach + 40
+    for size in [CGFloat(120), 360] {
+        for scale in [CGFloat(1), DulcetPlayerCover.pausedScale] {
+            let glowing = try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: false)
+            let reduced = try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: true)
+            let drawn = size * scale
+            let inset = (size - drawn) / 2
+            let cover = CGRect(x: margin + inset, y: margin + inset, width: drawn, height: drawn)
+            var beyondReach = 0
+            var glowNear = 0
+            var farthest: CGFloat = 0
+            for y in 0..<glowing.height {
+                for x in 0..<glowing.width {
+                    let fromCover = distance(fromPixel: x, y, to: cover, scale: glowing.scale)
+                    guard fromCover > 1 else { continue }
+                    guard channelDelta(glowing.rgb(x, y), reduced.rgb(x, y)) > 2.0 / 255 else { continue }
+                    farthest = max(farthest, fromCover)
+                    if fromCover > reach { beyondReach += 1 } else { glowNear += 1 }
+                }
+            }
+            print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) farthest-glow=\(farthest)"
+                + " beyond-reach=\(beyondReach) glow-near=\(glowNear)")
+            #expect(beyondReach == 0, "glow \(beyondReach) px past the reach of the drawn cover, size \(size) scale \(scale)")
+            #expect(glowNear > 0, "the glow must be drawn at all, size \(size) scale \(scale)")
+        }
+    }
+}
+
 private func tintTrack(_ title: String, palette: DulcetArtworkPalette) -> DulcetTrack {
     DulcetTrack(
         id: .init(providerInstanceID: "server", rawID: title),

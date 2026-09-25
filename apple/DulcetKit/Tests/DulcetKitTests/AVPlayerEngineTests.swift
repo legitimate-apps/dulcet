@@ -1141,6 +1141,73 @@ struct AVPlayerEngineTests {
         #expect(!surfaced.contains("?"))
     }
 
+    /// Each of AVFoundation's failures of an item's own media is the item's (spec §12.12). They
+    /// are named here one by one, not read from the set under test, so a code dropped from that
+    /// set fails its own case.
+    @Test(arguments: [
+        AVError.Code.decodeFailed.rawValue,
+        AVError.Code.decoderNotFound.rawValue,
+        AVError.Code.fileFormatNotRecognized.rawValue,
+        AVError.Code.fileFailedToParse.rawValue,
+        AVError.Code.failedToParse.rawValue,
+        AVError.Code.undecodableMediaData.rawValue,
+    ])
+    func anItemsOwnMediaFailureCrossesAsUndecodable(code: Int) {
+        let error = NSError(domain: AVFoundationErrorDomain, code: code)
+        #expect(DulcetApplePlaybackErrorSanitizer.avFoundationFailure(error) == .undecodable)
+    }
+
+    /// The control for the cases above: the system's failures are not the item's.
+    @Test(arguments: [
+        AVError.Code.unknown.rawValue,
+        // Media services were reset, and an operation interrupted: declared only for iOS-family
+        // SDKs, so named here by their raw values, which every platform's error can carry.
+        -11_819,
+        AVError.Code.decoderTemporarilyUnavailable.rawValue,
+        -11_847,
+    ])
+    func theSystemsOwnFailureStaysTheEngines(code: Int) {
+        let error = NSError(domain: AVFoundationErrorDomain, code: code)
+        #expect(DulcetApplePlaybackErrorSanitizer.avFoundationFailure(error) == .engine)
+    }
+
+    /// A wrapped error is read through `NSUnderlyingErrorKey`, outermost first and a bounded
+    /// number of levels deep: an AVFoundation error wrapping a certificate failure is the
+    /// connection's, one wrapping a decode failure is the item's, and a chain deeper than the
+    /// bound is the engine's. Nothing of any of them crosses but the closed name. Unreachable
+    /// today -- the item's bytes arrive only through the resource loader -- and pinned so it
+    /// stays right if that changes.
+    @Test
+    func wrappedFailuresAreReadThroughToABound() {
+        let canary = "wrapped-token-canary"
+        func wrapping(_ inner: NSError) -> NSError {
+            NSError(
+                domain: AVFoundationErrorDomain,
+                code: AVError.Code.unknown.rawValue,
+                userInfo: [NSUnderlyingErrorKey: inner]
+            )
+        }
+        func wrapped(_ inner: NSError, levels: Int) -> NSError {
+            (0..<levels).reduce(inner) { error, _ in wrapping(error) }
+        }
+        let untrusted = NSError(
+            domain: NSURLErrorDomain,
+            code: URLError.serverCertificateUntrusted.rawValue,
+            userInfo: [NSURLErrorFailingURLStringErrorKey: "https://source.invalid/audio?t=\(canary)"]
+        )
+        let timedOut = NSError(domain: NSURLErrorDomain, code: URLError.timedOut.rawValue)
+        let undecodable = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.decodeFailed.rawValue)
+        let sanitize = DulcetApplePlaybackErrorSanitizer.avFoundationFailure
+
+        #expect(sanitize(wrapping(untrusted)) == .tlsUntrusted)
+        #expect(sanitize(wrapping(timedOut)) == .transport)
+        #expect(sanitize(wrapping(undecodable)) == .undecodable)
+        // Eight errors are read, the outermost included: the eighth is, the ninth is not.
+        #expect(sanitize(wrapped(undecodable, levels: 7)) == .undecodable, "the deepest error read")
+        #expect(sanitize(wrapped(undecodable, levels: 8)) == .engine, "one level past the bound")
+        #expect(!String(reflecting: sanitize(wrapping(untrusted))).contains(canary))
+    }
+
     #if os(macOS)
     @Test
     func macCoreAudioRoutesClassifyNoisyDisconnectsWithoutTreatingHDMIAsAnInterruption() {

@@ -1,3 +1,4 @@
+import CryptoKit
 import UIKit
 import XCTest
 
@@ -676,6 +677,91 @@ final class DulcetiOSUITests: XCTestCase {
         let password: String
     }
 
+    private struct PlayCountReadFailure: Error {
+        let message: String
+    }
+
+    /// One `search3` read of the server, as the disposable server's own account. Its salt is fresh
+    /// per request, and nothing about the request -- which carries a token -- is ever reported.
+    private func readServerPlayCount(
+        title: String,
+        album: String,
+        configuration: LivePlaybackConfiguration
+    ) -> Result<Int, PlayCountReadFailure> {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((configuration.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: configuration.serverURL) else {
+            return .failure(.init(message: "the server URL is malformed (withheld)"))
+        }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/search3"
+        components.queryItems = [
+            URLQueryItem(name: "u", value: configuration.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+            URLQueryItem(name: "f", value: "json"),
+            URLQueryItem(name: "query", value: title),
+            URLQueryItem(name: "songCount", value: "50"),
+            URLQueryItem(name: "albumCount", value: "0"),
+            URLQueryItem(name: "artistCount", value: "0"),
+        ]
+        guard let url = components.url else {
+            return .failure(.init(message: "the request URL could not be built (withheld)"))
+        }
+        /// Written once by the completion handler, read after the semaphore it signals.
+        final class Outcome: @unchecked Sendable {
+            var value: Result<Data, PlayCountReadFailure> = .failure(.init(message: "no response"))
+        }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error as? URLError {
+                // The code only: a URLError's description can carry the URL, and so the token.
+                outcome.value = .failure(.init(message: "/rest/search3 unreachable: code \(error.code.rawValue)"))
+            } else if error != nil {
+                outcome.value = .failure(.init(message: "/rest/search3 failed"))
+            } else if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+                outcome.value = .failure(.init(message: "/rest/search3 returned HTTP \(status)"))
+            } else if let data {
+                outcome.value = .success(data)
+            }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            return .failure(.init(message: "/rest/search3 did not answer within 15 s"))
+        }
+        let data: Data
+        switch outcome.value {
+        case let .success(body): data = body
+        case let .failure(failure): return .failure(failure)
+        }
+        guard let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let envelope = document["subsonic-response"] as? [String: Any] else {
+            return .failure(.init(message: "/rest/search3 returned no subsonic-response envelope"))
+        }
+        guard envelope["status"] as? String == "ok" else {
+            let error = envelope["error"] as? [String: Any]
+            return .failure(.init(message: "/rest/search3 failed: code=\(String(describing: error?["code"]))"))
+        }
+        let songs = (envelope["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let matches = songs.filter { $0["title"] as? String == title && $0["album"] as? String == album }
+        guard matches.count == 1, let song = matches.first else {
+            return .failure(.init(message: "\(matches.count) songs titled \(title) on \(album); exactly one is required"))
+        }
+        // Subsonic omits playCount when it is zero.
+        guard let raw = song["playCount"] else { return .success(0) }
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue == Double(number.intValue), number.intValue >= 0 else {
+            return .failure(.init(message: "playCount is not a non-negative integer: \(raw)"))
+        }
+        return .success(number.intValue)
+    }
+
     private struct PlaybackProgressSample {
         let elapsed: TimeInterval
         let duration: TimeInterval
@@ -834,61 +920,34 @@ final class DulcetiOSUITests: XCTestCase {
     /// is skipped with a notice, and the next track plays (spec §12.12). Live, because only the
     /// real engine and the core's queue decide this: the layout fixture has neither.
     ///
-    /// Requires the disposable server to hold a "Skip Probe" album of two tracks, "Unplayable
-    /// Probe" (undecodable) then "Playable After Skip", and fails, never skips, when it does not.
+    /// Requires the disposable server to hold the opt-in "Skip Probe" album that
+    /// `tools/seed-skip-probe` adds -- "Unplayable Probe" (undecodable) then "Playable After Skip"
+    /// -- and fails, never skips, when it does not.
+    ///
+    /// The server's play counts are read over `/rest`, read-only: the skipped track's must stay
+    /// zero, and -- the control that shows the read can see a play at all -- the next track's must
+    /// go up by one once it has played past its threshold. Only a count that must NOT move is the
+    /// claim here; the playback canary's proof of a delivered scrobble reads its count outside the
+    /// test, for the reason `tools/read-play-count` gives.
     @MainActor
     func testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays() {
         guard requireSimulator(.phone, "The automatic skip proof") else { return }
         XCUIDevice.shared.orientation = .portrait
         guard let configuration = livePlaybackConfiguration() else { return }
-        let app = XCUIApplication()
-        app.launchArguments += [
-            "-dulcet-debug-ui-markers",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url",
-            configuration.serverURL,
-            "-dulcet-debug-account-username",
-            configuration.username,
-            "-dulcet-debug-account-password",
-            configuration.password,
-        ]
-        app.launch()
-        let window = app.windows.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
-            XCTFail("The live account connection must succeed first")
+        guard let unplayableBefore = serverPlayCount(title: "Unplayable Probe", configuration: configuration),
+              let playableBefore = serverPlayCount(title: "Playable After Skip", configuration: configuration) else {
             return
         }
-        guard requireProofMarkers(in: app),
-              openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
-            return
-        }
-        let album = app.buttons.matching(identifier: "dulcet.library.album")
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Skip Probe")).firstMatch
-        guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
-            XCTFail("The disposable server must expose the Skip Probe album: " + app.debugDescription)
-            return
-        }
-        album.tap()
-        // The fixture is the one intended: the unplayable track first, a playable one after it.
-        let unplayableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Unplayable Probe")).firstMatch
-        let playableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playable After Skip")).firstMatch
-        guard unplayableRow.waitForExistence(timeout: 15), playableRow.waitForExistence(timeout: 5),
-              unplayableRow.frame.minY < playableRow.frame.minY else {
-            XCTFail("The Skip Probe album must list Unplayable Probe before Playable After Skip: "
-                + app.debugDescription)
-            return
-        }
-        let markersBefore = proofMarkers(in: app)
-        unplayableRow.tap()
-
-        let notice = app.descendants(matching: .any)["dulcet.playback.skipped-notice"].firstMatch
-        let noticeShown = notice.waitForExistence(timeout: 30)
-        let noticeLabel = noticeShown ? notice.label : "<none>"
+        XCTAssertEqual(unplayableBefore, 0, "The skipped track must start this proof with no plays")
+        guard let run = startSkipProbe(configuration: configuration) else { return }
+        let app = run.app
+        let notice = run.notice
+        let noticeLabel = notice.exists ? notice.label : "<none>"
         XCTAssertTrue(noticeLabel.contains("Unplayable Probe") && noticeLabel.contains("Skipped"),
                       "A skipped track must be named in a notice; notice=\(noticeLabel)")
-        let noticeMarkers = waitForMarkers(after: markersBefore, ["skip-notice:1"], in: app, timeout: 5)
+        let noticeMarkers = waitForMarkers(after: run.markersBefore, ["skip-notice:1"], in: app, timeout: 5)
         XCTAssertEqual(noticeMarkers, ["skip-notice:1"], "The notice's own handler must run, once")
+        let placement = assertNoticeClearsNavigation(notice, in: app)
         attachScreenshot(named: "skipped-track-notice", app: app)
 
         // The next track plays, and no failure line stays for the track that is not playing.
@@ -923,11 +982,167 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(historyRow.hasPrefix("Unplayable Probe") && !historyRow.localizedCaseInsensitiveContains("skip"),
                       "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
         attachScreenshot(named: "skipped-track-history", app: app)
+
+        // The server: the next track's play is counted once it passes its threshold -- so the read
+        // can see a play -- and the skipped track's never is.
+        let playableAfter = awaitServerPlayCount(
+            title: "Playable After Skip", configuration: configuration,
+            expected: playableBefore + 1, timeout: 60
+        )
+        let unplayableAfter = serverPlayCount(title: "Unplayable Probe", configuration: configuration)
+        XCTAssertEqual(playableAfter, playableBefore + 1,
+                       "Control: the track that played must be counted once, or the read sees no plays")
+        XCTAssertEqual(unplayableAfter, 0, "The skipped track must never be counted as played")
         print("DULCET AUTO SKIP OBSERVED notice=\(noticeLabel.debugDescription) markers=\(noticeMarkers)"
-            + " bar=\(bar.label.debugDescription) playing=\(playing) no-failure-line=\(noFailureLine)"
-            + " notice-gone=\(noticeGone) history-row-0=\(historyRow.debugDescription)")
+            + " placement=\(placement) bar=\(bar.label.debugDescription) playing=\(playing)"
+            + " no-failure-line=\(noFailureLine) notice-gone=\(noticeGone) history-row-0=\(historyRow.debugDescription)"
+            + " unplayable-plays=\(unplayableBefore)->\(String(describing: unplayableAfter))"
+            + " playable-plays=\(playableBefore)->\(String(describing: playableAfter))")
     }
 
+    /// At the largest accessibility text size the skip notice wraps onto several lines and still
+    /// sits clear of the navigation bar, the tab bar and the now-playing bar, inside the screen's
+    /// margins (spec §12.12 rule 5). The screenshot is the evidence that the card contains its
+    /// text; the frames are the evidence of where it is.
+    @MainActor
+    func testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize() {
+        guard requireSimulator(.phone, "The accessibility-size skip notice proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        guard let configuration = livePlaybackConfiguration() else { return }
+        guard let run = startSkipProbe(
+            configuration: configuration,
+            extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        ) else { return }
+        let notice = run.notice
+        XCTAssertTrue(notice.label.contains("Unplayable Probe"), "notice=\(notice.label)")
+        let placement = assertNoticeClearsNavigation(notice, in: run.app)
+        // The experiment is the one intended: at this size the sentence wraps, so the notice is
+        // several lines tall rather than the one line of the default size.
+        XCTAssertGreaterThan(notice.frame.height, 90, "The notice must be at an accessibility size; \(placement)")
+        attachScreenshot(named: "skipped-track-notice-ax5", app: run.app)
+        print("DULCET AUTO SKIP AX5 OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
+    }
+
+    private struct SkipProbeRun {
+        let app: XCUIApplication
+        let notice: XCUIElement
+        let markersBefore: [String]
+    }
+
+    /// Connects, opens the Skip Probe album, taps its unplayable first track, and waits for the
+    /// notice. Fails, never skips, when the album is not there.
+    @MainActor
+    private func startSkipProbe(
+        configuration: LivePlaybackConfiguration,
+        extraLaunchArguments: [String] = []
+    ) -> SkipProbeRun? {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-ui-markers",
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url",
+            configuration.serverURL,
+            "-dulcet-debug-account-username",
+            configuration.username,
+            "-dulcet-debug-account-password",
+            configuration.password,
+        ] + extraLaunchArguments
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live account connection must succeed first")
+            return nil
+        }
+        guard requireProofMarkers(in: app),
+              openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+            return nil
+        }
+        let album = app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Skip Probe")).firstMatch
+        guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
+            XCTFail("The disposable server must expose the opt-in Skip Probe album; add it with "
+                + "tools/seed-skip-probe: " + app.debugDescription)
+            return nil
+        }
+        album.tap()
+        // The fixture is the one intended: the unplayable track first, a playable one after it.
+        let unplayableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Unplayable Probe")).firstMatch
+        let playableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playable After Skip")).firstMatch
+        guard unplayableRow.waitForExistence(timeout: 15), scrollIntoView(unplayableRow, in: app),
+              playableRow.waitForExistence(timeout: 5),
+              unplayableRow.frame.minY < playableRow.frame.minY else {
+            XCTFail("The Skip Probe album must list Unplayable Probe before Playable After Skip: "
+                + app.debugDescription)
+            return nil
+        }
+        let markersBefore = proofMarkers(in: app)
+        unplayableRow.tap()
+        let notice = app.descendants(matching: .any)["dulcet.playback.skipped-notice"].firstMatch
+        guard notice.waitForExistence(timeout: 30) else {
+            XCTFail("A skipped track must be named in a notice; none appeared: " + app.debugDescription)
+            return nil
+        }
+        return SkipProbeRun(app: app, notice: notice, markersBefore: markersBefore)
+    }
+
+    /// The notice is drawn over no navigation control: not the navigation bar, not the tab bar,
+    /// not the now-playing bar -- it sits above the last two -- and it stays inside the window's
+    /// side margins. Each bar must be on screen, so the comparison is against something real.
+    @MainActor
+    @discardableResult
+    private func assertNoticeClearsNavigation(_ notice: XCUIElement, in app: XCUIApplication) -> String {
+        let frame = notice.frame
+        let window = app.windows.firstMatch.frame
+        let navigationBar = app.navigationBars.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        let nowPlayingBar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let placement = "notice=\(frame) window=\(window) navigation=\(navigationBar.frame)"
+            + " tabs=\(tabBar.frame) now-playing=\(nowPlayingBar.frame)"
+        XCTAssertTrue(navigationBar.exists && tabBar.exists && nowPlayingBar.exists,
+                      "The navigation bar, tab bar and now-playing bar must all be on screen; \(placement)")
+        XCTAssertFalse(frame.intersects(navigationBar.frame), "The notice covers the navigation bar; \(placement)")
+        XCTAssertFalse(frame.intersects(tabBar.frame), "The notice covers the tab bar; \(placement)")
+        XCTAssertLessThanOrEqual(frame.maxY, nowPlayingBar.frame.minY,
+                                 "The notice must sit above the now-playing bar; \(placement)")
+        XCTAssertLessThanOrEqual(frame.maxY, tabBar.frame.minY, "The notice must sit above the tab bar; \(placement)")
+        XCTAssertGreaterThanOrEqual(frame.minX - window.minX, 16, "The notice runs to the left edge; \(placement)")
+        XCTAssertGreaterThanOrEqual(window.maxX - frame.maxX, 16, "The notice runs to the right edge; \(placement)")
+        return placement
+    }
+
+    /// The server's play count for the one "Skip Probe" song with this title, read over `/rest`
+    /// with the disposable server's own account. Read-only: nothing here can record a play.
+    /// Fails -- nil, with a failure recorded -- on no match, several matches, or any error, so a
+    /// read that cannot find its track is never mistaken for a track with no plays. The URL, which
+    /// carries a token, is never printed.
+    @MainActor
+    private func serverPlayCount(title: String, configuration: LivePlaybackConfiguration) -> Int? {
+        switch readServerPlayCount(title: title, album: "Skip Probe", configuration: configuration) {
+        case let .success(count):
+            return count
+        case let .failure(reason):
+            XCTFail("The server's play count for \(title) could not be read: \(reason.message)")
+            return nil
+        }
+    }
+
+    /// Polls until the count reaches `expected` or the timeout passes, and returns the last read.
+    @MainActor
+    private func awaitServerPlayCount(
+        title: String,
+        configuration: LivePlaybackConfiguration,
+        expected: Int?,
+        timeout: TimeInterval
+    ) -> Int? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = serverPlayCount(title: title, configuration: configuration)
+        while observed != nil, observed != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            observed = serverPlayCount(title: title, configuration: configuration)
+        }
+        return observed
+    }
     /// The iPad shell: Now Playing is not a sidebar place, and the now-playing bar opens the
     /// player over the whole window with Up Next beside it.
     ///

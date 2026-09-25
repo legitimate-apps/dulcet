@@ -71,7 +71,9 @@ public struct DulcetRootView: View {
                         .dulcetForeground(.primaryTextOnWindow)
                 }
                 // Up Next on tvOS edits the queue too; a refusal there is said, as on the others.
-                .dulcetPlaybackFeedback(store: store)
+                // There is no now-playing bar on tvOS, so the root draws the notices itself,
+                // along the bottom edge, clear of the section bar at the top.
+                .dulcetPlaybackFeedback(store: store, drawsNotices: true)
             }
         }
         .environment(store)
@@ -512,10 +514,10 @@ struct DulcetDestinationStack: View {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
             }
-            .modifier(bar)
+            .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.isEmpty))
             .navigationDestination(for: DulcetLibraryRoute.self) { route in
                 DulcetLibraryRouteView(store: store, route: route)
-                    .modifier(bar)
+                    .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
             }
         }
         // A different destination is a different stack: switching from an open album to Search
@@ -536,11 +538,16 @@ struct DulcetDestinationStack: View {
         retainedLibrary = store.snapshot
     }
 
-    private var bar: DulcetOptionalNowPlayingBar {
+    /// `drawsNotices`: only the page on top of the stack that is showing draws the playback
+    /// notices, so a hidden tab or a page underneath does not hold a second copy. Pages are
+    /// matched by route, so a path holding the same page twice draws on both, the lower one
+    /// covered by the top.
+    private func bar(drawsNotices: Bool) -> DulcetOptionalNowPlayingBar {
         DulcetOptionalNowPlayingBar(
             store: store,
             placement: barPlacement,
             isSuppressed: store.selectedDestination == .nowPlaying,
+            drawsNotices: drawsNotices,
             onOpen: onOpenPlayer
         )
     }
@@ -570,6 +577,7 @@ private struct DulcetOptionalNowPlayingBar: ViewModifier {
     @Bindable var store: DulcetPresentationStore
     let placement: DulcetNowPlayingBarPlacement.Placement?
     let isSuppressed: Bool
+    let drawsNotices: Bool
     let onOpen: () -> Void
 
     func body(content: Content) -> some View {
@@ -581,6 +589,7 @@ private struct DulcetOptionalNowPlayingBar: ViewModifier {
                 store: store,
                 placement: placement,
                 isSuppressed: isSuppressed,
+                drawsNotices: drawsNotices,
                 onOpen: onOpen
             ))
         } else {

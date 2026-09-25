@@ -230,6 +230,16 @@ to separate fields in `corpus-manifest.json`; the health check compares the comp
 structure to the contract. Any encoding, parsing, tag, duration, count, or format mismatch errors the
 job.
 
+### Opt-in fixture: the Skip Probe album
+
+`tools/seed-skip-probe` adds one more album, "Skip Probe", for the automatic-skip UI proof (spec
+§12.12): an undecodable MP3 whose bytes are fixed and pinned by SHA-256, then a 40-second playable
+tone. It is never part of the default corpus above, because that corpus is counted exactly — the
+health check requires its 314 files and the conformance suites count its albums. The UI harness runs
+it against a server that has already passed the health check, with `--base-url`, and the tool
+rescans and waits until both tracks are listed. No conformance class runs against a server it has
+been added to.
+
 ## Fail-loud precondition gate
 
 `tools/conformance-env/health-check` runs before a conformance test class and exits nonzero unless it

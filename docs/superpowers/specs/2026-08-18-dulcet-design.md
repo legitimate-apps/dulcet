@@ -412,8 +412,10 @@ horizontal size class**, never by the device:
   is not playing. The bar and the player name the track that failed and offer
   Try Again and Skip. Skip appears, on the bar and in the player alike, only when another entry
   follows the failed one, or the queue repeats onto another entry -- never onto the failed track
-  itself, which a one-track queue under repeat-all would be. That is the core's one Skip predicate,
-  the same one the automatic skip moves by, published with the queue; no shell computes its own. The message offers only what is there:
+  itself, which a one-track queue under repeat-all would be. The core decides it and publishes it
+  with the queue as `canSkipPastCurrent`; no shell computes its own. Skip always moves forward; the
+  automatic skip moves in the direction of travel (§12.12 rule 2), through the same core function
+  with that direction. The message offers only what is there:
   it mentions skipping only when Skip is shown, and a track that stopped partway is not said to have
   failed to start. Try Again follows §12.1. At the largest accessibility text sizes the bar lets
   the track's name and the failure line wrap to two lines each, and the player wraps, stacks its
@@ -436,8 +438,8 @@ horizontal size class**, never by the device:
   tap in flight when a library read replaces every tile; it was not reproduced.
 - **The player.** A swipe across the cover plays the next track (left) or the previous one
   (right), and a downward swipe closes a full-screen player; a diagonal drag, a drag short of the
-  threshold, and a swipe toward a control that is unavailable do nothing. Touch only: a pointer
-  drag on a Mac cover means nothing. Up Next is followed by Previously Played: the queue's entries
+  threshold, and a swipe toward a control that is unavailable do nothing. Touch or pointer drag: an
+  iPad's pointer drives the same gesture, and on a Mac a drag on the cover means nothing. Up Next is followed by Previously Played: the queue's entries
   before the current one, nearest first. It is positional, not a listening log -- an entry jumped
   over, or skipped past because it could not play (§12.12), is listed like any other and is not
   marked -- and repeat-all wrapping to the first entry empties it. It is collapsed until asked for,
@@ -445,10 +447,18 @@ horizontal size class**, never by the device:
   cover's own colours glow out from behind it, reaching 12 points past its edge and no further,
   which is less than every gap between the cover and text: every text colour on the player is a
   registered contrast pair measured against the window colour and nothing else, so cover colour
-  under that text would void the measurement. Reduce Transparency removes the glow, and tvOS draws
-  none, so its player is unchanged. **OBSERVED** (macOS render, `PlayerTintTests`): no pixel of
-  cover colour lies past the reach at three cover sizes; nothing on the one-column or side-by-side
-  player is drawn within the reach; under Reduce Transparency no glow is drawn. Beside a
+  under that text would void the measurement. A presented player's cover shrinks to 0.9 of its size
+  while paused, and the glow shrinks with it, so paused it reaches 12 × 0.9 = 10.8 points past the
+  cover as drawn. The shrunken cover of side *s* sits 0.05*s* inside its layout frame on each side,
+  so from that frame the paused glow reaches 10.8 − 0.05*s* points: 4.8 for the smallest cover the
+  player draws (120 points), and nothing past the frame from 216 points up. Every gap to text is
+  measured from the layout frame, where the nearest thing drawn is 29.25 points from the cover, so
+  paused at least 24.45 points stay clear, against 17.25 playing. Reduce Transparency removes the
+  glow, and tvOS draws none, so its player is unchanged. **OBSERVED** (macOS render,
+  `PlayerTintTests`): no pixel of cover colour lies past the reach at three cover sizes; nothing on
+  the one-column or side-by-side player is drawn within the reach; under Reduce Transparency no glow
+  is drawn; and at 0.9 the glow reaches no further than 10.8 points past the drawn cover at 120 and
+  360 points. Beside a
   regular-width player, the queue column is as tall as the player it sits beside -- cover to
   footer, as measured, not estimated -- and centred with it, rather than the window's height.
 
@@ -1769,8 +1779,9 @@ Three were decided rather than given:
   file. A reverse proxy's login page served under an audio content type lands here too, and so does
   one served as HTML (`UnexpectedContentType`, the track's by decision). Such a page answers every
   entry alike, so on its own the rule would sweep the queue. **The guard (rule 3) is what stops that
-  sweep**: at most four automatic skips, and so four further requests, before the entry it stopped
-  on is presented with the failure line.
+  sweep**: at most four automatic skips before the entry it stopped on is presented with the
+  failure line. Each skip costs at least one further request; how many is not measured, since the
+  shell resolves the entry and the engine's resource loader may ask for more than one range.
 - **`Server.Known` code 0 is the track's.** The reference server answers `stream` for an item whose
   file has gone with the generic code 0 (§28, revision 104 item 6), which makes it the commonest
   item-level failure a library produces. A server failing everything also answers 0; the guard
@@ -1795,33 +1806,50 @@ seconds, neither progresses nor fails. Whether the engine's own stall handling e
 
 **2. Direction.** The skip moves one entry in the direction of travel that reached the failed entry:
 Previous reached it, so to the entry before; anything else -- an automatic or gapless advance, Next,
-a tap, a jump, a new queue, a restore -- to the entry after. Try Again keeps the direction the entry
-was reached in. The skip follows the repeat mode exactly as Next and Previous do: repeat-all wraps,
-and nothing else does. With nowhere to go -- the last entry without repeat, the first entry reached
-by Previous, a one-entry queue under repeat-all -- it stops and presents the failure exactly as
-before. Skip's availability on the bar and in the player and the automatic skip's target are **one
-predicate** in the core, published with the queue snapshot as `canSkipPastCurrent`; no shell keeps a
-copy.
+a tap, a jump, a new queue, a restore, and a transport restart of the current entry
+(`restartCurrent`, which begins a new session) -- to the entry after. Try Again keeps the direction
+the entry was reached in. The skip follows the repeat mode exactly as Next and Previous do:
+repeat-all wraps, and nothing else does. With nowhere to go -- the last entry without repeat, the
+first entry reached by Previous, a one-entry queue under repeat-all -- it stops and presents the
+failure exactly as before. The person's Skip and the automatic skip find their target with **one
+function** in the core, `otherEntryIndex(direction)`, but not with one predicate: Skip always asks
+it forward, which is what its availability on the bar and in the player shows (`canSkipPastCurrent`,
+published with the queue snapshot; no shell keeps a copy), and the automatic skip asks it in the
+direction of travel. So after Previous, Skip can be offered where the automatic skip would stop, and
+the reverse.
 
 **3. The guard.** A chain is the run of entries that have failed with no `PlaybackProgressBegan`
 between them. It stops, presenting the failure of the entry it stopped on, when the next entry has
 already failed in the same chain (a cycle under repeat-all), or when the **fifth** consecutive entry
 has failed. Only progress ends a chain; a person's own Skip, Try Again, jump or new queue does not, so
-once the guard has stopped, each further failure is presented until something plays. **Why five:**
-each automatic skip costs a request against the server, and five unplayable entries in a row say
+once the guard has stopped, each further failure is presented until something plays. A failure of
+any owner is part of the chain -- the connection's included, though it stops the queue itself -- and
+a withdrawn request (`Transport.Cancelled`) is not. **Why five:**
+each automatic skip costs at least one request against the server, and five unplayable entries in a row say
 more about the server, or whatever answers for it, than about the entries. Five passes a short run
 of damaged files in one album and presents a server-wide fault within a few requests. At the stop,
 Try Again and Skip work as §3.1 and §12.1 say.
 
 **4. Identity.** An automatic skip is a next-item advance (§12.1): the failed entry's session ends,
 and the next entry gets a new session and attempt. It records no play for the failed entry beyond
-what §15.2 already evaluated at its failure, and it does not touch the Try Again rules. A queue
-restored paused moves past a failed entry still paused: a restore starts no sound.
+what §15.2 already evaluated at its failure, and it does not touch the Try Again rules. A restore
+starts no sound; once the person plays, the queue plays on past a failed entry. So a queue restored
+paused moves past an entry that fails before the person plays still paused, and hands that on to
+the next entry; the person's Play -- which reaches the core as the engine's `Resumed`, or as
+`PlaybackProgressBegan` -- ends it, and from then on a skip plays the next entry.
 
 **5. The person is told.** Each skipped entry produces a brief notice naming it -- "Couldn't play
 *title*. Skipped.", or "Couldn't play a track. Skipped." when the title is not known -- in whole
 sentences under §3.1's copy rules. It is non-blocking, VoiceOver announces it, and on Apple it shows
-for four seconds on the surface in front. The failure line is never left for a track that is not
+for four seconds on the surface in front. It is drawn at the bottom of that surface, centred, above
+the now-playing bar and the tab bar and inside the safe area, and never over a navigation control;
+taps pass through it. Its card always contains its text, at every text size: a continuous rounded
+rectangle rather than a capsule, whose corners curve over 1.53 × their 10-point radius, inside a
+16-point horizontal padding, so no line reaches a corner however many it wraps to; it keeps a margin
+from the screen's sides and is never truncated. Its text is the `primaryTextOnRegularMaterial` pair
+on the regular material, which holds by construction once the text is always on the material. The
+player and tvOS, which have no now-playing bar, draw it along their own bottom edge. A disconnect or
+sign-out withdraws it, since the track it names belongs to a queue that is gone. The failure line is never left for a track that is not
 playing: the next entry's preparing state replaces it. Previously Played lists a skipped entry like
 any other entry the queue passed, and does **not** mark it: the list is positional (§3.1), and the
 notice is where the skip is said.
@@ -1838,16 +1866,40 @@ crosses as the item's own. **Android does not adopt this yet:** it does not shar
 and `FEATURES.yml` claims nothing for it. The classification is a pure core function so that it can.
 
 **Evidence.** Core: `PlaybackAutoSkipTest` (every `DomainError` case, direction, repeat, both guard
-conditions, identity, preload, a paused restore); 16 of its first 18 tests failed on the code before
-the change, and the other two pin behaviour it already had;
-`ApplePlaybackFailureRelayTest` and its Swift twin for the round trip. Apple: two
-`DulcetCorePlaybackSystemTests` cases drive the real Kotlin queue with a fake engine through an
-automatic advance into an undecodable entry (skipped, the next entry starts) and into a connection
-failure (stopped); `AVPlayerDecodeFailureTests` the engine's naming. **OBSERVED** on an iPhone
-simulator against the disposable reference server (`testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays`):
+conditions, identity, preload, a paused restore, a restored queue the person then plays, a
+connection failure counting toward the guard, a withdrawn request left out of the chain, Try Again
+keeping the direction, a transport restart counting as forward); 16 of its first 18 tests failed on
+the code before the change, and the other two pin behaviour it already had;
+`ApplePlaybackFailureRelayTest` and its Swift twin for the round trip, and a malformed engine report
+refused as an input error without an exception crossing into Swift. Apple:
+`DulcetCorePlaybackSystemTests` drives the real Kotlin queue with a fake engine through an automatic
+advance into an undecodable entry (skipped, the next entry starts), into a connection failure
+(stopped), and through a disconnect, which withdraws the notice; `AVPlayerDecodeFailureTests` the
+engine's naming, and `AVPlayerEngineTests` each of the six item codes, four of the system's own, and
+a wrapped error read through to its bound. The notice's card, margins and wrapping:
+`ShellLayoutTests` (macOS). The UI proofs below run against the disposable reference server with the
+opt-in Skip Probe album (`tools/seed-skip-probe`, docs/CONFORMANCE-ENVIRONMENT.md).
+**OBSERVED locally on an iPhone 17 Pro simulator, iOS 26.5, 2026-09-24, on the revision before the
+notice moved to the bottom; not run by CI yet** (`testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays`):
 tapping a track whose MP3 frames do not decode shows the notice naming it -- the notice's own handler
 ran once -- then the next track plays with no failure line, the notice goes, and Previously Played
-lists the skipped track unmarked; the server's play count for the skipped track stayed at zero.
+lists the skipped track unmarked. **Written and not yet run on a simulator:** the same test's later
+assertions -- the skipped track's play count, read back over `/rest`, stays 0 while the next track's
+rises by one; the notice's frame intersects neither the navigation bar nor the tab bar, ends above the
+now-playing bar, and keeps 16 points from each side -- and
+`testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize`, the same at AX5. They compile; no
+simulator was available to run them on 2026-09-25. Until they run, the notice's position and its
+containment at AX5 on iPhone are ASSUMED from `ShellLayoutTests` on macOS.
+
+**Follow-ups, not done here.**
+
+- Run the Skip Probe UI proofs in CI. They need the album added after the health check and an iPhone
+  destination in `apple-ci`, which is being restructured; until then they are local evidence only.
+- The FLAC gap above: measure whether the engine's stall handling ever reports a FLAC that neither
+  progresses nor fails, and skip it if it does.
+- Measure the requests an automatic skip costs (the resolve step plus the resource loader's ranges),
+  which rule 3's reasoning depends on and nothing counts.
+- Android adopts the rule (rule 7).
 
 ---
 
@@ -5562,11 +5614,29 @@ wrong:
     §12.1, §12.2, §12.8 and §3.1). The maintainer's decision: auto-skip on a failure that belongs
     to the track, stop on one that belongs to the connection or the account. The classification is
     a closed `when` over `DomainError` in the core; the skip follows the direction of travel and
-    the repeat mode, uses the one Skip predicate, stops at a cycle or the fifth consecutive failed
-    entry, is a next-item advance that adds no play, and is announced. Two relays had to be
-    repaired first, because they would have misclassified: the Apple engine named every decode
-    failure `engine` (a transport failure, so the rule would never have fired), and the Apple
-    relay collapsed server codes and content failures into classes that meant something else.
+    the repeat mode, finds its target with the same core function as the person's Skip, stops at
+    a cycle or the fifth consecutive failed entry, is a next-item advance that adds no play, and
+    is announced. Two relays had to be repaired first, because they would have misclassified: the
+    Apple engine named every decode failure `engine` (a transport failure, so the rule would never
+    have fired), and the Apple relay collapsed server codes and content failures into classes that
+    meant something else.
+
+    **Corrected (2026-09-24), after an adversarial review.** A restored queue the person had then
+    played stopped at the next failure: the mark that keeps a restore silent was never cleared, so
+    a skip started the next entry paused under music the person had started. It is now cleared
+    when the person plays (rule 4). The notice was drawn at the top, over the navigation bar's
+    back button, in a capsule whose corners a wrapped line escaped; it is now at the bottom, above
+    the now-playing and tab bars, in a card that always contains its text (rule 5), and a
+    disconnect withdraws it. The spec overstated five things: "one predicate" (it is one function;
+    Skip asks it forward, the automatic skip in the direction of travel, rule 2); "four further
+    requests" (unmeasured, rule 3); "Touch only" (an iPad pointer drives the swipe too, §3.1); a
+    glow "12 points past its edge" that did not shrink with a paused cover (it does now, §3.1);
+    and a UI result marked OBSERVED that nothing in the repository could reproduce and whose
+    play-count claim no test asserted (the fixture is now `tools/seed-skip-probe` and the test
+    reads the counts; it is local evidence until CI runs it, §12.12's follow-ups). The Apple
+    relay also read the engine's names and positions outside its closed boundary, where a
+    malformed one would have thrown into Swift; and the error sanitizer now reads a wrapped error
+    through to a bound.
 
 **Revision 105 (2026-09-24)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a

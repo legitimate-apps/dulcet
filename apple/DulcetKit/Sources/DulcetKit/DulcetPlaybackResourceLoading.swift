@@ -746,16 +746,34 @@ private extension DulcetPlaybackFailure {
 
 /// The only conversion point for URL-bearing Foundation errors. Raw errors are never returned.
 enum DulcetApplePlaybackErrorSanitizer {
+    /// Reads the error and then the errors it wraps (`NSUnderlyingErrorKey`), outermost first, and
+    /// classifies by the first one it recognises: one of an item's own media failures, or a URL
+    /// failure. AVFoundation reports a transport failure wrapped in its own generic error, so
+    /// reading only the outermost would call a lost connection the engine's. At most
+    /// ``underlyingErrorDepth`` errors are read, the outermost included, so a cyclic or
+    /// pathological chain still ends; past the bound, or with nothing recognised, it is `.engine`.
+    /// Only the domain and code of each error are read -- never its user info's strings, which
+    /// can carry the credential-bearing URL.
     static func avFoundationFailure(_ error: Error?) -> DulcetPlaybackFailure {
-        guard let nsError = error as NSError? else { return .engine }
-        if nsError.domain == AVFoundationErrorDomain,
-           let code = AVError.Code(rawValue: nsError.code),
-           itemMediaFailures.contains(code) {
-            return .undecodable
+        var next = error as NSError?
+        var read = 0
+        while let nsError = next, read < underlyingErrorDepth {
+            read += 1
+            if nsError.domain == AVFoundationErrorDomain,
+               let code = AVError.Code(rawValue: nsError.code),
+               itemMediaFailures.contains(code) {
+                return .undecodable
+            }
+            if nsError.domain == NSURLErrorDomain {
+                return urlFailureCode(nsError.code)
+            }
+            next = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
         }
-        guard nsError.domain == NSURLErrorDomain else { return .engine }
-        return urlFailureCode(nsError.code)
+        return .engine
     }
+
+    /// How many errors ``avFoundationFailure(_:)`` reads, the outermost included.
+    static let underlyingErrorDepth = 8
 
     /// AVFoundation's failures of an item's OWN media: it could not be parsed, recognised or
     /// decoded (spec §12.12). A decoder merely unavailable for now, a media-services reset or an

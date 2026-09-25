@@ -2,9 +2,9 @@
 
 """Assert a song's server-side play count, for the workflow step's before/after evidence.
 
-The XCUITest deliberately never reads a play count: a test that could call `/rest/scrobble` itself
-cannot evidence that the *app* scrobbled. So the play-count half is asserted here, outside the test,
-either side of the run:
+The playback canary's XCUITest deliberately never reads a play count: a test that could call
+`/rest/scrobble` itself cannot evidence that the *app* scrobbled. So the play-count half is asserted
+here, outside the test, either side of the run:
 
     read-play-count --title 'UI Playback Canary' --expect 0
     <run the XCUITest>

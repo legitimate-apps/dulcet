@@ -135,6 +135,55 @@ class ApplePlaybackFailureRelayTest {
         driver.close()
     }
 
+    /**
+     * CLAUDE.md trap 17: no Kotlin exception may cross into Swift. A name, a reason or a position
+     * the core cannot read is refused inside the facade's closed boundary, as `input`, and the
+     * session it named is left as it was.
+     */
+    @Test
+    fun aMalformedEngineReportIsRefusedWithoutThrowing() {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        var identity = 0
+        val client = ApplePlaybackQueueClient(
+            PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = PersistentResumePositionStore(database),
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+        )
+        val a = assertNotNull(
+            client.replaceAndStart(
+                ApplePlaybackQueueRequestDto(
+                    items = listOf("a", "b").map { ApplePlaybackQueueItemDto("server", it, 180_000) },
+                    sourceKind = "album",
+                    sourceRawId = "album-a",
+                    sourceDisplayName = "Album A",
+                    startIndex = 0,
+                    shuffle = false,
+                ),
+            ).startDirective,
+        )
+        val refused = buildList {
+            for (kind in listOf("serverKnown:x", "serverKnown:1:2", "unexpectedContentType:Nope:Flac", "nonsense")) {
+                add(kind to client.recordFailedBeforeStart(a.attemptId, kind))
+                add(kind to client.recordFailedAfterPartial(a.attemptId, 1_000, kind))
+            }
+            add("skip reason" to client.recordSkipped(a.attemptId, 0, "nonsense"))
+            add("negative position" to client.recordFailedAfterPartial(a.attemptId, -1, "undecodable"))
+        }
+        for ((what, transition) in refused) {
+            assertEquals("input", transition.errorKind, "$what must be refused as input")
+            assertNull(transition.startDirective, "$what must start nothing")
+        }
+        // The positive control: the session was untouched, so a well-formed report still applies.
+        val skipped = client.recordFailedBeforeStart(a.attemptId, "undecodable")
+        assertNull(skipped.errorKind)
+        assertEquals("b", skipped.startDirective?.rawId)
+        client.close()
+        driver.close()
+    }
+
     private companion object {
         val RELAYED_ERRORS: List<DomainError> = listOf(
             DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.entries.first()),

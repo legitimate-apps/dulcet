@@ -440,233 +440,233 @@ public class ApplePlaybackQueueClient private constructor(
     }
 
     public fun recordPreparing(attemptId: String): ApplePlaybackQueueTransitionDto =
-        record(PlaybackEngineEvent.Preparing(AttemptId(attemptId)))
+        record { PlaybackEngineEvent.Preparing(AttemptId(attemptId)) }
 
     public fun recordReady(
         attemptId: String,
         durationMilliseconds: Long,
         seekability: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.Ready(
             AttemptId(attemptId),
             durationMilliseconds.takeIf { it >= 0 }?.milliseconds,
             seekability.toPlaybackSeekability(),
-        ),
-    )
+        )
+    }
 
     public fun recordPlaybackProgressBegan(
         attemptId: String,
         wallClockEpochMilliseconds: Long,
         mediaPositionMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.PlaybackProgressBegan(
             AttemptId(attemptId),
             PlaybackWallClockTime(wallClockEpochMilliseconds),
             mediaPositionMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordBuffering(
         attemptId: String,
         positionMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.Buffering(
             AttemptId(attemptId),
             positionMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordBufferingEnded(
         attemptId: String,
         positionMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.BufferingEnded(
             AttemptId(attemptId),
             positionMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordPaused(
         attemptId: String,
         positionMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.Paused(
             AttemptId(attemptId),
             positionMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordResumed(
         attemptId: String,
         positionMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.Resumed(
             AttemptId(attemptId),
             positionMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordPositionChanged(
         attemptId: String,
         mediaPositionMilliseconds: Long,
         monotonicUptimeNanoseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.PositionChanged(
             AttemptId(attemptId),
             mediaPositionMilliseconds.nonNegativeMilliseconds(),
             PlaybackMonotonicTime(monotonicUptimeNanoseconds.nonNegativeNanoseconds()),
-        ),
-    )
+        )
+    }
 
     public fun recordDurationChanged(
         attemptId: String,
         durationMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.DurationChanged(
             AttemptId(attemptId),
             durationMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordSeekCompleted(
         attemptId: String,
         fromMilliseconds: Long,
         toMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.SeekCompleted(
             AttemptId(attemptId),
             fromMilliseconds.nonNegativeMilliseconds(),
             toMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordSeekFailed(
         attemptId: String,
         fromMilliseconds: Long,
         toMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.SeekFailed(
             AttemptId(attemptId),
             fromMilliseconds.nonNegativeMilliseconds(),
             toMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordEndedNaturally(
         attemptId: String,
         finalPositionMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.EndedNaturally(
             AttemptId(attemptId),
             finalPositionMilliseconds.nonNegativeMilliseconds(),
-        ),
-    )
+        )
+    }
 
     public fun recordSkipped(
         attemptId: String,
         positionMilliseconds: Long,
         reason: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.Skipped(
             AttemptId(attemptId),
             positionMilliseconds.nonNegativeMilliseconds(),
             reason.toPlaybackSkipReason(),
-        ),
-    )
+        )
+    }
 
     public fun recordFailedBeforeStart(
         attemptId: String,
         errorKind: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.FailedBeforeStart(
             AttemptId(attemptId),
             errorKind.toClosedPlaybackDomainError(),
-        ),
-    )
+        )
+    }
 
     public fun recordFailedAfterPartial(
         attemptId: String,
         positionMilliseconds: Long,
         errorKind: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.FailedAfterPartial(
             AttemptId(attemptId),
             positionMilliseconds.nonNegativeMilliseconds(),
             errorKind.toClosedPlaybackDomainError(),
-        ),
-    )
+        )
+    }
 
     public fun recordRouteChanged(
         attemptId: String,
         oldRoute: String,
         newRoute: String,
         didPause: Boolean,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.RouteChanged(
             AttemptId(attemptId),
             oldRoute.toPlaybackRouteKind(),
             newRoute.toPlaybackRouteKind(),
             didPause,
-        ),
-    )
+        )
+    }
 
     public fun recordInterruptionBegan(
         attemptId: String,
         shouldResume: Boolean,
-    ): ApplePlaybackQueueTransitionDto = record(
-        PlaybackEngineEvent.InterruptionBegan(AttemptId(attemptId), shouldResume),
-    )
+    ): ApplePlaybackQueueTransitionDto = record {
+        PlaybackEngineEvent.InterruptionBegan(AttemptId(attemptId), shouldResume)
+    }
 
     public fun recordInterruptionEnded(
         attemptId: String,
         shouldResume: Boolean,
-    ): ApplePlaybackQueueTransitionDto = record(
-        PlaybackEngineEvent.InterruptionEnded(AttemptId(attemptId), shouldResume),
-    )
+    ): ApplePlaybackQueueTransitionDto = record {
+        PlaybackEngineEvent.InterruptionEnded(AttemptId(attemptId), shouldResume)
+    }
 
     public fun recordAttemptReplaced(
         oldAttemptId: String,
         newAttemptId: String,
-    ): ApplePlaybackQueueTransitionDto = record(
-        PlaybackEngineEvent.AttemptReplaced(AttemptId(oldAttemptId), AttemptId(newAttemptId)),
-    )
+    ): ApplePlaybackQueueTransitionDto = record {
+        PlaybackEngineEvent.AttemptReplaced(AttemptId(oldAttemptId), AttemptId(newAttemptId))
+    }
 
     public fun recordAdvancedToPreloaded(
         oldAttemptId: String,
         newAttemptId: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.AdvancedToPreloaded(
             AttemptId(oldAttemptId),
             AttemptId(newAttemptId),
-        ),
-    )
+        )
+    }
 
     public fun recordRateChanged(
         attemptId: String,
         rate: Double,
-    ): ApplePlaybackQueueTransitionDto = record(
-        PlaybackEngineEvent.RateChanged(AttemptId(attemptId), rate),
-    )
+    ): ApplePlaybackQueueTransitionDto = record {
+        PlaybackEngineEvent.RateChanged(AttemptId(attemptId), rate)
+    }
 
     public fun recordEngineTornDown(
         attemptId: String,
         reason: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.EngineTornDown(
             AttemptId(attemptId),
             reason.toPlaybackEngineTeardownReason(),
-        ),
-    )
+        )
+    }
 
     public fun recordSourceRefreshRequired(
         attemptId: String,
         reason: String,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.SourceRefreshRequired(
             AttemptId(attemptId),
             reason.toPlaybackSourceRefreshReason(),
-        ),
-    )
+        )
+    }
 
     public fun recordObservationResynced(
         attemptId: String,
@@ -676,7 +676,7 @@ public class ApplePlaybackQueueClient private constructor(
         seekability: String,
         rate: Double,
         progressStartWallClockEpochMilliseconds: Long,
-    ): ApplePlaybackQueueTransitionDto = record(
+    ): ApplePlaybackQueueTransitionDto = record {
         PlaybackEngineEvent.ObservationResynced(
             AttemptId(attemptId),
             PlaybackObservationSnapshot(
@@ -689,8 +689,8 @@ public class ApplePlaybackQueueClient private constructor(
                     .takeIf { it >= 0 }
                     ?.let(::PlaybackWallClockTime),
             ),
-        ),
-    )
+        )
+    }
 
     public fun close() {
         try {
@@ -723,8 +723,12 @@ public class ApplePlaybackQueueClient private constructor(
 
     private fun controllerOrThrow(): PlaybackQueueController = checkNotNull(controller)
 
-    private fun record(event: PlaybackEngineEvent): ApplePlaybackQueueTransitionDto = runClosed {
-        controllerOrThrow().recordPlaybackEvent(event)
+    /**
+     * The event is built inside [runClosed]: reading the shell's names, reasons and positions can
+     * throw on a malformed value, and no Kotlin exception may cross into Swift (CLAUDE.md trap 17).
+     */
+    private fun record(event: () -> PlaybackEngineEvent): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().recordPlaybackEvent(event())
     }
 
     internal fun drainPendingEffects(): List<PlaybackCoreEffect> = buildList {
@@ -984,17 +988,25 @@ internal fun String.toClosedPlaybackDomainError(): DomainError {
         UNEXPECTED_CONTENT_TYPE_KIND -> {
             require(parts.size == 3) { "Unknown playback failure" }
             DomainError.Protocol.UnexpectedContentType(
-                ObservedPlaybackContentType.entries.single { it.name == parts[1] },
-                AudioContainer.entries.single { it.name == parts[2] },
+                ObservedPlaybackContentType.entries.named(parts[1]),
+                AudioContainer.entries.named(parts[2]),
             )
         }
         CAPABILITY_UNSUPPORTED_KIND -> {
             require(parts.size == 2) { "Unknown playback failure" }
-            DomainError.CapabilityUnsupported(CapabilityFeature.entries.single { it.name == parts[1] })
+            DomainError.CapabilityUnsupported(CapabilityFeature.entries.named(parts[1]))
         }
         else -> throw IllegalArgumentException("Unknown playback failure")
     }
 }
+
+/**
+ * The entry with this name. An unknown one is a malformed report from the shell -- an input error
+ * like every other, never the `NoSuchElementException` that `single` throws, which the closed
+ * boundary would report as a persistence failure.
+ */
+private fun <T : Enum<T>> List<T>.named(name: String): T =
+    requireNotNull(singleOrNull { it.name == name }) { "Unknown playback failure" }
 
 private fun List<String>.singleCode(): Int {
     require(size == 2) { "Unknown playback failure" }

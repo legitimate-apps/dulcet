@@ -138,8 +138,11 @@ internal class PlaybackQueueController(
     private val failureChain = mutableSetOf<QueueEntryId>()
 
     /**
-     * The attempt a restoration started paused. A skip past its failure starts the next entry
-     * paused too: restoring a queue never starts sound on its own, even when it moves (§12.12).
+     * The attempt a restoration started paused, until the person plays it. A restore starts no
+     * sound; once the person plays, the queue plays on past a failed entry (§12.12 rule 4). So a
+     * skip past this attempt's failure starts the next entry paused too, and hands the mark on;
+     * the person's Play clears it. Play goes straight to the engine, so the core learns of it from
+     * the engine: `Resumed` or `PlaybackProgressBegan` for this attempt.
      */
     private var pausedStartAttempt: AttemptId? = null
 
@@ -482,6 +485,11 @@ internal class PlaybackQueueController(
             event.attemptId == playback.currentSession?.currentAttempt?.attemptId
         if (event is PlaybackEngineEvent.PlaybackProgressBegan && forCurrentAttempt) {
             failureChain.clear()
+        }
+        if (forCurrentAttempt && event.attemptId == pausedStartAttempt &&
+            (event is PlaybackEngineEvent.PlaybackProgressBegan || event is PlaybackEngineEvent.Resumed)
+        ) {
+            pausedStartAttempt = null
         }
         if (forCurrentAttempt) {
             val error = when (event) {

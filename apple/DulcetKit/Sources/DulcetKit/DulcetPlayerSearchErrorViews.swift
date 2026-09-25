@@ -300,14 +300,14 @@ struct DulcetNowPlayingView: View {
         showsQueueToggle: Bool
     ) -> some View {
         VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
-            DulcetArtworkView(artwork: player.current.artwork, size: artworkSize)
-                .shadow(color: .black.opacity(player.isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
-                .scaleEffect(player.isPlaying || presentation == .destination || reduceMotion ? 1 : 0.9)
+            DulcetPlayerCover(
+                artwork: player.current.artwork,
+                size: artworkSize,
+                isPlaying: player.isPlaying,
                 // Reduce Motion keeps the cover still: the play state is carried by the control.
-                .animation(reduceMotion ? nil : .spring(duration: 0.4), value: player.isPlaying)
-                .background {
-                    DulcetArtworkGlow(artwork: player.current.artwork, size: artworkSize)
-                }
+                scale: player.isPlaying || presentation == .destination || reduceMotion
+                    ? 1 : DulcetPlayerCover.pausedScale
+            )
                 .modifier(DulcetArtworkSwipes(player: player, onControl: onControl, onDismiss: onDismiss))
                 .frame(maxWidth: .infinity)
 
@@ -654,7 +654,8 @@ enum DulcetArtworkSwipe: Equatable {
 
 /// Swipes on the artwork: next, previous, and -- for a presented player -- close. The cover
 /// follows a horizontal drag a little, so the swipe is seen to be taken; under Reduce Motion it
-/// stays still. Touch only: a pointer drag on a Mac cover means nothing.
+/// stays still. Touch or pointer drag: an iPad's pointer drives the same gesture, and on a Mac a
+/// drag on the cover means nothing.
 private struct DulcetArtworkSwipes: ViewModifier {
     let player: DulcetNowPlaying
     let onControl: (DulcetPlaybackControlIntent) -> Void
@@ -694,6 +695,33 @@ private struct DulcetArtworkSwipes: ViewModifier {
 #else
         content
 #endif
+    }
+}
+
+/// The player's cover: the artwork, its shadow, and its glow behind it, shrunk a little while
+/// paused in a presented player.
+///
+/// The glow is attached before the scale, so it shrinks with the cover: paused, it reaches
+/// ``DulcetArtworkGlow/reach`` × ``pausedScale`` past the drawn cover, never further out than
+/// ``DulcetArtworkGlow/reach`` past the cover's layout frame, so every gap that clears the glow
+/// at full size clears it paused too.
+struct DulcetPlayerCover: View {
+    /// How far a presented player's cover shrinks while paused.
+    static let pausedScale: CGFloat = 0.9
+    let artwork: DulcetArtwork
+    let size: CGFloat
+    let isPlaying: Bool
+    let scale: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        DulcetArtworkView(artwork: artwork, size: size)
+            .shadow(color: .black.opacity(isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
+            .background {
+                DulcetArtworkGlow(artwork: artwork, size: size)
+            }
+            .scaleEffect(scale)
+            .animation(reduceMotion ? nil : .spring(duration: 0.4), value: isPlaying)
     }
 }
 
@@ -800,7 +828,9 @@ struct DulcetNowPlayingSheet: View {
                 }
             }
         }
-        .dulcetPlaybackFeedback(store: store)
+        // The player has no now-playing bar to draw them above, so it draws its own, along its
+        // bottom edge -- clear of the close button in its navigation bar.
+        .dulcetPlaybackFeedback(store: store, drawsNotices: true)
         .dulcetUIProofMarkers()
         .presentationDragIndicator(.visible)
         .presentationBackground(Color.dulcetWindow)
