@@ -143,7 +143,9 @@ jobs:
             tools/conformance-env/linux-local --root "$ROOT" down || true
           }
           trap cleanup EXIT
-          tools/conformance-env/linux-local --root "$ROOT" up
+          # --purge-default: the JVM suite includes the reader suite, whose CONF-74 needs the
+          # second, default-PurgeMissing server. Jobs that never run CONF-74 do not start it.
+          tools/conformance-env/linux-local --root "$ROOT" up --purge-default
           tools/conformance-env/linux-local --root "$ROOT" run -- \
             ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
             :core-conformance:jvmTest

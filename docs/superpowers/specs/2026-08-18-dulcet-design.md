@@ -2724,9 +2724,16 @@ Rules the table does not show:
   `getArtists` is unpaged by protocol; at a large artist count it is one large response, which is
   still one request. OBSERVED 2026-09-22 (fixture configuration, `PurgeMissing = "always"`), 100 artists: 41,761 bytes, 3.4 ms over loopback.
 - **Responses are compared by parsed value, never by bytes.** OBSERVED 2026-09-22 by an independent
-  review run (`PurgeMissing` unset): the order of an artist's `roles` array in `getArtists` varies from call to call with no
-  catalog change, so a byte hash of a response calls an unchanged catalog changed. Dedupe and change
-  detection use opaque ids and normalized parsed fields.
+  review run (`PurgeMissing` unset): the order of an artist's `roles` array in `getArtists` varies
+  from call to call with no catalog change. OBSERVED again 2026-09-24 on Navidrome 0.63.2 by a
+  second independent review: 20 identical `getArtists` calls returned 11 distinct response bodies,
+  and 20 identical `search3` calls, whose artist objects carry the same array, returned 3; in both
+  the bodies differed only in `roles`. A re-measurement the same day on a fresh fixture server
+  agreed (12 of 20 and 3 of 20, identical once each `roles` array was sorted, with the scan stamp
+  unchanged throughout). So a byte hash of a response calls an unchanged catalog changed. Dedupe and
+  change detection use opaque ids and normalized parsed fields. CONF-73 compares canonical forms,
+  with arrays sorted, so that this order cannot fail it; for the same reason it cannot observe the
+  order, and is not the evidence for it.
 - **Every value is the one the server returned.** A window stores the server's *positions*, so the
   cached grid and the live grid are the same order by construction. §16.7's "ordering belongs to the
   client" was a consequence of drawing one grid from two differently-collated sources; with one read
@@ -2771,6 +2778,15 @@ is tens of milliseconds on a LAN, and the request *count* is what a slow link ch
 | `alphabeticalByName`, `alphabeticalByArtist`, `newest`, `random`, `byYear` | present, equal to the album count |
 | `byGenre` | present, equal to the genre's album count |
 | `recent`, `frequent`, `highest`, `starred` | present; `0` for a user with no plays, ratings or stars |
+
+It is the list's **total, not the page's length**: OBSERVED 2026-09-22 by CONF-75 on the fixture
+corpus (8 albums), a `size=3` page of each whole-library type carried `X-Total-Count: 8`, and a
+`byYear` range matching no album carried `0`. CONF-75 pins the `recent`/`frequent`/`highest`/`starred`
+rows as "present and equal to the rows this user's list returns", which holds at `0` and above, so it
+does not depend on what earlier tests played or starred. The fixture corpus is tagged **without
+genres** (`getGenres` is empty), so CONF-75 pins `byGenre` only for a genre matching nothing
+(present, `0`); "equal to the genre's album count" remains revision 104's 2,498-album observation
+and is not re-pinned until the corpus carries a genre.
 
 It is used opportunistically as a window's **total**, never as its termination signal, and a server
 that omits it yields a window with an unknown total (§16.12).
@@ -2886,6 +2902,15 @@ given cached read?*
   run (fixture configuration) and beside `scanning == false` in the independent review run
   (`PurgeMissing` unset), so the sentinel is recognised by its value alone.
   The sentinel, an absent `lastScan` or a failed request is **"no epoch"** — never "unchanged".
+  **The sentinel is visible only in a start-up window.** OBSERVED 2026-09-22 (phase R0, native
+  0.63.2, fresh database, four starts): the server logs "Full scan required after migration" and runs
+  a full scan about **2 s after start** whatever the configuration says — with `ScanOnStartup =
+  false`, and again with `Scanner.Enabled = false` ("Automatic Scanning is DISABLED" logged, the scan
+  ran anyway). A first scan that **fails** also replaces the sentinel: with the music folder absent,
+  `lastScan` became a real stamp and `getScanStatus` carried an `error` string (which names the
+  server-side library path). So no configuration holds a running server at the sentinel, a
+  conformance test against a running server cannot observe it deterministically, and CONF-71 does not
+  pin it; the rule that the sentinel reads as no epoch is a reader rule and is pinned by CONF-82.
 
 **What the epoch does not cover — user state.** OBSERVED 2026-09-11 and again 2026-09-22 (fixture configuration): `star`,
 `setRating`, `createPlaylist` and `scrobble` each took effect and **none moved `lastScan`**, while
@@ -2922,11 +2947,17 @@ restoring it, under **both** settings, with every probe also run before the remo
 
 | after removal | `PurgeMissing = "always"` (fixture) | `PurgeMissing` unset (Navidrome default) |
 |---|---|---|
-| `getAlbum` | `failed`, code 70 | **`ok`**, `songCount: 2`, **zero songs** |
+| `getAlbum` | `failed`, code 70 | **`ok`**, `songCount` unchanged (`2`), **zero songs** |
 | `getSong` (a removed track) | `failed`, code 70 | **`ok`**, full metadata |
-| `stream` (a removed track) | HTTP 200, error envelope | HTTP 200, envelope with **generic code 0** |
+| `stream` (a removed track) | HTTP 200, error envelope, code 70 | HTTP 200, envelope with **generic code 0** |
 | `getAlbumList2`, `search3` | album absent | album absent |
 | after restoring the files | album `ok` under the **same** album id; the old **track id no longer resolves** (`getSong` code 70) — the purge and re-import minted new track ids | album and track ids both resolve again |
+
+CONF-74 pins this table on both legs with the fixture corpus's four-track, two-disc album
+(`songCount` stays `4` with zero songs under the default), and adds one cell the table lacked:
+OBSERVED 2026-09-22 (phase R0, fixture configuration), the removed track's `stream` envelope carries
+**code 70**. Under both settings a `stream` of an id that never existed also answers code 70, so the
+default setting's code 0 is specific to a known-but-missing file.
 
 So neither code 70 nor `getSong` is a presence test, and `songCount` is not a membership count.
 **The rules:**
@@ -3072,8 +3103,48 @@ offline); `unverified(changing)` (the stamp kept moving through every bounded re
   every 7 s, and counts *violations*: two page reads whose *after* readings show the same stamp with
   `scanning == false` but whose contents differ. It fails if the race did not happen (fewer than two
   toggles or two stamps) and if any violation occurs. OBSERVED 2026-09-22 (`PurgeMissing` unset):
-  **42,051 samples, 976 of them read during a scan, 59 toggles, 60 distinct stamps, zero
-  violations.** An independent review run of the same probe took 27,957 samples.
+  **42,051 samples, 976 of them with a scan showing in their *after* reading, 59 toggles, 60
+  distinct stamps, zero violations.** An independent review run of the same probe took 27,957
+  samples.
+- **The *before* reading is load-bearing, not a formality.** That run judged each page by its
+  *after* reading alone, which is weaker than the check above. OBSERVED 2026-09-22 (phase R0,
+  fixture configuration, native server, fixture corpus): a page read while a scan was running
+  returned the list as it was **before** the scan's change, and the `getScanStatus` issued after
+  that response **blocked for ~650 ms** and then reported `scanning == false` under the scan's
+  **new** stamp; the next page, under the same stamp, returned the changed list. Judged by *after*
+  alone, one stamp accepted two contents. The page's *before* reading had shown `scanning == true`,
+  so the bracketed check rejects it. Seen in two probe runs (5 and 10 minutes, 148 toggles in both
+  directions — an album leaving and an album returning — so roughly 150 scans): **3 stamps that each
+  saw two different contents under after-only checking, about 2% per scan, and 0 bracketed
+  violations.** The case happens per scan, so the probe's sample count is no denominator for it. The
+  raw probe output was not preserved. The figures are the ones R0's commit `adf73cf3` recorded ("3
+  after-only violations", over "160,772 samples"); that each counts a stamp rather than a sample is
+  read from the probe, which keys `after_only_violations` by stamp (`tools/probes/window-epoch-race`),
+  not re-measured. A fourth sighting falls outside those runs and that count: the case
+  was first seen as a macOS CONF-70 failure in one run of five, during R0's development. The reader
+  must therefore require *before* and *after* both idle and equal for every page, including a
+  window's first, where *before* may be the stored foreground reading as above; it must never accept
+  a page on its *after* reading alone. The probe now reports both counts and fails only on the
+  bracketed one.
+- **In the suite.** CONF-70 runs the same race on both legs (phase R0): 30 s of bracketed page reads
+  against a directory toggled every 6 s. Before it may assert zero bracketed violations it asserts
+  that the race happened: at least two toggles, each counted only once the album directory is seen
+  to have changed sides; at least two accepted stamps; and at least two distinct accepted
+  *contents*, so the list really changed between accepted pages and a violation was possible at all.
+  Two accepted stamps already imply a page the bracketed check **rejected** — each page's *before*
+  reading is the previous page's *after* reading, so every stamp change lands inside some page's
+  bracket — and the test asserts that rejected page explicitly as well, as the deterministic witness
+  that a scan fell inside a bracket rather than as an independent condition. It does **not** require a page whose
+  *after* reading showed a scan in progress — catching a scan in flight is a sampling accident, not
+  a property of the race. OBSERVED 2026-09-24 in PR #141's apple-ci run 36018294846: the hosted
+  macOS runner sampled about every 118 ms (255 samples in 30 s); the only scans that job's fixture
+  log timed, CONF-74's, lasted 18.8 and 74.5 ms (the race's own scans were not timed); and the race passed that former requirement with exactly one
+  such sample. The count is still printed as `scanning_samples`, never asserted. CONF-70 also first
+  proves on synthetic samples that its detector fires, that it rejects a busy *before* or *after*
+  and a stamp change, and that the after-only counter fires where the bracketed one does not. The
+  probe stays the instrument for long runs; it is not wired into CI. The rare after-only case is not
+  asserted in CI: it cannot be produced on demand, and a check that passes whenever the race misses
+  it is not a control.
 
 **The replacement invariant** — CORPUS §4 line 11 (revision 104):
 
@@ -3422,7 +3493,7 @@ with an independent adversarial review that checks commit messages and comments 
 
 | phase | brief | owns | acceptance |
 |---|---|---|---|
-| **R0** | server facts as conformance | new `core/src/commonTest/.../ReaderServerConformanceTest.kt` (JVM + `macosArm64` legs, disposable server), `tools/conformance-env` additions for a second, default-`PurgeMissing` server configuration, `tools/probes/window-epoch-race` | CONF-70..75 green on both legs; CONF-74 against **both** `PurgeMissing` configurations; every mutation test asserts its mutation fired and has a no-mutation control |
+| **R0** | server facts as conformance | new `core-conformance/src/commonTest/.../ReaderServerConformanceTest.kt` — the conformance suite's module, where the disposable-server environment is wired; an abstract class run on exactly the JVM and `macosArm64` legs by one concrete subclass per leg — `tools/conformance-env` additions for a second, default-`PurgeMissing` server configuration (`render-config --purge-missing`, `purge-default-server`, `linux-local`), `tools/probes/window-epoch-race` (its detector re-implemented in-suite for CONF-70) | CONF-70..75 green on both legs; CONF-74 against **both** `PurgeMissing` configurations; every mutation test asserts its mutation fired and has a no-mutation control |
 | **R1a** | cache store | new `SeenCache.sq`, `migrations/5.sqm`, `databases/6.db`, new `SeenCacheStore.kt`, `DulcetDatabase.kt`, `ServerData.sq`, `tools/migration-fixtures/v6/` | additive migration with seeding and pins (CONF-81); binding purge (CONF-80); eviction order and pin survival (CONF-78); issue-order writes; §11.4 fixture gate |
 | **R1b** | live source, epoch, windows, look-ahead | new `LibraryReader.kt`, `LibraryWindow.kt`, `CatalogEpoch.kt`, `DetailLookAhead.kt`; `LibraryBrowse.kt` (parsers kept, `LibraryBrowser` retired) — after R1a's schema lands | CONF-82 (tear rules, rebase, scanning mode, driven through the production reader), CONF-83 (gone-ness), CONF-76 (publication sequence), CONF-77 (reconnect budget), CONF-86 (home rows), CONF-87 (look-ahead bound) — request counts asserted, never wall time |
 | **R1c** | local search over the cache | `LocalLibrarySearch.kt`, `Search.kt`, `LocalSearchMigrationTest` — after R1a | CONF-41 unchanged and green; CONF-79 scope values in core |
@@ -3452,19 +3523,19 @@ server's behaviour and are R0's; *reader* ids drive the production code.
 
 | id | pins | kind | phase |
 |---|---|---|---|
-| CONF-70 | a deletion before the cursor, scanned between two pages, changes the post-page `getScanStatus`; the race probe finds zero violations and proves the race occurred | server fact | R0 |
-| CONF-71 | `getScanStatus` readable by a non-admin user; `lastScan` unmoved by `star`, `setRating` and `scrobble`, **each asserted to have taken effect** by reading it back; the sentinel value reads as no epoch (no assertion on `scanning` beside it) | server fact | R0 |
+| CONF-70 | a deletion before the cursor, scanned between two pages, changes the post-page `getScanStatus`; the race finds zero violations under the bracketed (*before* and *after*) check of §16.12 and proves the race occurred | server fact | R0 |
+| CONF-71 | `getScanStatus` readable by a non-admin user; `lastScan` unmoved by `star`, `setRating` and `scrobble`, **each asserted to have taken effect** by reading it back, with the positive control that a no-op `startScan` moves it (the sentinel is not observable against a running server, §16.11, and moved to CONF-82) | server fact | R0 |
 | CONF-72 | per-user state in `getAlbumList2` and `getAlbum` reflects the reading user only | server fact | R0 |
 | CONF-73 | `/rest` JSON reads carry no `ETag`/`Last-Modified`/`Cache-Control` and a conditional request returns a full `200` — with the positive control that the same responses' `X-Total-Count` header is observed | server fact | R0 |
 | CONF-74 | removal of an album under **both** `PurgeMissing` settings produces the §16.11 table, with before/after controls | server fact | R0 |
-| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type equals the §16.9 table; a server without it degrades to an unknown total | server fact | R0 |
+| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type equals the §16.9 table and is the list's total, not the page's length; it is absent on `search3`, with the positive control that the same lookup saw it on `getAlbumList2` (a server without it degrading to an unknown total is reader behaviour, moved to CONF-82) | server fact | R0 |
 | CONF-76 | an open with cached content publishes it before any request and before any loading state; a grid-only album paints its cached header first online; offline, a never-opened album is `unavailable` with copy | reader | R1b, R2b, R3 |
 | CONF-77 | reconnect performs outbox flush, epoch read, visible-screen revalidation and the downloaded-album recheck and nothing else, by counted requests | reader | R1b, R2b, R3 |
 | CONF-78 | eviction removes least-recently-accessed unpinned windows, then orphans; pinned metadata survives every ceiling | reader | R1a |
 | CONF-79 | search publishes the correct scope in each of its four cases, with seen-cache counts offline | reader | R1c, R2b, R3 |
 | CONF-80 | a namespace whose binding differs from the presenting account is purged before any row is served | reader | R1a |
 | CONF-81 | both migrations preserve protected data; the additive step pins every download and queue entry and seeds exactly the §16.17 shape (verified only; unpinned, stale, `asOf` absent, `detail_complete`, per-user fields null, `starred` only from `library_starred`, no windows) | migration | R1a, R5 |
-| CONF-82 | the production reader tears on a fired check, on a stored-epoch mismatch at first live read, and on a folder-set change; rebases only the viewport's pages; appends unguarded while scanning and rebases when the scan ends; keeps the anchor by id | reader | R1b |
+| CONF-82 | the production reader tears on a fired check, on a stored-epoch mismatch at first live read, and on a folder-set change; rebases only the viewport's pages; appends unguarded while scanning and rebases when the scan ends; keeps the anchor by id; reads the sentinel and an absent `lastScan` as no epoch whatever `scanning` says, and a failed `getScanStatus` as *unread* — never as no epoch or unchanged (§16.12); and gives a window whose responses lack `X-Total-Count` an unknown total | reader | R1b |
 | CONF-83 | a pinned track absent from a successful `getAlbum` is `gone` under both server settings; code 70 marks `gone`; `getSong` `ok` never restores presence; an album with zero songs is `gone` | reader | R1b |
 | CONF-84 | a star or rating shows in the same publication as the tap; a revalidation that lands before the send completes does not remove it; compaction sends only the last value; the echoed value is adopted | reader | R1d, R2b, R3 |
 | CONF-85 | a download enqueue pins its metadata in the same transaction; downloaded albums are re-read after an epoch change and nowhere else | reader | R4 |
@@ -4164,19 +4235,19 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-32 | atomic sync-generation commit: a generation becomes visible in one step or not at all (§16.4) — **retired by phase R5 of §16.18** |
 | CONF-41 | local and server search results merge without duplicating or dropping an entry (§18.1) |
 | CONF-51 | validated atomic download promotion: live exact and cold-estimated response bodies pass the §12.4 validator before atomic rename; exact mismatch leaves no destination, observed terminal length becomes exact, and duplicate delivery is idempotent (§14.5) |
-| CONF-70 | a deletion before the cursor, scanned between two pages, changes the post-page `getScanStatus`; the race probe finds zero violations and proves the race occurred — server fact (§16.12) |
-| CONF-71 | `getScanStatus` readable by a non-admin user; `lastScan` unmoved by `star`, `setRating` and `scrobble`, each asserted to have taken effect; the sentinel value reads as no epoch, with no assertion on `scanning` beside it — server fact (§16.11) |
+| CONF-70 | a deletion before the cursor, scanned between two pages, changes the post-page `getScanStatus`; the race finds zero violations under the bracketed check and proves the race occurred — server fact (§16.12) |
+| CONF-71 | `getScanStatus` readable by a non-admin user; `lastScan` unmoved by `star`, `setRating` and `scrobble`, each asserted to have taken effect, with a no-op `startScan` as the positive control that moves it — server fact (§16.11); the sentinel moved to CONF-82 |
 | CONF-72 | per-user state in `getAlbumList2` and `getAlbum` reflects the reading user only — server fact (§16.10) |
 | CONF-73 | `/rest` JSON reads carry no `ETag`/`Last-Modified`/`Cache-Control` and a conditional request returns a full `200`, with the positive control that `X-Total-Count` is observed on the same responses — server fact (§16.11) |
 | CONF-74 | removing an album produces the §16.11 table under both `PurgeMissing` settings, with before/after controls — server fact |
-| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type equals the §16.9 table; absence degrades to an unknown total — server fact |
+| CONF-75 | `X-Total-Count` presence per `getAlbumList2` type equals the §16.9 table and is the total, not the page length; absent on `search3` with a positive control — server fact; unknown-total degradation moved to CONF-82 |
 | CONF-76 | an open with cached content publishes it before any request or loading state; a grid-only album paints its cached header first online; a never-opened album offline is `unavailable` with copy (§16.14) |
 | CONF-77 | reconnect performs outbox flush, epoch read, visible-screen revalidation and the downloaded-album recheck and nothing else, by counted requests (§16.14) |
 | CONF-78 | eviction removes least-recently-accessed unpinned windows, then orphans; pinned metadata survives every ceiling (§16.13) |
 | CONF-79 | search publishes the correct scope in each of its four cases, with seen-cache counts offline (§16.15) |
 | CONF-80 | a namespace whose binding differs from the presenting account is purged before any row is served (§16.10) |
 | CONF-81 | both reader migrations preserve protected data; the additive step pins every download and queue entry and seeds the verified mirror in exactly the §16.17 shape |
-| CONF-82 | the production reader tears on a fired check, a stored-epoch mismatch at first live read, and a folder-set change; rebases only the viewport's pages; appends unguarded while scanning and rebases after; keeps the anchor by id (§16.12) |
+| CONF-82 | the production reader tears on a fired check, a stored-epoch mismatch at first live read, and a folder-set change; rebases only the viewport's pages; appends unguarded while scanning and rebases after; keeps the anchor by id; reads the sentinel and an absent stamp as no epoch and a failed status read as unread, never as either; a window without `X-Total-Count` has an unknown total (§16.11, §16.12) |
 | CONF-83 | gone-ness under both server settings: a pinned track absent from a successful `getAlbum` is `gone`; code 70 marks `gone`; `getSong` `ok` never restores presence; a zero-song album is `gone` (§16.11) |
 | CONF-84 | a star or rating shows in the publication after the tap, survives a revalidation that lands before the send, compacts, and adopts the echoed value (§16.20) |
 | CONF-85 | a download enqueue pins its metadata in the same transaction; downloaded albums are re-read after an epoch change and nowhere else (§16.13) |
@@ -5310,6 +5381,53 @@ fresh disposable server before landing; items 11–14 are what that review chang
     and are corrected here: "a rebinding discards changes authored as another account" held only
     if no crash intervened, and the queue did not hold "the opaque id, the field and a JSON object"
     sufficient to identify a change — without the kind it could not.
+20. **Phase R0 turned CONF-70..75 into assertions, and three spec claims moved.** R0 lands
+    separately from #139, whose title named it but whose branch did not contain it; until then items
+    16 and 17(k) cited R0's server facts before `main` carried them. (a) The sentinel: a fresh
+    0.63.2 database runs a full scan ~2 s after start even with `ScanOnStartup = false` or
+    `Scanner.Enabled = false`, and a failed first scan also replaces the sentinel, so it cannot be
+    pinned against a running server; CONF-71 drops it and CONF-82 pins the no-epoch rule in the
+    reader (§16.11), where R1b's `CatalogEpochTest` and
+    `r0TheSentinelIsNoEpochAndTheFirstRealStampRebases` already carry it. A failed status read is
+    *unread*, never no epoch (item 17(h)), and both CONF-82 rows say so. (b) "A server without
+    `X-Total-Count` degrades to an unknown total" is reader behaviour and moved from CONF-75 to
+    CONF-82 (`r0AWindowWithoutXTotalCountHasAnUnknownTotal`); CONF-75 instead pins that the header
+    is a total and not a page length, and is absent on `search3` (§16.9). (c) The R0 file lives in
+    `core-conformance`, the module that owns the disposable-server environment, not in `core`, whose
+    `jvmTest` runs without a server; it is abstract, and one concrete subclass per leg runs it on
+    exactly the JVM and `macosArm64` legs. Also measured: a removed track's `stream` answers code 70
+    under the fixture setting; the fixture corpus has no genres, so `byGenre` is pinned only at
+    zero; `search3` shares `getArtists`'s nondeterministic `roles` order (re-measured 2026-09-24,
+    §16.9; CONF-73 compares canonical forms and cannot see an order); CONF-70's race runs in-suite
+    on both legs. (d) A page read during a scan can return pre-change content while the status read
+    after it blocks until the scan ends and reports the new stamp with no scan running: 3 stamps
+    that each saw two different contents, across roughly 150 scans in two probe runs (about 2% per
+    scan), plus a fourth sighting outside that count, a macOS CONF-70 failure in one run of five.
+    The raw probe output was not preserved; the figure is the one R0's commit `adf73cf3` recorded,
+    with the unit read from the probe (§16.12).
+    §16.12's bracketed check rejects it; an after-only check, which is how the race probe had
+    counted and how item 5 summarises the window rule, does not. §16.12 says so, the probe and
+    CONF-70 count both, and CLAUDE.md trap 18 now names both readings. OBSERVED 2026-09-24 while
+    landing, against private disposable native 0.63.2 servers in both configurations: CONF-70..75
+    passed 8 of 8 on three runs per leg (JVM and `macosArm64`); each of the six in-suite races
+    toggled 4–5 times, accepted 5 stamps and had 16–69 samples whose *after* reading showed a scan,
+    with zero bracketed and zero after-only violations in 5,237 samples; and the whole JVM
+    conformance suite passed 59 of 59 against the same servers. Revised the same day after the
+    independent review of PR #141, which found the in-suite race and CONF-71 and CONF-73 able to
+    pass without the condition they claim: CONF-70 no longer requires a sample whose *after* reading
+    showed a scan (it had passed at exactly one on the hosted runner, §16.12) and instead requires a
+    rejected page and two distinct accepted contents, counting a toggle only once the directory has
+    moved; CONF-71 gained a before-state control and an 8 s quiet window before its positive
+    control; CONF-73 asserts that the conditional headers were sent. Each new assertion first failed
+    on the mutant it guards against: toggles outside the library, a disc-folder toggle that changes
+    no album list, a toggler that moves nothing, a leftover star and rating with the writes deleted,
+    a scan started right after the writes, and conditional headers never attached. OBSERVED
+    2026-09-24 after that revision, against fresh private disposable native 0.63.2 servers in both
+    configurations: CONF-70..75 passed 8 of 8 on two runs per leg; the four races toggled 4–5 times,
+    rejected 12–16 pages, accepted 5 stamps and 2 distinct contents, and had 8–12 samples whose
+    *after* reading showed a scan, with zero bracketed and zero after-only violations in 3,975
+    samples.
+
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV
 ships automatically on every merge to `main`; no workflow ever did that, and the maintainer decided on

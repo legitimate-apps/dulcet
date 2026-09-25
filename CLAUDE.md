@@ -254,8 +254,11 @@ They are deliberately not reproduced in this repository.**
     cross (it terminates the process). Review the generated ObjC header diff on every facade change.
 18. **There is no change token, and offset paging is not a snapshot.** Dedupe cannot recover an
     omitted row. Dulcet is a reader, not a mirror (spec §16.8): a page is one server read, and a
-    window of pages is extended only when a `getScanStatus` read taken **after** each page shows the
-    window's stamp unchanged and `scanning == false`. A window whose stored stamp differs from the
+    window of pages is extended only when the scan-status readings taken **before** the page's
+    request and **after** its response **both** show the window's stamp unchanged and
+    `scanning == false` — never on *after* alone, which the race probe
+    (`tools/probes/window-epoch-race`) caught accepting a page read during a scan (spec §16.12;
+    CONF-70 pins the bracketed check). A window whose stored stamp differs from the
     current one is torn at its first live read and rebased around the viewport — never stitched.
     While the server scans, pages append marked unverified and the list says so (spec §16.12).
     Bounded concurrency 4.

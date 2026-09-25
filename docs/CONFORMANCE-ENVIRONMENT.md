@@ -107,8 +107,29 @@ two-read payload checks.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external
-providers, log redaction, cache sizes, and localhost-only address. The Darwin and Linux path values are
-the only substitutions.
+providers, log redaction, cache sizes, and localhost-only address. The Darwin and Linux path values and
+the port are the only substitutions; the second server below also drops exactly one line.
+
+### The second, default-`PurgeMissing` server
+
+The reader suite (`ReaderServerConformanceTest`, CONF-70..75, design spec §16.11) needs a second
+server whose configuration differs from the fixture's in exactly one setting: `PurgeMissing` is left
+at Navidrome's default instead of `"always"`. Its library differs too: it holds only the two albums
+the suite needs, where the fixture serves the whole corpus. `render-config --purge-missing
+server-default --port 4534` renders it from the same template, `purge-default-server prepare` copies
+the two corpus albums into its own music folder, and `purge-default-server bootstrap` creates the
+fixed admin and waits for the first scan.
+
+Only the runs that execute CONF-74 start it. On Linux it is a second container on `127.0.0.1:4534`,
+started by `linux-local up --purge-default`; core-ci's conformance job passes that flag, and a plain
+`linux-local up` (the Android emulator jobs') starts no second server and declares none of its
+variables. In apple-ci's Darwin conformance step it is a second native process that runs only around
+the macOS conformance leg: it starts after that leg's cold restart of the fixture server and stops as
+soon as the leg ends, so no simulator phase and no other restart runs beside it. The suite moves an
+album directory out of each server's music folder and back, and waits for the scanner's watcher, so
+it reads three more variables: `DULCET_CONFORMANCE_MUSIC_DIR`,
+`DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL` and `DULCET_CONFORMANCE_PURGE_DEFAULT_MUSIC_DIR`. A
+missing variable fails the test; it never skips.
 
 ## One-command Linux environment
 
@@ -116,7 +137,7 @@ The Linux/amd64 environment used by `core-ci.yml` is also the local environment.
 Docker Engine on Linux) must be running; no separately installed Navidrome or ffmpeg is used.
 
 ```bash
-tools/conformance-env/linux-local up
+tools/conformance-env/linux-local up --purge-default
 tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:jvmTest
 tools/conformance-env/linux-local reset
 tools/conformance-env/linux-local run -- ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 :core-conformance:testAndroidHostTest
@@ -167,7 +188,8 @@ tools/conformance-env/linux-local run-apple \
 The command runs macOS, iOS simulator, and tvOS simulator sequentially against one local instance
 root. Before each Gradle invocation it uses the same marker-guarded stop, cache clear, server restart,
 and fail-closed `cached=false` observation as CI. Simulator child processes receive the same
-disposable loopback environment as the host process.
+disposable loopback environment as the host process. The macOS run includes the reader suite, so
+`run-apple` refuses to start unless the root was brought up with `up --purge-default`.
 
 `run` supplies the same variables as CI: `TZ=UTC`, the exact loopback Navidrome, redirect, and
 untrusted-TLS URLs, and `DULCET_CONFORMANCE_DISPOSABLE=true`. The common conformance suite requires
