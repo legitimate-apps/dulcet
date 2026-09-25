@@ -346,12 +346,13 @@ internal class LibraryReader(
      * each 429 of the run, so a server answering `Retry-After: 0` — or nothing — is not asked again
      * at once. A wait already running is never shortened: the later end of the two stands, so a 429
      * that another flush meets meanwhile cannot bring a server's longer `Retry-After` forward. Each
-     * flush checks the wait before each change it sends, so neither begins sending a change until
-     * the wait has passed, whatever triggers it — a request already out when the wait begins is not
-     * recalled; then one flush of every outbox runs, as a reconnect's first step would, and a retry
-     * a later end replaced is cancelled. A 429 that does not [count] — its change was withdrawn or
-     * undone while the request was out, so nothing of it is queued — still sets the wait, but is no
-     * 429 of the run: it neither begins nor lengthens it. Returns whether this 429 began the run:
+     * flush checks the wait before it begins each change, so neither begins a change until the wait
+     * has passed, whatever triggers it — a change already under way when the wait begins is not
+     * recalled, and may finish its requests; then one flush of every outbox runs, as a reconnect's
+     * first step would, and a retry a later end replaced is cancelled. A 429 that does not [count] —
+     * its change was withdrawn or undone while the request was out, or is a create deleted here, so
+     * nothing of it is queued — still sets the wait, and its flush still counts it as met, so the run
+     * goes on; but it neither begins nor lengthens the run. Returns whether this 429 began the run:
      * each outbox tells the person once per run, not once per retry.
      */
     internal fun noteBusy(run: BusyRun, retryAfter: Duration?, count: Boolean = true): Boolean {
@@ -928,11 +929,12 @@ internal val DomainError.refusesAccess: Boolean
 
 /**
  * One outbox's run of 429s (§18.6 "Failures"). It begins with the first 429 that outbox meets for a
- * change still queued — a 429 for one withdrawn or undone while its request was out begins nothing
- * — and ends when a flush of that outbox sends something and meets no 429, when a flush finishes
- * with nothing pending, or when the queue empties here ([end]) — never on one delivery, so a
- * limiter that admits one request per window is one run: told once, its floor doubling throughout
- * ([LibraryReader.noteBusy]).
+ * change still queued — a 429 for one withdrawn or undone while its request was out begins nothing,
+ * though its flush met it and so it keeps a run going — and ends when a flush of that outbox sends
+ * something and meets no 429, when a flush finishes with nothing pending (defensive: every way a
+ * queue empties here already ends the run), or when the queue empties here ([end]) — never on one
+ * delivery, so a limiter that admits one request per window is one run: told once, its floor
+ * doubling throughout ([LibraryReader.noteBusy]).
  */
 internal class BusyRun {
     /** The 429s met in this run; 0 between runs. */

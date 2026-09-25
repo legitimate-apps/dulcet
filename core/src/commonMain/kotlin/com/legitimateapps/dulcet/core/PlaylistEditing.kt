@@ -158,16 +158,21 @@ import kotlinx.serialization.json.longOrNull
  * later one. A rate limit (429) stops it the same way, told once per run of 429s — a run begins with
  * a 429 for a change still queued, and ends when a flush sends something and meets no 429, or
  * finishes with nothing pending, or the queue empties here, never on one delivery; a 429 for a
- * change withdrawn or undone while its request was out stops the flush and sets the wait, but begins
- * no run and is not told. Neither this flush nor the favourites one begins sending a change again
+ * change withdrawn or undone while its request was out, or for a create deleted here meanwhile, stops
+ * the flush, sets the wait and keeps a run going — it is a 429 the flush met — but begins none and is
+ * not told. Such a 429 for a deleted create proves it made nothing: its row goes, unless an earlier
+ * send of it is still in doubt. Neither this flush nor the favourites one begins a change again
  * until `max(Retry-After, a floor doubling through the run from two seconds)` has passed, never more
- * than five minutes, whatever triggers them meanwhile — each checks the wait before each change, so
- * one already running stops at its next; a request already out is not recalled — and a later 429 of
- * either never shortens that wait. Whatever holds a change, the person can withdraw it
- * ([withdraw]). Only a send that went out and was not answered with a 429, another 4xx, or another
- * answer proving it did not apply (an error envelope, unreachable) makes that too late to undo
- * ([PlaylistEditRecord.AlreadySent]); a change whose sends were all answered so is
- * [PlaylistEditRecord.CompactedAway]. A failure of the device's own database stops the flush too,
+ * than five minutes, whatever triggers them meanwhile — each checks the wait before it begins each
+ * change, so one already running stops before its next; a change already under way is not recalled
+ * and may finish its requests (a create's comment write, a later batch of an append sent without a
+ * form body) — and a later 429 of either never shortens that wait. Whatever holds a change, the
+ * person can withdraw it ([withdraw]). Only a send that went out and was not answered with a 429,
+ * another 4xx, or another answer proving it did not apply (an error envelope, unreachable) makes that
+ * too late to undo ([PlaylistEditRecord.AlreadySent]); a change whose sends were all answered so is
+ * [PlaylistEditRecord.CompactedAway], edited here while a send was out or not — save a list change
+ * so edited, which keeps the list it was sent onto and stays [PlaylistEditRecord.AlreadySent]. A
+ * failure of the device's own database stops the flush too,
  * reported as local.
  *
  * **Storage.** Rows live in `mutation_outbox` (protected, §11.4) under `field = playlist.<kind>`
@@ -366,7 +371,8 @@ internal enum class PlaylistEditRecord {
      * lost — so the server may hold it already. It is not sent again, and the playlist shows what the
      * server answers, or its next read; a create's possible playlist is named
      * ([PlaylistEditOutcome.PossiblyCreated]). A change whose sends were all answered with a 429 or
-     * a 4xx is [CompactedAway].
+     * a 4xx is [CompactedAway], even when edited here while one was out — except a list change so
+     * edited: the list it was sent onto travels with the edit, and it stays [AlreadySent].
      */
     AlreadySent,
 }
@@ -726,7 +732,8 @@ internal class PlaylistEditor(
      * state again. However a change is held or failing, the person can always withdraw it (§18.6
      * "Failures").
      * - [PlaylistEditRecord.CompactedAway]: no send of it had gone out, or each one was answered with a
-     *   429, another 4xx or another answer proving it did not apply, so it never reaches the server.
+     *   429, another 4xx or another answer proving it did not apply — even when it was edited here
+     *   while one was out, save a list change so edited — so it never reaches the server.
      * - [PlaylistEditRecord.AlreadySent]: too late to undo — a send of it is in flight, or its answer
      *   was lost, so the server may hold it already; the playlist shows what the server answers, or
      *   its next read.
@@ -1237,9 +1244,9 @@ internal class PlaylistEditor(
 
     private suspend fun flushLocked(tally: Tally): PlaylistFlushReport {
         while (reader.online) {
-            // The server asked for quiet (a 429): nothing is sent until the wait has passed. Checked
+            // The server asked for quiet (a 429): no change begins until the wait has passed. Checked
             // before each row, not once, so a wait the favourites flush's 429 sets meanwhile stops
-            // this flush too; a request already out is not recalled.
+            // this flush too; a change already under way is not recalled and may finish its requests.
             tally.stoppedBy = reader.busyError()
             if (tally.stoppedBy != null) break
             // A create waiting for the person's choice is passed over, never sent on a guess.
@@ -1290,12 +1297,15 @@ internal class PlaylistEditor(
                 }
                 PlaylistFailureClass.Held -> {
                     tally.stoppedBy = error
-                    // A 429 is told once per run of them, not once per retry. One for a change
-                    // withdrawn or undone while its request was out still sets the wait, but nothing
-                    // of it is queued: it begins no run and is not told.
+                    // A 429 is told once per run of them, not once per retry. Every 429 this flush
+                    // meets keeps its run going. One for a change withdrawn or undone while its
+                    // request was out, or for a create deleted here meanwhile (a tombstone is not a
+                    // queued change), still sets the wait, but nothing of it is queued: it neither
+                    // begins nor lengthens a run, and is not told.
                     val tell = if (error is DomainError.Server.Busy) {
-                        val queued = outbox.find(row.playlistId, row.kind) != null
-                        if (queued) tally.met429 = true
+                        val queued = outbox.find(row.playlistId, row.kind)
+                            ?.let { it !is PendingPlaylistRow.Create || !it.cancelled } == true
+                        tally.met429 = true
                         reader.noteBusy(busyRun, error.retryAfter, count = queued)
                     } else {
                         true
@@ -1927,13 +1937,53 @@ internal class PlaylistEditor(
     ): SentResponse = try {
         slot?.sendRepeatedChecked(endpoint, parameters, formPost) ?: reader.sendRepeatedChecked(endpoint, parameters, formPost)
     } catch (thrown: LibraryRequestFailure) {
-        if (thrown.error.provesNotApplied()) {
-            val prior = beforeMark[row.key]?.takeIf { it.localSequence == row.localSequence }
-            if (prior != null && outbox.current(row) != null) outbox.rewrite(prior)
-        }
+        if (thrown.error.provesNotApplied() && unmarkUnapplied(row)) changed(setOf(row.playlistId))
         throw thrown
     } finally {
         beforeMark.remove(row.key)
+    }
+
+    /**
+     * A send of [marked] provably never arrived: what it marked is taken back from whatever change
+     * now holds the key, as favourites do (§18.6 "Failures", sixth review round). Unchanged since,
+     * the row is restored as it was. Edited here while the send was out, a header change loses the
+     * values this send added to each field's attempted set — never one an earlier send left in doubt
+     * — and a create what this send recorded, when no earlier send of it is in doubt; a create
+     * deleted here meanwhile is then gone, since the send made nothing. A list change edited while
+     * its send was out keeps its mark: the list it was sent onto travels with the edit. Whether the
+     * row changed.
+     */
+    private fun unmarkUnapplied(marked: PendingPlaylistRow): Boolean = database.transactionWithResult {
+        val prior = beforeMark[marked.key] ?: return@transactionWithResult false
+        val current = outbox.find(marked.playlistId, marked.kind) ?: return@transactionWithResult false
+        when {
+            current.localSequence == marked.localSequence -> {
+                if (prior.localSequence != marked.localSequence) return@transactionWithResult false
+                outbox.rewrite(prior)
+            }
+            current is PendingPlaylistRow.Details && prior is PendingPlaylistRow.Details && marked is PendingPlaylistRow.Details -> {
+                val fields = current.fields.mapValues { (field, change) ->
+                    val added = marked.fields[field]?.attempted.orEmpty() - prior.fields[field]?.attempted.orEmpty()
+                    change.copy(attempted = change.attempted - added)
+                }
+                if (fields == current.fields) return@transactionWithResult false
+                outbox.rewrite(current.copy(fields = fields))
+            }
+            current is PendingPlaylistRow.Create && prior is PendingPlaylistRow.Create && !prior.attempted -> {
+                if (current.cancelled) {
+                    outbox.removeIfUnchanged(current)
+                } else {
+                    outbox.rewrite(
+                        current.copy(
+                            attempted = false, sentName = prior.sentName, sentSongs = prior.sentSongs,
+                            seenBeforeSend = prior.seenBeforeSend, candidates = prior.candidates, chosen = prior.chosen,
+                        ),
+                    )
+                }
+            }
+            else -> return@transactionWithResult false
+        }
+        true
     }
 
     private fun finish(row: PendingPlaylistRow, outcome: PlaylistEditOutcome, tally: Tally) {

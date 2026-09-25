@@ -64,7 +64,8 @@ def seed_v7(connection):
             (server_id, raw_id, name, song_count, duration, owner, wall, issue_seq, wall,
              comment, is_public, readonly),
         )
-    # The issue sequence the seen-cache hands out next must be past every seeded row's.
+    # last_issued equals the highest seeded issue number, so the next one the seen-cache hands out
+    # is past every seeded row's.
     connection.execute("UPDATE cache_meta SET last_issued = 13 WHERE singleton_id = 1")
 
 

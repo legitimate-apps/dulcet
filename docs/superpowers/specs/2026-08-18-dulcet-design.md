@@ -1226,7 +1226,9 @@ resume tables are unchanged.
   row, and compares `cache_pin` rows as protected data for fixtures that already carry them — each
   with a destructive negative control that must be rejected for the stated reason. From schema 7 it
   also asserts that every fixture, upgraded to the current schema, has exactly the tables, columns
-  (name, type, NOT NULL, default, key) and indexes a fresh install creates, and compares the
+  (name, type, NOT NULL, default, key), named indexes, implicit indexes (the UNIQUE and PRIMARY KEY
+  constraints SQLite backs with an automatic index, compared by what they index) and CHECK
+  constraints (compared as expressions, whitespace aside) a fresh install creates, and compares the
   `cache_playlist` rows of every fixture that holds the columns schema 7 added — a cache table, so
   not protected data, but a column a schema added is compared with data — each again with a
   negative control. From schema 7 a fixture is generated, not edited by hand:
@@ -4324,9 +4326,14 @@ status with no envelope is `Auth.InvalidCredentials` for a 401, as playback name
     with each 429 of a run (2, 4, 8 s …), and the wait never exceeds five minutes, whatever
     `Retry-After` says (both values ASSUMED: asking again after five minutes costs one request). Each
     outbox has its own run. It begins with a 429 for a change still queued; a 429 for a change no
-    longer queued — withdrawn or undone while its send was out — stops the flush and sets the wait,
-    but neither begins a run nor is told (fifth review round: it told `Held` for the change the
-    person had taken back, and the change actually held went untold). A run ends when a flush of
+    longer queued — withdrawn or undone while its send was out, or a create deleted here while its
+    send was out — stops the flush and sets the wait, but neither begins a run nor is told (fifth
+    review round: it told `Held` for the change the person had taken back, and the change actually
+    held went untold; sixth review round, for the deleted create). It is still a 429 the flush met,
+    so it never ends a run either (sixth review round: ending on it told `Held` twice in one limiter
+    episode and reset the floor). A 429 answering a create deleted here proves that send made
+    nothing: unless an earlier send of it is still in doubt, the create's row goes at once, and
+    nothing is looked for. A run ends when a flush of
     that outbox sends something and meets no 429, or finishes with nothing pending, or when its
     queue empties, however that happens — the flush sending the last change, or a change withdrawn
     or undone here — and **not** on one delivery, so a limiter that admits one request per window
@@ -4334,10 +4341,13 @@ status with no envelope is `Auth.InvalidCredentials` for a 401, as playback name
     each delivery told `Held` seven times for eight favourites and never let the floor grow). A new
     429 never shortens a wait already running: the later end stands, so a 429 without `Retry-After`
     that the other outbox meets meanwhile cannot bring the server's longer `Retry-After` forward.
-    During the wait neither the favourites nor the playlist flush sends anything — a later edit, a
-    reconnect or a second flush included: each checks the wait before each change it sends, so a
-    flush already running when the other outbox meets a 429 stops at its next change (fifth review
-    round); a request already out is not recalled. When the wait ends one flush of every outbox
+    During the wait neither the favourites nor the playlist flush begins a change — a later edit, a
+    reconnect or a second flush included: each checks the wait before it begins each change, so a
+    flush already running when the other outbox meets a 429 stops before its next change (fifth
+    review round). A change already under way is not recalled, and may finish its remaining requests
+    inside the wait: the request already out, a create's comment or visibility write after its
+    `createPlaylist`, or a later batch of an append sent without `formPost` (sixth review round,
+    which narrowed "sends nothing" to this). When the wait ends one flush of every outbox
     runs; a wait moved out cancels the retry the earlier one scheduled, so that retry never flushes
     any outbox — the scrobbles included, which no 429 of these outboxes stops — inside the later
     wait. Each outbox tells the person once per run, not once per retry. The `Retry-After` parser reads anything beyond one day as one day: a
@@ -4359,8 +4369,11 @@ A pending change can always be withdrawn — held, waiting for a choice, or fail
 stuck in the queue (`pendingChanges`, `withdraw`; §18.3 for favourites). Withdrawing cannot unsend,
 and says so: a change none of whose sends has gone out, or every send of which was answered in a
 way that proves it was not applied — a 429, another 4xx, an error envelope, or no connection at all
-— is `CompactedAway`; only one whose send is under way, or whose answer was lost or does not prove
-it unapplied (a 5xx), is `AlreadySent` (fifth review round), so the shell can say it is too late to
+— is `CompactedAway`, a header change or a create edited here while that send was out included
+(sixth review round); only one whose send is under way, or whose answer was lost or does not prove
+it unapplied (a 5xx), is `AlreadySent` (fifth review round) — and a list change edited here while
+its send was out, which stays `AlreadySent` even when that send is answered 429: the list it was
+sent onto travels with the edit, and is not unwound — so the shell can say it is too late to
 undo — the server may hold it already, and the playlist then shows what the server answers, or its
 next read. Withdrawing a
 create is deleting it here, above: one never sent is simply gone (`CompactedAway`), one sent names
@@ -6667,7 +6680,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     and was told as `Held` for the withdrawn change, while the change actually held behind it went
     untold (t6, t6b). **Decision:** a 429 for a change no longer queued sets the wait and stops the
     flush, but neither begins a run nor is told; and a run also ends whenever a flush finishes with
-    nothing pending. The T6 mutant — the retry an earlier wait scheduled, left running when a later
+    nothing pending — a defensive clause, not a fix: every way a queue empties here already ends
+    the run, so the clause changes nothing the code can reach, and a mutant restoring the fourth
+    round's rule survives as equivalent (sixth review round). The T6 mutant — the retry an earlier wait scheduled, left running when a later
     429 moves the wait out — was argued equivalent in (z). The argument missed that the retry
     flushes every outbox, the scrobbles among them, which no 429 of these outboxes stops; a test
     now shows the scrobble seam flushed inside the server's ten seconds under the mutant, and never
@@ -6699,7 +6714,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `migrations/6.sqm` adds the three columns (schema 6 → 7), with `databases/7.db` and a v7 fixture
     holding three cached playlists — the new fields stated, stated otherwise, and unstated. The
     fixture is `main`'s v6 with `6.sqm` applied as shipped, then `schema_version` 7, those three
-    rows and `cache_meta.last_issued` 13 (past every seeded row's issue sequence) in one
+    rows and `cache_meta.last_issued` 13 (equal to the highest seeded issue number, so the next one
+    issued is past every seeded row's) in one
     transaction, then `user_version` 7 and a VACUUM, written by Python's `sqlite3` linked against
     SQLite 3.51.0 with no bytes reserved per page, the build that wrote v4–v6. That recipe is
     committed as `tools/generate_migration_fixture.py` (`SEEDS[7]`), and `--to 7 --check`
@@ -6713,6 +6729,39 @@ fresh disposable server before landing; items 11–14 are what that review chang
     two checks (§11.4): every fixture, upgraded, has exactly a fresh install's tables, columns and
     indexes, and `cache_playlist` rows are compared from v7 on; each has a negative control.
     OBSERVED 2026-09-25: the gate passes over 7 fixture databases, every one upgraded to v7 equal to a fresh install (62 tables and indexes), 3 `cache_playlist` rows compared from v7 (2 with the added fields stated), and 14 destructive negative controls, each rejected for its stated reason; and SQLDelight's own migration verification rejects a `6.sqm` that omits `readonly` ("columns[cache_playlist.readonly] - ADDED"). (ak) **Failing first.** The 20 new tests (17 in `PlaylistEditingFifthReviewTest`, 3 in `PlaylistColumnsMigrationTest`), run against 43cbb7da: 16 fail on the JVM and the same 16 on `macosArm64`. The four that pass there pass by design: x3 pins the stated residual; p8 pins what 43cbb7da already did, and M8 is its mutant; one is the control that creates of different names in doubt together each adopt their own lone candidate; and the T6 test distinguishes only an uncancelled replaced retry, which 43cbb7da already cancelled while no test said so. (al) **Mutation run.** 54 mutants of the final code, 54 killed, against a baseline of 272 tests that all pass — among them T6 (the replaced retry not cancelled, which survived the fourth round) and M8 (the playlist flush counting a send when the wait stopped it). A 55th, a control that does not compile, is reported as such and counted as nothing. (am) **Live.** CONF-88..91 against one fresh disposable Navidrome 0.63.2: twice on the JVM, once on `macosArm64` and once more on the JVM with an upper-case user name, 6 of 6 each, the server holding no playlist before, between and after the runs; the server was then stopped and its data deleted.
+
+    **Item 20, sixth review round — a re-review of the fifth round's head found no blocker and
+    accepted its four departures; these are the maintainer's decisions on its findings.** (an)
+    **SF1: a create deleted while its send was out.** Deleting a create whose send is out keeps its
+    row as a tombstone, and the fifth round's "no longer queued" found that tombstone: a 429 for the
+    deleted create was told `Held` and began a run. **Decision:** a 429 answering a create deleted
+    here proves that send made nothing, so the row goes at once — unless an earlier send of the
+    create is still in doubt, when the tombstone stays for the next flush to look — and a tombstone
+    never counts as queued: the 429 is never told and never begins a run. (ao) **SF2: every 429
+    counts for the run.** The fifth round left a 429 for a withdrawn change out of the flush's tally,
+    so that flush, having sent something, ended the run: the next change's 429 was told again and
+    the floor fell back to 2 s. **Decision:** every 429 a flush meets keeps its run going, whether
+    its change is queued, withdrawn or deleted; only whether it begins, lengthens and is told
+    depends on its change still being queued. A run then ends only as the texts already said. (ap)
+    **q3, narrowed.** "During the wait neither flush sends anything" overclaimed for a change of
+    several requests: a create's comment write, or a later batch of an append sent without
+    `formPost`, went out inside the other outbox's wait. **Decision:** the text says the wait gates
+    the start of each change, and a change under way may finish its requests; a test pins that. No
+    gate is added mid-change. (aq) **q4: a change edited while its only send was out.** The edit
+    re-queued the row, so a 429 for that send no longer found the row it had marked, and withdrawing
+    answered `AlreadySent` for a change nothing of which had reached the server. **Decision:** as
+    favourites do, a send proven unapplied un-marks what it marked on whatever change now holds the
+    key — for a header change, the values it added to each field's attempted set, never a value an
+    earlier send left in doubt; for a create, what the send recorded, when no earlier send of it is
+    in doubt. A list change edited while its send is out stays `AlreadySent`: the list it was sent
+    onto travels with the edit and is not unwound, and r12 now says so. (ar) **Decision 1(b)'s
+    "awaiting the person" arm** is pinned: a create waiting for the person on another playlist of
+    the name, whose own playlist commits only after its lookup (residual 4), still keeps another
+    create of the name from adopting that playlist. (as) **The migration gate** also compares each
+    table's implicit indexes — the UNIQUE and PRIMARY KEY constraints SQLite backs with
+    `sqlite_autoindex_*`, by what they index rather than their numbered names — and its CHECK
+    constraints, as expressions with whitespace removed (§11.4). OBSERVED 2026-09-25: a fresh install of v7 carries 34 implicit indexes (5 of them UNIQUE) and 103 CHECK clauses across 33 tables; the gate passes over the 7 real fixtures, every one upgraded to v7 equal to a fresh install, with 17 destructive negative controls. The three new controls — a UNIQUE constraint added to `cache_binding`, `cache_epoch`'s PRIMARY KEY made descending, `cache_meta`'s CHECK dropped — are each accepted by the fifth round's gate and rejected by this one, naming the table and `implicit_indexes` or `checks`. Of four mutants of the new comparison, three are killed (no implicit index read, no CHECK read, UNIQUE read without PRIMARY KEY); the fourth, comparing CHECK text with its whitespace, is equivalent on these fixtures, the normalisation being for robustness only. (at) **Failing first.**
+    The 11 new tests in `PlaylistEditingSixthReviewTest`, run against 5f467f16: 7 fail on the JVM and the same 7 on `macosArm64` — q1, q2, q4, a playlist change withdrawn while out, the tombstone whose earlier send is in doubt, a deleted create's 429 beginning no run, and a create renamed while its only send was out. The four that pass there pass by design: q3 documents what a change under way may finish, q4f is favourites' control, one guards a value an earlier send left in doubt, and one pins decision 1(b)'s "awaiting the person" arm. (au) **Mutation run.** 16 compiling mutants of the final code against a baseline of 283 tests that all pass: 15 killed — among them the tombstone counted as queued, `met429` set only when queued (the inverse of the review's unconditional mutant, for favourites and for playlists), a gate before the create's comment write, a header change edited while out keeping its mark, and the review's surviving decision-1(b) mutant — and 1 survives by design: the fourth round's run-ending rule restored, without the clause that ends a run when nothing is pending — equivalent, which is why that clause is called defensive above. A control that does not compile, and a first form of the header-change mutant that did not compile, are reported as such and counted as nothing. (av) **Live.** CONF-88..91 against one fresh disposable Navidrome 0.63.2, once on the JVM and once on `macosArm64`, 6 of 6 each, the server holding no playlist before, between and after the runs; the server was then stopped and its data deleted.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

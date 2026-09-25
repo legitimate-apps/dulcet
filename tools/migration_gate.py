@@ -433,15 +433,45 @@ def pin_coverage_errors(connection: sqlite3.Connection) -> list[str]:
     return errors
 
 
+def check_constraints(create_sql: str) -> list[str]:
+    """The CHECK constraints of a CREATE TABLE statement, each its parenthesised expression with all
+    whitespace removed, sorted: where a constraint sits in the text, and how the text is laid out,
+    differ between an upgraded table and a fresh one; what it checks does not."""
+    checks: list[str] = []
+    for match in re.finditer(r"\bCHECK\s*\(", create_sql, flags=re.IGNORECASE):
+        depth, start = 0, match.end() - 1
+        quote = None
+        for position in range(start, len(create_sql)):
+            character = create_sql[position]
+            if quote is not None:
+                if character == quote:
+                    quote = None
+                continue
+            if character in "'\"":
+                quote = character
+            elif character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0:
+                    checks.append(re.sub(r"\s+", "", create_sql[start:position + 1]))
+                    break
+        else:
+            raise MigrationGateError(f"unbalanced CHECK constraint in: {create_sql}")
+    return sorted(checks)
+
+
 def table_structure(connection: sqlite3.Connection) -> dict[str, dict[str, object]]:
     """Every table and index as SQLite reports its structure: a table's columns in order (name,
-    type, NOT NULL, default, key position, hidden) and its foreign keys; an index's table and
-    columns. The CREATE text is deliberately not compared: SQLite records `ALTER TABLE ... ADD
-    COLUMN` by editing the stored text, so an upgraded table and a fresh one are the same table with
-    different text."""
+    type, NOT NULL, default, key position, hidden), its foreign keys, its implicit indexes (the
+    UNIQUE and PRIMARY KEY constraints SQLite backs with `sqlite_autoindex_*`, compared by what they
+    index, not by their numbered names) and its CHECK constraints; a named index's table and
+    columns. The CREATE text as a whole is deliberately not compared: SQLite records `ALTER TABLE
+    ... ADD COLUMN` by editing the stored text, so an upgraded table and a fresh one are the same
+    table with different text."""
     structure: dict[str, dict[str, object]] = {}
-    for kind, name, table in connection.execute(
-        "SELECT type, name, tbl_name FROM sqlite_master "
+    for kind, name, table, sql in connection.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master "
         "WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY type, name"
     ).fetchall():
         entry: dict[str, object] = {"on": table}
@@ -453,6 +483,21 @@ def table_structure(connection: sqlite3.Connection) -> dict[str, dict[str, objec
                 list(foreign_key)[2:]
                 for foreign_key in connection.execute(f'PRAGMA foreign_key_list("{name}")')
             )
+            entry["implicit_indexes"] = sorted(
+                (
+                    [unique, origin, partial]
+                    + [
+                        list(column)[1:]
+                        for column in connection.execute(f'PRAGMA index_xinfo("{index}")')
+                    ]
+                    for _, index, unique, origin, partial in connection.execute(
+                        f'PRAGMA index_list("{name}")'
+                    )
+                    if origin in ("u", "pk")
+                ),
+                key=repr,
+            )
+            entry["checks"] = check_constraints(sql)
         else:
             entry["columns"] = [
                 list(column) for column in connection.execute(f'PRAGMA index_xinfo("{name}")')
@@ -835,6 +880,49 @@ UPGRADE_NEGATIVE_CONTROLS = (
         ),
     ),
 )
+# The structure controls run on the newest fixture: each rebuilds one table as the same columns,
+# keys and rows, less one constraint, which only the implicit-index or CHECK comparison can see.
+STRUCTURE_NEGATIVE_CONTROLS = (
+    (
+        "implicit_unique_added",
+        "CREATE TABLE cache_binding_rebuilt (server_id TEXT NOT NULL PRIMARY KEY, "
+        "normalized_base_url TEXT NOT NULL, username TEXT NOT NULL, created_at_wall INTEGER NOT NULL, "
+        "UNIQUE (normalized_base_url, username)); "
+        "INSERT INTO cache_binding_rebuilt SELECT * FROM cache_binding; "
+        "DROP TABLE cache_binding; "
+        "ALTER TABLE cache_binding_rebuilt RENAME TO cache_binding;",
+        (
+            "upgraded schema differs from a fresh install",
+            "table cache_binding: implicit_indexes differs",
+        ),
+    ),
+    (
+        "implicit_primary_key_reordered",
+        "CREATE TABLE cache_epoch_rebuilt (server_id TEXT NOT NULL, last_scan TEXT, "
+        "folder_ids TEXT NOT NULL, scanning INTEGER NOT NULL CHECK (scanning IN (0, 1)), "
+        "read_at_wall INTEGER NOT NULL, PRIMARY KEY (server_id DESC)); "
+        "INSERT INTO cache_epoch_rebuilt SELECT * FROM cache_epoch; "
+        "DROP TABLE cache_epoch; "
+        "ALTER TABLE cache_epoch_rebuilt RENAME TO cache_epoch;",
+        (
+            "upgraded schema differs from a fresh install",
+            "table cache_epoch: implicit_indexes differs",
+        ),
+    ),
+    (
+        "check_dropped",
+        "CREATE TABLE cache_meta_rebuilt (singleton_id INTEGER NOT NULL PRIMARY KEY, "
+        "last_issued INTEGER NOT NULL CHECK (last_issued >= 0), "
+        "normalization_version INTEGER NOT NULL CHECK (normalization_version >= 0)); "
+        "INSERT INTO cache_meta_rebuilt SELECT * FROM cache_meta; "
+        "DROP TABLE cache_meta; "
+        "ALTER TABLE cache_meta_rebuilt RENAME TO cache_meta;",
+        (
+            "upgraded schema differs from a fresh install",
+            "table cache_meta: checks differs",
+        ),
+    ),
+)
 CACHE_ROW_NEGATIVE_CONTROLS = (
     (
         "added_fields_cleared",
@@ -970,19 +1058,22 @@ def main() -> None:
     prove_negative_controls(
         fixtures[compared_since], compared_since, current, CACHE_ROW_NEGATIVE_CONTROLS
     )
+    prove_negative_controls(fixtures[current], current, current, STRUCTURE_NEGATIVE_CONTROLS)
     control_count = (
         len(NEGATIVE_CONTROLS)
         + len(PIN_NEGATIVE_CONTROLS)
         + len(PROTECTED_PIN_NEGATIVE_CONTROLS)
         + len(UPGRADE_NEGATIVE_CONTROLS)
         + len(CACHE_ROW_NEGATIVE_CONTROLS)
+        + len(STRUCTURE_NEGATIVE_CONTROLS)
     )
     print(
         f"Migration gate valid: {len(fixtures)} fixture database(s), "
         f"{len(protected_tables(current))} protected table comparisons at v{current}, "
         f"pin coverage from v{PIN_COVERAGE_SINCE_VERSION}, "
         f"every fixture upgraded to v{current} equal to a fresh install "
-        f"({len(fresh_install_structure(current))} tables and indexes), "
+        f"({len(fresh_install_structure(current))} tables and named indexes, with implicit "
+        f"indexes and CHECK constraints), "
         f"cache_playlist rows compared from v{compared_since} ({len(compared_rows)} rows, "
         f"{len(stated)} with the added fields stated), "
         f"download file reconciliation, and {control_count} explicit destructive "

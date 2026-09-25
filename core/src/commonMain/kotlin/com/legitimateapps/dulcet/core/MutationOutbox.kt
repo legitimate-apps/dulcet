@@ -639,11 +639,13 @@ internal class LibraryFavourites(
      * - When the server asks to wait (HTTP 429), the flush stops the same way, told once per run of
      *   429s ([BusyRun]: it ends when a flush sends something and meets no 429, or finishes with
      *   nothing pending, or the queue empties here — not on one delivery). A 429 for a change
-     *   withdrawn or undone while its request was out stops the flush and sets the wait, but begins
-     *   no run and is not told. Neither this flush nor the playlist one begins sending a change until
+     *   withdrawn or undone while its request was out stops the flush and sets the wait, and keeps a
+     *   run going — it is a 429 the flush met — but begins none and is not told. Neither this flush
+     *   nor the playlist one begins a change until
      *   `max(Retry-After, a floor that doubles through the run from two seconds)` has passed, capped
-     *   at five minutes — each checks the wait before each change, so one already running stops at
-     *   its next change; a request already out is not recalled — and a later 429 never shortens that
+     *   at five minutes — each checks the wait before it begins each change, so one already running
+     *   stops before its next; a change already under way is not recalled and may finish its
+     *   requests (a playlist create's comment write, say) — and a later 429 never shortens that
      *   wait (§18.6 "Failures"); a change made meanwhile does not send early. Then one flush of every
      *   outbox runs.
      * - When the server cannot be reached at all, the flush stops and keeps every change, in order,
@@ -737,12 +739,13 @@ internal class LibraryFavourites(
                         }
                         FailureClass.Held -> {
                             stoppedBy = error
-                            // A 429 is told once per run of them, not once per retry. One for a change
-                            // withdrawn or undone while its request was out still sets the wait, but
-                            // nothing of it is queued: it begins no run and is not told.
+                            // A 429 is told once per run of them, not once per retry. Every 429 this
+                            // flush meets keeps its run going. One for a change withdrawn or undone
+                            // while its request was out still sets the wait, but nothing of it is
+                            // queued: it neither begins nor lengthens a run, and is not told.
                             val tell = if (error is DomainError.Server.Busy) {
                                 val queued = outbox.pendingFor(change.target, change.field) != null
-                                if (queued) met429 = true
+                                met429 = true
                                 reader.noteBusy(busyRun, error.retryAfter, count = queued)
                             } else {
                                 true
