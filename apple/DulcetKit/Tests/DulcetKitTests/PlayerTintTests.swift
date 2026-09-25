@@ -40,14 +40,23 @@ func theTVOSPlayerDrawsNoGlow() {
 #endif
 
 #if os(macOS)
+// Only the renders run on the main actor, and the tests yield between them. Each render is
+// short: 0.2 to 0.6 s for the whole player in a full run, up to about 1 s when it is the first
+// thing the process draws, and a few milliseconds for the cover alone (each prints its own
+// figure). The pixel scans that read the
+// renders take seconds over millions of pixels in a debug build, so they run off the main actor.
+// A scan held on it starves every other main-actor test in a parallel `swift test` run until
+// those tests' own deadlines expire.
+
 /// A render redrawn once into 8-bit sRGB, so every pixel is read from one buffer in one colour
 /// space rather than converted one `NSColor` at a time.
-private struct RenderedPixels {
+private struct RenderedPixels: Sendable {
     let width: Int
     let height: Int
     /// Pixels per point.
     let scale: CGFloat
-    private let bytes: [UInt8]
+    /// RGBA, premultiplied, row 0 at the top of the render.
+    fileprivate let bytes: [UInt8]
 
     init(image: CGImage, scale: CGFloat) throws {
         let width = image.width
@@ -69,16 +78,32 @@ private struct RenderedPixels {
         bytes = buffer
         try #require(drawn, "the render must redraw into sRGB")
     }
-
-    /// Row 0 is the top of the render.
-    func rgb(_ x: Int, _ y: Int) -> SIMD3<Double> {
-        let offset = (y * width + x) * 4
-        return SIMD3(Double(bytes[offset]), Double(bytes[offset + 1]), Double(bytes[offset + 2])) / 255
-    }
 }
 
-private func channelDelta(_ lhs: SIMD3<Double>, _ rhs: SIMD3<Double>) -> Double {
-    max(abs(lhs.x - rhs.x), abs(lhs.y - rhs.y), abs(lhs.z - rhs.z))
+/// The largest difference in any one colour channel, each channel as a fraction of full scale.
+/// It is computed exactly as it always was -- each channel divided by 255 before subtracting --
+/// so a pixel on a threshold is counted as before, and the counts the tests print are unchanged.
+private func channelDelta(_ lhs: UnsafeBufferPointer<UInt8>, _ lhsOffset: Int,
+                          _ rhs: UnsafeBufferPointer<UInt8>, _ rhsOffset: Int) -> Double {
+    func channel(_ bytes: UnsafeBufferPointer<UInt8>, _ offset: Int) -> Double { Double(bytes[offset]) / 255 }
+    return max(abs(channel(lhs, lhsOffset) - channel(rhs, rhsOffset)),
+               abs(channel(lhs, lhsOffset + 1) - channel(rhs, rhsOffset + 1)),
+               abs(channel(lhs, lhsOffset + 2) - channel(rhs, rhsOffset + 2)))
+}
+
+/// Whether ``channelDelta`` exceeds `threshold`, deciding most pixels from the integer difference.
+/// The exact value is within a rounding error of the integer difference over 255, so a pixel more
+/// than half a level from the threshold is decided by the integer alone. Only a pixel that close
+/// pays for the exact computation, and the answer is always the one ``channelDelta`` gives.
+private func differs(_ lhs: UnsafeBufferPointer<UInt8>, _ lhsOffset: Int,
+                     _ rhs: UnsafeBufferPointer<UInt8>, _ rhsOffset: Int, by threshold: Double) -> Bool {
+    let levels = max(abs(Int(lhs[lhsOffset]) - Int(rhs[rhsOffset])),
+                     abs(Int(lhs[lhsOffset + 1]) - Int(rhs[rhsOffset + 1])),
+                     abs(Int(lhs[lhsOffset + 2]) - Int(rhs[rhsOffset + 2])))
+    let scaled = threshold * 255
+    if Double(levels) + 0.5 < scaled { return false }
+    if Double(levels) - 0.5 > scaled { return true }
+    return channelDelta(lhs, lhsOffset, rhs, rhsOffset) > threshold
 }
 
 /// Distance in points from a pixel to a rectangle given in points; zero inside it.
@@ -88,6 +113,21 @@ private func distance(fromPixel x: Int, _ y: Int, to rect: CGRect, scale: CGFloa
     let dx = max(rect.minX - px, 0, px - rect.maxX)
     let dy = max(rect.minY - py, 0, py - rect.maxY)
     return (dx * dx + dy * dy).squareRoot()
+}
+
+/// Runs one render on the main actor and prints how long it held it, so the budget above is
+/// visible in every run.
+@MainActor
+private func timedRender(_ label: String, _ render: () throws -> RenderedPixels) rethrows -> RenderedPixels {
+    let start = ContinuousClock.now
+    let pixels = try render()
+    print("DULCET TINT RENDER \(label) main-actor=\(ContinuousClock.now - start)")
+    return pixels
+}
+
+/// Runs a pixel scan off the main actor and waits for it there.
+private func scannedOffTheMainActor<T: Sendable>(_ scan: @escaping @Sendable () -> T) async -> T {
+    await Task.detached(priority: .userInitiated) { scan() }.value
 }
 
 /// The cover and its glow alone, through SwiftUI's own renderer: it draws the blur and the mask
@@ -112,38 +152,63 @@ private func renderGlow(size: CGFloat, margin: CGFloat, reduceTransparency: Bool
     return try RenderedPixels(image: image, scale: 2)
 }
 
+/// What the glow test counts, outside the cover and its one-point edge stroke.
+private struct GlowScan: Sendable {
+    /// Pixels past the reach that differ from the window: cover colour where none may be.
+    var beyondReach = 0
+    /// Pixels within the reach where the glow and Reduce Transparency renders differ.
+    var glowInRing = 0
+    /// Pixels of the Reduce Transparency render that differ from the window.
+    var reducedOutsideCover = 0
+}
+
+private func scanGlow(glowing: RenderedPixels, reduced: RenderedPixels, cover: CGRect, reach: CGFloat) -> GlowScan {
+    var scan = GlowScan()
+    glowing.bytes.withUnsafeBufferPointer { lit in
+        reduced.bytes.withUnsafeBufferPointer { plain in
+            let window = (1 * reduced.width + 1) * 4
+            for y in 0..<glowing.height {
+                for x in 0..<glowing.width {
+                    let offset = (y * glowing.width + x) * 4
+                    let glowLit = differs(lit, offset, plain, window, by: 2.0 / 255)
+                    let glowDiffers = differs(lit, offset, plain, offset, by: 4.0 / 255)
+                    let reducedLit = differs(plain, offset, plain, window, by: 2.0 / 255)
+                    guard glowLit || glowDiffers || reducedLit else { continue }
+                    let fromCover = distance(fromPixel: x, y, to: cover, scale: glowing.scale)
+                    guard fromCover > 1 else { continue } // the cover and its one-point edge stroke
+                    if fromCover > reach, glowLit { scan.beyondReach += 1 }
+                    if fromCover <= reach, glowDiffers { scan.glowInRing += 1 }
+                    if reducedLit { scan.reducedOutsideCover += 1 }
+                }
+            }
+        }
+    }
+    return scan
+}
+
 /// Cover colour reaches no further than `reach` past the cover, the glow is really drawn inside
 /// that (so the confinement is not satisfied by an absent glow), and Reduce Transparency removes it.
 @Test @MainActor
-func theGlowStaysWithinItsReachAndReduceTransparencyRemovesIt() throws {
+func theGlowStaysWithinItsReachAndReduceTransparencyRemovesIt() async throws {
     let reach = DulcetArtworkGlow.reach
     let margin = reach + 16
     for size in [CGFloat(120), 360, 520] {
         let cover = CGRect(x: margin, y: margin, width: size, height: size)
-        let glowing = try renderGlow(size: size, margin: margin, reduceTransparency: false, palette: .emberRose)
-        let reduced = try renderGlow(size: size, margin: margin, reduceTransparency: true, palette: .emberRose)
-        let window = reduced.rgb(1, 1)
-
-        var beyondReach = 0
-        var glowInRing = 0
-        var reducedOutsideCover = 0
-        for y in 0..<glowing.height {
-            for x in 0..<glowing.width {
-                let fromCover = distance(fromPixel: x, y, to: cover, scale: glowing.scale)
-                guard fromCover > 1 else { continue } // the cover and its one-point edge stroke
-                let lit = channelDelta(glowing.rgb(x, y), window) > 2.0 / 255
-                if fromCover > reach, lit { beyondReach += 1 }
-                if fromCover <= reach, channelDelta(glowing.rgb(x, y), reduced.rgb(x, y)) > 4.0 / 255 {
-                    glowInRing += 1
-                }
-                if channelDelta(reduced.rgb(x, y), window) > 2.0 / 255 { reducedOutsideCover += 1 }
-            }
+        let glowing = try timedRender("glow \(size)") {
+            try renderGlow(size: size, margin: margin, reduceTransparency: false, palette: .emberRose)
         }
-        print("DULCET TINT GLOW size=\(size) reach=\(reach) beyond-reach=\(beyondReach)"
-            + " glow-in-ring=\(glowInRing) reduce-transparency-outside-cover=\(reducedOutsideCover)")
-        #expect(beyondReach == 0, "cover colour \(beyondReach) px past the reach at size \(size)")
-        #expect(glowInRing > 0, "the glow must be drawn within its reach at size \(size)")
-        #expect(reducedOutsideCover == 0, "Reduce Transparency left \(reducedOutsideCover) px of glow at size \(size)")
+        await Task.yield()
+        let reduced = try timedRender("glow \(size) reduce-transparency") {
+            try renderGlow(size: size, margin: margin, reduceTransparency: true, palette: .emberRose)
+        }
+        let scan = await scannedOffTheMainActor {
+            scanGlow(glowing: glowing, reduced: reduced, cover: cover, reach: reach)
+        }
+        print("DULCET TINT GLOW size=\(size) reach=\(reach) beyond-reach=\(scan.beyondReach)"
+            + " glow-in-ring=\(scan.glowInRing) reduce-transparency-outside-cover=\(scan.reducedOutsideCover)")
+        #expect(scan.beyondReach == 0, "cover colour \(scan.beyondReach) px past the reach at size \(size)")
+        #expect(scan.glowInRing > 0, "the glow must be drawn within its reach at size \(size)")
+        #expect(scan.reducedOutsideCover == 0, "Reduce Transparency left \(scan.reducedOutsideCover) px of glow at size \(size)")
     }
 }
 
@@ -168,38 +233,61 @@ private func renderCover(size: CGFloat, margin: CGFloat, scale: CGFloat, reduceT
     return try RenderedPixels(image: image, scale: 2)
 }
 
+/// Where the glow of a composed cover lies, outside the drawn cover and its edge stroke.
+private struct CoverGlowScan: Sendable {
+    var beyondReach = 0
+    var glowNear = 0
+    var farthest: CGFloat = 0
+}
+
+private func scanCoverGlow(glowing: RenderedPixels, reduced: RenderedPixels, cover: CGRect, reach: CGFloat) -> CoverGlowScan {
+    var scan = CoverGlowScan()
+    glowing.bytes.withUnsafeBufferPointer { lit in
+        reduced.bytes.withUnsafeBufferPointer { plain in
+            for y in 0..<glowing.height {
+                for x in 0..<glowing.width {
+                    let offset = (y * glowing.width + x) * 4
+                    // The glow is what differs between the two renders.
+                    guard differs(lit, offset, plain, offset, by: 2.0 / 255) else { continue }
+                    let fromCover = distance(fromPixel: x, y, to: cover, scale: glowing.scale)
+                    guard fromCover > 1 else { continue }
+                    scan.farthest = max(scan.farthest, fromCover)
+                    if fromCover > reach { scan.beyondReach += 1 } else { scan.glowNear += 1 }
+                }
+            }
+        }
+    }
+    return scan
+}
+
 /// A presented player's cover shrinks while paused, and its glow shrinks with it: the glow still
 /// reaches no further than `reach` past the cover as drawn, so paused it ends further inside the
 /// cover's layout frame than it does playing, and every gap to text measured above still holds.
 /// The glow is isolated as the difference between the render with it and the render under Reduce
 /// Transparency, which share everything else, the shadow included.
 @Test @MainActor
-func thePausedCoversGlowShrinksWithTheCover() throws {
+func thePausedCoversGlowShrinksWithTheCover() async throws {
     let reach = DulcetArtworkGlow.reach
     let margin = reach + 40
     for size in [CGFloat(120), 360] {
         for scale in [CGFloat(1), DulcetPlayerCover.pausedScale] {
-            let glowing = try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: false)
-            let reduced = try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: true)
+            let glowing = try timedRender("cover \(size)x\(scale)") {
+                try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: false)
+            }
+            await Task.yield()
+            let reduced = try timedRender("cover \(size)x\(scale) reduce-transparency") {
+                try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: true)
+            }
             let drawn = size * scale
             let inset = (size - drawn) / 2
             let cover = CGRect(x: margin + inset, y: margin + inset, width: drawn, height: drawn)
-            var beyondReach = 0
-            var glowNear = 0
-            var farthest: CGFloat = 0
-            for y in 0..<glowing.height {
-                for x in 0..<glowing.width {
-                    let fromCover = distance(fromPixel: x, y, to: cover, scale: glowing.scale)
-                    guard fromCover > 1 else { continue }
-                    guard channelDelta(glowing.rgb(x, y), reduced.rgb(x, y)) > 2.0 / 255 else { continue }
-                    farthest = max(farthest, fromCover)
-                    if fromCover > reach { beyondReach += 1 } else { glowNear += 1 }
-                }
+            let scan = await scannedOffTheMainActor {
+                scanCoverGlow(glowing: glowing, reduced: reduced, cover: cover, reach: reach)
             }
-            print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) farthest-glow=\(farthest)"
-                + " beyond-reach=\(beyondReach) glow-near=\(glowNear)")
-            #expect(beyondReach == 0, "glow \(beyondReach) px past the reach of the drawn cover, size \(size) scale \(scale)")
-            #expect(glowNear > 0, "the glow must be drawn at all, size \(size) scale \(scale)")
+            print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) farthest-glow=\(scan.farthest)"
+                + " beyond-reach=\(scan.beyondReach) glow-near=\(scan.glowNear)")
+            #expect(scan.beyondReach == 0, "glow \(scan.beyondReach) px past the reach of the drawn cover, size \(size) scale \(scale)")
+            #expect(scan.glowNear > 0, "the glow must be drawn at all, size \(size) scale \(scale)")
         }
     }
 }
@@ -264,12 +352,64 @@ private func renderPlayer(
     return try RenderedPixels(image: image, scale: CGFloat(bitmap.pixelsWide) / size.width)
 }
 
+/// The bounds, in points, of the pixels that differ between two renders with different cover
+/// palettes -- the cover -- or nil when nothing differs.
+private func scanCoverBounds(_ first: RenderedPixels, _ second: RenderedPixels) -> CGRect? {
+    var minX = Int.max, minY = Int.max, maxX = Int.min, maxY = Int.min
+    first.bytes.withUnsafeBufferPointer { one in
+        second.bytes.withUnsafeBufferPointer { two in
+            for y in 0..<first.height {
+                for x in 0..<first.width {
+                    let offset = (y * first.width + x) * 4
+                    guard differs(one, offset, two, offset, by: 0.02) else { continue }
+                    minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+        }
+    }
+    guard maxX >= minX else { return nil }
+    let scale = first.scale
+    return CGRect(
+        x: CGFloat(minX) / scale, y: CGFloat(minY) / scale,
+        width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale
+    )
+}
+
+/// The nearest pixel drawn on the player -- clearly not window colour -- outside the cover and its
+/// one-point edge stroke: anywhere, directly below the cover, and directly beside it.
+private struct NearestDrawn: Sendable {
+    var nearest = CGFloat.infinity
+    var below = CGFloat.infinity
+    var beside = CGFloat.infinity
+}
+
+private func scanNearestDrawn(_ render: RenderedPixels, cover: CGRect) -> NearestDrawn {
+    var found = NearestDrawn()
+    let scale = render.scale
+    render.bytes.withUnsafeBufferPointer { pixels in
+        let window = (1 * render.width + 1) * 4
+        for y in 0..<render.height {
+            for x in 0..<render.width {
+                let offset = (y * render.width + x) * 4
+                guard differs(pixels, offset, pixels, window, by: 0.15) else { continue }
+                let fromCover = distance(fromPixel: x, y, to: cover, scale: scale)
+                guard fromCover > 1 else { continue } // the cover and its one-point edge stroke
+                found.nearest = min(found.nearest, fromCover)
+                let px = (CGFloat(x) + 0.5) / scale, py = (CGFloat(y) + 0.5) / scale
+                if py > cover.maxY, px >= cover.minX, px <= cover.maxX { found.below = min(found.below, fromCover) }
+                if px > cover.maxX, py >= cover.minY, py <= cover.maxY { found.beside = min(found.beside, fromCover) }
+            }
+        }
+    }
+    return found
+}
+
 /// Nothing on the real player -- no text, no control -- is drawn within the glow's reach of the
 /// cover, in the one-column and the side-by-side layouts. The cover is found as the pixels that
 /// change with its palette, and its size is checked against the layout, so a render that lost
 /// the cover cannot pass by finding nothing near it.
 @Test @MainActor
-func nothingOnThePlayerIsDrawnWithinTheGlowsReachOfTheCover() throws {
+func nothingOnThePlayerIsDrawnWithinTheGlowsReachOfTheCover() async throws {
     let reach = DulcetArtworkGlow.reach
     let layouts: [(name: String, size: CGSize, cover: CGFloat)] = [
         ("one-column", CGSize(width: 430, height: 900), 360),
@@ -278,44 +418,26 @@ func nothingOnThePlayerIsDrawnWithinTheGlowsReachOfTheCover() throws {
     ]
     var observedPairs: Set<DulcetRegisteredContrastPair> = []
     for layout in layouts {
-        let first = try renderPlayer(palette: .emberRose, size: layout.size, observedPairs: &observedPairs)
-        let second = try renderPlayer(palette: .oceanMint, size: layout.size, observedPairs: &observedPairs)
-        var minX = Int.max, minY = Int.max, maxX = Int.min, maxY = Int.min
-        for y in 0..<first.height {
-            for x in 0..<first.width where channelDelta(first.rgb(x, y), second.rgb(x, y)) > 0.02 {
-                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
-            }
+        let first = try timedRender("player \(layout.name)") {
+            try renderPlayer(palette: .emberRose, size: layout.size, observedPairs: &observedPairs)
         }
-        try #require(maxX >= minX, "\(layout.name): the cover must be drawn")
-        let scale = first.scale
-        let cover = CGRect(
-            x: CGFloat(minX) / scale, y: CGFloat(minY) / scale,
-            width: CGFloat(maxX - minX + 1) / scale, height: CGFloat(maxY - minY + 1) / scale
-        )
+        await Task.yield()
+        let second = try timedRender("player \(layout.name) second palette") {
+            try renderPlayer(palette: .oceanMint, size: layout.size, observedPairs: &observedPairs)
+        }
+        let found = await scannedOffTheMainActor { scanCoverBounds(first, second) }
+        let cover = try #require(found, "\(layout.name): the cover must be drawn")
         // The experiment is the one intended: the cover found is the size the layout gives it.
         #expect(abs(cover.width - layout.cover) <= 1 && abs(cover.height - layout.cover) <= 1,
                 "\(layout.name): found a \(cover.size) cover, expected \(layout.cover)")
 
-        let window = first.rgb(1, 1)
-        var nearest = CGFloat.infinity
-        var nearestBelow = CGFloat.infinity
-        var nearestBeside = CGFloat.infinity
-        for y in 0..<first.height {
-            for x in 0..<first.width where channelDelta(first.rgb(x, y), window) > 0.15 {
-                let fromCover = distance(fromPixel: x, y, to: cover, scale: scale)
-                guard fromCover > 1 else { continue } // the cover and its one-point edge stroke
-                nearest = min(nearest, fromCover)
-                let px = (CGFloat(x) + 0.5) / scale, py = (CGFloat(y) + 0.5) / scale
-                if py > cover.maxY, px >= cover.minX, px <= cover.maxX { nearestBelow = min(nearestBelow, fromCover) }
-                if px > cover.maxX, py >= cover.minY, py <= cover.maxY { nearestBeside = min(nearestBeside, fromCover) }
-            }
-        }
+        let drawn = await scannedOffTheMainActor { scanNearestDrawn(first, cover: cover) }
         print("DULCET TINT LAYOUT layout=\(layout.name) cover=\(cover) reach=\(reach)"
-            + " nearest-drawn=\(nearest) below=\(nearestBelow) beside=\(nearestBeside)")
-        #expect(nearest > reach, "\(layout.name): something is drawn \(nearest) pt from the cover, within its \(reach) pt glow")
+            + " nearest-drawn=\(drawn.nearest) below=\(drawn.below) beside=\(drawn.beside)")
+        #expect(drawn.nearest > reach, "\(layout.name): something is drawn \(drawn.nearest) pt from the cover, within its \(reach) pt glow")
         // The instrument sees text at all: the title sits one spacing step under the cover.
-        #expect(nearestBelow <= DulcetNowPlayingView.coverToTitleSpacing + 16,
-                "\(layout.name): the title must be found under the cover; nearest below is \(nearestBelow)")
+        #expect(drawn.below <= DulcetNowPlayingView.coverToTitleSpacing + 16,
+                "\(layout.name): the title must be found under the cover; nearest below is \(drawn.below)")
     }
     // Every pair the player registered is measured against the window (and the fills drawn on
     // it), never against artwork: the registry has no pair for text on cover colour.
