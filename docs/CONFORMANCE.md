@@ -83,3 +83,55 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-85 | download enqueue pins metadata atomically; downloaded albums rechecked after an epoch change |
 | CONF-86 | multi-list screen rows publish independently |
 | CONF-87 | bounded detail look-ahead |
+
+## Apple account-connect evidence boundary (CONF-09b)
+
+CONF-09b is an explicit gap on all four Apple `account.connect` cells. The shared
+`accountPresentationTransitionsGivenConnectorOutcomes` test submits through the production
+`DulcetPresentationStore` into `DulcetAccountDataSource` and collects real snapshots, but it injects
+the connector's completed outcomes and controls the credential store's load and save. It therefore
+proves conditional presentation behaviour — idle, connecting, connected, a saved account
+reconstructed from the credentials the successful submission actually saved, every domain-error
+family, and the save-failure path — and does not prove that production can originate each outcome
+or forward it through the Apple adapter. It runs in the macOS package run (`DulcetKitTests`), on the
+iPhone and the iPad (`DulcetKitIOSTests`) and on Apple TV (`DulcetKitTVOSTests`), and each cell cites
+it as a bounded `observes` row, never as CONF-09b.
+
+`unevidenced_conformance` maps a declared CONF id to a nonblank reason. The parity gate requires the
+evidence and the named gaps to partition the cell's declared ids with no overlap, and refuses a
+`shipped` cell that carries a gap. This keeps the universal CONF-09b requirement visible instead of
+satisfying it with a narrower test.
+
+### `Capability.Unsupported` has no account-connect origin
+
+OBSERVED from source on 2026-09-25. `DomainError.CapabilityUnsupported` and `CapabilityFeature` are
+declared in `core/.../AccountConnection.kt`. Production constructs it only in `LibrarySync.kt`, for a
+server that cannot enumerate the whole library and for a walk that will not terminate; every other
+production occurrence is a type match in a diagnostic or facade mapping. On the account-connect path,
+`AccountConnector.connectNormalized` treats an extension-list 404 or non-envelope as
+`legacySubsonic = true` and proceeds after an authenticated `ping`; malformed metadata is
+`Protocol.MalformedEnvelope`, an incompatible version is `Protocol.Incompatible`, and parsed server
+errors go through `AccountConnectionContract.mapSubsonicError`. None of them yields a capability
+error, which agrees with spec §10.3: absent discovery must not fail a baseline login. §10.4's
+three-failure circuit breaker has no production implementation in `commonMain`, so it supplies no
+origin either. The Apple and Android capability error presentations are therefore reserved
+vocabulary for account setup; the Swift conditional test and the Android CONF-09b control both inject
+it.
+
+## CONF-51 citations on the Apple download cells are incomplete
+
+CONF-51 requires live exact **and** cold-estimated bodies to validate before atomic promotion, an
+exact mismatch never to reach the destination, and duplicate delivery to be idempotent. The macOS,
+iOS and iPadOS `downloads.offline` cells cite
+`DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically[OnIOS|OnIPadOS]`,
+which observes one successful promotion through the platform executor: the downloaded state, exactly
+one promoted file, no remaining `.partial`, and a stored size equal to the asset's exact length. It
+exercises no cold estimate, no exact mismatch and no duplicate delivery. The core conformance control
+`conf51LiveDownloadsValidateBeforeAtomicPromotion` covers those three against the reference server,
+but through `DownloadPolicyContract`, not the Apple executor. This finding is open: nothing here
+changes a citation or a status.
+
+A naming rule — the CONF id must appear in the cited test's name — was considered as a gate for this
+class of defect and rejected. In the citation audit that found these two defects it flagged 26
+legitimate descriptive citations against 7 weak ones (four CONF-09b, three CONF-51), and a renamed
+test that still injects its outcome would pass it; naming does not establish semantic coverage.

@@ -3859,6 +3859,13 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   CrossOriginRedirectRejected`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
+  **OBSERVED 2026-09-25 from source:** the account-connect path never constructs it. The only
+  production constructions are library sync's, for a server that cannot enumerate the whole library
+  or a walk that will not terminate; every other production use is a type match in a mapping. In
+  account setup it is reserved vocabulary, not a missing mapping for absent extension discovery
+  (§10.3 requires baseline login to proceed), and §10.4's circuit breaker has no production
+  implementation to supply one. Presentation tests that inject it do not make it a reachable
+  account-connect state; `docs/CONFORMANCE.md` records the audit.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
@@ -5133,6 +5140,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 109 (2026-09-25)** — §18.12 records that `Capability.Unsupported` has no production origin on
+the account-connect path. CONF-09b ("every declared distinct account-connect render state is
+reachable") was cited on all four Apple cells by tests that reach no state through the production
+transitions: macOS cited a test that renders every state from deterministic fixtures, and iOS,
+iPadOS and tvOS cited tests that load the root view or check its layout in its initial state. The
+capability state cannot be reached at all without injecting it. The citations are withdrawn: each Apple cell now names CONF-09b as an
+explicit gap (`unevidenced_conformance`, which the parity gate requires to partition the declared ids
+with the evidence and forbids on a shipped cell), and keeps the injected-outcome presentation test
+as a bounded `observes` row. (Numbered after the highest revision on `main` when written; renumbers
+at merge.)
 
 **Revision 108 (2026-09-25)** — §12.2 rule 3 said the phase gate is Apple-only "because Android has no
 phase-to-presentation mapping on `main` at all" and that the Media3 work must extend it. The Media3
