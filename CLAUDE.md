@@ -454,15 +454,17 @@ They are deliberately not reproduced in this repository.**
     (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
     (docs/verification/android-playback-surfaces.md).
 
-44. **In a Robolectric host test, work the playback controller resumes on the main thread waits
-    until something idles the main looper.** `AndroidPlaybackController` runs on the main
-    dispatcher, and its song read resumes by a message the HTTP client posts from its own thread.
-    A Compose `waitUntil` does not idle the looper, so the request is answered (HTTP 200 at the
-    forwarder) while the controller shows nothing — no queue, no error — and every dispatcher
-    thread is idle. It is timing-dependent, so it reads as a flake: 2 of 8 album-play runs passed.
-    Idle the main looper inside the wait (`shadowOf(Looper.getMainLooper()).idle()`), as a device's
-    always runs: 8 of 8. The reader is unaffected; its requests run on its own thread (spec §28
-    revision 104 item 34).
+44. **In a Robolectric host test, a wait whose condition reads app state directly never idles the
+    main looper.** Compose's `waitUntil` advances Compose's clock and does not idle the looper; only
+    a condition that goes through a Compose finder does (fetching semantics nodes waits for idle).
+    Anything delivered by a message posted to the main looper from another thread then never
+    arrives. `AndroidPlaybackController` runs on the main dispatcher, and its song read resumes by
+    such a message, so a wait on `playback.state.value` saw the read answered (HTTP 200 at the
+    forwarder) while the controller showed nothing — no queue, no error — with every dispatcher
+    thread idle. It is timing-dependent, so it reads as a flake: 2 of 8 album-play runs passed.
+    Idle the main looper inside such a condition (`shadowOf(Looper.getMainLooper()).idle()`), as a
+    device's always runs: 8 of 8. The reader's publications also arrive by the main looper; its
+    waits work only because they read the screen through finders (spec §28 revision 104 item 34).
 
 ## Review and delegation
 

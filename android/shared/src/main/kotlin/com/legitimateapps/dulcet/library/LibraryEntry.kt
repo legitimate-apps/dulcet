@@ -276,6 +276,8 @@ private fun TvAlbumScreen(session: LibrarySession, provider: String, rawId: Stri
                     position,
                     onPlay = {
                         // The album from this track, as the phone plays it; then the TV's Now Playing.
+                        // A note that a track plays only on reconnect no longer applies.
+                        note = null
                         if (playAlbum(playback, provider, current, item.rawId)) {
                             context.startActivity(PlaybackIntents.showNowPlaying(context))
                         }

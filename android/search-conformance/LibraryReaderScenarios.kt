@@ -374,13 +374,15 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals(reconnects, observed().reconnects, "the late answer starts no reconnect")
         assertEquals(emptyList(), readerRequests(lossMark).map { it.endpoint }, "nothing is read after the loss")
         assertTrue(HOME.all { last(it).freshness.isOfflineCached() }, "every row still says offline")
+        // Measured here, before the clean-up below reconnects.
+        val observedLine = "answers-after-loss=${observed().reconnectAnswers - answers} " +
+            "reconnects-after-loss=${observed().reconnects - reconnects} requests-after-loss=${readerRequests(lossMark).size}"
 
         proxy.release()
         environment.network.restore()
         await("the library back online") { observed().connections.last() is LibraryConnectionState.Online }
         assertNoCredentialLeak()
-        println("SHELL OBSERVED $platform late-reconnect-answer answers=${observed().reconnectAnswers - answers} " +
-            "reconnects-after-loss=0 requests-after-loss=0")
+        println("SHELL OBSERVED $platform late-reconnect-answer $observedLine")
     }
 
     /**
@@ -472,9 +474,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             try {
                 // The controller runs on the main thread, and its song read resumes there by a message
                 // posted from the HTTP client's thread. The host runtime's main looper runs posted
-                // messages only when something idles it, and a wait that only drives Compose does
-                // not, so the queue was published in 2 of 8 runs before this. A device's main looper
-                // always runs; idling it here is that.
+                // messages only when something idles it. The other waits here read the screen through
+                // Compose finders, which idle it; this one reads the controller's state directly, so
+                // nothing did, and the queue was published in 2 of 8 runs before this. A device's
+                // main looper always runs; idling it here is that.
                 await("the album to be queued") {
                     shadowOf(Looper.getMainLooper()).idle()
                     playback.state.value.queue.isNotEmpty()

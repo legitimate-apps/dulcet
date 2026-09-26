@@ -528,7 +528,10 @@ public data class LibraryObservationState(
      */
     val reachabilityReports: List<Boolean> = emptyList(),
     val reconnects: Int = 0,
-    /** Reconnect outcomes this session received, acted on or not. */
+    /**
+     * Outcomes of this session's latest reconnect that reached it while open, whether or not they
+     * changed anything: an outcome of a superseded reconnect, or one after close, is not counted.
+     */
     val reconnectAnswers: Int = 0,
     /** Every connection state this session reported, in order. */
     val connections: List<LibraryConnectionState> = emptyList(),

@@ -1,6 +1,9 @@
 {
   "schema_version": 2,
-  "accepted_regressions": [],
+  "accepted_regressions": [
+    {"id": "library.sync", "platform": "android", "reason": "The Android apps no longer synchronize the library; they read it live (spec 16.8). The cell stops citing the removed sync app proofs and is n/a until phase R5 retires the row (spec 16.18).", "pr": "#0"},
+    {"id": "library.sync", "platform": "androidtv", "reason": "The Android apps no longer synchronize the library; they read it live (spec 16.8). The cell stops citing the removed sync app proofs and is n/a until phase R5 retires the row (spec 16.18).", "pr": "#0"}
+  ],
   "accepted_promotions": [],
   "features": [
     {
@@ -628,52 +631,12 @@
           "reason": "apple-ci executes the platform-specific app-host test on tvos, with its own execution guard and JUnit directory. DulcetCoreLibraryBrowser invokes production AppleLibrarySyncClient against the disposable fixture using a fresh platform-prefixed UUID database. The test independently reads SQLDelight generations 1 and 2, compares displayed opaque identifiers, asserts and emits the real monotonic scheduled-refresh firing, then asserts connection refusal before reopening saved metadata offline with zero connector or sync starts. This proves the production persistence and presentation integration on this destination; it does not claim physical-device or interaction coverage."
         },
         "android": {
-          "status": "shipped",
-          "evidence": [
-            {
-              "conformance": "CONF-31",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
-            },
-            {
-              "conformance": "CONF-32",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
-            },
-            {
-              "conformance": "CONF-33",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
-            }
-          ],
-          "reason": "CONF-31, CONF-32 and CONF-33 are executed by the core conformance suite on the Android host runtime in the disposable Linux job, and its JUnit is consumed by the required core-ci evidence verifier. That is the core sync contract only. The Android apps no longer run sync: they browse the library through the reader (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with it. This row is retired through accepted_removals when the sync code is deleted (spec 16.18, phase R5); the status is kept until then as that plan states."
+          "status": "n/a",
+          "reason": "The Android apps do not synchronize the library: they read it live and keep what was seen (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with the sync shells. The core sync contract (CONF-31, CONF-32, CONF-33) is still exercised by the core tests, which core-ci also runs on the Android host runtime, and is evidenced on the Apple cells, until this row is retired through accepted_removals in phase R5 (spec 16.18)."
         },
         "androidtv": {
-          "status": "shipped",
-          "evidence": [
-            {
-              "conformance": "CONF-31",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
-            },
-            {
-              "conformance": "CONF-32",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
-            },
-            {
-              "conformance": "CONF-33",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
-            }
-          ],
-          "reason": "CONF-31, CONF-32 and CONF-33 are executed by the core conformance suite on the Android host runtime in the disposable Linux job, and its JUnit is consumed by the required core-ci evidence verifier. That is the core sync contract only. The Android apps no longer run sync: they browse the library through the reader (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with it. This row is retired through accepted_removals when the sync code is deleted (spec 16.18, phase R5); the status is kept until then as that plan states."
+          "status": "n/a",
+          "reason": "The Android apps do not synchronize the library: they read it live and keep what was seen (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with the sync shells. The core sync contract (CONF-31, CONF-32, CONF-33) is still exercised by the core tests, which core-ci also runs on the Android host runtime, and is evidenced on the Apple cells, until this row is retired through accepted_removals in phase R5 (spec 16.18)."
         }
       }
     },
@@ -698,7 +661,7 @@
              "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77ReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElse"},
             {"conformance": "CONF-86", "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionLibraryReaderAppConformanceTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive"},
-            {"observes": "returning the phone app to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder, after sixteen minutes in the background with nothing read",
+            {"observes": "with the phone app stopped, nothing is read while the main thread's clock is advanced sixteen minutes (the reader's own timers run in real time; the cadence test covers them), and returning to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly"},
             {"observes": "the core's epoch cadence runs while the phone app is in the foreground with a library screen open, reads only the epoch while it is unchanged, and stops in the background",
@@ -707,7 +670,7 @@
             {"observes": "a reconnect answered after the platform reported the network gone leaves the phone app's library offline: the session counts the answer, starts no second reconnect, and nothing more is read",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionLibraryReaderAppConformanceTest/aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline"},
-            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the phone app's reader offline; a return to the foreground and trying again from the album screen each tell the reader the network is reachable before reconnecting, and trying again then reads live",
+            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the phone app's reader offline; the session's record of what it tells the reader shows a return to the foreground telling it the network is reachable and then, when that reconnect finds the server unreachable, unreachable; and the album screen's refresh (a retry while offline) telling it reachable exactly once, after which the refresh reads live",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionLibraryReaderAppConformanceTest/anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack"},
             {"observes": "a playable track tapped on the phone's album screen queues the album in the server's order, current at that track, in the production playback service",
@@ -729,7 +692,7 @@
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77ReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElse"},
             {"conformance": "CONF-86", "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive"},
-            {"observes": "returning the TV app to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder, after sixteen minutes in the background with nothing read",
+            {"observes": "with the TV app stopped, nothing is read while the main thread's clock is advanced sixteen minutes (the reader's own timers run in real time; the cadence test covers them), and returning to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly"},
             {"observes": "the core's epoch cadence runs while the TV app is in the foreground with a library screen open, reads only the epoch while it is unchanged, and stops in the background",
@@ -738,7 +701,7 @@
             {"observes": "a reconnect answered after the platform reported the network gone leaves the TV app's library offline: the session counts the answer, starts no second reconnect, and nothing more is read",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline"},
-            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the TV app's reader offline; a return to the foreground and trying again from the album screen each tell the reader the network is reachable before reconnecting, and trying again then reads live",
+            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the TV app's reader offline; the session's record of what it tells the reader shows a return to the foreground telling it the network is reachable and then, when that reconnect finds the server unreachable, unreachable; and the album screen's refresh (a retry while offline) telling it reachable exactly once, after which the refresh reads live",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack"},
             {"observes": "a playable track selected with the remote on the TV album screen queues the album in the server's order, current at that track, in the production playback service, and opens the TV's own Now Playing activity",

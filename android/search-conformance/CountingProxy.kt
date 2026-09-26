@@ -76,8 +76,9 @@ class CountingProxy(private val target: String) : AutoCloseable {
     fun fail(rule: ((Seen) -> Boolean)?) = synchronized(lock) { failRule = rule }
 
     /**
-     * Closes the connection of every matching request without any answer, as a server that cannot
-     * be reached leaves it: the client sees a transport failure, not an HTTP status.
+     * Closes the connection of every matching request without any answer: the connection is
+     * accepted and then ends before a status line. The client sees a transport failure, not an HTTP
+     * status, which the app classifies as unreachable. It is not a refused or timed-out connection.
      */
     fun drop(rule: ((Seen) -> Boolean)?) = synchronized(lock) { dropRule = rule }
 

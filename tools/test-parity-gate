@@ -791,6 +791,53 @@ expect_comparison(
     _change_keeps_a_row_citing_a_deleted_test,
     "FEATURES.yml: account.connect/macos evidence test does not exist",
 )
+
+
+# The cell above is partial. A cell that stays SHIPPED while it stops citing a test is a regression:
+# with base tests no longer required to exist, only this declaration stops a change deleting a shipped
+# cell's proof together with its row. Rewording a kept row's prose is not a loss.
+def _shipped_rows(document: dict[str, object]) -> list[dict[str, str]]:
+    cell = feature_cell(document, "search.query", "macos")
+    assert cell["status"] == "shipped", "fixture: search.query/macos must be shipped"
+    evidence = cell["evidence"]
+    assert isinstance(evidence, list)
+    return evidence
+
+
+def _shipped_cell_loses_a_test(base: dict[str, object], _current: dict[str, object]) -> None:
+    _shipped_rows(base).append(dict(_DELETED_TEST_ROW))
+
+
+def _shipped_cell_loses_a_test_declared(base: dict[str, object], current: dict[str, object]) -> None:
+    _shipped_cell_loses_a_test(base, current)
+    regressions = current["accepted_regressions"]
+    assert isinstance(regressions, list)
+    regressions.append({
+        "id": "search.query",
+        "platform": "macos",
+        "reason": "A disclosed removal of one proof from a shipped cell.",
+        "pr": "#65",
+    })
+
+
+def _shipped_cell_rewords_a_row(_base: dict[str, object], current: dict[str, object]) -> None:
+    row = next(entry for entry in _shipped_rows(current) if "observes" in entry)
+    row["observes"] = row["observes"] + " (reworded)"
+
+
+expect_comparison(
+    "a shipped cell that stops citing a test, undeclared",
+    _shipped_cell_loses_a_test,
+    "undeclared regression: search.query/macos stays shipped but no longer cites ['DeletedWithItsRowTest/deletedWithItsRow']",
+)
+expect_comparison(
+    "a shipped cell that stops citing a test, declared",
+    _shipped_cell_loses_a_test_declared,
+)
+expect_comparison(
+    "a shipped cell whose kept row is reworded",
+    _shipped_cell_rewords_a_row,
+)
 expect_rejection(
     "required aggregator that never verifies executed tests",
     lambda document: macos_evidence(document)[0].update(
