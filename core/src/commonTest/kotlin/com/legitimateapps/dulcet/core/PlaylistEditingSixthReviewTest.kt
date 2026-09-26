@@ -192,7 +192,8 @@ class PlaylistEditingSixthReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road").localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         assertEquals(1, creates, "fixture: the first send's answer proves nothing")
         session.playlists.flush()
@@ -401,7 +402,8 @@ class PlaylistEditingSixthReviewTest {
         session.setOnline(false)
         val b = assertNotNull(session.playlists.create("Mix", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         advanceUntilIdle()
         // Another client makes Y of the name, holding other songs: B cannot adopt it and asks.
         val y = env.server.add("Mix", listOf("song-9"))

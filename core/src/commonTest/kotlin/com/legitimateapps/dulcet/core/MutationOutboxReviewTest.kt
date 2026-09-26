@@ -401,10 +401,14 @@ class MutationOutboxReviewTest {
         session.favourites.setRating(album4, 4)
         advanceUntilIdle()
         env.server.failWithStatus.clear()
-        session.setOnline(false)
+        // The later change is made while connected and its send times out, so it stays queued with 5
+        // among the values it may have sent. (A change made OFFLINE would be sent by the reconnect
+        // before anything is read, §16.14 step 1, and so be newer than any read here, §18.3.)
+        env.server.failWithError["setRating"] = DomainError.Transport.Timeout
         session.favourites.setRating(album4, 5)
+        advanceUntilIdle()
+        env.server.failWithError.clear()
         env.server.ratings[albumId(4)] = 4 // another client, after this device's change
-        session.setOnline(true)
         session.reader.open(grid) {}.also { it.refresh() }
         advanceUntilIdle()
         session.reader.reconnect()
@@ -500,7 +504,9 @@ class MutationOutboxReviewTest {
     private suspend fun TestScope.favouritesHeldAcrossFlushes(env: SessionEnv, status: Int, error: DomainError) {
         val (session, outcomes) = favouritesHeldBy(env, status)
         env.server.failWithStatus["ping"] = status
-        repeat(LibraryFavourites.MAX_FAILURES + 1) {
+        // The reachable report's reconnect flushes too (§16.14 step 1), at the first yield below, and
+        // meets the same refusal: it is one of the MAX_FAILURES + 1 flushes counted.
+        repeat(LibraryFavourites.MAX_FAILURES) {
             assertEquals(error, session.favourites.flush().stoppedBy)
             runCurrent()
         }
@@ -694,6 +700,7 @@ class MutationOutboxReviewTest {
     fun aFavouriteMadeDuringTheWaitIsNotSentEarly() = sessionTest { env ->
         val (session, _) = favouritesHeldBy(env, 429, retryAfter = "30")
         session.favourites.flush()
+        runCurrent() // the reachable report's reconnect: its flush is stopped by the wait, and it reads the epoch
         env.server.failWithStatus.clear()
         val before = env.server.log.size
         session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Track, "album-0004-track-0"), true)

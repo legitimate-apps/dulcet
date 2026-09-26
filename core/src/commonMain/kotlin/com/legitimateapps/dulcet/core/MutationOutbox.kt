@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.database.DulcetDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -248,11 +249,13 @@ internal class MutationOutbox(
         }
 
     /**
-     * Every row this account has queued, counted by the database — including a row [all] cannot
-     * decode, which is never sent and would be lost at sign-out just the same. So the count is never
-     * lower than what the person would lose.
+     * Every favourites row this account has queued — including a row [all] cannot decode, which is
+     * never sent and would be lost at sign-out just the same, so the count is never lower than what
+     * the person would lose. Playlist editing's rows share the table under [PLAYLIST_FIELD_PREFIX]
+     * and are counted by its own outbox, never here.
      */
-    fun pendingCount(): Long = queries.countPendingMutations(cache.serverId).executeAsOne()
+    fun pendingCount(): Long =
+        queries.selectPendingMutations(cache.serverId).executeAsList().count { !it.field_.startsWith(PLAYLIST_FIELD_PREFIX) }.toLong()
 
     fun pendingFor(target: LibraryEntityRef, field: MutationField): PendingMutation? =
         queries.selectPendingMutation(cache.serverId, target.rawId, mutationKey(target.kind, field)).executeAsOneOrNull()?.let { row ->
@@ -679,7 +682,9 @@ internal class LibraryFavourites(
      *   is online, or a reconnect is running — its first step, before the reader is online again.
      *   Otherwise (the platform's last report says unreachable) it does nothing.
      */
-    suspend fun flush(): MutationFlushReport = confined { lock.withLock {
+    suspend fun flush(): MutationFlushReport = withContext(OutboxRequests) { flushInContext() }
+
+    private suspend fun flushInContext(): MutationFlushReport = confined { lock.withLock {
         var sent = 0
         var saved = 0
         var adopted = 0

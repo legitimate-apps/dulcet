@@ -125,6 +125,10 @@ class AppleLibraryReaderFacadeTest {
             MutationOutcome.Saved(album, MutationField.Starred, 1) to listOf("saved", "album", "favourite", 1, null, null),
             MutationOutcome.NotSaved(album, MutationField.Rating, DomainError.Server.Known(70)) to
                 listOf("notSaved", "album", "rating", null, null, "notFound"),
+            MutationOutcome.Held(album, MutationField.Starred, DomainError.Auth.InvalidCredentials) to
+                listOf("held", "album", "favourite", null, null, "invalidCredentials"),
+            MutationOutcome.Held(album, MutationField.Rating, DomainError.Server.Busy(null)) to
+                listOf("held", "album", "rating", null, null, "serverBusy"),
             MutationOutcome.Superseded(album, MutationField.Rating, 4) to listOf("superseded", "album", "rating", null, 4, null),
             MutationOutcome.NotRecorded(LibraryEntityRef(LibraryEntityKind.Track, "t"), MutationField.Starred) to
                 listOf("notRecorded", "track", "favourite", null, null, null),

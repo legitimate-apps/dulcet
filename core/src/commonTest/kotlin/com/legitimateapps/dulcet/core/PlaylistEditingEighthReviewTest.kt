@@ -80,6 +80,10 @@ class PlaylistEditingEighthReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that flush makes the send, and the
+        // tombstone's lookups are the flushes counted below.
+        runCurrent()
+        assertEquals(1, creates, "fixture: the reconnect's flush made the send")
         var refused = 0
         repeat(4) {
             refused += session.playlists.flush().refused
@@ -292,7 +296,8 @@ class PlaylistEditingEighthReviewTest {
         session.setOnline(false)
         val localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush(); runCurrent()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         other = env.server.add("Other", listOf("song-9"))
         session.playlists.flush(); runCurrent()
         assertEquals(2, creates)

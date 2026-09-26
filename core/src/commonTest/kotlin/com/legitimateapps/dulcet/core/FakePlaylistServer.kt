@@ -38,6 +38,9 @@ internal class FakePlaylistServer(
     )
 
     val playlists = mutableListOf<Playlist>()
+
+    /** The songs `star` has starred and `unstar` has not since unstarred. */
+    val starredSongs = mutableSetOf<String>()
     val log = mutableListOf<Request>()
     private var nextId = 1
 
@@ -124,8 +127,11 @@ internal class FakePlaylistServer(
 
     private fun respond(request: Request): LibraryEndpointResponse = when (request.endpoint) {
         "ping" -> ok(null)
-        // Favourites, answered and not modelled: the playlist tests only count them.
-        "star", "unstar", "setRating" -> ok(null)
+        // Favourites: a song's star is kept, so a re-read answers what the server holds; the rest is
+        // answered and counted only.
+        "star" -> ok(null).also { request.all("id").forEach { starredSongs += it } }
+        "unstar" -> ok(null).also { request.all("id").forEach { starredSongs -= it } }
+        "setRating" -> ok(null)
         "getScanStatus" -> ok(""""scanStatus":{"scanning":false,"count":12,"lastScan":"2026-09-23T10:00:00Z"}""")
         "getMusicFolders" -> ok(""""musicFolders":{"musicFolder":[{"id":"1","name":"Music"}]}""")
         "getAlbum" -> ok(
@@ -205,8 +211,10 @@ internal class FakePlaylistServer(
         append(",\"coverArt\":\"pl-" + p.id + "\"}")
     }
 
-    private fun songJson(id: String) =
-        """{"id":"$id","title":"Title $id","album":"Album One","albumId":"album-1","artist":"Artist","artistId":"artist-1","duration":60,"suffix":"flac"}"""
+    private fun songJson(id: String): String {
+        val starred = if (id in starredSongs) ",\"starred\":\"2026-09-23T10:00:00Z\"" else ""
+        return """{"id":"$id","title":"Title $id","album":"Album One","albumId":"album-1","artist":"Artist","artistId":"artist-1","duration":60,"suffix":"flac"$starred}"""
+    }
 
     private fun ok(body: String?) = LibraryEndpointResponse(
         200,
