@@ -118,7 +118,8 @@ internal const val MAX_LYRICS_RESPONSE_BYTES = 8 * 1_048_576
  *
  * The §10.4 breaker is the reader's, never this object's: a breaker created per lyrics object
  * would start closed every time a shell asked for one, and would never hold; and the reader owns
- * the one offline-to-online transition that resets it, whichever entry point takes it.
+ * the one offline-to-online transition that resets it: a reconnect's, once its epoch read
+ * succeeds (§16.14).
  */
 internal class LibraryLyrics(
     private val reader: LibraryReader,

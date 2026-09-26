@@ -708,8 +708,7 @@ internal class LibraryReader(
     internal suspend fun sendChecked(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
-        whileOffline: Boolean = false,
-    ): SentResponse = send(endpoint, parameters, whileOffline = whileOffline).requireOk(endpoint, parameters)
+    ): SentResponse = send(endpoint, parameters).requireOk(endpoint, parameters)
 
     /** [sendChecked] for parameters that repeat a name, in order (playlist edits, §18.6). */
     internal suspend fun sendRepeatedChecked(

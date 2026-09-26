@@ -9,13 +9,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Owed extends after the round-9 review (§16.14, §28 item 29): a screen never says `live` while a
- * "load more" it owes is still to be made, whatever route left it owed. A page a rebase discarded
- * is read once more at once; each extend keeps its own failure; a person's own "load more" that
- * fails online is owed like one asked for offline; and a window whose stamp keeps moving costs no
- * more per trigger than it did before extends were owed. The review's probes B9, B10, B12, B13 and
- * B16, and one for each outcome arm it found unpinned, as tests. Each is bounded in time and in
- * requests ([cappedSessionTest]), so a mutant that loops fails instead of holding a worker.
+ * Owed extends after the round-9 review (§16.14, §28 revision 104 item 29): a screen never says
+ * `live` while a "load more" it owes is still to be made, whatever route left it owed. A page a
+ * rebase discarded is read once more at once; each extend keeps its own failure; a person's own
+ * "load more" that fails online is owed like one asked for offline; and a window whose stamp keeps
+ * moving costs no more per trigger than it did before extends were owed. The review's probes B9,
+ * B10, B12, B13 and B16, and one for each outcome arm it found unpinned, as tests. Each is bounded
+ * in time and in requests ([cappedSessionTest]), so a mutant that loops fails instead of holding a
+ * worker.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderOwedExtendRoutesTest {
@@ -255,6 +256,36 @@ class ReaderOwedExtendRoutesTest {
      * An owed extend whose page arrives but whose *after* reading fails is not made: the page is
      * not used, the extend stays owed with that failure, and the next trigger makes it.
      */
+    /**
+     * An extend that is made clears its own earlier failure. A person's "load more" fails online,
+     * and their second one succeeds: nothing is owed and nothing failed, so the screen says `live`.
+     * Pinned because writing an extend's failure into the window's own, as before round 10, still
+     * ends at 200 rows but says `cached(failed)`.
+     */
+    @Test
+    fun aSecondLoadMoreThatSucceedsClearsTheFirstOnesFailureAndEndsLive() = cappedSessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        handle.setViewport(90, 99)
+        advanceUntilIdle()
+        env.server.answerInstead = { endpoint ->
+            if (endpoint == "getAlbumList2" && env.server.log.last().parameters["offset"] == "100") status500() else null
+        }
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals("cached(Failed)/100", pubs.last.label(), "fixture: the first load more failed")
+
+        env.server.answerInstead = { null }
+        val before = env.server.log.size
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals(listOf("100"), offsets(env, before), "the second load more read the page once")
+        assertEquals("Live/200", pubs.last.label())
+    }
+
     @Test
     fun anOwedExtendWhoseAfterReadingFailsIsOwed() = cappedSessionTest { env ->
         val (session, handle, pubs) = owedAppend(env)

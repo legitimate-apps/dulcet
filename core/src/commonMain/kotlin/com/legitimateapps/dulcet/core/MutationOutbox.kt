@@ -724,7 +724,8 @@ internal class LibraryFavourites(
                     val failure = try {
                         // One of the two kinds of request an offline reader sends — and only while
                         // canSend holds when it reaches the front of the queue, not only when queued.
-                        reader.sendChecked(change.endpoint(), change.parameters(), whileOffline = true)
+                        // It is an outbox request because [flush] runs in [OutboxRequests].
+                        reader.sendChecked(change.endpoint(), change.parameters())
                         null
                     } catch (notSent: ReaderSendRefused) {
                         // Refused unsent after an unreachable report: kept, and not counted as sent.

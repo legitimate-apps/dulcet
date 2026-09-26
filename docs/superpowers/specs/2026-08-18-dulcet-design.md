@@ -1232,18 +1232,18 @@ app stayed open):
   the period is shorter than it.
 - **A reconnect resets it.** The reader's one offline→online transition clears every breaker of the
   session. That transition is a reconnect's, made once its epoch read succeeds (§16.14), whether a
-  platform reachability report requested the reconnect or the reconnect was called: failures
-  observed before the network went away say nothing about an endpoint after it came back. Losing
-  the network, being told again that it is up, or a reconnect that fails resets nothing. (Corrected
-  in place when R2a-core was integrated, §28 revision 104 item 33: this said a reachability report
-  took the transition itself; since item 29 a report only requests the reconnect.) A request the
-  reader refuses unsent because it went offline (§16.14) is not an answer of the endpoint: it
-  neither charges nor clears the breaker, and a trial so refused gives its slot back, as a
-  cancelled one does. **The reset
-  also forgets calls already in flight**: every admission carries the generation it was handed out
-  in, a reset starts a new one, and a success, failure or cancellation from an older generation
-  changes nothing. (Corrected at the third review: three requests sent before a reconnect and
-  failing after it opened the breaker at once.)
+  platform reachability report requested the reconnect or the reconnect was called: failures observed
+  before the network went away say nothing about an endpoint after it came back. Losing the network,
+  being told again that it is up, or a reconnect that fails resets nothing. (Corrected in place when
+  R2a-core was integrated, §28 revision 104 item 33: this said a reachability report took the
+  transition itself; since item 29 a report only requests the reconnect.) A request the reader refuses
+  unsent because it went offline (§16.14) is not an answer of the endpoint: it neither charges nor
+  clears the breaker. It also returns its admission, but nothing can observe that: such a refusal
+  happens only while the reader is offline, and every way back online resets the breaker. **The reset
+  also forgets calls already in flight**: every admission carries the generation it was handed out in,
+  a reset starts a new one, and a success, failure or cancellation from an older generation changes
+  nothing. (Corrected at the third review: three requests sent before a reconnect and failing after it
+  opened the breaker at once.)
 - **It is session state.** It lives on the account's reader, so a feature object created again does
   not start with a closed breaker, and it dies with the session.
 
@@ -8253,10 +8253,12 @@ fresh disposable server before landing; items 11–14 are what that review chang
       again, and one keyed on a last row appearing does not fire while that row stays on screen. It
       is now owed like any other extend (§16.14).
 
-    **After the round-9 review (round 10).** OBSERVED 2026-09-26 on macOS arm64, counted from the
-    JUnit XML with every task forced to execute (`--rerun-tasks`, 67 of 67 tasks executed): `jvmTest` ran 782
-    tests, `macosArm64Test` 834 and `testAndroidHostTest` 881, each with 0 failures. The seven
-    compiles passed, and the macOS debug framework linked. The facade's header gained no member: its diff against round 9's is documentation only — the `owed` reason on the freshness, and what `loadMore`, `loadBefore` and `refresh` now do about an owed extend.
+    **After the round-9 review (round 10).** OBSERVED 2026-09-26 on macOS arm64, counted from the JUnit
+    XML with every task forced to execute (`--rerun-tasks`, 67 of 67 tasks executed): `jvmTest` ran 782
+    tests, `macosArm64Test` 834 and `testAndroidHostTest` 881, each with 0 failures. The seven compiles
+    passed, and the macOS debug framework linked. The facade's header gained no member: its diff against
+    round 9's is documentation only — the `owed` reason on the freshness, and what `loadMore`,
+    `loadBefore` and `refresh` now do about an owed extend.
     - **A screen never says `live` while an extend is owed** (item 29, corrected in place;
       §16.14). `ReaderOwedExtendRoutesTest` holds the review's probes B9, B10, B12, B13 and B16 as
       tests, with one more for a page discarded twice and one for an *after* reading that fails.
@@ -8333,8 +8335,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - **A refused lyrics read was charged to its endpoint.** Lyrics classified every
       `LibraryRequestFailure` as the server's, and a request the reader refuses unsent is one. So
       a read that got past its own offline check and was refused published `unreachable` and
-      counted toward opening the breaker. It now publishes what an offline read does, and it gives
-      its admission back without charging or clearing the endpoint (§10.4, §16.14).
+      counted toward opening the breaker. It now publishes what an offline read does, and neither
+      charges nor clears the endpoint (§10.4, §16.14). It also returns its admission, which nothing
+      can observe: every way back online resets the breaker (corrected at the integration review).
       **Red first:** `aReadRefusedUnsentBecauseTheReaderWentOfflineIsNotChargedToTheEndpoint`
       failed with `Unavailable(Failed(Unreachable))` where `Unavailable(NotCachedOffline)` was
       required. The read joins a flight while online, and the flight is cancelled after the network
@@ -8347,12 +8350,46 @@ fresh disposable server before landing; items 11–14 are what that review chang
     (`--rerun-tasks`, 67 of 67 tasks executed): `jvmTest` ran 940 tests, `macosArm64Test` 986 and
     `testAndroidHostTest` 1,032, where round 10 ran 782, 834 and 881. `macosArm64Test` and
     `testAndroidHostTest` had no failures. The one `jvmTest` failure was
-    `HostResolutionTest.blockingLookupDeadlineRejectsRedirect`, which asserts that a lookup returns
-    in under 400 ms of wall-clock time; its file is untouched here. Run alone five times on the same tree, it passed 10 of 10 tests each time. The seven compiles
-    passed, and the macOS debug framework linked. DulcetKit's `swift test` passed 190 tests in 8 suites (its XCTest
-    runner executed 0; every test there is a Swift Testing test). The facade header's diff against
-    round 10's is `main`'s lyrics declarations and its `TooLarge` error kind; this integration
-    adds no declaration.
+    `HostResolutionTest.blockingLookupDeadlineRejectsRedirect`, which asserts that a lookup returns in
+    under 400 ms of wall-clock time; its file is untouched here. Run alone five times on the same tree,
+    it passed 10 of 10 tests each time. The seven compiles passed, and the macOS debug framework linked.
+    DulcetKit's `swift test` passed 190 tests in 8 suites (its XCTest runner executed 0; every test
+    there is a Swift Testing test). The facade header's diff against round 10's is `main`'s lyrics
+    declarations and its `TooLarge` error kind; this integration adds no declaration.
+
+    **After the integration review.** The review found no blocker. It found one rule without a test,
+    one outcome arm without a test, one claim nothing can observe, and a control session that did
+    not wait.
+    - **A reconnect that fails resets nothing**, and a test now pins it:
+      `ReaderReconnectBreakerTest`. The breaker is opened, the reader goes offline, and the report
+      that the server is reachable requests a reconnect whose `getScanStatus` answers 500. The
+      reader stays offline with the breaker open; the reconnect that then succeeds closes it.
+      Putting back `main`'s reset at the reachability report, which survived every other test,
+      fails it with "a reconnect that failed reset the breaker".
+    - **An extend that is made clears its own failure.** A failed "load more" followed by one that
+      succeeds ends `live` at 200 rows
+      (`aSecondLoadMoreThatSucceedsClearsTheFirstOnesFailureAndEndsLive`). Writing an extend's
+      failure into the window's own, as before round 10, fails it with `cached(Failed)/200`.
+    - **A refused lyrics read's returned admission cannot be observed**, because every way back
+      online resets the breaker. §10.4 and the bullet above now say so, where they said it gives
+      its slot back.
+    - **The lyrics control session's `setOnline(true)` now waits** for the reconnect it requests.
+      CONF-42 gains a step: reachable again, the next read is live and sends its one request.
+      Running that step against a disposable Navidrome 0.63.2 found that `requestsWithoutSizeLimit`
+      counted the reconnect's epoch read, 2 requests that carry no lyrics limit. It now counts
+      lyrics requests only. OBSERVED: CONF-42 passed 2 of 2 tests on `jvmTest` and on
+      `macosArm64Test`. Its controls fail as they should: dropping the lyrics limit fails with 7
+      unlimited requests (and 2 on the legacy test), and a `setOnline` that does not wait fails
+      with "expected a live read, got CachedOffline".
+    - `sendChecked` no longer takes `whileOffline`: its one outbox caller runs inside `flush`'s
+      outbox context, which marks it already.
+
+    OBSERVED 2026-09-26 on macOS arm64, counted from the JUnit XML with every task forced to execute
+    (`--rerun-tasks`, 67 of 67 tasks executed): `jvmTest` ran 942 tests, `macosArm64Test` 988 and
+    `testAndroidHostTest` 1,034, each with 0 failures. The seven compiles passed, and the macOS debug
+    framework linked. The facade header's diff against the reviewed commit is two documentation
+    comments, on the lyrics control session's `setOnline` and `requestsWithoutSizeLimit`; no
+    declaration was added, removed or changed.
 
     **A retention that is not the reviewed leak.** The release test first required all forty closed
     search subscriptions to be collected, and it failed intermittently. A diagnostic ran its steps 200
