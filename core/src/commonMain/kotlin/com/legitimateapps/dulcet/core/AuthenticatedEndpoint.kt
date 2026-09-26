@@ -58,9 +58,25 @@ internal data class AuthenticatedEndpointRequestOptions(
     /** How a successful full response's Content-Length must be interpreted. */
     val contentLengthKind: AuthenticatedEndpointContentLengthKind =
         AuthenticatedEndpointContentLengthKind.Exact,
+    /**
+     * The most body bytes this request may read, or null for the whole body. Beyond it the request
+     * fails with [bodyBeyondLimit] instead of reading on. For a whole GET only. How early it stops
+     * depends on the engine (§18.4 residual 1). On the JVM engine a declared Content-Length beyond
+     * the limit is refused before a byte of the body is read, and a body without one at the first
+     * read past the limit. The Darwin engine hands over the headers only with the first body
+     * bytes: a declared length is refused once some of the body has arrived, and a server that
+     * declares a length and then sends nothing ends as [DomainError.Transport.Timeout], never as a
+     * refusal.
+     */
+    val maxBodyBytes: Int? = null,
 ) {
     init {
         require(range == null || BYTE_RANGE_PATTERN.matches(range))
+        require(maxBodyBytes == null || maxBodyBytes > 0)
+        require(
+            maxBodyBytes == null ||
+                (range == null && contentLengthKind == AuthenticatedEndpointContentLengthKind.Exact),
+        )
     }
 
     private companion object {
@@ -155,6 +171,7 @@ internal class AuthenticatedEndpointClient(
         options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
     ): AuthenticatedEndpointResponse {
         require(jsonBody.isNotBlank())
+        require(options.maxBodyBytes == null)
         return execute(endpoint, parameters, options, jsonBody)
     }
 
@@ -187,7 +204,14 @@ internal class AuthenticatedEndpointClient(
         while (true) {
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
             val snapshot = try {
-                if (
+                val maxBodyBytes = options.maxBodyBytes
+                if (jsonBody == null && !formPost && maxBodyBytes != null) {
+                    client.prepareGet(target.url) {
+                        applyRequestParts(target.hostHeader, common, options, repeated)
+                    }.execute { response ->
+                        response.toSnapshot(response.bodyAsBytesWithin(maxBodyBytes), options)
+                    }
+                } else if (
                     jsonBody == null && !formPost &&
                     options.contentLengthKind == AuthenticatedEndpointContentLengthKind.Estimated &&
                     options.range == null
@@ -357,12 +381,41 @@ internal class AuthenticatedEndpointClient(
             chunks += scratch.copyOf(count)
             total += count
         }
-        return ByteArray(total).also { result ->
-            var offset = 0
-            chunks.forEach { chunk ->
-                chunk.copyInto(result, destinationOffset = offset)
-                offset += chunk.size
-            }
+        return concatenate(chunks, total)
+    }
+
+    /**
+     * The body, read no further than [limit] bytes (see [AuthenticatedEndpointRequestOptions.maxBodyBytes]).
+     * Leaving the enclosing `execute` block by throwing cancels the response, so the connection is
+     * closed rather than drained. On the JVM engine the rest of an oversized body is then never
+     * downloaded, beyond what the sockets had already buffered. The Darwin engine keeps receiving
+     * into its own buffer until the cancellation reaches the task, so several megabytes more cross
+     * the network before the refusal (§18.4 residual 1 has the measurements).
+     */
+    private suspend fun io.ktor.client.statement.HttpResponse.bodyAsBytesWithin(limit: Int): ByteArray {
+        val refusal = bodyBeyondLimit(status.value)
+        val declared = headers[HttpHeaders.ContentLength]?.toLongOrNull()
+        if (declared != null && declared > limit) throw AuthenticatedEndpointFailure(refusal)
+        val channel = bodyAsChannel()
+        val chunks = mutableListOf<ByteArray>()
+        var total = 0L
+        val scratch = ByteArray(16 * 1024)
+        while (true) {
+            val count = channel.readAvailable(scratch, 0, scratch.size)
+            if (count < 0) break
+            if (count == 0) continue
+            total += count
+            if (total > limit) throw AuthenticatedEndpointFailure(refusal)
+            chunks += scratch.copyOf(count)
+        }
+        return concatenate(chunks, total.toInt())
+    }
+
+    private fun concatenate(chunks: List<ByteArray>, total: Int): ByteArray = ByteArray(total).also { result ->
+        var offset = 0
+        chunks.forEach { chunk ->
+            chunk.copyInto(result, destinationOffset = offset)
+            offset += chunk.size
         }
     }
 

@@ -147,7 +147,28 @@ internal fun interface LibraryEndpointTransport {
         check(single.size == parameters.size) { "this transport cannot repeat a request parameter" }
         return request(endpoint, single)
     }
+
+    /**
+     * [request] with the body limited to [maxBodyBytes]. A successful (2xx) body beyond it throws
+     * [DomainError.Protocol.TooLarge], an item-scoped refusal; any other status's body beyond it
+     * throws [DomainError.Protocol.MalformedEnvelope], since no envelope that large is a failure
+     * this client could read. A transport that can stop reading at the limit overrides this, so
+     * the limit bounds traffic and memory, not only what is kept; this default reads the whole
+     * body first. 🚨 A transport that wraps another must forward this overload, or the wrapped
+     * transport's early stop is silently lost.
+     */
+    suspend fun request(endpoint: String, parameters: Map<String, String>, maxBodyBytes: Int): LibraryEndpointResponse {
+        val response = request(endpoint, parameters)
+        if (response.body.encodeToByteArray().size > maxBodyBytes) {
+            throw LibraryRequestFailure(bodyBeyondLimit(response.statusCode))
+        }
+        return response
+    }
 }
+
+/** The failure for a body beyond a request's size limit (see [LibraryEndpointTransport.request]). */
+internal fun bodyBeyondLimit(statusCode: Int): DomainError =
+    if (statusCode in 200..299) DomainError.Protocol.TooLarge else DomainError.Protocol.MalformedEnvelope
 
 /**
  * 🚨 **Retired by the reader (spec §16.18, phase R1b).** New code reads through [LibraryReader],
@@ -417,10 +438,11 @@ internal class KtorLibraryEndpointTransport(
     saltSource: SaltSource?,
     logSink: LogSink?,
     hostResolver: HostResolver,
+    operationName: String = "library.browse",
 ) : LibraryEndpointTransport, AutoCloseableLibraryTransport {
     private val client = AuthenticatedEndpointClient(
         credentials = request.endpointCredentials(),
-        operationName = "library.browse",
+        operationName = operationName,
         saltSource = saltSource,
         logSink = logSink,
         hostResolver = hostResolver,
@@ -429,16 +451,18 @@ internal class KtorLibraryEndpointTransport(
     override suspend fun request(
         endpoint: String,
         parameters: Map<String, String>,
-    ): LibraryEndpointResponse {
-        val response = client.request(endpoint, parameters)
-        return LibraryEndpointResponse(
-            response.statusCode,
-            response.body.decodeToString(),
-            response.redactedUrl,
-            totalCount = response.headers.totalCount?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
-            retryAfter = response.headers.retryAfter,
-        )
-    }
+    ): LibraryEndpointResponse = client.request(endpoint, parameters).toLibraryResponse()
+
+    /** Stops reading at the limit: see [AuthenticatedEndpointRequestOptions.maxBodyBytes]. */
+    override suspend fun request(
+        endpoint: String,
+        parameters: Map<String, String>,
+        maxBodyBytes: Int,
+    ): LibraryEndpointResponse = client.request(
+        endpoint,
+        parameters,
+        AuthenticatedEndpointRequestOptions(maxBodyBytes = maxBodyBytes),
+    ).toLibraryResponse()
 
     override suspend fun requestRepeated(
         endpoint: String,
@@ -453,6 +477,14 @@ internal class KtorLibraryEndpointTransport(
             retryAfter = response.headers.retryAfter,
         )
     }
+
+    private fun AuthenticatedEndpointResponse.toLibraryResponse() = LibraryEndpointResponse(
+        statusCode,
+        body.decodeToString(),
+        redactedUrl,
+        totalCount = headers.totalCount?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
+        retryAfter = headers.retryAfter,
+    )
 
     override fun close() {
         client.close()
@@ -473,18 +505,27 @@ internal suspend fun LibraryEndpointTransport.checkedRequest(
     parameters: Map<String, String> = emptyMap(),
 ): String {
     val response = request(endpoint, parameters)
-    // A rate limit is named from the STATUS, whatever the body: the reference server's own limiter
-    // answers 429 with an envelope carrying only the generic code 0. Its `Retry-After` is honoured.
-    if (response.statusCode == 429) throw LibraryRequestFailure(DomainError.Server.Busy(parseRetryAfterSeconds(response.retryAfter)))
-    // An error status with no envelope is the server or a proxy refusing the HTTP request itself,
-    // and is named as such, never as a malformed answer (spec §18.6): a 401 as refused credentials,
-    // as playback names it; anything else — a 414 for a URL too long, a 502 from a gateway, a 403 or
-    // 407 from a proxy — by its status. An envelope, whatever the status, is judged as an envelope.
-    val envelope = parseLibraryEnvelope(response.body)
+    response.okPayload()
+    return response.body
+}
+
+/**
+ * The payload of this response's `ok` envelope, from one parse of the body. A failure envelope
+ * throws its [DomainError]. A rate limit is named from the STATUS, whatever the body: the reference
+ * server's own limiter answers 429 with an envelope carrying only the generic code 0, and its
+ * `Retry-After` is honoured. An error status with no envelope is the server or a proxy refusing the
+ * HTTP request itself, and is named as such, never as a malformed answer (spec §18.6): a 401 as
+ * refused credentials, as playback names it; anything else — a 414 for a URL too long, a 502 from
+ * a gateway, a 403 or 407 from a proxy — by its status. Any other body that is not an envelope is
+ * malformed. An envelope, whatever the status, is judged as an envelope.
+ */
+internal fun LibraryEndpointResponse.okPayload(): JsonObject {
+    if (statusCode == 429) throw LibraryRequestFailure(DomainError.Server.Busy(parseRetryAfterSeconds(retryAfter)))
+    val envelope = parseLibraryEnvelope(body)
         ?: throw LibraryRequestFailure(
-            when (response.statusCode) {
+            when (statusCode) {
                 401 -> DomainError.Auth.InvalidCredentials
-                in 400..599 -> DomainError.Server.HttpStatus(response.statusCode)
+                in 400..599 -> DomainError.Server.HttpStatus(statusCode)
                 else -> DomainError.Protocol.MalformedEnvelope
             },
         )
@@ -493,10 +534,10 @@ internal suspend fun LibraryEndpointTransport.checkedRequest(
         val code = error.int("code") ?: -1
         val message = error?.string("message").orEmpty()
         throw LibraryRequestFailure(
-            AccountConnectionContract.mapSubsonicError(code, message, response.redactedUrl),
+            AccountConnectionContract.mapSubsonicError(code, message, redactedUrl),
         )
     }
-    return response.body
+    return envelope.payload
 }
 
 internal data class LibraryEnvelope(val status: String, val payload: JsonObject)

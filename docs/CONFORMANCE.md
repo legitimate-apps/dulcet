@@ -59,7 +59,7 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-34 | `getIndexes?ifModifiedSince` behavior and granularity |
 | CONF-35 | paging past the end returns an empty list, not an error |
 | CONF-41 | local and server search merge |
-| CONF-42 | `songLyrics` v2 structured response shape |
+| CONF-42 | `songLyrics` v2 structured response shape, language selection, offline reuse, and legacy `getLyrics` only without the extension |
 | CONF-43 | `search3` local-versus-server matching divergence |
 | CONF-44 | `getCoverArt` size behavior, content types, error envelopes, and image signatures |
 | CONF-51 | live exact and cold-estimated bodies validate before atomic promotion; exact mismatch never reaches destination and duplicate delivery is idempotent |
