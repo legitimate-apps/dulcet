@@ -169,11 +169,15 @@ internal class SessionEnv(
         binding: CacheBinding = BINDING,
         config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
         otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+        // Background by default in tests: a foreground reader's epoch cadence never lets
+        // `advanceUntilIdle` return. A test about the foreground says so.
+        foreground: Boolean = false,
     ): LibraryReaderSession = LibraryReaderSession(
         database = database.database,
         cache = store.bind(binding),
         transport = server,
         scope = scope,
+        foreground = foreground,
         config = config,
         otherOutboxes = otherOutboxes,
         formPost = false,

@@ -82,12 +82,13 @@ class ReaderReconnectStepsTest {
         val session = primed(
             env,
             LibraryReaderSession(
-                env.database.database, env.cache(), env.server, env.scope,
-                LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+                env.database.database, env.cache(), env.server, env.scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
                 downloads = DownloadedTrackSource {
                     hookCalls += 1
                     if (failing) error("hook failed") else emptySet()
                 },
+                formPost = false,
+                foreground = false,
             ),
         )
         session.setOnline(false)

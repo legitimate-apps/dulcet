@@ -796,7 +796,7 @@ class AppleLibraryReaderFacadeTest {
      */
     @Test
     fun aSessionThatCannotBeBuiltAnswersEveryEntryPoint() = facadeTest { h ->
-        val c = h.client(compose = { error("GET https://music.example/rest/ping.view?u=$CANARY-user&p=$CANARY-password failed") })
+        val c = h.client(compose = { _, _ -> error("GET https://music.example/rest/ping.view?u=$CANARY-user&p=$CANARY-password failed") })
         val window = WindowRecorder()
         val search = SearchRecorder()
         val outcomes = OutcomeRecorder()
@@ -1121,9 +1121,9 @@ class AppleLibraryReaderFacadeTest {
     @Test
     fun closeCancelsBeforeItReleases() = facadeTest { h ->
         val cancelledAtRelease = AtomicReference<Boolean?>(null)
-        val c = h.client(compose = { scope ->
+        val c = h.client(compose = { scope, foreground ->
             val store = DulcetDatabaseStore.open(h.driver)
-            val session = LibraryReaderSession(store.database, SeenCacheStore(store, h.clock).bind(BINDING), h.transport, scope)
+            val session = LibraryReaderSession(store.database, SeenCacheStore(store, h.clock).bind(BINDING), h.transport, scope, formPost = false, foreground = foreground)
             AppleLibraryReaderComposition(session, release = {
                 cancelledAtRelease.store(scope.coroutineContext[kotlinx.coroutines.Job]?.isCancelled)
             })
@@ -1291,6 +1291,41 @@ class AppleLibraryReaderFacadeTest {
         assertEquals(listOf("getScanStatus", "getMusicFolders"), c.onReader { h.server.endpoints().drop(requests) })
     }
 
+    /**
+     * The app's foreground state at launch is a constructor argument, with no default. A client
+     * constructed in the foreground retries a transient reconnect failure by itself, with no
+     * `setForeground` call; one constructed in the background, the control, does not.
+     */
+    @Test
+    fun aClientConstructedInTheForegroundRetriesATransientFailureWithNoOtherReport() = facadeTest { h ->
+        val fast = LibraryReaderConfig(lookAheadMaxPerViewport = 0, reconnectRetryInitialMillis = 50)
+        for (launchedInForeground in listOf(false, true)) {
+            val c = h.client(config = fast, foreground = launchedInForeground)
+            val connected = AtomicReference<AppleLibraryReaderConnection?>(null)
+            c.client.connect { connected.store(it) }
+            pumpUntil("connect") { connected.load() != null }
+            c.client.setOnline(false)
+            waitOnReader(c, "offline") { c.onReader { !h.sessions.last().reader.online } }
+            c.onReader { h.server.failWithError["getScanStatus"] = DomainError.Transport.Timeout }
+            val reads = c.onReader { h.server.count("getScanStatus") }
+            c.client.setOnline(true)
+            if (launchedInForeground) {
+                waitOnReader(c, "the retry of a client launched in the foreground") {
+                    c.onReader { h.server.count("getScanStatus") } - reads >= 3
+                }
+                c.onReader { h.server.failWithError.clear() }
+                waitOnReader(c, "the retry to bring the reader back") { c.onReader { h.sessions.last().reader.online } }
+            } else {
+                waitOnReader(c, "the report's own reconnect") { c.onReader { h.server.count("getScanStatus") } - reads >= 1 }
+                pumpFor(600.milliseconds) // twelve times the first wait: 50 + 100 + 200 ms would be three retries
+                assertEquals(1, c.onReader { h.server.count("getScanStatus") } - reads, "a client launched in the background retried")
+                assertFalse(c.onReader { h.sessions.last().reader.online })
+                c.onReader { h.server.failWithError.clear() }
+            }
+            c.close()
+        }
+    }
+
     // ---- Harness -----------------------------------------------------------------------------------------------
 
     private class ThrowingTransport(private val delegate: LibraryEndpointTransport) : LibraryEndpointTransport {
@@ -1316,18 +1351,22 @@ class AppleLibraryReaderFacadeTest {
             config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
             search: LibrarySearchConfig = LibrarySearchConfig(debounceMillis = 0),
             downloads: DownloadedTrackSource = DownloadedTrackSource.None,
-            compose: ((CoroutineScope) -> AppleLibraryReaderComposition)? = null,
+            foreground: Boolean = false,
+            compose: ((CoroutineScope, Boolean) -> AppleLibraryReaderComposition)? = null,
         ): FacadeClient {
             val dispatcher = newLibraryReaderDispatcher()
             val client = AppleLibraryReaderClient(
-                compose ?: { scope ->
+                compose ?: { scope, launchedInForeground ->
                     val store = DulcetDatabaseStore.open(driver)
                     AppleLibraryReaderComposition(
-                        LibraryReaderSession(store.database, SeenCacheStore(store, clock).bind(BINDING), transport, scope, config, downloads)
-                            .also { sessions += it },
+                        LibraryReaderSession(
+                            store.database, SeenCacheStore(store, clock).bind(BINDING), transport, scope,
+                            config, downloads, formPost = false, foreground = launchedInForeground,
+                        ).also { sessions += it },
                         search,
                     )
                 },
+                foreground,
                 dispatcher,
                 Dispatchers.Main,
             )

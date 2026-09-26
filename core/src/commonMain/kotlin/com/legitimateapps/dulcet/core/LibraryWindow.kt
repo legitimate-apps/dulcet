@@ -66,7 +66,8 @@ internal abstract class ReaderHandle(
      * Set when a read of this screen was not sent because the reader went offline while it waited
      * ([ReaderSendRefused], or the offline check before a request): the read was not made, so no
      * failure is recorded, and it is OWED. The next reconnect's revalidation makes it whatever the
-     * screen's age — as a refresh would — and clears the flag.
+     * screen's age — as a refresh would — and clears the flag. A read of the screen's own pages;
+     * an owed "load more" beyond them is [owesMore], and the reconnect makes that too.
      */
     protected var readOwed = false
 
@@ -78,7 +79,8 @@ internal abstract class ReaderHandle(
      * reconnect has run every step it goes on saying what it said while offline — never
      * `revalidating` with nothing coming for it, and never `live` before the sequence is complete —
      * so it publishes nothing unless its content changes (a tap still shows at once); at the end it
-     * says `live` once.
+     * says `live` once. The label follows the read: once the screen starts a read of its own (the
+     * person scrolls, or pages), it says `revalidating` from then on, and the flag is cleared.
      */
     private var quietUntilReconnectEnds = false
 
@@ -135,6 +137,12 @@ internal abstract class ReaderHandle(
         if (thrown is ReaderSendRefused) readOwed = true else failure = thrown.asReaderError()
     }
 
+    /**
+     * Whether a read beyond the screen's own pages is owed — a "load more" refused unsent because
+     * the reader went offline, made by the next reconnect after the screen's revalidation.
+     */
+    protected open fun owesMore(): Boolean = false
+
     /** Builds the publication from the cache as it stands now. */
     protected abstract fun snapshot(): LibraryPublication
 
@@ -162,7 +170,7 @@ internal abstract class ReaderHandle(
     fun prepareForReconnect() {
         if (closed) return
         val coming = try {
-            readOwed || readsOnReconnect()
+            readOwed || owesMore() || readsOnReconnect()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -240,6 +248,7 @@ internal abstract class ReaderHandle(
         // From here the in-flight count carries "revalidating"; the open's pending flag must not
         // outlive the read, or the final publication would still say revalidating.
         revalidationPending = false
+        quietUntilReconnectEnds = false
         inFlight += 1
         try {
             return block()
@@ -248,6 +257,12 @@ internal abstract class ReaderHandle(
         }
     }
 
+    /**
+     * Re-reads this screen now, whatever its age. While the reader is offline it does nothing:
+     * there is nothing it may send (§16.14). A "Try again" for a screen saying `offline`, or the
+     * reconnect failure that keeps the reader offline ([LibraryReader.standstill]), must call
+     * reconnect instead, which runs the whole sequence and then re-reads every screen.
+     */
     override fun refresh() {
         reader.checkConfined()
         if (reader.online) launchRead { performRevalidate(RevalidateCause.Refresh) }
@@ -268,11 +283,12 @@ internal abstract class ReaderHandle(
     protected fun cachedFreshness(asOfWall: Long?, liveUnderCurrentEpoch: Boolean): LibraryFreshness {
         val error = failure
         return when {
-            !reader.online || (reader.completingReconnect && quietUntilReconnectEnds) ->
-                LibraryFreshness.Cached(asOfWall, offlineReason())
+            !reader.online -> LibraryFreshness.Cached(asOfWall, offlineReason())
+            // The label follows the read: a read in flight says so, quiet or not.
+            inFlight > 0 || revalidationPending -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
+            reader.completingReconnect && quietUntilReconnectEnds -> LibraryFreshness.Cached(asOfWall, offlineReason())
             // Nothing is `live` until a reconnect has run every step (§16.14).
-            inFlight > 0 || revalidationPending || reader.completingReconnect ->
-                LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
+            reader.completingReconnect -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
             internalFailure -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.InternalFailure)
             error != null -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Failed(error))
             liveUnderCurrentEpoch -> LibraryFreshness.Live
@@ -473,6 +489,16 @@ internal class ListWindow(
     /** Bumped by every rebase; a page read from an older generation is discarded on arrival. */
     private var generation = 0
 
+    /**
+     * Extends ("load more", "load before") that were not made because the reader was offline —
+     * asked for while offline, or refused unsent at the queue. They are OWED, like a refused page
+     * read ([readOwed]), but beyond the screen's own pages, so a revalidation of the viewport does
+     * not make them: the reconnect re-issues each after this screen's revalidation (§16.14).
+     */
+    private val owedExtends = mutableSetOf<PageMode>()
+
+    override fun owesMore(): Boolean = owedExtends.isNotEmpty()
+
     private var pendingAnchor: LibraryAnchor? = null
 
     /**
@@ -524,9 +550,16 @@ internal class ListWindow(
     override suspend fun performRevalidate(requested: RevalidateCause) {
         if (closed || !reader.online) return
         val cause = takeOwed(requested)
+        // Owed extends are made after the revalidation, whether or not it reads anything.
+        val extends = owedExtends.toList()
+        owedExtends.clear()
         if (!readComing(cause)) {
             // Fresh: nothing is read, so nothing says `revalidating` — and nothing is republished,
             // unless a `revalidating` this handle already published must be taken back.
+            if (extends.isNotEmpty()) {
+                makeOwedExtends(extends)
+                return
+            }
             if (revalidationPending) {
                 revalidationPending = false
                 emitSnapshot()
@@ -555,6 +588,22 @@ internal class ListWindow(
             if (!torn && state != null && cause != RevalidateCause.Refresh && readRecently(state, epoch)) return@live
             if (torn || state == null) rebase(epoch, attempt = 0) else revalidateViewport(epoch)
         }
+        if (extends.isNotEmpty()) makeOwedExtends(extends) else emitSnapshot()
+    }
+
+    /** Makes the extends that were owed; one refused again is owed again. */
+    private suspend fun makeOwedExtends(extends: List<PageMode>) {
+        for (mode in extends) {
+            if (closed) return
+            if (!reader.online) {
+                owedExtends += mode
+                continue
+            }
+            extend(mode, confirming = false)
+        }
+        // An extend that found nothing to read (the window complete, or the viewport moved away)
+        // leaves nothing coming: a `revalidating` published at the transition is taken back.
+        revalidationPending = false
         emitSnapshot()
     }
 
@@ -716,10 +765,10 @@ internal class ListWindow(
      * ([ReaderSendRefused]), and for a page answered after the unreachable report, no *after*
      * reading, so the page is not used.
      */
-    private suspend fun readPage(offset: Int): PageRead? {
+    private suspend fun readPage(offset: Int, owe: () -> Unit = { readOwed = true }): PageRead? {
         val sizeParameter = spec.sizeParameter ?: return null
         if (!reader.online) {
-            readOwed = true
+            owe()
             return null
         }
         val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + ("offset" to offset.toString())
@@ -728,7 +777,7 @@ internal class ListWindow(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (thrown: Throwable) {
-            readFailed(thrown)
+            if (thrown is ReaderSendRefused) owe() else readFailed(thrown)
             return null
         }
         val parsed = try {
@@ -739,7 +788,7 @@ internal class ListWindow(
         }
         // The *after* reading is issued only once the page's response has arrived (§16.12).
         if (!reader.online) {
-            readOwed = true
+            owe()
             return null
         }
         var afterError: DomainError? = null
@@ -748,7 +797,7 @@ internal class ListWindow(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (refused: ReaderSendRefused) {
-            readOwed = true
+            owe()
             return null
         } catch (thrown: Throwable) {
             afterError = thrown.asReaderError()
@@ -814,13 +863,21 @@ internal class ListWindow(
 
     override fun loadMore() {
         reader.checkConfined()
-        if (closed || !reader.online || !spec.paged) return
+        if (closed || !spec.paged) return
+        if (!reader.online) {
+            owedExtends += PageMode.Append // made by the next reconnect (§16.14)
+            return
+        }
         launchRead { extend(PageMode.Append, confirming = false) }
     }
 
     override fun loadBefore() {
         reader.checkConfined()
-        if (closed || !reader.online || !spec.paged) return
+        if (closed || !spec.paged) return
+        if (!reader.online) {
+            owedExtends += PageMode.Prepend
+            return
+        }
         launchRead { extend(PageMode.Prepend, confirming = false) }
     }
 
@@ -845,7 +902,10 @@ internal class ListWindow(
             }
             PageMode.Replace -> return
         }
-        val epoch = reader.ensureEpoch() ?: return
+        val epoch = reader.ensureEpoch() ?: run {
+            if (!reader.online) owedExtends += mode
+            return
+        }
         // Tear rule 2: a window not yet read live this session is revalidated, not extended.
         if (!liveThisSession) {
             performRevalidate(RevalidateCause.Open)
@@ -853,7 +913,7 @@ internal class ListWindow(
         }
         live {
             val gen = generation
-            val read = readPage(offset) ?: return@live
+            val read = readPage(offset) { owedExtends += mode } ?: return@live
             if (gen != generation || closed) return@live
             val unguardedWindow = state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete
             when (checkPage(windowStamp(state), read.before, read.after)) {

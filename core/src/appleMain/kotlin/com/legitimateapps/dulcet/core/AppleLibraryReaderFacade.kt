@@ -68,16 +68,24 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  */
 @OptIn(ExperimentalAtomicApi::class, DelicateCoroutinesApi::class)
 public class AppleLibraryReaderClient internal constructor(
-    private val compose: (CoroutineScope) -> AppleLibraryReaderComposition,
+    private val compose: (scope: CoroutineScope, foreground: Boolean) -> AppleLibraryReaderComposition,
+    private val initiallyForeground: Boolean,
     private val readerDispatcher: CloseableCoroutineDispatcher,
     mainDispatcher: CoroutineDispatcher,
 ) {
     /**
      * One account's reader over the app's database. [databaseName] is the same database the other
      * facades open. The account's credentials reach only the transport.
+     *
+     * [foreground] is whether the app is in the foreground NOW, read from the app's lifecycle at
+     * construction — required, with no default. The reader reads on a timer (the epoch cadence, a
+     * reconnect's automatic retry) only in the foreground; a default of `false` would silently
+     * disable the retry for a shell that forgot, and `true` would read in the background. Report
+     * every later change with [setForeground].
      */
-    public constructor(databaseName: String, account: AppleLibraryReaderAccount) : this(
+    public constructor(databaseName: String, account: AppleLibraryReaderAccount, foreground: Boolean) : this(
         productionComposer(databaseName, account),
+        foreground,
         newLibraryReaderDispatcher(),
         Dispatchers.Main,
     )
@@ -113,7 +121,7 @@ public class AppleLibraryReaderClient internal constructor(
     init {
         onReader {
             composition = try {
-                compose(readerScope).also { built ->
+                compose(readerScope, initiallyForeground).also { built ->
                     built.session.favourites.addOutcomeListener(::fanOutOutcome)
                 }
             } catch (cancelled: CancellationException) {
@@ -235,10 +243,10 @@ public class AppleLibraryReaderClient internal constructor(
     }
 
     /**
-     * Foreground transitions; call it on every change, the first included — nothing reads on a
-     * timer until the app is reported in the foreground. The epoch cadence and a reconnect's
-     * automatic retry run only in the foreground (core policy, §16.11 and §16.14), and a return to
-     * the foreground while offline and reported reachable starts a reconnect.
+     * Foreground transitions after construction, whose `foreground` argument stated the first; call
+     * it on every change. The epoch cadence and a reconnect's automatic retry run only in the
+     * foreground (core policy, §16.11 and §16.14), and a return to the foreground while offline and
+     * reported reachable starts a reconnect.
      */
     public fun setForeground(foreground: Boolean) {
         onReader { composition?.session?.reader?.setForeground(foreground) }
@@ -486,7 +494,7 @@ private fun failedConnection(kind: String) = AppleLibraryReaderConnection(false,
 private fun productionComposer(
     databaseName: String,
     account: AppleLibraryReaderAccount,
-): (CoroutineScope) -> AppleLibraryReaderComposition = { scope ->
+): (CoroutineScope, Boolean) -> AppleLibraryReaderComposition = { scope, foreground ->
     var store: DulcetDatabaseStore? = null
     var transport: KtorLibraryEndpointTransport? = null
     try {
@@ -509,7 +517,10 @@ private fun productionComposer(
         AppleLibraryReaderComposition(
             // No download source: downloads join the reader in phase R4, and tvOS has none (§14.5),
             // so no Apple platform can publish `downloaded` until then.
-            session = LibraryReaderSession(opened.database, cache, live, scope),
+            // No playlist editing reaches this facade yet, and the account does not carry the
+            // server's extensions, so `formPost` is off: without it an edit is batched within the
+            // parameter budget (§18.6), never refused for want of it.
+            session = LibraryReaderSession(opened.database, cache, live, scope, formPost = false, foreground = foreground),
             release = {
                 live.close()
                 opened.close()
@@ -692,7 +703,12 @@ public class AppleLibraryWindowSubscription internal constructor(
         call { it.loadBefore() }
     }
 
-    /** Re-reads the visible pages whatever their age. */
+    /**
+     * Re-reads the visible pages whatever their age. It does nothing while the reader is offline —
+     * a screen saying `offline`, or the reconnect failure that keeps the reader offline, such as
+     * `failed(invalidCredentials)` or `internalFailure`. A "Try again" for such a screen must call
+     * the client's `reconnect`, which runs the whole sequence and then re-reads every screen (§16.14).
+     */
     public fun refresh() {
         call { it.refresh() }
     }

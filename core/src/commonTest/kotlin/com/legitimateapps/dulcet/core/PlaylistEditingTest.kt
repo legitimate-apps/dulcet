@@ -547,7 +547,7 @@ internal class PlaylistEnv(
         transport = server,
         scope = scope,
         config = config,
-        formPost = formPost,
+        formPost = formPost, foreground = false,
     ).also { it.playlists.addOutcomeListener(outcomes::add) }
 
     class Opened(val handle: LibraryWindowHandle, val all: MutableList<Seen>) {

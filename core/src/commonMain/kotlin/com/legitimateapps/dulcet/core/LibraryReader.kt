@@ -1303,7 +1303,10 @@ internal interface LibraryWindowHandle {
      */
     fun setViewport(firstIndex: Int, lastIndex: Int)
 
-    /** An explicit refresh: re-reads the visible pages whatever their age. */
+    /**
+     * An explicit refresh: re-reads the visible pages whatever their age. It does nothing while the
+     * reader is offline; a "Try again" for an offline screen must call reconnect instead (§16.14).
+     */
     fun refresh()
 
     /** Idempotent; cancels this handle's in-flight reads. Nothing is published after it. */
