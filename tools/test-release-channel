@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import base64
+import json
+import plistlib
 import os
 import shutil
 import subprocess
@@ -22,6 +24,7 @@ sys.path.insert(0, str(TOOLS))
 
 import app_store_connect as asc  # noqa: E402
 import release_plan as plan  # noqa: E402
+import verify_release_policy as policy  # noqa: E402
 
 failures: list[str] = []
 passed = 0
@@ -227,20 +230,108 @@ with tempfile.TemporaryDirectory() as scratch:
     for name in ("DULCET_ASC_KEY_ID", "DULCET_ASC_ISSUER_ID", "DULCET_ASC_KEY_P8_BASE64", "RUNNER_TEMP"):
         os.environ.pop(name)
 
+# --- tools/release/validate-app-bundle against bundles shaped like observed Release builds --------
+VALIDATOR = REPO / "tools/release/validate-app-bundle"
+STAMPED = {"CFBundleDevelopmentRegion": "en", "CFBundleExecutable": "Dulcet", "CFBundleIdentifier": "x",
+           "CFBundleInfoDictionaryVersion": "6.0", "CFBundleName": "Dulcet", "CFBundlePackageType": "APPL",
+           "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1", "ITSAppUsesNonExemptEncryption": False,
+           "CFBundleDisplayName": "Dulcet", "DTXcode": "2660", "CFBundleSupportedPlatforms": ["iPhoneOS"],
+           "NSLocalNetworkUsageDescription": "Dulcet connects to the music server you choose."}
+# The icon shapes actool writes, OBSERVED in Release builds (Xcode 26.6): a dictionary on iOS, a
+# bare string naming the brand-assets icon on tvOS, plus tvOS's top-shelf entry.
+IOS_ICONS = {"CFBundleIcons": {"CFBundlePrimaryIcon": {"CFBundleIconFiles": ["AppIcon60x60"], "CFBundleIconName": "AppIcon"}},
+             "CFBundleIcons~ipad": {"CFBundlePrimaryIcon": {"CFBundleIconFiles": ["AppIcon60x60"], "CFBundleIconName": "AppIcon"}}}
+TV_ICONS = {"CFBundleIcons": {"CFBundlePrimaryIcon": "App Icon"},
+            "TVTopShelfImage": {"TVTopShelfPrimaryImage": "Top Shelf Image", "TVTopShelfPrimaryImageWide": "Top Shelf Image Wide"}}
+MAC_KEYS = {"CFBundleIconFile": "AppIcon", "CFBundleIconName": "AppIcon", "LSApplicationCategoryType": "public.app-category.music",
+            "LSMinimumSystemVersion": "14.0", "NSHumanReadableCopyright": ""}
+
+
+def run_validator(platform: str, channel: str, info: dict, files: dict[str, bytes] | None = None) -> subprocess.CompletedProcess:
+    with tempfile.TemporaryDirectory() as root:
+        app = Path(root, "Dulcet.app")
+        plist = app / ("Contents/Info.plist" if platform == "macos" else "Info.plist")
+        plist.parent.mkdir(parents=True)
+        plist.write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
+        for relative, data in (files or {"Dulcet": b"\xcf\xfa\xed\xfe binary"}).items():
+            Path(app, relative).parent.mkdir(parents=True, exist_ok=True)
+            Path(app, relative).write_bytes(data)
+        return subprocess.run([sys.executable, str(VALIDATOR), platform, channel, str(app)], capture_output=True, text=True)
+
+
+def without(document: dict, *path: str) -> dict:
+    copy = json.loads(json.dumps(document))
+    holder = copy
+    for key in path[:-1]:
+        holder = holder[key]
+    del holder[path[-1]]
+    return copy
+
+
+IOS_PROD = {**STAMPED, **IOS_ICONS, "LSRequiresIPhoneOS": True, "UIBackgroundModes": ["audio"], "UILaunchScreen": {},
+            "MinimumOSVersion": "17.0", "UIDeviceFamily": [1, 2]}
+TV_DEV = {**STAMPED, **TV_ICONS, "UIBackgroundModes": ["audio"], "UIDeviceFamily": [3]}
+VALIDATIONS = [
+    # (label, platform, channel, info, files, expected rc, reason in stderr)
+    ("tvOS DEV with actool's string-form icon and both top-shelf images", "tvos", "dev", TV_DEV, None, 0, ""),
+    ("tvOS DEV with the dictionary-form icon", "tvos", "dev",
+     {**TV_DEV, "CFBundleIcons": {"CFBundlePrimaryIcon": {"CFBundleIconName": "App Icon"}}}, None, 0, ""),
+    ("tvOS DEV with no app icon", "tvos", "dev", without(TV_DEV, "CFBundleIcons"), None, 1, "no brand-assets app icon"),
+    ("tvOS DEV with an empty icon name", "tvos", "dev", {**TV_DEV, "CFBundleIcons": {"CFBundlePrimaryIcon": ""}}, None, 1,
+     "no brand-assets app icon"),
+    ("tvOS DEV with no top-shelf image", "tvos", "dev", without(TV_DEV, "TVTopShelfImage"), None, 1,
+     "no top-shelf image (TVTopShelfImage:TVTopShelfPrimaryImage)"),
+    ("tvOS DEV with no wide top-shelf image", "tvos", "dev", without(TV_DEV, "TVTopShelfImage", "TVTopShelfPrimaryImageWide"),
+     None, 1, "TVTopShelfPrimaryImageWide"),
+    ("tvOS PROD, which has no target", "tvos", "prod", TV_DEV, None, 1, "no PROD Info.plist allowlist for platform tvos"),
+    ("iOS with the tvOS string-form icon", "ios", "dev", {**IOS_PROD, "CFBundleIcons": {"CFBundlePrimaryIcon": "AppIcon"}},
+     None, 1, "CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName"),
+    ("iOS DEV with the dictionary-form icon", "ios", "dev", IOS_PROD, None, 0, ""),
+    ("macOS without an asset-catalog icon", "macos", "dev", {**STAMPED, **without(MAC_KEYS, "CFBundleIconName")}, None, 1,
+     "ITMS-90546"),
+    ("macOS PROD declaring its local-network purpose", "macos", "prod", {**STAMPED, **MAC_KEYS}, None, 0, ""),
+    ("iOS PROD as built", "ios", "prod", IOS_PROD, None, 0, ""),
+    ("iOS PROD with an extra plist key", "ios", "prod", {**IOS_PROD, "DulcetHome": "srv.invalid"}, None, 1,
+     "unexpected keys ['DulcetHome']"),
+    ("iOS PROD with a URL-valued key", "ios", "prod", {**IOS_PROD, "UIBackgroundModes": ["https://srv.invalid"]}, None, 1,
+     "URL-valued keys ['UIBackgroundModes']"),
+    ("iOS PROD with the server key in its binary", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\xcf\xfa\xed\xfe\0DulcetPreconfiguredServer\0"}, 1, "Dulcet.app/Dulcet contains DulcetPreconfiguredServer"),
+    ("iOS PROD with the server key as UTF-16 in a nested resource", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"bin", "DulcetKit_DulcetKit.bundle/settings.plist": "DulcetPreconfiguredServer".encode("utf-16-le")}, 1,
+     "DulcetKit_DulcetKit.bundle/settings.plist contains DulcetPreconfiguredServer"),
+    ("iOS DEV with the server key, which DEV may carry", "ios", "dev", IOS_PROD,
+     {"Dulcet": b"DulcetPreconfiguredServer"}, 0, ""),
+]
+for label, platform, channel, info, files, code_expected, reason in VALIDATIONS:
+    result = run_validator(platform, channel, info, files)
+    expect(result.returncode == code_expected and reason in result.stderr,
+           f"validate-app-bundle {platform}/{channel}: {label} must exit {code_expected} ({reason!r}); "
+           f"rc={result.returncode} stderr={result.stderr!r}")
+
 # --- verify_release_policy.py against mutated copies -----------------------------------------
 POLICY = TOOLS / "verify_release_policy.py"
 
 
+# Every file the policy reads: the workflows, the project source and the committed project Xcode
+# builds, both channels' plists and entitlements, and the archive script with its validator.
+POLICY_INPUTS = [
+    ".github/workflows", "apple/project.yml", "apple/Dulcet.xcodeproj/project.pbxproj",
+    "apple/DulcetMacRelease", "apple/DulcetiOSRelease", "apple/DulcetMacDev",
+    "apple/DulcetiOS/BackgroundAudio.plist", "apple/DulcetTV/BackgroundAudio.plist",
+    "apple/DulcetMac/DulcetMac.entitlements", "apple/DulcetMac/DulcetMacRelease.entitlements",
+    "tools/release/archive-and-export", "tools/release/validate-app-bundle",
+    "apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetMacRelease.xcscheme",
+    "apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetiOSRelease.xcscheme",
+]
+
+
 def run_policy(mutate) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as root:
-        shutil.copytree(REPO / ".github/workflows", Path(root, ".github/workflows"))
-        shutil.copytree(REPO / "apple/DulcetMacRelease", Path(root, "apple/DulcetMacRelease"))
-        shutil.copytree(REPO / "apple/DulcetiOSRelease", Path(root, "apple/DulcetiOSRelease"))
-        Path(root, "apple/DulcetiOS").mkdir()
-        shutil.copy(REPO / "apple/DulcetiOS/BackgroundAudio.plist", Path(root, "apple/DulcetiOS/BackgroundAudio.plist"))
-        shutil.copy(REPO / "apple/project.yml", Path(root, "apple/project.yml"))
-        Path(root, "tools/release").mkdir(parents=True)
-        shutil.copy(REPO / "tools/release/archive-and-export", Path(root, "tools/release/archive-and-export"))
+        for relative in POLICY_INPUTS:
+            source, target = REPO / relative, Path(root, relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            (shutil.copytree if source.is_dir() else shutil.copy)(source, target)
         mutate(Path(root))
         return subprocess.run([sys.executable, str(POLICY)], cwd=root, capture_output=True, text=True)
 
@@ -255,6 +346,37 @@ def edit(relative: str, old: str, new: str):
     return apply
 
 
+def pbx(target: str, configuration: str, change):
+    """Edit one target configuration's buildSettings in the committed project, as a hand edit or a
+    regeneration would leave it. `change` maps that block of text to its replacement."""
+    def apply(root: Path) -> None:
+        path = root / "apple/Dulcet.xcodeproj/project.pbxproj"
+        text = path.read_text()
+        objects = policy.parse_pbxproj(text)["objects"]
+        owner = next(item for item in objects.values()
+                     if item.get("isa") == "PBXNativeTarget" and item["name"] == target)
+        identifier = next(item for item in objects[owner["buildConfigurationList"]]["buildConfigurations"]
+                          if objects[item]["name"] == configuration)
+        start = text.index(f"\t\t{identifier} /* {configuration} */ = {{")
+        end = text.index("\t\t};\n", start)
+        block = change(text[start:end])
+        if block == text[start:end]:
+            raise SystemExit(f"pbxproj mutation changed nothing in {target} {configuration}")
+        path.write_text(text[:start] + block + text[end:])
+    return apply
+
+
+def add_setting(line: str):
+    return lambda block: block.replace("buildSettings = {\n", "buildSettings = {\n\t\t\t\t" + line + "\n", 1)
+
+
+def both(*mutations):
+    def apply(root: Path) -> None:
+        for mutation in mutations:
+            mutation(root)
+    return apply
+
+
 baseline = run_policy(lambda root: None)
 expect(baseline.returncode == 0, f"unmutated repository passes the release policy: {baseline.stderr}")
 
@@ -262,6 +384,40 @@ WORKFLOW = ".github/workflows/release.yml"
 PROD_ANCHOR = '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"\n'
 IOS_PROD_ANCHOR = '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS App Store"\n'
 IOS_PLIST = "apple/DulcetiOSRelease/Info.plist"
+IOS_PROD_TARGET = "  DulcetiOSRelease:\n    type: application\n"
+IOS_PROD_SCHEME = "  DulcetiOSRelease:\n    build:\n      targets:\n        DulcetiOSRelease: all\n    archive:\n      config: Release\n"
+IOS_PROD_SOURCES = "        excludes:\n          - BackgroundAudio.plist\n      - DulcetAppleShared\n"
+DEV_IOS_RELEASE = "          PROVISIONING_PROFILE_SPECIFIER: \"Dulcet CI Dev iOS App Store\"\n"
+
+
+def pbx_project_release(root: Path, line: str) -> None:
+    path = root / "apple/Dulcet.xcodeproj/project.pbxproj"
+    text = path.read_text()
+    parsed = policy.parse_pbxproj(text)
+    objects = parsed["objects"]
+    listed = objects[objects[parsed["rootObject"]]["buildConfigurationList"]]["buildConfigurations"]
+    identifier = next(item for item in listed if objects[item]["name"] == "Release")
+    start = text.index(f"\t\t{identifier} /* Release */ = {{")
+    at = text.index("buildSettings = {\n", start) + len("buildSettings = {\n")
+    path.write_text(text[:at] + "\t\t\t\t" + line + "\n" + text[at:])
+
+
+def pbx_extra_prod_resource(root: Path) -> None:
+    """Add a PBXBuildFile for an existing file reference to iOS PROD's resources phase only."""
+    path = root / "apple/Dulcet.xcodeproj/project.pbxproj"
+    text = path.read_text()
+    objects = policy.parse_pbxproj(text)["objects"]
+    target = next(item for item in objects.values()
+                  if item.get("isa") == "PBXNativeTarget" and item["name"] == "DulcetiOSRelease")
+    phase = next(item for item in target["buildPhases"] if objects[item]["isa"] == "PBXResourcesBuildPhase")
+    reference = next(key for key, item in objects.items()
+                     if item.get("isa") == "PBXFileReference" and item.get("path") == "BackgroundAudio.plist")
+    build_file = "FEEDFACE0000000000000001"
+    text = text.replace("/* Begin PBXBuildFile section */\n",
+                        f"/* Begin PBXBuildFile section */\n\t\t{build_file} = {{isa = PBXBuildFile; fileRef = {reference}; }};\n", 1)
+    start = text.index(f"\t\t{phase} /* Resources */ = {{")
+    at = text.index("files = (\n", start) + len("files = (\n")
+    path.write_text(text[:at] + f"\t\t\t\t{build_file},\n" + text[at:])
 MUTATIONS = [
     ("a pull_request trigger", edit(WORKFLOW, "on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
      "workflow_dispatch only"),
@@ -292,7 +448,7 @@ MUTATIONS = [
                                                           '    MARKETING_VERSION: "0.1.0"\n    DULCET_SERVER_URL: "https://example.invalid"\n'),
      "project-level setting DULCET_SERVER_URL is not allowlisted"),
     ("project-level configs", edit("apple/project.yml", "packages:\n", "  configs:\n    Release:\n      X: y\npackages:\n"),
-     "project-level configs would reach PROD"),
+     "settings.configs is not allowed"),
     ("PROD reading the shared plist again", edit("apple/project.yml", "path: DulcetMacRelease/Info.plist", "path: DulcetMac/Info.plist"),
      "must use its own DulcetMacRelease/Info.plist"),
     ("a DEV target reading the PROD plist directory", edit("apple/project.yml", "      path: DulcetMacDev/Info.plist", "      path: DulcetMacRelease/Info.plist"),
@@ -336,18 +492,117 @@ MUTATIONS = [
      "UIBackgroundModes holds a URL"),
     ("a key DEV's iOS partial plist gains and PROD lacks",
      edit("apple/DulcetiOS/BackgroundAudio.plist", "<dict>\n", "<dict>\n\t<key>UIFileSharingEnabled</key>\n\t<true/>\n"),
-     "UIFileSharingEnabled differs from DEV's"),
+     "Info.plist UIFileSharingEnabled: DulcetiOS and DulcetiOSRelease must declare it identically"),
     ("an iOS PROD value drifting from DEV's", edit(IOS_PLIST, "<string>Dulcet queue item</string>", "<string>Queue item</string>"),
-     "UTExportedTypeDeclarations differs from DEV's"),
+     "Info.plist UTExportedTypeDeclarations: DulcetiOS and DulcetiOSRelease must declare it identically"),
     ("the iOS PROD target deleted", edit("apple/project.yml", "  DulcetiOSRelease:\n", "  DulcetiOSReleaseGone:\n"),
      "no DulcetiOSRelease target"),
+    # Routes that put a setting into a build without naming it where a name allowlist looks.
+    ("an xcconfig on the iOS PROD target", edit("apple/project.yml", IOS_PROD_TARGET, IOS_PROD_TARGET + "    configFiles:\n      Release: DulcetiOS/Server.xcconfig\n"),
+     "target DulcetiOSRelease uses configFiles"),
+    ("a project-level xcconfig", edit("apple/project.yml", "packages:\n", "configFiles:\n  Release: Server.xcconfig\npackages:\n"),
+     "top-level 'configFiles'"),
+    ("a template on the iOS PROD target", edit("apple/project.yml", IOS_PROD_TARGET, IOS_PROD_TARGET + "    templates:\n      - DevServer\n"),
+     "target DulcetiOSRelease uses templates"),
+    ("project settingGroups", edit("apple/project.yml", "packages:\n", "settingGroups:\n  server:\n    DULCET_SERVER: x\npackages:\n"),
+     "top-level 'settingGroups'"),
+    ("targetTemplates", edit("apple/project.yml", "packages:\n", "targetTemplates:\n  DevServer:\n    settings:\n      DULCET_SERVER: x\npackages:\n"),
+     "top-level 'targetTemplates'"),
+    ("a changed XcodeGen preset", edit("apple/project.yml", "  bundleIdPrefix:", "  settingPresets: none\n  bundleIdPrefix:"),
+     "options.settingPresets is not allowed"),
+    ("a quoted setting key on the iOS PROD target", edit("apple/project.yml", IOS_PROD_ANCHOR, IOS_PROD_ANCHOR + '        "DULCET_SERVER_URL": "srv.invalid"\n'),
+     "quoted mapping key"),
+    ("a flow-style setting on the iOS PROD target", edit("apple/project.yml", IOS_PROD_ANCHOR, IOS_PROD_ANCHOR + "        X: {DULCET_SERVER: srv.invalid}\n"),
+     "flow-style mapping"),
+    ("a YAML merge key on the iOS PROD target", edit("apple/project.yml", IOS_PROD_ANCHOR, IOS_PROD_ANCHOR + "        <<: *devserver\n"),
+     "YAML anchor, alias, merge key"),
+    ("an extra source folder on the iOS PROD target", edit("apple/project.yml", IOS_PROD_SOURCES, IOS_PROD_SOURCES + "      - DulcetDevServer\n"),
+     "DulcetiOSRelease must compile exactly the source folders DulcetiOS does"),
+    ("an extra dependency on the iOS PROD target", edit("apple/project.yml", IOS_PROD_SOURCES + "    dependencies:\n",
+                                                        IOS_PROD_SOURCES + "    dependencies:\n      - target: DulcetDevConfig\n"),
+     "DulcetiOSRelease must have exactly DulcetiOS's dependencies"),
+    ("a project.yml change never regenerated", edit("apple/project.yml", DEV_IOS_RELEASE, DEV_IOS_RELEASE + '          SWIFT_OPTIMIZATION_LEVEL: "-Onone"\n'),
+     "DulcetiOS (Release) SWIFT_OPTIMIZATION_LEVEL is None where project.yml says '-Onone'; regenerate"),
+    # The committed project is what Xcode builds, so it is held to the same rules directly.
+    ("an xcconfig in the committed project", pbx("DulcetiOSRelease", "Release", lambda block: block.replace(
+        "isa = XCBuildConfiguration;\n", "isa = XCBuildConfiguration;\n\t\t\tbaseConfigurationReference = 0123456789ABCDEF01234567;\n", 1)),
+     "is based on an xcconfig"),
+    ("a compile condition hand-added to iOS PROD", pbx("DulcetiOSRelease", "Release", add_setting("SWIFT_ACTIVE_COMPILATION_CONDITIONS = DULCET_DEV_SERVER;")),
+     "PROD target DulcetiOSRelease (Release) sets SWIFT_ACTIVE_COMPILATION_CONDITIONS, which is not allowlisted"),
+    ("an INFOPLIST_KEY_ hand-added to macOS PROD", pbx("DulcetMacRelease", "Release", add_setting("INFOPLIST_KEY_DulcetHome = srv.invalid;")),
+     "PROD target DulcetMacRelease (Release) sets INFOPLIST_KEY_DulcetHome"),
+    ("a linker payload in PROD's allowlisted OTHER_LDFLAGS", pbx("DulcetiOSRelease", "Release", lambda block: block.replace(
+        '"$(inherited) -Wl,-export_dynamic"', '"$(inherited) -Wl,-export_dynamic -Wl,-sectcreate,__DATA,__srv,srv.txt"', 1)),
+     "OTHER_LDFLAGS must be exactly"),
+    ("a project-level Release compile condition", lambda root: pbx_project_release(root, "SWIFT_ACTIVE_COMPILATION_CONDITIONS = DULCET_DEV_SERVER;"),
+     "project-level Release setting SWIFT_ACTIVE_COMPILATION_CONDITIONS is not allowlisted"),
+    ("a resource only iOS PROD carries", lambda root: pbx_extra_prod_resource(root),
+     "DulcetiOSRelease must build exactly DulcetiOS's files"),
+    ("a committed project that does not parse", edit("apple/Dulcet.xcodeproj/project.pbxproj", "objects = {", "objects = {{"),
+     "project.pbxproj: unreadable"),
+    # Spec §22.3 parity: a regenerated project in which DEV diverges from PROD.
+    ("DEV iOS gaining a plist setting PROD lacks", both(
+        edit("apple/project.yml", DEV_IOS_RELEASE, DEV_IOS_RELEASE + "          INFOPLIST_KEY_UIRequiresFullScreen: YES\n"),
+        pbx("DulcetiOS", "Release", add_setting("INFOPLIST_KEY_UIRequiresFullScreen = YES;"))),
+     "Info.plist UIRequiresFullScreen: DulcetiOS and DulcetiOSRelease must declare it identically (apple/DulcetiOSRelease/Info.plist lacks it)"),
+    ("DEV iOS built unoptimised", both(
+        edit("apple/project.yml", DEV_IOS_RELEASE, DEV_IOS_RELEASE + '          SWIFT_OPTIMIZATION_LEVEL: "-Onone"\n'),
+        pbx("DulcetiOS", "Release", add_setting('SWIFT_OPTIMIZATION_LEVEL = "-Onone";'))),
+     "Release SWIFT_OPTIMIZATION_LEVEL differs between DulcetiOS"),
+    ("DEV iOS dropping its launch screen", both(
+        edit("apple/project.yml", "        INFOPLIST_KEY_UILaunchScreen_Generation: YES\n", ""),
+        pbx("DulcetiOS", "Release", lambda block: block.replace("\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;\n", ""))),
+     "Info.plist UILaunchScreen: DulcetiOS and DulcetiOSRelease must declare it identically (DulcetiOS lacks it)"),
+    ("DEV macOS plist gaining a key PROD lacks", edit("apple/DulcetMacDev/Info.plist", "<dict>\n", "<dict>\n\t<key>LSUIElement</key>\n\t<true/>\n"),
+     "Info.plist LSUIElement: DulcetMac and DulcetMacRelease must declare it identically"),
+    ("DEV macOS entitlements drifting from PROD's", edit("apple/DulcetMac/DulcetMac.entitlements", "<dict>\n",
+                                                       "<dict>\n    <key>com.apple.security.network.server</key>\n    <true/>\n"),
+     "entitlements of DulcetMac and DulcetMacRelease must match"),
+    # The server key lives in a DEV-only plist and nowhere else.
+    ("the server key in shared code", lambda root: Path(root, "apple/DulcetAppleShared").mkdir(parents=True) or
+     Path(root, "apple/DulcetAppleShared/Server.swift").write_text('let key = "DulcetPreconfiguredServer"\n'),
+     "apple/DulcetAppleShared/Server.swift: contains DulcetPreconfiguredServer"),
+    ("the server key as a DEV build setting", both(
+        edit("apple/project.yml", DEV_IOS_RELEASE, DEV_IOS_RELEASE + "          INFOPLIST_KEY_DulcetPreconfiguredServer: srv.invalid\n"),
+        pbx("DulcetiOS", "Release", add_setting("INFOPLIST_KEY_DulcetPreconfiguredServer = srv.invalid;"))),
+     "project.yml: contains DulcetPreconfiguredServer"),
+    ("the server key in the iOS PROD plist", edit(IOS_PLIST, "<dict>\n", "<dict>\n\t<key>DulcetPreconfiguredServer</key>\n\t<string>srv.invalid</string>\n"),
+     "apple/DulcetiOSRelease/Info.plist: contains DulcetPreconfiguredServer"),
+    # How the PROD target is archived: Release, where the DEBUG condition and its hooks are off.
+    ("a PROD scheme archiving Debug", edit("apple/project.yml", IOS_PROD_SCHEME, IOS_PROD_SCHEME.replace("config: Release", "config: Debug")),
+     "scheme DulcetiOSRelease must build DulcetiOSRelease alone and archive Release"),
+    ("a PROD scheme building the DEV target too", edit("apple/project.yml", IOS_PROD_SCHEME,
+                                                       IOS_PROD_SCHEME.replace("DulcetiOSRelease: all\n", "DulcetiOSRelease: all\n        DulcetiOS: all\n")),
+     "scheme DulcetiOSRelease must build DulcetiOSRelease alone"),
+    ("a generated PROD scheme archiving Debug", edit("apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetiOSRelease.xcscheme",
+                                                     '<ArchiveAction\n      buildConfiguration = "Release"', '<ArchiveAction\n      buildConfiguration = "Debug"'),
+     "DulcetiOSRelease.xcscheme: must reference DulcetiOSRelease alone and archive Release"),
+    ("an archive run in Debug", edit("tools/release/archive-and-export", "  -configuration Release \\\n", "  -configuration Debug \\\n"),
+     "the archive must pass -configuration Release explicitly"),
+    ("a PROD plist property never regenerated", edit("apple/project.yml", "        CFBundleDisplayName: Dulcet\n        ITSAppUsesNonExemptEncryption: false\n",
+                                                     "        CFBundleDisplayName: Dulcet\n        DulcetHome: srv.invalid\n        ITSAppUsesNonExemptEncryption: false\n"),
+     "DulcetiOSRelease info.properties declares DulcetHome"),
+    ("an archive that skips the bundle validator", edit("tools/release/archive-and-export", "/usr/bin/python3 tools/release/validate-app-bundle", "true tools/release/validate-app-bundle"),
+     "must run tools/release/validate-app-bundle"),
 ]
 for label, mutate, reason in MUTATIONS:
     result = run_policy(mutate)
     expect(result.returncode == 1 and reason in result.stderr,
            f"release policy must reject {label} ({reason!r}); rc={result.returncode} stderr={result.stderr!r}")
 
+# The sanctioned home for a DEV convenience server (spec §22.6): its DEV-only plist. The parity rule
+# exempts exactly that key, so this must pass, or the rule leaves DEV no place to put one.
+for label, mutate in [
+    ("the server key in iOS DEV's partial plist", edit("apple/DulcetiOS/BackgroundAudio.plist", "<dict>\n",
+                                                        "<dict>\n\t<key>DulcetPreconfiguredServer</key>\n\t<string>music.invalid</string>\n")),
+    ("the server key in macOS DEV's plist", edit("apple/DulcetMacDev/Info.plist", "<dict>\n",
+                                                 "<dict>\n\t<key>DulcetPreconfiguredServer</key>\n\t<string>music.invalid</string>\n")),
+]:
+    result = run_policy(mutate)
+    expect(result.returncode == 0, f"release policy must accept {label}; stderr={result.stderr!r}")
+
 if failures:
     print("\n".join(f"FAIL {failure}" for failure in failures), file=sys.stderr)
     raise SystemExit(1)
-print(f"release channel controls passed ({passed} assertions, {len(MUTATIONS)} policy mutations rejected)")
+print(f"release channel controls passed ({passed} assertions, {len(MUTATIONS)} policy mutations rejected, "
+      f"{len(VALIDATIONS)} bundle validations)")

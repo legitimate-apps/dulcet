@@ -117,7 +117,7 @@ def case_quotes_and_backslashes() -> None:
 
 
 def case_corrupt_one_duplicate() -> None:
-    print("=== NEGATIVE: one of eight committed bodies is corrupted ===")
+    print("=== NEGATIVE: one of nine committed bodies is corrupted ===")
     original = (REPOSITORY / "apple/Dulcet.xcodeproj/project.pbxproj").read_text()
     mutated = original.replace("tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode", "echo WRONG", 1)
     before = hashlib.sha256(original.encode()).hexdigest()

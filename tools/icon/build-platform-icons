@@ -14,7 +14,8 @@ Writes:
   android/app/src/main/res/mipmap-*                          phone launcher icon (adaptive + legacy)
   android/app/src/dev/res/mipmap-*                           DEV flavour launcher icon, with the band
   android/tv/src/main/res/mipmap-*                           TV launcher icon
-  android/tv/src/main/res/drawable-xhdpi/tv_banner.png       TV home-screen banner (320x180)
+  android/tv/src/main/res/drawable-*/tv_banner.png           TV home-screen banner, 160x90dp at
+                                                             every density (320x180 at xhdpi)
 
 Run from anywhere: tools/icon/build-platform-icons
 """
@@ -251,6 +252,10 @@ def android_icons(res: Path, dev: bool) -> None:
                legacy, legacy).save(folder / "ic_launcher_round.png")
     if dev:
         return
+    # `anydpi-v26`, although minSdk is 26 and lint calls the qualifier obsolete (ObsoleteSdkInt).
+    # OBSERVED 2026-09-26 with this project's AGP: from a plain `mipmap-anydpi` folder the adaptive
+    # XML never reaches the APK -- `aapt2 dump resources` lists only the density PNGs for
+    # mipmap/ic_launcher -- so every launcher would show the legacy bitmap. Keep the qualifier.
     anydpi = res / "mipmap-anydpi-v26"
     anydpi.mkdir(parents=True, exist_ok=True)
     (anydpi / "ic_launcher.xml").write_text(ADAPTIVE_XML)
@@ -258,17 +263,19 @@ def android_icons(res: Path, dev: bool) -> None:
 
 
 def tv_banner() -> None:
-    # 320x180 at xhdpi, the size Android TV's launcher row asks for. It carries the app name
-    # as text because the banner is the only label the TV home row shows.
+    # 160x90dp -- 320x180 at xhdpi, the size Android TV's launcher row asks for -- rendered at every
+    # density the launcher icons have, so no TV has to scale a bitmap for its row. It carries the
+    # app name as text because the banner is the only label the TV home row shows.
     box = wide_box(16 / 9)
     x, _, w, _ = box
     body = (ground(box)
             + f'<g transform="translate({-w * 0.24} 0)">{RESONANCE}{FORK}</g>'
             + f'<text x="{512 - w * 0.04}" y="590" font-family="Helvetica" font-weight="bold" '
               f'font-size="230" fill="#F2D49A">Dulcet</text>' + sheen(box))
-    folder = REPO / "android/tv/src/main/res/drawable-xhdpi"
-    folder.mkdir(parents=True, exist_ok=True)
-    opaque(render(svg(box, body), 320, 180)).save(folder / "tv_banner.png")
+    for density, factor in DENSITIES.items():
+        folder = REPO / f"android/tv/src/main/res/drawable-{density}"
+        folder.mkdir(parents=True, exist_ok=True)
+        opaque(render(svg(box, body), round(160 * factor), round(90 * factor))).save(folder / "tv_banner.png")
 
 
 def main() -> int:

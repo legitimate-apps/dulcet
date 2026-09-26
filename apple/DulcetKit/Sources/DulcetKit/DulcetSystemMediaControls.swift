@@ -240,7 +240,7 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
             return .seek(sessionID: sessionID, position: event.positionTime)
         }
         // Rating and like are deliberately NOT registered. Favourites do not exist yet (spec
-        // §18.3's outbox is unbuilt), and a registered command that answers "failed" puts a
+        // §18.3's outbox has no shell caller), and a registered command that answers "failed" puts a
         // heart on the lock screen that does nothing. They come back with the feature.
     }
 

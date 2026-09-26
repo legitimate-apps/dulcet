@@ -11,13 +11,20 @@
 4. Every upload mechanism appears in exactly one step, guarded by the resolved plan's upload
    decision, which only an exact dry_run=false produces. No other workflow and no archive script
    contains one, and the export writes a package rather than uploading it.
-5. PROD has no configuration route for a preconfigured server (spec §22.3). For each PROD target
-   (DulcetMacRelease, DulcetiOSRelease) the Info.plist sits in a directory only that target reads
-   and must hold exactly the allowlisted keys; its target
-   settings and the project-level settings it inherits are allowlisted by NAME, so a server
-   setting cannot hide behind an innocent one; no value on that path may hold a URL; and the
-   archive passes no build setting but the build number. What this cannot see is a URL literal
-   compiled into Swift shared by both channels -- that is review's job, not this gate's.
+5. PROD has no configuration route for a preconfigured server (spec §22.3, §22.6), checked on the
+   committed Xcode project as well as on apple/project.yml, because Xcode builds the former:
+   - project.yml uses only the shape this reader understands (no configFiles, settingGroups,
+     templates or include; no quoted keys, flow mappings, anchors or merge keys);
+   - no build configuration is based on an xcconfig; project-level and PROD settings are allowlisted
+     by name, linker flags by value, and no value on PROD's path holds a URL;
+   - each PROD target (DulcetMacRelease, DulcetiOSRelease) reads its own plist from a directory only
+     it reads, held to an exact key set, and the committed settings equal what project.yml declares;
+   - each PROD target and its DEV twin build the same files, packages and dependencies, and differ in
+     Release settings, declared Info.plist and entitlements only by §22.3's channel list;
+   - the server key appears only in a DEV-only plist, and the archive script runs
+     tools/release/validate-app-bundle, which re-checks the built PROD bundle itself.
+   What this cannot see is a server address compiled into code shared by both channels under another
+   name -- that is review's job, not this gate's.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed.
@@ -56,6 +63,8 @@ UPLOAD_MECHANISMS = re.compile(
     re.I,
 )
 ARCHIVE_SCRIPT = Path("tools/release/archive-and-export")
+# The artifact check: icons per platform, and PROD's plist allowlist and server-key scan.
+VALIDATOR = Path("tools/release/validate-app-bundle")
 # Xcode fills these into every plist XcodeGen writes; they name the bundle, never a server.
 BUNDLE_KEYS = {
     "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIdentifier",
@@ -67,10 +76,20 @@ SIGNING_SETTINGS = {
     "OTHER_LDFLAGS", "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_NAME", "ASSETCATALOG_COMPILER_APPICON_NAME",
     "CODE_SIGN_STYLE", "CODE_SIGN_IDENTITY", "PROVISIONING_PROFILE_SPECIFIER",
 }
+PROJECT_YML = Path("apple/project.yml")
+# What Xcode actually builds. project.yml is only its source, so every rule below is enforced on the
+# committed project too, and the two are required to agree on the settings that matter here.
+PBXPROJ = Path("apple/Dulcet.xcodeproj/project.pbxproj")
+# The one sanctioned spelling of a preconfigured server (spec §22.3, §22.6): an Info.plist key set in
+# a DEV-only plist. Nothing else under apple/ may contain these bytes, the DEV/PROD parity rule
+# exempts exactly this key, and tools/release/validate-app-bundle fails any PROD bundle containing
+# them. No build carries one today.
+SERVER_KEY = "DulcetPreconfiguredServer"
 # Every PROD target: its own plist, in a directory no other target reads, held to an exact key set,
-# and its own settings allowlisted by name.
+# its own settings allowlisted by name, and a DEV twin it must match in everything but §22.3's list.
 PROD_TARGETS = {
     "DulcetMacRelease": {
+        "dev": "DulcetMac",
         "plist": Path("apple/DulcetMacRelease/Info.plist"),
         "keys": BUNDLE_KEYS | {
             "CFBundleIconFile", "CFBundleIconName", "LSApplicationCategoryType",
@@ -82,6 +101,7 @@ PROD_TARGETS = {
         },
     },
     "DulcetiOSRelease": {
+        "dev": "DulcetiOS",
         "plist": Path("apple/DulcetiOSRelease/Info.plist"),
         "keys": BUNDLE_KEYS | {
             "LSRequiresIPhoneOS", "UIBackgroundModes", "UILaunchScreen",
@@ -89,16 +109,74 @@ PROD_TARGETS = {
             "UTExportedTypeDeclarations",
         },
         "settings": SIGNING_SETTINGS | {"TARGETED_DEVICE_FAMILY"},
-        # Channel parity (spec §22.3): every key DEV's partial plist gives DulcetiOS, PROD states with
-        # the same value. A key added to DEV alone would otherwise ship a PROD build that behaves
-        # differently -- the queue's drag type was missing from PROD's first draft exactly this way.
-        "dev_partial": Path("apple/DulcetiOS/BackgroundAudio.plist"),
     },
 }
 PROJECT_SETTINGS = {
     "SWIFT_VERSION", "ARCHS", "ENABLE_USER_SCRIPT_SANDBOXING", "GENERATE_INFOPLIST_FILE",
     "CODE_SIGN_STYLE", "DEVELOPMENT_TEAM", "FRAMEWORK_SEARCH_PATHS", "OTHER_LDFLAGS",
     "MARKETING_VERSION",
+}
+# The project.yml shape this policy can read. Everything else XcodeGen accepts -- configFiles,
+# settingGroups, targetTemplates, include, per-target templates -- can put settings into a build
+# without naming them where this policy looks, so it is refused rather than parsed.
+TOP_LEVEL_KEYS = {"name", "options", "settings", "packages", "targets", "schemes"}
+OPTIONS_KEYS = {"bundleIdPrefix", "deploymentTarget"}
+TARGET_KEYS = {"type", "platform", "sources", "dependencies", "settings", "info", "preBuildScripts"}
+# Settings XcodeGen writes into a target configuration from its type, platform and `info:`.
+XCODEGEN_TARGET_SETTINGS = {"INFOPLIST_FILE", "LD_RUNPATH_SEARCH_PATHS", "SDKROOT", "COMBINE_HIDPI_IMAGES"}
+# ...and the ones its platform presets fill in when a target leaves them undeclared (an iOS Debug
+# configuration gets an "iPhone Developer" signing identity).
+XCODEGEN_TARGET_DEFAULTS = XCODEGEN_TARGET_SETTINGS | {"CODE_SIGN_IDENTITY"}
+# XcodeGen 2.46.0's default project presets (OBSERVED in the committed project) and the deployment
+# targets `options.deploymentTarget` writes, per configuration. A project-level name outside these
+# reaches PROD, so it has to be added here, in review, first.
+_XCODEGEN_PROJECT_COMMON = {
+    "ALWAYS_SEARCH_USER_PATHS", "CLANG_ANALYZER_NONNULL", "CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION",
+    "CLANG_CXX_LANGUAGE_STANDARD", "CLANG_CXX_LIBRARY", "CLANG_ENABLE_MODULES", "CLANG_ENABLE_OBJC_ARC",
+    "CLANG_ENABLE_OBJC_WEAK", "CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING", "CLANG_WARN_BOOL_CONVERSION",
+    "CLANG_WARN_COMMA", "CLANG_WARN_CONSTANT_CONVERSION", "CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS",
+    "CLANG_WARN_DIRECT_OBJC_ISA_USAGE", "CLANG_WARN_DOCUMENTATION_COMMENTS", "CLANG_WARN_EMPTY_BODY",
+    "CLANG_WARN_ENUM_CONVERSION", "CLANG_WARN_INFINITE_RECURSION", "CLANG_WARN_INT_CONVERSION",
+    "CLANG_WARN_NON_LITERAL_NULL_CONVERSION", "CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF",
+    "CLANG_WARN_OBJC_LITERAL_CONVERSION", "CLANG_WARN_OBJC_ROOT_CLASS",
+    "CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER", "CLANG_WARN_RANGE_LOOP_ANALYSIS",
+    "CLANG_WARN_STRICT_PROTOTYPES", "CLANG_WARN_SUSPICIOUS_MOVE", "CLANG_WARN_UNGUARDED_AVAILABILITY",
+    "CLANG_WARN_UNREACHABLE_CODE", "CLANG_WARN__DUPLICATE_METHOD_MATCH", "COPY_PHASE_STRIP",
+    "DEBUG_INFORMATION_FORMAT", "ENABLE_STRICT_OBJC_MSGSEND", "GCC_C_LANGUAGE_STANDARD",
+    "GCC_NO_COMMON_BLOCKS", "GCC_WARN_64_TO_32_BIT_CONVERSION", "GCC_WARN_ABOUT_RETURN_TYPE",
+    "GCC_WARN_UNDECLARED_SELECTOR", "GCC_WARN_UNINITIALIZED_AUTOS", "GCC_WARN_UNUSED_FUNCTION",
+    "GCC_WARN_UNUSED_VARIABLE", "IPHONEOS_DEPLOYMENT_TARGET", "MACOSX_DEPLOYMENT_TARGET",
+    "MTL_ENABLE_DEBUG_INFO", "MTL_FAST_MATH", "PRODUCT_NAME", "SWIFT_OPTIMIZATION_LEVEL",
+    "TVOS_DEPLOYMENT_TARGET",
+} | PROJECT_SETTINGS
+XCODEGEN_PROJECT_SETTINGS = {
+    "Debug": _XCODEGEN_PROJECT_COMMON | {
+        "ENABLE_TESTABILITY", "GCC_DYNAMIC_NO_PIC", "GCC_OPTIMIZATION_LEVEL",
+        "GCC_PREPROCESSOR_DEFINITIONS", "ONLY_ACTIVE_ARCH", "SWIFT_ACTIVE_COMPILATION_CONDITIONS",
+    },
+    "Release": _XCODEGEN_PROJECT_COMMON | {"ENABLE_NS_ASSERTIONS", "SWIFT_COMPILATION_MODE"},
+}
+# A linker flag can read a file into the binary (-sectcreate, @file), so the allowlisted linker
+# settings are held to their exact values rather than their names.
+PINNED_PROJECT_SETTINGS = {"OTHER_LDFLAGS": "$(inherited) -framework DulcetCore"}
+PINNED_TARGET_SETTINGS = {"OTHER_LDFLAGS": "$(inherited) -Wl,-export_dynamic"}
+# The build settings that may differ between a DEV target and its PROD twin: spec §22.3's list
+# (identity, name, icon) plus what signing and the plist route need, and the build number the
+# archive overrides anyway. Every other Release setting must be identical. INFOPLIST_KEY_* settings
+# are compared as the plist keys they produce, below.
+CHANNEL_SETTINGS = {
+    "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_NAME", "ASSETCATALOG_COMPILER_APPICON_NAME",
+    "PROVISIONING_PROFILE_SPECIFIER", "INFOPLIST_FILE", "CODE_SIGN_ENTITLEMENTS",
+    "CURRENT_PROJECT_VERSION",
+}
+# The Info.plist keys that may differ: name, icon, and the DEV-only server key.
+CHANNEL_PLIST_KEYS = {"CFBundleDisplayName", "CFBundleIconFile", "CFBundleIconName", SERVER_KEY}
+# Keys Xcode generates for a target whose plist it generates, which a hand-written PROD plist
+# therefore spells out as build-setting references; neither side can carry a value in them.
+IMPLICIT_PLIST_KEYS = {
+    "CFBundleDevelopmentRegion", "CFBundleExecutable", "CFBundleIdentifier",
+    "CFBundleInfoDictionaryVersion", "CFBundleName", "CFBundlePackageType",
+    "CFBundleShortVersionString", "CFBundleVersion", "LSRequiresIPhoneOS",
 }
 
 
@@ -183,6 +261,12 @@ def check(errors: list[str]) -> None:
             errors.append(f"{ARCHIVE_SCRIPT}: contains an upload mechanism; only release.yml's guarded step may upload")
         if '"destination": "export"' not in script:
             errors.append(f"{ARCHIVE_SCRIPT}: the export must write a package (destination export)")
+        if not re.search(r'(?m)^/usr/bin/python3 tools/release/validate-app-bundle "\$RELEASE_PLATFORM" '
+                         r'"\$RELEASE_CHANNEL" "\$app" \\\n\s+\|\| die ', script) \
+                or not VALIDATOR.is_file():
+            errors.append(f"{ARCHIVE_SCRIPT}: must run {VALIDATOR} on the archived app and die when it fails")
+        if not re.search(r"xcodebuild archive \\\n(?:[^\n]*\\\n)*?\s+-configuration Release \\\n", script):
+            errors.append(f"{ARCHIVE_SCRIPT}: the archive must pass -configuration Release explicitly")
         overrides = set(re.findall(r"(?m)^\s+([A-Z][A-Z0-9_]*)=", script))
         if overrides != {"CURRENT_PROJECT_VERSION"} or "-xcconfig" in script:
             errors.append(f"{ARCHIVE_SCRIPT}: the archive may override CURRENT_PROJECT_VERSION only, found {sorted(overrides)}")
@@ -237,22 +321,81 @@ def mapping(lines: list[str]) -> dict[str, str]:
     return {entry.group(2): entry.group(3).strip('"\'') for entry in entries if len(entry.group(1)) == indent}
 
 
+def structural_lines(lines: list[str]) -> list[tuple[int, str]]:
+    """(line number, line) for every line that is YAML structure: no comments, no block-scalar
+    bodies (the script phases), no blank lines."""
+    found, block_indent = [], None
+    for number, raw in enumerate(lines, 1):
+        indent = len(raw) - len(raw.lstrip(" "))
+        if block_indent is not None:
+            if not raw.strip() or indent > block_indent:
+                continue
+            block_indent = None
+        line = code(raw)
+        if not line.strip():
+            continue
+        found.append((number, line))
+        if re.search(r"(?:^\s*-|:)\s*[|>][-+0-9]*$", line):
+            block_indent = indent
+    return found
+
+
+def check_yaml_shape(errors: list[str], project: Path, lines: list[str]) -> None:
+    """Refuse every YAML spelling the line-based reader here would misread, and every XcodeGen
+    feature that injects settings from somewhere this policy does not look."""
+    structure = structural_lines(lines)
+    for number, line in structure:
+        where = f"{project}:{number}"
+        if "\t" in line:
+            errors.append(f"{where}: tab indentation; this policy reads block YAML with spaces only")
+        if re.match(r"\s*(?:-\s+)?[\"']", line) and re.match(r"\s*(?:-\s+)?([\"'])[^\"']*\1\s*:(?:\s|$)", line):
+            errors.append(f"{where}: quoted mapping key; write keys bare so this policy can read them")
+        if re.search(r"(?:^\s*(?:-\s+)?|:\s+)\{(?!\s*\}\s*$)", line) or re.search(r"(?:^\s*(?:-\s+)?|:\s+)\[[^\]]*:", line):
+            errors.append(f"{where}: flow-style mapping; write block YAML so this policy can read it")
+        if re.search(r"(?:^|\s)(?:[&*!][^\s]|<<\s*:|\?\s)", line) or line.strip() == "---":
+            errors.append(f"{where}: YAML anchor, alias, merge key, tag or complex key; not readable here")
+    for number, line in structure:
+        match = re.fullmatch(r"([A-Za-z0-9_]+):(?:\s.*)?", line)
+        if not line.startswith(" ") and (not match or match.group(1) not in TOP_LEVEL_KEYS):
+            errors.append(f"{project}:{number}: top-level {line.split(':')[0]!r} is not one of "
+                          f"{sorted(TOP_LEVEL_KEYS)}; configFiles, settingGroups, targetTemplates and "
+                          "include can each put settings into a build unseen")
+    for section, allowed in (("options", OPTIONS_KEYS), ("settings", {"base"})):
+        for name in sorted(set(mapping(yaml_block(lines, [section]) or [])) - allowed):
+            errors.append(f"{project}: {section}.{name} is not allowed; only {sorted(allowed)}")
+    targets = yaml_block(lines, ["targets"]) or []
+    for target in re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(targets)):
+        for key in sorted(set(mapping(yaml_block(targets, [target]) or [])) - TARGET_KEYS):
+            errors.append(f"{project}: target {target} uses {key}, which is not one of {sorted(TARGET_KEYS)}")
+
+
+def source_paths(target: list[str]) -> list[str]:
+    items = [code(line) for line in yaml_block(target, ["sources"]) or [] if re.match(r"\s*-\s", code(line))]
+    indent = min((len(item) - len(item.lstrip()) for item in items), default=0)
+    paths = []
+    for item in items:
+        if len(item) - len(item.lstrip()) == indent:
+            match = re.fullmatch(r"\s*-\s+(?:path:\s*)?[\"']?([^\"'\s]+)[\"']?\s*", item)
+            paths.append(match.group(1) if match else item.strip())
+    return sorted(paths)
+
+
 def check_prod_configuration(errors: list[str]) -> None:
-    project = Path("apple/project.yml")
+    project = PROJECT_YML
     if not project.is_file():
         errors.append(f"{project} is missing")
         return
     lines = project.read_text().splitlines()
+    check_yaml_shape(errors, project, lines)
 
     inherited = mapping(yaml_block(lines, ["settings", "base"]) or [])
-    if yaml_block(lines, ["settings", "configs"]) is not None:
-        errors.append(f"{project}: project-level configs would reach PROD unreviewed; use settings.base")
     for name in sorted(set(inherited) - PROJECT_SETTINGS):
         errors.append(f"{project}: project-level setting {name} is not allowlisted, and PROD inherits it")
 
     target_names = re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(yaml_block(lines, ["targets"]) or []))
     for name, rules in PROD_TARGETS.items():
         check_prod_target(errors, project, lines, target_names, name, rules)
+    check_pbxproj(errors, lines)
 
 
 def holds_url(value) -> bool:
@@ -291,6 +434,22 @@ def check_prod_target(errors: list[str], project: Path, lines: list[str], target
         if other != name and any(directory in code(line)
                                  for line in yaml_block(lines, ["targets", other]) or []):
             errors.append(f"{project}: target {other} reads the PROD-only {directory} directory")
+    dev = yaml_block(lines, ["targets", rules["dev"]])
+    if dev is None:
+        errors.append(f"{project}: no {rules['dev']} target, the DEV twin of {name}")
+    else:
+        if source_paths(target) != source_paths(dev):
+            errors.append(f"{project}: {name} must compile exactly the source folders {rules['dev']} does "
+                          f"(excludes may only remove); found {source_paths(target)} against {source_paths(dev)}")
+        deps = [code(line).strip() for line in yaml_block(target, ["dependencies"]) or [] if code(line).strip()]
+        dev_deps = [code(line).strip() for line in yaml_block(dev, ["dependencies"]) or [] if code(line).strip()]
+        if deps != dev_deps:
+            errors.append(f"{project}: {name} must have exactly {rules['dev']}'s dependencies")
+
+    scheme = [code(line).strip() for line in yaml_block(lines, ["schemes", name]) or [] if code(line).strip()]
+    if scheme != ["build:", "targets:", f"{name}: all", "archive:", "config: Release"]:
+        errors.append(f"{project}: scheme {name} must build {name} alone and archive Release, found {scheme}")
+    check_scheme_file(errors, name)
 
     if not plist_path.is_file():
         errors.append(f"{plist_path} is missing")
@@ -307,17 +466,301 @@ def check_prod_target(errors: list[str], project: Path, lines: list[str], target
     for key, value in document.items():
         if holds_url(value):
             errors.append(f"{plist_path}: {key} holds a URL")
-    dev_partial = rules.get("dev_partial")
-    if dev_partial is not None:
+    # XcodeGen writes the plist from `info.properties`; a property the committed plist lacks was
+    # never regenerated, and would appear the next time someone regenerates.
+    properties = yaml_block(target, ["info", "properties"]) or []
+    for key in sorted(set(mapping(properties)) - keys):
+        errors.append(f"{project}: {name} info.properties declares {key}, which {plist_path} lacks; "
+                      "regenerate with the pinned XcodeGen")
+    if any("://" in code(line) for line in properties):
+        errors.append(f"{project}: {name} info.properties carries a URL")
+
+
+def check_scheme_file(errors: list[str], name: str) -> None:
+    """xcodebuild reads the generated scheme, not project.yml: it must build the PROD target alone
+    and archive Release, where the project-level Debug configuration's DEBUG condition is off."""
+    path = PBXPROJ.parent / f"xcshareddata/xcschemes/{name}.xcscheme"
+    try:
+        import xml.etree.ElementTree as ElementTree
+        tree = ElementTree.parse(path)
+    except Exception as error:  # noqa: BLE001 - a missing or broken scheme is a policy failure
+        errors.append(f"{path}: unreadable: {error}")
+        return
+    blueprints = {item.get("BlueprintName") for item in tree.iter("BuildableReference")}
+    archive = tree.find("ArchiveAction")
+    if blueprints != {name} or archive is None or archive.get("buildConfiguration") != "Release":
+        errors.append(f"{path}: must reference {name} alone and archive Release; found {sorted(map(str, blueprints))}, "
+                      f"archive {None if archive is None else archive.get('buildConfiguration')}")
+
+
+# --- the committed Xcode project -------------------------------------------------------------------
+
+_PBX_TOKEN = re.compile(r'\s+|/\*.*?\*/|//[^\n]*|"((?:[^"\\]|\\.)*)"|([A-Za-z0-9_$./:+\-]+)|([{}()=;,])', re.S)
+
+
+def parse_pbxproj(text: str):
+    """The old-style (OpenStep) property list an .xcodeproj is written in. Stdlib only, because this
+    gate runs on Linux where plutil does not exist."""
+    tokens, position = [], 0
+    while position < len(text):
+        match = _PBX_TOKEN.match(text, position)
+        if not match:
+            raise ValueError(f"unreadable at offset {position}: {text[position:position + 30]!r}")
+        position = match.end()
+        if match.group(1) is not None:
+            raw = match.group(1)
+            tokens.append(("s", raw.encode("latin-1", "backslashreplace").decode("unicode_escape")
+                           if "\\" in raw else raw))
+        elif match.group(2) is not None:
+            tokens.append(("s", match.group(2)))
+        elif match.group(3) is not None:
+            tokens.append(("p", match.group(3)))
+    index = 0
+
+    def value():
+        nonlocal index
+        kind, token = tokens[index]
+        index += 1
+        if kind == "s":
+            return token
+        if token == "{":
+            result = {}
+            while tokens[index] != ("p", "}"):
+                key = value()
+                if tokens[index] != ("p", "="):
+                    raise ValueError(f"expected '=' after {str(key)[:40]!r}")
+                index += 1
+                result[key] = value()
+                if tokens[index] != ("p", ";"):
+                    raise ValueError(f"expected ';' after {str(key)[:40]!r}")
+                index += 1
+            index += 1
+            return result
+        if token == "(":
+            result = []
+            while tokens[index] != ("p", ")"):
+                result.append(value())
+                if tokens[index] == ("p", ","):
+                    index += 1
+            index += 1
+            return result
+        raise ValueError(f"unexpected {token!r}")
+
+    try:
+        root = value()
+    except (IndexError, ValueError) as error:
+        raise ValueError(str(error) or "truncated") from error
+    if not isinstance(root, dict) or not isinstance(root.get("objects"), dict):
+        raise ValueError("not an Xcode project")
+    return root
+
+
+def plist_from_setting(name: str, value: str):
+    """The Info.plist entry an INFOPLIST_KEY_* build setting produces."""
+    key = name[len("INFOPLIST_KEY_"):]
+    if key == "UILaunchScreen_Generation":
+        return ("UILaunchScreen", {}) if value == "YES" else (None, None)
+    suffix = re.fullmatch(r"(.+)_(iPhone|iPad)", key)
+    if suffix:
+        key = f"{suffix.group(1)}~{suffix.group(2).lower()}"
+    if key.startswith("UISupportedInterfaceOrientations"):
+        return key, value.split()
+    if value in ("YES", "NO"):
+        return key, value == "YES"
+    return key, value
+
+
+def check_pbxproj(errors: list[str], lines: list[str]) -> None:
+    if not PBXPROJ.is_file():
+        errors.append(f"{PBXPROJ} is missing")
+        dev_only_plists: set[Path] = set()
+    else:
         try:
-            dev = plistlib.loads(dev_partial.read_bytes())
-        except Exception as error:  # noqa: BLE001 - a missing or broken DEV plist is a failure too
-            errors.append(f"{dev_partial}: unreadable: {error}")
-            return
-        for key, value in dev.items():
-            if document.get(key) != value:
-                errors.append(f"{plist_path}: {key} differs from DEV's {dev_partial}; the channels "
-                              "must differ only in identity, name and icon")
+            root = parse_pbxproj(PBXPROJ.read_text())
+        except ValueError as error:
+            errors.append(f"{PBXPROJ}: unreadable: {error}")
+            root = None
+        dev_only_plists = check_project_objects(errors, lines, root) if root else set()
+    check_server_marker(errors, dev_only_plists)
+
+
+def check_project_objects(errors: list[str], lines: list[str], root: dict) -> set[Path]:
+    objects = root["objects"]
+
+    def configurations(owner: dict) -> dict[str, dict]:
+        listed = objects.get(owner.get("buildConfigurationList"), {})
+        return {objects[item]["name"]: objects[item].get("buildSettings", {})
+                for item in listed.get("buildConfigurations", []) if item in objects}
+
+    for identifier, item in objects.items():
+        if item.get("isa") == "XCBuildConfiguration" and "baseConfigurationReference" in item:
+            errors.append(f"{PBXPROJ}: configuration {item.get('name')} ({identifier}) is based on an xcconfig, "
+                          "whose settings nothing here can see; no configuration may have one")
+
+    project_configs = configurations(objects.get(root.get("rootObject"), {}))
+    declared = mapping(yaml_block(lines, ["settings", "base"]) or [])
+    for configuration, settings in project_configs.items():
+        allowed = XCODEGEN_PROJECT_SETTINGS.get(configuration)
+        if allowed is None:
+            errors.append(f"{PBXPROJ}: unexpected project configuration {configuration}")
+            continue
+        for name in sorted(set(settings) - allowed):
+            errors.append(f"{PBXPROJ}: project-level {configuration} setting {name} is not allowlisted, "
+                          "and PROD inherits it")
+        check_values(errors, f"project-level {configuration}", settings, PINNED_PROJECT_SETTINGS)
+        for name, value in declared.items():
+            if settings.get(name) != value:
+                errors.append(f"{PBXPROJ}: project-level {name} is {settings.get(name)!r} where project.yml "
+                              f"says {value!r}; regenerate with the pinned XcodeGen")
+
+    targets = {item["name"]: item for item in objects.values() if item.get("isa") == "PBXNativeTarget"}
+    for name, rules in PROD_TARGETS.items():
+        prod, dev = targets.get(name), targets.get(rules["dev"])
+        if prod is None or dev is None:
+            errors.append(f"{PBXPROJ}: no {name if prod is None else rules['dev']} target")
+            continue
+        prod_configs, dev_configs = configurations(prod), configurations(dev)
+        plist_setting = str(rules["plist"].relative_to("apple"))
+        for configuration, settings in prod_configs.items():
+            for setting in sorted(set(settings) - rules["settings"] - XCODEGEN_TARGET_SETTINGS):
+                errors.append(f"{PBXPROJ}: PROD target {name} ({configuration}) sets {setting}, "
+                              "which is not allowlisted")
+            if settings.get("INFOPLIST_FILE") != plist_setting:
+                errors.append(f"{PBXPROJ}: PROD target {name} ({configuration}) must read {plist_setting}")
+            check_values(errors, f"PROD target {name} ({configuration})", settings, PINNED_TARGET_SETTINGS)
+        for target, target_configs in ((name, prod_configs), (rules["dev"], dev_configs)):
+            check_generated(errors, lines, target, target_configs)
+        if "Release" not in prod_configs or "Release" not in dev_configs:
+            errors.append(f"{PBXPROJ}: {name} and {rules['dev']} must both have a Release configuration")
+            continue
+        check_twins(errors, objects, name, prod, prod_configs["Release"], rules["dev"], dev,
+                    dev_configs["Release"], rules["plist"])
+
+    dev_only = set()
+    for item in targets.values():
+        if item.get("productType") == "com.apple.product-type.application" and item["name"] not in PROD_TARGETS:
+            for settings in configurations(item).values():
+                if settings.get("INFOPLIST_FILE"):
+                    dev_only.add(Path("apple") / settings["INFOPLIST_FILE"])
+    return dev_only
+
+
+def check_values(errors: list[str], where: str, settings: dict, pinned: dict[str, str]) -> None:
+    for setting, value in settings.items():
+        if holds_url(value):
+            errors.append(f"{PBXPROJ}: {where} {setting} carries a URL")
+    for setting, value in pinned.items():
+        if setting in settings and settings[setting] != value:
+            errors.append(f"{PBXPROJ}: {where} {setting} must be exactly {value!r}, found {settings[setting]!r}")
+
+
+def check_generated(errors: list[str], lines: list[str], target: str, configs: dict[str, dict]) -> None:
+    """The committed project must carry exactly the target settings project.yml declares, so a
+    project.yml edit that was never regenerated -- or a project hand-edit -- is a failure here."""
+    declared = yaml_block(lines, ["targets", target, "settings"]) or []
+    base = mapping(yaml_block(declared, ["base"]) or [])
+    for configuration, settings in configs.items():
+        expected = {**base, **mapping(yaml_block(declared, ["configs", configuration]) or [])}
+        for setting in sorted(set(expected) | set(settings)):
+            if setting in XCODEGEN_TARGET_DEFAULTS and setting not in expected:
+                continue
+            if settings.get(setting) != expected.get(setting):
+                errors.append(f"{PBXPROJ}: {target} ({configuration}) {setting} is {settings.get(setting)!r} where "
+                              f"project.yml says {expected.get(setting)!r}; regenerate with the pinned XcodeGen")
+
+
+def declared_plist(settings: dict) -> tuple[dict, list[str]]:
+    """The Info.plist a target declares: its INFOPLIST_FILE plus its INFOPLIST_KEY_* settings."""
+    problems, document = [], {}
+    path = Path("apple") / settings.get("INFOPLIST_FILE", "")
+    if settings.get("INFOPLIST_FILE"):
+        try:
+            document = plistlib.loads(path.read_bytes())
+        except Exception as error:  # noqa: BLE001 - any parse failure is a policy failure
+            problems.append(f"{path}: unreadable: {error}")
+    for setting, value in settings.items():
+        if setting.startswith("INFOPLIST_KEY_"):
+            key, entry = plist_from_setting(setting, value)
+            if key is not None:
+                document[key] = entry
+    return document, problems
+
+
+def check_twins(errors: list[str], objects: dict, name: str, prod: dict, prod_settings: dict,
+                dev_name: str, dev: dict, dev_settings: dict, prod_plist: Path) -> None:
+    """Spec §22.3: a DEV target and its PROD twin differ only in identity, name, icon and the
+    preconfigured server. Anything else differing means DEV no longer predicts PROD."""
+    for setting in sorted(set(prod_settings) | set(dev_settings)):
+        if setting in CHANNEL_SETTINGS or setting.startswith("INFOPLIST_KEY_"):
+            continue
+        if prod_settings.get(setting) != dev_settings.get(setting):
+            errors.append(f"{PBXPROJ}: Release {setting} differs between {dev_name} "
+                          f"({dev_settings.get(setting)!r}) and {name} ({prod_settings.get(setting)!r}); "
+                          "only spec §22.3's channel settings may")
+    dev_plist, problems = declared_plist(dev_settings)
+    prod_document, prod_problems = declared_plist(prod_settings)
+    errors.extend(problems + prod_problems)
+    for key in sorted((set(dev_plist) | set(prod_document)) - IMPLICIT_PLIST_KEYS - CHANNEL_PLIST_KEYS):
+        if dev_plist.get(key) != prod_document.get(key):
+            side = f"{dev_name} lacks it" if key not in dev_plist else \
+                f"{prod_plist} lacks it" if key not in prod_document else "the values differ"
+            errors.append(f"Info.plist {key}: {dev_name} and {name} must declare it identically ({side}); "
+                          "only name, icon and the DEV-only server key may differ")
+
+    dev_id, prod_id = dev_settings.get("PRODUCT_BUNDLE_IDENTIFIER", ""), prod_settings.get("PRODUCT_BUNDLE_IDENTIFIER", "")
+
+    def entitlements(settings: dict, rename: bool):
+        if not settings.get("CODE_SIGN_ENTITLEMENTS"):
+            return None
+        path = Path("apple") / settings["CODE_SIGN_ENTITLEMENTS"]
+        try:
+            text = path.read_text()
+        except OSError as error:
+            errors.append(f"{path}: unreadable: {error}")
+            return None
+        if rename and dev_id:
+            text = text.replace(dev_id, prod_id)
+        return plistlib.loads(text.encode())
+
+    if entitlements(dev_settings, True) != entitlements(prod_settings, False):
+        errors.append(f"entitlements of {dev_name} and {name} must match apart from the bundle identifier")
+
+    def membership(target: dict):
+        phases = []
+        for identifier in target.get("buildPhases", []):
+            phase = objects[identifier]
+            if phase.get("isa") == "PBXShellScriptBuildPhase":
+                phases.append((phase["isa"], phase.get("name"), phase.get("shellScript"),
+                               tuple(phase.get("inputPaths", [])), tuple(phase.get("outputPaths", []))))
+                continue
+            members = []
+            for entry in phase.get("files", []):
+                build_file = objects.get(entry, {})
+                if "fileRef" in build_file:
+                    members.append(build_file["fileRef"])
+                else:
+                    members.append("product:" + objects.get(build_file.get("productRef"), {}).get("productName", "?"))
+            phases.append((phase.get("isa"), phase.get("dstSubfolderSpec"), phase.get("dstPath"), tuple(sorted(members))))
+        packages = sorted(objects.get(item, {}).get("productName", "?") for item in target.get("packageProductDependencies", []))
+        depends = sorted(objects.get(objects.get(item, {}).get("target"), {}).get("name", "?")
+                         for item in target.get("dependencies", []))
+        return phases, packages, depends, target.get("buildRules", [])
+
+    if membership(prod) != membership(dev):
+        errors.append(f"{PBXPROJ}: {name} must build exactly {dev_name}'s files, script phases, packages and "
+                      "dependencies; a resource or source only PROD carries is a route for a server")
+
+
+def check_server_marker(errors: list[str], dev_only_plists: set[Path]) -> None:
+    """The server key may live only in a DEV-only plist: not in shared code, not in a PROD plist, not
+    in a build setting. tools/release/validate-app-bundle re-checks the built PROD bundle itself."""
+    skip = {".build", "build", "DerivedData", "xcuserdata", ".swiftpm"}
+    for path in sorted(Path("apple").rglob("*")):
+        if any(part in skip for part in path.parts) or not path.is_file() or path in dev_only_plists:
+            continue
+        if SERVER_KEY.encode() in path.read_bytes():
+            errors.append(f"{path}: contains {SERVER_KEY}, which may appear only in a DEV-only plist "
+                          f"({', '.join(sorted(map(str, dev_only_plists))) or 'none found'})")
 
 
 def main() -> int:

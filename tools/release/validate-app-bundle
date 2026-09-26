@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Validate an archived .app before it is exported: the platform's App Store icon keys, and for PROD
+the preconfigured-server guard (spec §22.3) applied to the artifact itself.
+
+    validate-app-bundle <macos|ios|tvos> <dev|prod> <path/to/App.app>
+
+Called by tools/release/archive-and-export; tools/test-release-channel runs it against bundles shaped
+like observed Release builds. Exits 1 naming every violation.
+
+Icons, per platform (each shape OBSERVED in a Release build with Xcode 26.6):
+- macos: CFBundleIconName (the asset catalog; a bare .icns is ITMS-90546), LSApplicationCategoryType.
+- ios:   CFBundleIcons -> CFBundlePrimaryIcon is a dictionary carrying CFBundleIconName.
+- tvos:  actool writes CFBundleIcons -> CFBundlePrimaryIcon as a STRING, the brand-assets app icon's
+         name; the dictionary form is accepted too. A tvOS app also needs both top-shelf images
+         (TVTopShelfImage -> TVTopShelfPrimaryImage and TVTopShelfPrimaryImageWide).
+
+PROD only:
+- The Info.plist holds only the allowlisted keys for its platform plus the ones Xcode stamps into every
+  build, and no value anywhere in it is a URL.
+- No file in the bundle contains the server key's bytes (UTF-8 or UTF-16), whichever route put it
+  there: plist, resource, or code.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import plistlib
+import sys
+from pathlib import Path
+
+# The same key tools/verify_release_policy.py confines to DEV-only plists.
+SERVER_KEY = "DulcetPreconfiguredServer"
+
+COMMON = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIdentifier",
+    "CFBundleInfoDictionaryVersion", "CFBundleName", "CFBundlePackageType",
+    "CFBundleShortVersionString", "CFBundleVersion", "ITSAppUsesNonExemptEncryption",
+    "NSLocalNetworkUsageDescription",
+    "BuildMachineOSBuild", "CFBundleSupportedPlatforms", "DTCompiler", "DTPlatformBuild",
+    "DTPlatformName", "DTPlatformVersion", "DTSDKBuild", "DTSDKName", "DTXcode", "DTXcodeBuild",
+}
+# The PROD allowlists, OBSERVED on Release builds of DulcetMacRelease and DulcetiOSRelease. The macOS
+# list once lacked NSLocalNetworkUsageDescription, which the PROD plist has always declared, so a
+# prod/macos archive would have been refused. There is no PROD tvOS target, so no tvOS list.
+PROD_KEYS = {
+    "macos": COMMON | {
+        "CFBundleIconFile", "CFBundleIconName", "LSApplicationCategoryType", "LSMinimumSystemVersion",
+        "NSHumanReadableCopyright",
+    },
+    "ios": COMMON | {
+        "LSRequiresIPhoneOS", "UIBackgroundModes", "UILaunchScreen",
+        "UISupportedInterfaceOrientations~iphone", "UISupportedInterfaceOrientations~ipad",
+        "CFBundleIcons", "CFBundleIcons~ipad", "MinimumOSVersion", "UIDeviceFamily",
+        "UIRequiredDeviceCapabilities", "UTExportedTypeDeclarations",
+    },
+}
+
+
+def text(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def icon_problems(platform: str, info: dict) -> list[str]:
+    problems = []
+    if platform == "macos":
+        if not text(info.get("CFBundleIconName")):
+            problems.append("no asset-catalog app icon (CFBundleIconName; ITMS-90546)")
+        if not text(info.get("LSApplicationCategoryType")):
+            problems.append("no LSApplicationCategoryType")
+        return problems
+    icons = info.get("CFBundleIcons")
+    primary = icons.get("CFBundlePrimaryIcon") if isinstance(icons, dict) else None
+    named = isinstance(primary, dict) and text(primary.get("CFBundleIconName"))
+    if platform == "ios" and not named:
+        problems.append("no asset-catalog app icon (CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName)")
+    if platform == "tvos":
+        if not (named or text(primary)):
+            problems.append("no brand-assets app icon (CFBundleIcons:CFBundlePrimaryIcon)")
+        shelf = info.get("TVTopShelfImage")
+        for key in ("TVTopShelfPrimaryImage", "TVTopShelfPrimaryImageWide"):
+            if not (isinstance(shelf, dict) and text(shelf.get(key))):
+                problems.append(f"no top-shelf image (TVTopShelfImage:{key})")
+    return problems
+
+
+def holds_url(value) -> bool:
+    return "://" in json.dumps(value, default=str)
+
+
+def prod_problems(platform: str, info: dict, app: Path) -> list[str]:
+    problems = []
+    allowed = PROD_KEYS.get(platform)
+    if allowed is None:
+        return [f"no PROD Info.plist allowlist for platform {platform}; there is no PROD {platform} target"]
+    extra = sorted(set(info) - allowed)
+    urls = sorted(key for key, value in info.items() if holds_url(value))
+    if extra or urls:
+        problems.append(f"PROD Info.plist: unexpected keys {extra}, URL-valued keys {urls}")
+    needles = [SERVER_KEY.encode(encoding) for encoding in ("utf-8", "utf-16-le", "utf-16-be")]
+    for directory, _, files in os.walk(app, followlinks=False):
+        for name in files:
+            path = Path(directory, name)
+            if path.is_symlink() or not path.is_file():
+                continue
+            data = path.read_bytes()
+            if any(needle in data for needle in needles):
+                problems.append(f"{path.relative_to(app.parent)} contains {SERVER_KEY}: PROD ships no "
+                                "preconfigured server")
+    return problems
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 4 or argv[1] not in ("macos", "ios", "tvos") or argv[2] not in ("dev", "prod"):
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    platform, channel, app = argv[1], argv[2], Path(argv[3])
+    info_path = app / ("Contents/Info.plist" if platform == "macos" else "Info.plist")
+    try:
+        info = plistlib.loads(info_path.read_bytes())
+    except Exception as error:  # noqa: BLE001 - an unreadable plist is a validation failure
+        print(f"{info_path}: unreadable: {error}", file=sys.stderr)
+        return 1
+    problems = icon_problems(platform, info)
+    if channel == "prod":
+        problems += prod_problems(platform, info, app)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

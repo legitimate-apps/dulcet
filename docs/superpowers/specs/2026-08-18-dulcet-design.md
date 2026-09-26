@@ -584,7 +584,7 @@ androidTarget(); jvm()   // jvm exists only for the conformance suite (S20)
   they require a JDK and the Gradle wrapper on the build machine. GitHub's macOS runner images ship
   both, so this is free in CI; it is a stated contributor prerequisite in `CLAUDE.md`.
 - **Every Run Script phase invokes Gradle through `tools/run-gradle-exclusive`, never a bare
-  `./gradlew`.** OBSERVED: eight targets own the phase, Xcode builds independent targets in parallel,
+  `./gradlew`.** OBSERVED: eight targets own the phase (nine since revision 112 added `DulcetiOSRelease`), Xcode builds independent targets in parallel,
   and Gradle queues behind its own locks for only about 60 s before failing the build if the owner
   has not yielded — most pairs fit inside that window (green run 34596556005 ran a tvOS pair
   concurrently for over four minutes), and the failure is the long tail. Run
@@ -5866,7 +5866,8 @@ to everyone who downloads the app, and it is wrong for every user who is not the
 it. **Anything of that shape belongs to the DEV target only, and never to a build that leaves the
 maintainer's own devices.** The build configuration must make this structurally impossible rather than
 relying on someone remembering — the field is read from a DEV-only configuration file that the PROD
-target does not compile.
+target does not compile. *Revision 112* names that file and key (§22.6): the Info.plist key
+`DulcetPreconfiguredServer`, only ever in a DEV-only plist.
 
 Optimization level, assertions, and every correctness-relevant flag are **identical** across channels.
 A DEV build that behaves differently from PROD because of a build setting is not dogfooding, it is
@@ -5934,7 +5935,12 @@ gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_r
 
 Refused, with the reason printed: `prod/tvos` (no PROD tvOS target exists; tvOS ships to DEV only).
 *Revision 112* added `dev/tvos` — `DulcetTV` now carries the layered app icon and both top-shelf
-images App Store Connect requires, in one brand-assets set — and `prod/ios`, a `DulcetiOSRelease`
+images App Store Connect requires, in one brand-assets set. As first committed it could not pass the
+archive step, which required the iOS icon shape (a dictionary naming the icon) on every non-macOS
+platform. actool writes tvOS's primary icon as a bare string (OBSERVED in a Release `DulcetTV`
+build). The check now accepts that shape, and also requires both top-shelf images. `dev/tvos` has
+not yet run end to end, so it is ASSUMED deliverable until its first dispatch. Revision 112 also
+added `prod/ios`, a `DulcetiOSRelease`
 target built like `DulcetMacRelease`: its own plist in a directory no other target reads, the same
 sources as `DulcetiOS` minus DEV's partial plist, and the production icon. Internal-only is read back from the packaged `Info.plist` (`TFInternalTestingOnly`),
 not assumed from the export options. The pairs
@@ -5976,25 +5982,60 @@ platform is not caught before the archive; ASSUMED, not yet observed: that App S
 refuses the validation or the upload.
 
 **The preconfigured-server guard (§22.3).** No build carries a preconfigured server today. What
-exists is the guard, and its reach is stated exactly:
+exists is the guard, and its reach is stated exactly. *Revision 112* rebuilt it after review showed
+the earlier version read only `apple/project.yml` while Xcode builds the committed `.pbxproj`: an
+xcconfig attached through `configFiles`, a template, a setting group, a quoted or flow-style key, an
+extra source folder, or a hand edit of the project all passed it, and an xcconfig carrying a server
+value and a compile condition was shown to reach a Release build of `DulcetiOSRelease` (the same
+routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now holds:
 
-- **Structural for configuration.** The two Mac targets no longer share a plist: PROD reads
-  `apple/DulcetMacRelease/Info.plist`, DEV reads `apple/DulcetMacDev/Info.plist`, and neither directory
-  is a source folder of the other channel. A DEV convenience value belongs in the DEV plist, which no
-  PROD build reads. *Revision 112:* the iOS pair is built the same way. `DulcetiOSRelease` reads
-  `apple/DulcetiOSRelease/Info.plist`, which states outright every key `DulcetiOS` gets from
-  `INFOPLIST_KEY_*` settings and its partial plist, and excludes that partial plist from its sources,
-  so no DEV-side plist reaches it. Stating the keys twice creates a drift risk, which the policy
-  closes: every key DEV's partial plist sets must appear in PROD's plist with the same value, and a
-  mutation control proves the check fires both ways.
-- **Allowlists, not name matching.** `verify_release_policy.py` holds the PROD plist to an exact key
-  set, the PROD target's build settings and the project-level settings it inherits to allowlisted
-  names, forbids project-level `configs`, and rejects any URL on that path; `release.yml` may pass no
-  server, URL, `-xcconfig` or `INFOPLIST_KEY_` setting, and the archive may override only the build
-  number. The archive step then holds the built PROD `Info.plist` to the same allowlist plus the keys
-  Xcode stamps into every build, with no URL-valued entry.
-- **Not covered:** a URL literal compiled into Swift or Kotlin shared by both channels. No build
-  configuration can exclude that, so it remains a review obligation.
+- **Separate plists.** PROD reads `apple/DulcetMacRelease/Info.plist` or
+  `apple/DulcetiOSRelease/Info.plist`, each in a directory no other target reads; the DEV targets read
+  `apple/DulcetMacDev/Info.plist` and `apple/DulcetiOS/BackgroundAudio.plist`, which `DulcetiOSRelease`
+  excludes from its sources. Each PROD plist is held to an exact key set with no URL anywhere.
+- **The project source, as a shape it can read.** `project.yml` may use only the top-level, `options`
+  and per-target keys the policy knows; `configFiles`, `settingGroups`, `targetTemplates`, `include`,
+  target `templates` and setting presets are refused rather than parsed, as are quoted keys,
+  flow-style mappings, anchors, aliases and merge keys. PROD settings are allowlisted by name, a PROD
+  target must compile exactly its DEV twin's source folders (excludes may only remove) with exactly
+  its dependencies, and project-level settings are allowlisted by name.
+- **The committed project, which is what builds.** Parsed without Xcode, so the gate still runs on
+  Linux: no configuration anywhere is based on an xcconfig; project-level settings are allowlisted
+  per configuration; each PROD configuration's settings are allowlisted by name and hold no URL, and
+  linker flags, which can read a file into the binary, are held to their exact values. The committed
+  settings of both channels' targets, and the project-level ones `project.yml` declares, must equal
+  what `project.yml` declares, so an edit that was never regenerated fails too.
+- **DEV and PROD twins (§22.3's list, enforced).** In the committed project each PROD target must
+  build exactly its DEV twin's files, script phases, packages and dependencies, and their Release
+  settings must be identical except for the channel settings (bundle identifier, product name, icon,
+  provisioning profile, plist route, entitlements file, build number). The Info.plist each declares
+  (its plist file plus its `INFOPLIST_KEY_*` settings) must agree key for key except name, icon and
+  the server key, and the entitlements must match apart from the bundle identifier. That rule exists
+  because PROD iOS's first plist omitted the queue's drag type.
+- **Where a DEV server goes.** The one sanctioned spelling is the Info.plist key
+  `DulcetPreconfiguredServer`, set in a DEV-only plist: `apple/DulcetMacDev/Info.plist`,
+  `apple/DulcetiOS/BackgroundAudio.plist`, or `apple/DulcetTV/BackgroundAudio.plist`. The parity rule
+  exempts exactly that key, and the key's bytes may appear in no other file under `apple/`: not in
+  shared code, a PROD plist or a build setting. The code that reads it therefore has to live in a
+  DEV-only source directory, which the twins rule does not yet admit. Adding the first DEV server is
+  a reviewed change to that rule, and none exists today.
+- **The artifact.** `release.yml` may pass no server, URL, `-xcconfig` or `INFOPLIST_KEY_` setting,
+  and the archive may override only the build number. After archiving,
+  `tools/release/validate-app-bundle` holds the built PROD `Info.plist` to its platform's allowlist
+  plus the keys Xcode stamps into every build, with no URL-valued entry. It also fails the release if
+  any file in the PROD bundle contains the server key, in UTF-8 or UTF-16, whichever route put it
+  there.
+- **Not covered:** a server address compiled into Swift or Kotlin shared by both channels under a name
+  other than the key. No build configuration can exclude that, so it remains a review obligation.
+- **No CI job builds either PROD target (OBSERVED 2026-09-26: neither `DulcetMacRelease` nor
+  `DulcetiOSRelease` appears in any workflow).** The first build of a PROD target is the archive step
+  of a `release.yml` dispatch, so a change that compiles for DEV and breaks PROD is found only then,
+  at the cost of one approved hosted run. The policy above makes that less likely, because the twins
+  rule keeps the two targets' inputs identical, but it does not make it impossible. A build of
+  `DulcetiOSRelease` beside the existing Debug `DulcetMac` build step would reuse that step's
+  DerivedData and Kotlin framework and cost roughly one to two minutes (ASSUMED, from local warm
+  builds). It was not added: `apple-ci` is close to its time caps and its matrix stays narrow
+  (§21.1).
 
 **Signing material** is the CI-only Apple Distribution certificate, a CI-only Mac Installer
 Distribution certificate (a macOS App Store package must be installer-signed), the `Dulcet CI …`
@@ -6416,19 +6457,21 @@ another branch may take the number first, so it may be renumbered at merge.
    symbol scan of the Release binaries rather than from source (§13.7). The Kotlin/Native framework
    is where `fstat` and `lstat` come from, so a grep of the Swift would have under-declared.
 2. **PROD iOS exists.** `DulcetiOSRelease` builds `${BUNDLE_PREFIX}` with display name "Dulcet" and
-   the production icon, under the same structural guard as `DulcetMacRelease` (§22.6): its own plist
-   in a PROD-only directory, an exact key set, no URL anywhere, allowlisted settings, and eight new
-   policy mutations that prove each guard fires. PROD and DEV plists must agree on every key DEV's
-   partial plist sets. That check exists because the first draft of the PROD plist omitted the
-   queue drag type (`UTExportedTypeDeclarations`), found by diffing the built DEV and PROD
-   `Info.plist`s. `release_plan.py` plans `prod/ios`, and the signing wrapper installs the iOS App
-   Store profile when the environment holds it.
-3. **tvOS DEV is deliverable.** `DulcetTV` carries a brand-assets set: a three-layer app icon, its
-   App Store counterpart, and both top-shelf images, all rendered from the one source mark by
-   `tools/icon/build-platform-icons`. An image stack lists its layers front to back, and actool
-   requires the last one to be opaque. A stack listed back to front is reported as an error while
-   the build still returns 0, so the build's exit code is not evidence the icon is valid.
-   `release_plan.py` plans `dev/tvos`, and only `prod/tvos` is refused.
+   the production icon, under the same guard as `DulcetMacRelease` (§22.6): its own plist in a
+   PROD-only directory, an exact key set, no URL anywhere, and allowlisted settings. PROD's first
+   plist omitted the queue drag type (`UTExportedTypeDeclarations`), which was found by diffing the
+   built DEV and PROD `Info.plist`s and is why the twins rule in item 8 exists. `release_plan.py`
+   plans `prod/ios`, and the signing wrapper installs the iOS App Store profile when the environment
+   holds it.
+3. **tvOS DEV is planned; it is deliverable only once its first dispatch passes.** `DulcetTV` carries
+   a brand-assets set: a three-layer app icon, its App Store counterpart, and both top-shelf images,
+   all rendered from the one source mark by `tools/icon/build-platform-icons`. An image stack lists
+   its layers front to back, and actool requires the last one to be opaque. A stack listed back to
+   front is reported as an error while the build still returns 0, so the build's exit code is not
+   evidence the icon is valid. `release_plan.py` plans `dev/tvos`, and only `prod/tvos` is refused.
+   *Corrected in review:* as first committed, this item said "tvOS DEV is deliverable". It was not.
+   The archive step required the iOS icon shape on tvOS, where actool writes a string, so every
+   `dev/tvos` dispatch would have failed after archiving. Item 8 records the fix.
 4. **The archive-time PROD plist check was wrong for macOS, and now covers both platforms.** It is
    held to a per-platform allowlist. The macOS list lacked `NSLocalNetworkUsageDescription`, which
    the PROD plist has carried since the channel was built. OBSERVED 2026-09-26: `main`'s check,
@@ -6439,7 +6482,10 @@ another branch may take the number first, so it may be renumbered at merge.
    this revision). Both iOS channels' built plists now carry a `UILaunchScreen`.
 6. **Android launcher icons.** The phone app now has adaptive icons with a monochrome layer and
    legacy fallbacks for every density; the DEV flavour overrides only the foreground and legacy
-   bitmaps, with a DEV band. The TV app has the same icon, and a real 320x180 banner replaces a
+   bitmaps, with a DEV band. The adaptive XML stays in `mipmap-anydpi-v26`, although lint calls the
+   qualifier obsolete at minSdk 26. From a plain `mipmap-anydpi` folder the XML never reached the APK:
+   OBSERVED 2026-09-26, `aapt2 dump resources` listed only the density PNGs for `mipmap/ic_launcher`.
+   The TV app has the same icon, and a real banner, 160x90dp at every density, replaces a
    placeholder rectangle.
 7. **Documentation corrections.**
    - `CORPUS.md` said DEV ships on every merge; it is dispatched by hand.
@@ -6453,6 +6499,27 @@ another branch may take the number first, so it may be renumbered at merge.
      reaches yet.
    - §23.2 listed per-platform Apple bundle identifiers. There are two, shared across platforms.
    - "Eight" targets running the Kotlin phase are now nine.
+8. **Corrections from the adversarial review of this revision.**
+   - **The artifact check moved into `tools/release/validate-app-bundle`, with controls.** It now
+     accepts tvOS's string-form icon and requires both top-shelf images, while iOS still requires the
+     dictionary form. The PROD allowlists moved with it, and so did a new scan that fails any PROD
+     bundle containing the server key. The policy requires the archive script to call it.
+   - **The preconfigured-server guard is enforced on the committed project, not only on its
+     source** (§22.6). The review showed configuration routes that bypassed the old guard, and the
+     bypass reached a Release build. Each route is now refused, and each refusal has a mutation
+     control in `tools/test-release-channel`.
+   - **DEV/PROD parity covers build settings, not only DEV's partial plist.** Twins must match in
+     Release settings, declared Info.plist, entitlements and build membership, except for §22.3's
+     list. A DEV iOS build gaining `UIRequiresFullScreen`, building with `-Onone`, or dropping its
+     launch screen each now fails, where each passed before.
+   - **A DEV server has a named home** (§22.3, §22.6): the key `DulcetPreconfiguredServer`, only
+     in a DEV-only plist. That home is proven to pass, and every other place the key could appear
+     is proven to fail.
+   - **Recorded, not fixed:** no CI job builds a PROD target, so a `release.yml` archive is the first
+     PROD build (§22.6).
+   - **Counts:** the release-channel controls went from 25 policy mutations on `main` to 63. The
+     first commit of this revision claimed eight new ones and added ten; review added 28 more. There
+     are also 17 bundle-validation controls and 2 controls that must be accepted.
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it
