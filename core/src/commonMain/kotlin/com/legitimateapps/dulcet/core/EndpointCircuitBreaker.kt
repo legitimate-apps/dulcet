@@ -17,16 +17,19 @@ import kotlin.time.TimeSource
  * - **A server that asks for quiet opens it at once.** A [DomainError.Server.Busy] answer (an HTTP
  *   429) opens the endpoint on that one failure, for the longer of [openMillis] and the server's
  *   `Retry-After` (trap 24), which is never taken beyond [LIBRARY_BUSY_CAP] — the one cap the
- *   reader applies to every wait a 429 asks for (§18.6), not a second one. A 429 that
- *   lands while the endpoint is already open only ever lengthens the hold, and a straggler's never
- *   ends the trial in flight. An explicit request is still admitted inside the hold, as below.
+ *   reader applies to every wait a 429 asks for (§18.6), not a second one. **A hold already running
+ *   is never shortened by any later failure**: a 429 that lands while the endpoint is open only
+ *   ever lengthens it, a straggler's never ends the trial in flight, and the trial's own failure
+ *   holds until the later of its new period and the running hold. An explicit request is still
+ *   admitted inside the hold, as below.
  * - **Then admits exactly one trial.** While the trial is in flight every other call is refused.
- *   A success closes the breaker. **Only the trial's own failure ends the trial**, and reopens the
- *   breaker for another full period. A straggler — a call admitted before the breaker opened,
- *   answering late — is not the trial: its failure is recorded as the latest error and changes
- *   nothing else, so the trial stays in flight and no second one can be admitted beside it. The
- *   trial is recognised by its [Admission.Allowed] instance, never by a flag a caller passes, so a
- *   trial admitted before a [reset] cannot end one admitted after it.
+ *   The trial's success closes the breaker. **Only the trial's own outcome ends the trial**; its
+ *   failure reopens the breaker for another full period. A straggler — a call admitted before the
+ *   breaker opened, answering late — is not the trial: its failure is recorded as the latest error
+ *   and changes nothing else, and its success closes nothing, so the trial stays in flight and no
+ *   second one can be admitted beside it. The trial is recognised by its [Admission.Allowed]
+ *   instance, never by a flag a caller passes, so a trial admitted before a [reset] cannot end one
+ *   admitted after it.
  * - **An explicit request is admitted as the trial at once**, inside the period: the person asked
  *   (a Retry control), which is not the automatic traffic the period exists to hold back. It is
  *   still the single trial — refused while another is in flight — and its failure starts a new
@@ -108,9 +111,15 @@ internal class EndpointCircuitBreaker(
         return Admission.Allowed(trial = true, generation).also { state.trial = it }
     }
 
-    /** A successful call to [endpoint], by the call [admission] admitted; ignored across a [reset]. */
+    /**
+     * A successful call to [endpoint], by the call [admission] admitted; ignored across a [reset].
+     * Closed, any success resets the count. Open, only the trial's own success closes it: a
+     * straggler's ends neither the hold nor the trial in flight.
+     */
     fun recordSuccess(endpoint: String, admission: Admission.Allowed) {
         if (admission.generation != generation) return
+        val state = states[endpoint] ?: return
+        if (state.openUntil != null && state.trial !== admission) return
         states.remove(endpoint)
     }
 
@@ -122,9 +131,11 @@ internal class EndpointCircuitBreaker(
         val now = monotonicMillis()
         val busyUntil = (error as? DomainError.Server.Busy)?.let { now + busyHoldMillis(it) }
         if (state.trial === admission) {
-            // The trial's own failure: a full new period — the server's, when it asked for longer.
+            // The trial's own failure: a full new period — the server's, when it asked for longer —
+            // and never shorter than a hold already running, such as a straggler's longer 429.
             state.trial = null
-            state.openUntil = busyUntil ?: (now + openMillis)
+            val reopened = busyUntil ?: (now + openMillis)
+            state.openUntil = maxOf(reopened, state.openUntil ?: reopened)
             return
         }
         // Any other call, the trial's straggling predecessors included: a count, never the trial.

@@ -1198,10 +1198,11 @@ app stayed open):
   out every other call is refused. A success closes the breaker; **the trial's own** failure reopens
   it for another full period; a cancelled trial gives its slot back. Only the trial does either: a
   straggler — a call admitted before the breaker opened, answering late — holds no slot, so its
-  failure is recorded as the diagnostic and changes nothing else, and its cancellation frees
-  nothing. The breaker recognises the trial by the admission it handed out, not by a flag. (Corrected
-  at the second review: a straggler's failure used to end the trial, and a Retry then sent a second
-  one beside it.)
+  failure is recorded as the diagnostic and changes nothing else, its success closes nothing, and
+  its cancellation frees nothing. The breaker recognises the trial by the admission it handed out,
+  not by a flag. (Corrected at the second review: a straggler's failure used to end the trial, and a
+  Retry then sent a second one beside it. Corrected after the seventh review: a straggler's success
+  closed the breaker, ending a 429 hold and forgetting the trial in flight.)
 - **The person can ask now.** An explicit user request — a Retry control, never an automatic refresh
   — is admitted at once as the single trial, inside the period: it is not the automatic traffic the
   period exists to hold back. It is still the one trial (refused while another is out), and its
@@ -1210,9 +1211,13 @@ app stayed open):
   (`Server.Busy`) is a failure like any other, and it opens the breaker on that one failure, for
   `max(period, min(Retry-After, cap))`. The cap is the reader's busy cap, `LIBRARY_BUSY_CAP` in
   `LibraryReader.kt` — the one bound §18.6's flushes already put on every wait a 429 asks for; the
-  breaker introduces no second one. A 429 without `Retry-After` opens for the period. A later 429
-  never shortens a hold already running; a straggler's extends it and never ends the trial in
-  flight; the trial's own 429 opens a new hold. The explicit request is still admitted inside it.
+  breaker introduces no second one. A 429 without `Retry-After` opens for the period. **A hold
+  already running is never shortened by any later failure**: a straggler's 429 extends it and never
+  ends the trial in flight, and the trial's own failure — a 429 or any other — opens a new hold that
+  ends at the later of its own end and the running one's. Only the trial's own success ends a hold
+  early. The explicit request is still admitted inside it. (Corrected after the seventh review: the
+  trial's own failure replaced the hold, so a trial timing out after a straggler's longer 429 was
+  re-admitted one period later, before the server's `Retry-After` had ended.)
   The breaker holds no reader-wide state: a lyrics 429 never pauses the outbox flushes (§18.6).
   Stated plainly: the period and the cap are both five minutes today, so `Retry-After` cannot yet
   lengthen the hold — what the 429 changes is that one answer opens the breaker, where three
@@ -4167,8 +4172,9 @@ envelope whose `lyricsList` is malformed, and a `getLyrics` answer without its `
 as failures. **A 429 opens the breaker on that one answer**, for the longer of the period and the
 server's `Retry-After`, the latter never beyond the reader's busy cap (`LIBRARY_BUSY_CAP` in
 `LibraryReader.kt`, the cap §18.6's flushes use; the full rule is §10.4's). Inside that hold no
-automatic read sends anything; `retry` still does. A lyrics 429 never feeds the reader's own wait,
-so it never pauses the favourite and playlist flushes. **A failure that is not the request's** —
+automatic read sends anything; `retry` still does. No later failure shortens that hold, the
+trial's own included, and nothing but the trial's success ends it early. A lyrics 429 never feeds
+the reader's own wait, so it never pauses the favourite and playlist flushes. **A failure that is not the request's** —
 the device's database failing as the read is issued, before anything is sent — is published as the
 reader's internal failure, sends nothing, and neither counts toward the breaker nor clears its count
 (§10.4). **Only a well-formed answer, trimmed to the caps, is ever stored, and only an empty
@@ -7375,7 +7381,14 @@ fresh disposable server before landing; items 11–14 are what that review chang
     oversized 401 keeps refused credentials; before, every non-2xx oversized body was malformed
     (§10.4). (ae) §12.12's owner table lists `Protocol.TooLarge` as the track's, with its reason.
     (af) The rebase's commit message said the pre-squash commits remained on the remote; after the
-    force-push they are only on a local branch, and the message says so.
+    force-push they are only on a local branch, and the message says so. **After the seventh
+    review**, each with a test that failed first: (ag) the review's one NIT — the trial's own
+    failure replaced the hold already running, so with a 60 s period, after a straggler's 429 asked
+    for 200 s, the trial's timeout re-admitted a trial 60 s later — the new hold now ends at the
+    later of the two, for an ordinary failure and a shorter 429 alike (latent while the period
+    equals the busy cap); (ah) found while fixing it — a straggler's success closed the open
+    breaker, ending a 429 hold and forgetting the trial in flight, where §10.4 already said only the
+    trial closes it — it now changes nothing while the breaker is open (§10.4, §18.4).
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

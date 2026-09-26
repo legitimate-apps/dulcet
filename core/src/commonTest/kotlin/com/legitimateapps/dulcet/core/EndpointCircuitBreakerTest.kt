@@ -108,6 +108,75 @@ class EndpointCircuitBreakerTest {
         assertFalse(breaker.isOpen(E), "the trial's success closes it, as always")
     }
 
+    /**
+     * A hold already running is never shortened by a later failure — not even the trial's own. A
+     * straggler's 429 holds until +200 s; the trial then times out, which alone would hold for one
+     * 60 s period. The longer end stands (round-7 review, NIT R7-1: the trial's failure replaced
+     * the hold and re-admitted about 140 s before the server's `Retry-After` ended).
+     */
+    @Test
+    fun aTrialsOrdinaryFailureNeverShortensAStragglersLongerBusyHold() {
+        val straggler = ordinary()
+        repeat(3) { breaker.recordFailure(E, timeout, ordinary()) }
+        now += 60_000
+        val trial = trial(breaker.admit(E))
+        val heldUntil = now + 200_000
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), straggler)
+        now += 1_000
+        breaker.recordFailure(E, timeout, trial)
+        // One period after the trial's failure: where the replaced hold re-admitted.
+        now += 60_000
+        val open = assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E), "re-admitted inside the server's hold")
+        assertEquals(heldUntil - now, open.retryInMillis)
+        assertEquals(timeout, open.lastError, "the trial's error is still the diagnostic")
+        now = heldUntil - 1
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        now = heldUntil
+        trial(breaker.admit(E))
+    }
+
+    /** ...nor by the trial's own 429 asking for less than the hold already running. */
+    @Test
+    fun aTrialsShorterBusyAnswerNeverShortensAStragglersLongerBusyHold() {
+        val straggler = ordinary()
+        repeat(3) { breaker.recordFailure(E, timeout, ordinary()) }
+        now += 60_000
+        val trial = trial(breaker.admit(E))
+        val heldUntil = now + 200_000
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), straggler)
+        now += 1_000
+        breaker.recordFailure(E, DomainError.Server.Busy(null), trial)
+        now = heldUntil - 1
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        now = heldUntil
+        trial(breaker.admit(E))
+    }
+
+    /**
+     * Only the trial's own success closes an open breaker. A straggler's success — a call admitted
+     * before the breaker opened, answering late — ends neither the hold nor the trial in flight:
+     * it was sent before the server asked for quiet, so it says nothing against that request.
+     */
+    @Test
+    fun aStragglersSuccessEndsNeitherAHoldNorTheTrial() {
+        val stragglers = List(2) { ordinary() }
+        val heldUntil = now + 200_000
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), ordinary())
+        now += 10
+        breaker.recordSuccess(E, stragglers[0])
+        assertTrue(breaker.isOpen(E), "a straggler's success ended the server's hold")
+        now = heldUntil - 1
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        now = heldUntil
+        val trial = trial(breaker.admit(E))
+        breaker.recordSuccess(E, stragglers[1])
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E, explicit = true), "a straggler's success ended the trial")
+        // The positive control: the trial's own success does close it.
+        breaker.recordSuccess(E, trial)
+        assertFalse(breaker.isOpen(E))
+        assertOrdinary(breaker.admit(E))
+    }
+
     @Test
     fun failuresOfAnyClassAddUp() {
         // A proxy alternating a 502 page with a timeout is one unhealthy endpoint, not two.
