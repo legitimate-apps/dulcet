@@ -2541,9 +2541,10 @@ Undo is available only before step 3. If the app dies mid-removal, the `removing
 sequence at launch.
 
 **The offer of step 2, stated for the reader (R1d).** The count offered is the pending changes of
-both outboxes, favourites and ratings and playlist edits (§18.6), and it is unknown, never zero,
-when either cannot be read — including a queued change this build cannot decode, which is never
-sent and is lost just the same (§28 revision 104 item 30; playlist edits counted since R2a round 8).
+both outboxes, favourites and ratings and playlist edits (§18.6) — including a queued change this
+build cannot decode, which is never sent and is lost just the same (§28 revision 104 item 30;
+playlist edits counted since R2a round 8). It is unknown, never zero, when either outbox cannot be
+read.
 Online, "submit" is a flush, and a change the server refuses is told like any refusal.
 **Offline, nothing can be submitted**, so the choice is stated as it is: "N changes haven't reached
 your server. Signing out now discards them." — with **Stay signed in** as
@@ -3786,8 +3787,10 @@ itself is retried by itself:
     of the 429 it met: a 429 on the reconnect's epoch read does not delay an outbox flush, and an
     outbox's 429 does not delay the reconnect's epoch read. Both are capped at the same 5 minutes;
     a reconnect whose first step meets an outbox still waiting sends none of its changes, and goes
-    on to read the epoch (ASSUMED from reading the code in round 8; no test isolates the two
-    waits);
+    on to read the epoch. OBSERVED in round 9 by `ReaderSeparateBusyWaitsTest`: an outbox's 429
+    during the reconnect's flush leaves the epoch read in the same reconnect (b6); a 429 on the
+    reconnect's epoch read leaves the outboxes free to send at once (b7); and a reconnect meeting
+    a waiting outbox sends no change and reads the epoch (b8);
   - a gateway status with no envelope: 502, 503 or 504, or a CDN's origin error (520–524, 530).
     This is typically a reverse proxy's own page while the server behind it restarts. It is named by
     its status, never as a malformed envelope or "not a Subsonic server";
@@ -7801,7 +7804,20 @@ fresh disposable server before landing; items 11–14 are what that review chang
       review (round 8):** the revalidation took the owed extends before it read, so one that then
       failed inside the reader lost them; the screen said `internalFailure`, and its next
       revalidation re-read the viewport only. An extend not yet made when the revalidation fails
-      stays owed, and the next revalidation makes it.
+      stays owed, and the next revalidation makes it. **Corrected in place after the round-8 review
+      (round 9):** "every owed extend is now made" held only for an extend that threw. An extend
+      that returned without making anything was dropped as if made: a failed page read, an epoch
+      that could not be read, a page discarded by a rebase, and — the case the review drove — a
+      window this session had not yet read live. A relaunched session owing a "load more" whose
+      reconnect read of the grid met a bare 500 re-read offset 0 at once, dropped the extend, and
+      ended `live` at 100 of 250 rows, never reading offset 100, even after a refresh. An owed extend
+      now leaves the list only once it is made or proven unneeded (the window complete at that end,
+      or the viewport more than a page away); otherwise it is owed again, the screen says what
+      failed, and the next revalidation makes it. The owed extend of a window left unread live is
+      not read again back to back. A person's "load more" on such a window, online, reads the
+      window and then extends it; it used to read the window and stop. A reconnect that makes a
+      re-owed extend ends `live`: the page landing clears an internal failure recorded earlier
+      (round-6 decision 3); it used to end `cached(internalFailure)` at 200 rows.
     - The retry "only in the foreground" started out told the app was in the background, and
       nothing required a shell to say otherwise, so a shell that reported only changes never retried.
       The foreground state is now a required argument of `LibraryReaderSession` and of the Apple
@@ -8145,6 +8161,60 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - **Documentation.** The favourite outcome subscription names `held`. The held error kinds add
       `forbidden`, `protocol` and `notFound`. §16.14 states that the reconnect and the outboxes
       keep separate busy waits. §14.7 counts both outboxes.
+      **Corrected after the round-8 review:** this round's mutation paragraph above ran on an
+      intermediate tree, whose two sign-out tests were still red; the round-8 review's own run is
+      the mutation evidence for the committed round-8 tree. And "an owed extend survives" held only
+      for an extend that threw (item 27, corrected in place).
+
+    **After the round-8 review (round 9).** OBSERVED 2026-09-26 on macOS arm64, counted from the
+    JUnit XML with every task forced to execute (`--rerun-tasks`, 67 of 67 tasks executed):
+    `jvmTest` ran 775 tests, `macosArm64Test` 827 and `testAndroidHostTest` 874, each with 0
+    failures. The seven compiles passed, and the macOS debug framework linked. The facade's header
+    is byte-identical to round 8's.
+    - **An owed extend leaves the owed list only once made or proven unneeded** (item 27, corrected
+      in place). `ReaderOwedExtendTest` holds the round-8 review's probes B1–B5 as tests, and one
+      more for a person's "load more" on a window not yet read live. **Red first**, against the
+      round-8 `LibraryWindow.kt`, three failed on their stated assertions:
+      - B1: the reconnect re-read offset 0 back to back (`[0, 0]`), where it must read it once and
+        owe the extend;
+      - B4: the reconnect that made the re-owed extend ended `cached(internalFailure)` at 200 rows;
+      - the online "load more" read the window and stopped (`[0]`, not `[0, 100]`).
+
+      B2, B3 and B5 pin behaviour that was already right: a page that landed is not fetched twice,
+      a closed screen owes nothing, and an extend past the end is not owed forever. After the forced
+      run, B1's fixture was changed to count the 500s it served rather than the requests it saw; the
+      red and green runs above, and B1 on macOS and the Android host (6 of 6 each), are at that
+      version.
+    - **The sign-out count's two claims now have discriminating tests.** A queued playlist row this
+      build cannot decode is counted. The playlist count alone unreadable makes the sign-out count
+      unknown: the favourites' read succeeds and the second read of the shared table fails. Both
+      pin code that round 8 already had. Each is shown to matter by the review's mutant that it
+      alone kills.
+    - **§16.14's separate busy waits are OBSERVED** by `ReaderSeparateBusyWaitsTest`, the review's
+      B6–B8. They pin behaviour that was already right.
+    - **Mutation** over `ReaderOwedExtendTest`, `ReaderSeparateBusyWaitsTest`,
+      `ReaderCurrentOrOfflineTest`, `MutationOutboxReviewTest`, `ReaderSessionReviewTest`, and the
+      playlist and favourites-outbox classes: 336 tests, green at baseline. Every source file was
+      byte-identical after each mutant. Eight were killed:
+      - an owed extend not made, dropped (by B1);
+      - tear rule 2 reading the window and stopping (by the online "load more" test);
+      - the owed extend re-reading an unread window at once (by B1);
+      - tear rule 2's unread window reported as not needed (by B1);
+      - a landed page leaving `internalFailure` (by B4);
+      - the review's R8d, the extend leaving the list before it is made (by B4 and by
+        `anOwedLoadMoreWhoseOwnWriteFailsIsOwedAgain`);
+      - R8c, counting only decodable playlist rows (by `anUndecodablePlaylistRowIsCountedForSignOut`);
+      - R8f, an unreadable playlist count treated as 0 (by
+        `theSignOutCountIsUnknownWhenOnlyThePlaylistCountCannotBeRead`).
+
+      A first, wrongly written R8d deleted the removal outright. It looped forever, and held a JVM
+      test worker at full CPU until the worker was killed by hand. `jvmTest` has no per-test wall
+      timeout, so a looping mutant can hold a worker until the run's own timeout; two tests
+      reported `UncompletedCoroutinesError` first. It was killed, but by a hang, so the correctly
+      written R8d was run as well.
+    - **Deliberately not owed:** a person's own "load more" that fails online is shown as
+      failed, and is not owed. The person can ask again. Only an extend that was already owed, or
+      refused unsent, is owed.
 
     **A retention that is not the reviewed leak.** The release test first required all forty closed
     search subscriptions to be collected, and it failed intermittently. A diagnostic ran its steps 200

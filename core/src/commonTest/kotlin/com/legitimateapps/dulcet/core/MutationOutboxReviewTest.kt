@@ -217,9 +217,13 @@ class MutationOutboxReviewTest {
         assertEquals<Long?>(2L, session.pendingChangeCount(), "a pending playlist edit was left out of the sign-out count")
     }
 
-    /** Either outbox unreadable makes the sign-out count unknown, never a partial sum or zero. */
+    /**
+     * The shared outbox table unreadable: the playlist editor's own count is unknown, never zero, and
+     * so is the sign-out count. Both outboxes' reads fail here; the next test fails the playlist
+     * count alone.
+     */
     @Test
-    fun theSignOutCountIsUnknownWhenThePlaylistOutboxCannotBeRead() = sessionTest { env ->
+    fun aPlaylistCountThatCannotBeReadIsUnknownNeverZero() = sessionTest { env ->
         val session = env.session()
         session.setOnline(false)
         session.playlists.create("Road")
@@ -234,6 +238,50 @@ class MutationOutboxReviewTest {
         assertEquals<Long?>(null, playlists, "an unreadable playlist count was reported as a number")
         assertEquals<Long?>(null, total, "an unreadable sign-out count was reported as a number")
         assertEquals<Long?>(1L, session.pendingChangeCount(), "the change is still pending once the read succeeds")
+    }
+
+    /**
+     * Only the playlist count unreadable — the favourites' count, read first, succeeds — and the
+     * sign-out count is unknown: never the favourites' count alone, which would read an unreadable
+     * playlist count as zero.
+     */
+    @Test
+    fun theSignOutCountIsUnknownWhenOnlyThePlaylistCountCannotBeRead() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        session.playlists.create("Road")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "fixture: two changes are pending")
+
+        var reads = 0
+        env.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) && reads++ == 1 }
+        val total = session.pendingChangeCount()
+        env.driver.failRead = null
+
+        assertEquals(2, reads, "fixture: the sign-out count read the outbox table twice, favourites then playlists")
+        assertEquals(1, env.driver.failedReads, "fixture: only the second read, the playlist count's, failed")
+        assertEquals<Long?>(null, total, "an unreadable playlist count was treated as zero")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "both changes are still pending once the read succeeds")
+    }
+
+    /**
+     * A queued playlist row this build cannot decode is never sent, so it is lost at sign-out like any
+     * other: the count includes it. The favourites' twin is
+     * [ReaderSessionReviewTest.aQueuedChangeThatCannotBeDecodedIsCounted].
+     */
+    @Test
+    fun anUndecodablePlaylistRowIsCountedForSignOut() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.playlists.create("Road")
+        assertEquals<Long?>(1L, session.playlists.pendingCount(), "fixture: one playlist change is pending")
+        env.database.database.protectedReservedDataQueries.insertPendingMutation(
+            SessionEnv.BINDING.serverId, "playlist-9", PLAYLIST_FIELD_PREFIX + "unknownKind", "{\"value\":1}", 999_999L, 0L,
+        )
+        assertEquals(1, session.playlists.pendingChanges().size, "fixture: the new row cannot be decoded")
+        assertEquals(0L, session.favourites.pendingCount(), "fixture: the favourites never count a playlist row")
+        assertEquals<Long?>(2L, session.playlists.pendingCount(), "an undecodable playlist row was left out of the count")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "an undecodable playlist row was left out of the sign-out count")
     }
 
     // ---- S1 -----------------------------------------------------------------------------------------

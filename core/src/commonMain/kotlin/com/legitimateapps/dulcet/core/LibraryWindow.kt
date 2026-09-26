@@ -459,6 +459,14 @@ private data class PageRead(
 
 private enum class PageMode { Append, Replace, Prepend }
 
+/**
+ * What one extend did. [NotNeeded] is a proof that nothing is owed: the window is complete at that
+ * end, or the viewport is more than a page away from it. [NotMade] is everything else — offline, a
+ * failed read, a page discarded by a rebase, a window that must first be read live — and an owed
+ * extend that ends so is owed again.
+ */
+private enum class ExtendResult { Made, NotNeeded, NotMade }
+
 /** One list screen: a paged window, or a single response. */
 internal class ListWindow(
     reader: LibraryReader,
@@ -604,14 +612,19 @@ internal class ListWindow(
     }
 
     /**
-     * Makes the extends that were owed; one refused again is owed again. Each leaves [extends] only
-     * once made, so an extend that throws stays in it for [performRevalidate] to owe again.
+     * Makes the extends that were owed. One that is not made — offline, refused, failed, discarded,
+     * or on a window this session has not yet read live — is owed again, for the next revalidation;
+     * one proven unneeded ([ExtendResult.NotNeeded]) is dropped. Each leaves [extends] only once its
+     * outcome is known, so an extend that throws stays in it for [performRevalidate] to owe again.
      */
     private suspend fun makeOwedExtends(extends: MutableList<PageMode>) {
         while (extends.isNotEmpty()) {
             if (closed) return
             val mode = extends.first()
-            if (reader.online) extend(mode, confirming = false) else owedExtends += mode
+            // The revalidation just made is this screen's read: a window it left unread live is not
+            // read again here, back to back — the extend is owed to the next one (round-8 review).
+            val result = if (reader.online) extend(mode, confirming = false, readFirstIfUnread = false) else ExtendResult.NotMade
+            if (result == ExtendResult.NotMade) owedExtends += mode
             extends.removeAt(0)
         }
         // An extend that found nothing to read (the window complete, or the viewport moved away)
@@ -881,7 +894,7 @@ internal class ListWindow(
             owedExtends += PageMode.Append // made by the next reconnect (§16.14)
             return
         }
-        launchRead { extend(PageMode.Append, confirming = false) }
+        launchRead { extend(PageMode.Append, confirming = false, readFirstIfUnread = true) }
     }
 
     override fun loadBefore() {
@@ -891,56 +904,68 @@ internal class ListWindow(
             owedExtends += PageMode.Prepend
             return
         }
-        launchRead { extend(PageMode.Prepend, confirming = false) }
+        launchRead { extend(PageMode.Prepend, confirming = false, readFirstIfUnread = true) }
     }
 
     /**
      * Extends the window by one page at its end ([PageMode.Append]) or its start
      * ([PageMode.Prepend]). The bracketed check runs BEFORE the write that would advance the
      * window; anything but [PageCheck.Guarded] on an intact window leaves the window as it was.
+     * A window this session has not read live is read first when [readFirstIfUnread] (tear rule 2),
+     * then extended if that read made it live; otherwise the extend is [ExtendResult.NotMade].
      */
-    private suspend fun extend(mode: PageMode, confirming: Boolean) {
-        val state = cache.listState(spec.listKey) ?: return
+    private suspend fun extend(mode: PageMode, confirming: Boolean, readFirstIfUnread: Boolean): ExtendResult {
+        val state = cache.listState(spec.listKey) ?: return ExtendResult.NotMade
         val offset = when (mode) {
             PageMode.Append -> {
-                if (state.coverage == CacheCoverage.Complete) return
+                if (state.coverage == CacheCoverage.Complete) return ExtendResult.NotNeeded
                 // Never more than one page beyond the viewport (§16.12).
-                if (!confirming && state.endLoadedOffset > viewport.last + pageSize) return
+                if (!confirming && state.endLoadedOffset > viewport.last + pageSize) return ExtendResult.NotNeeded
                 state.endLoadedOffset
             }
             PageMode.Prepend -> {
-                if (state.firstLoadedOffset == 0) return
-                if (viewport.first >= state.firstLoadedOffset + pageSize) return
+                if (state.firstLoadedOffset == 0) return ExtendResult.NotNeeded
+                if (viewport.first >= state.firstLoadedOffset + pageSize) return ExtendResult.NotNeeded
                 maxOf(0, state.firstLoadedOffset - pageSize)
             }
-            PageMode.Replace -> return
+            PageMode.Replace -> return ExtendResult.NotNeeded
         }
         val epoch = reader.ensureEpoch() ?: run {
             if (!reader.online) owedExtends += mode
-            return
+            return ExtendResult.NotMade
         }
-        // Tear rule 2: a window not yet read live this session is revalidated, not extended.
+        // Tear rule 2: a window not yet read live this session is revalidated, not extended — and
+        // extended once that read has made it live.
         if (!liveThisSession) {
+            if (!readFirstIfUnread) return ExtendResult.NotMade
             performRevalidate(RevalidateCause.Open)
-            return
+            if (closed || !liveThisSession) return ExtendResult.NotMade
+            return extend(mode, confirming, readFirstIfUnread = false)
         }
-        live {
+        val result = live {
             val gen = generation
-            val read = readPage(offset) { owedExtends += mode } ?: return@live
-            if (gen != generation || closed) return@live
+            val read = readPage(offset) { owedExtends += mode } ?: return@live ExtendResult.NotMade
+            if (gen != generation || closed) return@live ExtendResult.NotMade
             val unguardedWindow = state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete
             when (checkPage(windowStamp(state), read.before, read.after)) {
-                PageCheck.Unread -> failure = read.afterError
-                PageCheck.Fired, PageCheck.ScanEnded -> rebase(reader.sessionEpoch ?: epoch, attempt = 1)
-                PageCheck.Scanning -> writePage(read, CacheCoverage.UnverifiedScanning, epoch, mode)
-                PageCheck.NoEpoch -> writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, mode)
+                PageCheck.Unread -> {
+                    failure = read.afterError
+                    ExtendResult.NotMade
+                }
+                PageCheck.Fired, PageCheck.ScanEnded -> {
+                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                    ExtendResult.NotMade
+                }
+                PageCheck.Scanning -> madeBy { writePage(read, CacheCoverage.UnverifiedScanning, epoch, mode) }
+                PageCheck.NoEpoch -> madeBy { writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, mode) }
                 PageCheck.Guarded -> if (unguardedWindow) {
                     // The window holds unguarded pages and the server is now idle under one stamp:
                     // that is the reading that ends scanning mode, so the window is rebased.
                     rebase(reader.sessionEpoch ?: epoch, attempt = 1)
+                    ExtendResult.NotMade
                 } else {
                     failure = null
-                    writePage(read, CacheCoverage.Open, epoch, mode)
+                    madeBy { writePage(read, CacheCoverage.Open, epoch, mode) }
                     val rows = read.parsed.members.size
                     val after = cache.listState(spec.listKey)
                     // A short page is only a CANDIDATE end: with no total it is confirmed by one
@@ -948,12 +973,27 @@ internal class ListWindow(
                     if (mode == PageMode.Append && !confirming && rows in 1 until read.requested &&
                         after?.total == null && after?.coverage != CacheCoverage.Complete
                     ) {
-                        extend(PageMode.Append, confirming = true)
+                        // Unconfirmed, the end is still owed: the next extend starts past this page.
+                        extend(PageMode.Append, confirming = true, readFirstIfUnread = false)
+                    } else {
+                        ExtendResult.Made
                     }
                 }
             }
         }
         emitSnapshot()
+        return result
+    }
+
+    /**
+     * Writes a page an extend read. The write landing is this screen's own success, so an internal
+     * failure an earlier step recorded no longer describes it: the reconnect that makes a re-owed
+     * extend ends `live`, as every reconnect does (round-6 decision 3, round-8 review).
+     */
+    private fun madeBy(write: () -> Unit): ExtendResult {
+        write()
+        internalFailure = false
+        return ExtendResult.Made
     }
 
     private fun windowStamp(state: CachedListState): String? {
