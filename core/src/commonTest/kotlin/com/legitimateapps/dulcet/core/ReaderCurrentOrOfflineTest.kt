@@ -668,6 +668,37 @@ class ReaderCurrentOrOfflineTest {
     }
 
     /**
+     * The same, for a refresh: the quiet grid is refreshed during the held reconnect, and while its
+     * read is in flight it says `revalidating`. With the quiet label checked first, the frame
+     * announcing the read said `offline`, and the reader's duplicate suppression dropped it, so the
+     * screen went on saying `offline` for as long as its read took.
+     */
+    @Test
+    fun aQuietScreenRefreshedDuringTheReconnectSaysRevalidatingWhileItsReadIsInFlight() = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        session.reader.open(LibraryQuery.Artists()) {}
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        env.server.base.holdMatching = { it.endpoint == "getArtists" || it.endpoint == "getAlbumList2" }
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: the reconnect is held")
+        assertEquals("cached(Offline)", pubs.last.freshness.label(), "fixture: the fresh grid is quiet")
+        handle.refresh()
+        advanceUntilIdle()
+        assertEquals(2, env.server.base.heldCount, "fixture: the grid's read is in flight")
+        assertEquals("cached(Revalidating)", pubs.last.freshness.label(), "a screen reading live said offline")
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness, "not live once the reconnect ended")
+    }
+
+    /**
      * The reviewer's r6. A "load more" (offset 100) waits for the only slot when the platform
      * reports the server unreachable, and the send gate refuses it. That extend is owed, and the
      * reconnect makes it — no viewport report needed. Until it is made the grid never says `live`:
@@ -728,7 +759,14 @@ class ReaderCurrentOrOfflineTest {
         assertEquals(emptyList(), env.server.endpoints().drop(offline), "a load more was sent offline")
         val mark = env.server.log.size
         val pubMark = pubs.all.size
+        env.server.base.holdMatching = { it.endpoint == "getAlbumList2" && it.parameters["offset"] == "100" }
         session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: the owed extend is held")
+        // A read is coming for this screen, so it says so from the transition, not `offline`.
+        assertEquals("cached(Revalidating)", pubs.last.freshness.label(), "the owed extend was not announced")
+        env.server.base.holdMatching = null
+        env.server.base.release()
         advanceUntilIdle()
         val offsets = env.server.log.drop(mark).filter { it.endpoint == "getAlbumList2" }.map { it.parameters["offset"] }
         assertEquals(listOf("100"), offsets, "the load more asked for offline was not made, once, at the reconnect")
