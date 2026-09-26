@@ -77,10 +77,12 @@ refused(lambda: plan.resolve("dev", "macos", "true", "refs/heads/feature", PROJE
         "refs/heads/main only", "non-main ref")
 refused(lambda: plan.resolve("dev", "macos", "true", "refs/tags/v0.1.0", PROJECT),
         "refs/heads/main only", "tag ref")
-refused(lambda: plan.resolve("prod", "ios", "false", "refs/heads/main", PROJECT),
-        "no PROD iOS target", "prod/ios")
-refused(lambda: plan.resolve("dev", "tvos", "false", "refs/heads/main", PROJECT),
-        "tvOS DEV is not deliverable", "dev/tvos")
+refused(lambda: plan.resolve("prod", "tvos", "false", "refs/heads/main", PROJECT),
+        "no PROD tvOS target", "prod/tvos")
+# Every Apple platform has a DEV plan, and PROD covers macOS and iOS; PROD tvOS is the one refusal.
+expect({p for (c, p) in plan.PLANS if c == "dev"} == {"macos", "ios", "tvos"}, "DEV plans cover every Apple platform")
+expect({p for (c, p) in plan.PLANS if c == "prod"} == {"macos", "ios"}, "PROD plans are macOS and iOS")
+expect(set(plan.PLANS).isdisjoint(plan.REFUSALS), "no pair is both planned and refused")
 refused(lambda: plan.resolve("beta", "macos", "false", "refs/heads/main", PROJECT),
         "unknown channel", "unknown channel")
 drifted = PROJECT.replace('PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac Dev App Store"',
@@ -88,6 +90,16 @@ drifted = PROJECT.replace('PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac Dev Ap
 expect(drifted != PROJECT, "profile-drift mutation applied")
 refused(lambda: plan.resolve("dev", "macos", "true", "refs/heads/main", drifted),
         "the archive would not find its profile", "DEV target signing with the PROD profile")
+drifted_ios = PROJECT.replace('PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS App Store"',
+                              'PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Dev iOS App Store"')
+expect(drifted_ios != PROJECT, "iOS profile-drift mutation applied")
+refused(lambda: plan.resolve("prod", "ios", "true", "refs/heads/main", drifted_ios),
+        "the archive would not find its profile", "PROD iOS target signing with the DEV profile")
+drifted_tv = PROJECT.replace('PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Dev tvOS App Store"',
+                             'PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Dev iOS App Store"')
+expect(drifted_tv != PROJECT, "tvOS profile-drift mutation applied")
+refused(lambda: plan.resolve("dev", "tvos", "true", "refs/heads/main", drifted_tv),
+        "the archive would not find its profile", "tvOS target signing with the iOS profile")
 
 # PROD cut gate
 green = [{"name": name, "conclusion": "success", "app": "github-actions"}
@@ -222,9 +234,11 @@ POLICY = TOOLS / "verify_release_policy.py"
 def run_policy(mutate) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as root:
         shutil.copytree(REPO / ".github/workflows", Path(root, ".github/workflows"))
-        Path(root, "apple/DulcetMacRelease").mkdir(parents=True)
+        shutil.copytree(REPO / "apple/DulcetMacRelease", Path(root, "apple/DulcetMacRelease"))
+        shutil.copytree(REPO / "apple/DulcetiOSRelease", Path(root, "apple/DulcetiOSRelease"))
+        Path(root, "apple/DulcetiOS").mkdir()
+        shutil.copy(REPO / "apple/DulcetiOS/BackgroundAudio.plist", Path(root, "apple/DulcetiOS/BackgroundAudio.plist"))
         shutil.copy(REPO / "apple/project.yml", Path(root, "apple/project.yml"))
-        shutil.copy(REPO / "apple/DulcetMacRelease/Info.plist", Path(root, "apple/DulcetMacRelease/Info.plist"))
         Path(root, "tools/release").mkdir(parents=True)
         shutil.copy(REPO / "tools/release/archive-and-export", Path(root, "tools/release/archive-and-export"))
         mutate(Path(root))
@@ -246,6 +260,8 @@ expect(baseline.returncode == 0, f"unmutated repository passes the release polic
 
 WORKFLOW = ".github/workflows/release.yml"
 PROD_ANCHOR = '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Mac App Store"\n'
+IOS_PROD_ANCHOR = '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS App Store"\n'
+IOS_PLIST = "apple/DulcetiOSRelease/Info.plist"
 MUTATIONS = [
     ("a pull_request trigger", edit(WORKFLOW, "on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
      "workflow_dispatch only"),
@@ -299,6 +315,32 @@ MUTATIONS = [
                                              '  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \\\n  DULCET_HOME="$X"'),
      "may override CURRENT_PROJECT_VERSION only"),
     ("release.yml deleted", lambda root: (root / WORKFLOW).unlink(), "no delivery channel"),
+    # The iOS PROD target is held to the same shape as the macOS one.
+    ("a server setting on the iOS PROD target", edit("apple/project.yml", IOS_PROD_ANCHOR,
+                                                      IOS_PROD_ANCHOR + '        DULCET_PRECONFIGURED_SERVER_URL: "https://example.invalid"\n'),
+     "DulcetiOSRelease declares DULCET_PRECONFIGURED_SERVER_URL, which is not allowlisted"),
+    ("the iOS PROD target reading DEV's partial plist", edit("apple/project.yml", IOS_PROD_ANCHOR,
+                                                              IOS_PROD_ANCHOR + "        INFOPLIST_FILE: DulcetiOS/BackgroundAudio.plist\n"),
+     "DulcetiOSRelease declares INFOPLIST_FILE, which is not allowlisted"),
+    ("an iOS PROD per-configuration override", edit("apple/project.yml", IOS_PROD_ANCHOR,
+                                                     IOS_PROD_ANCHOR + "      configs:\n        Release:\n          X: y\n"),
+     "DulcetiOSRelease may declare settings.base only"),
+    ("the iOS PROD target reading another plist", edit("apple/project.yml", "path: DulcetiOSRelease/Info.plist", "path: DulcetiOS/Info.plist"),
+     "must use its own DulcetiOSRelease/Info.plist"),
+    ("a DEV target reading the iOS PROD plist directory", edit("apple/project.yml", "        INFOPLIST_FILE: DulcetiOS/BackgroundAudio.plist\n",
+                                                                "        INFOPLIST_FILE: DulcetiOSRelease/Info.plist\n"),
+     "target DulcetiOS reads the PROD-only DulcetiOSRelease directory"),
+    ("an extra iOS PROD plist key", edit(IOS_PLIST, "<dict>\n", "<dict>\n\t<key>DulcetHome</key>\n\t<string>x</string>\n"),
+     "DulcetiOSRelease/Info.plist: keys must be exactly the allowlist"),
+    ("a URL nested in an iOS PROD plist array", edit(IOS_PLIST, "<string>audio</string>", "<string>https://example.invalid</string>"),
+     "UIBackgroundModes holds a URL"),
+    ("a key DEV's iOS partial plist gains and PROD lacks",
+     edit("apple/DulcetiOS/BackgroundAudio.plist", "<dict>\n", "<dict>\n\t<key>UIFileSharingEnabled</key>\n\t<true/>\n"),
+     "UIFileSharingEnabled differs from DEV's"),
+    ("an iOS PROD value drifting from DEV's", edit(IOS_PLIST, "<string>Dulcet queue item</string>", "<string>Queue item</string>"),
+     "UTExportedTypeDeclarations differs from DEV's"),
+    ("the iOS PROD target deleted", edit("apple/project.yml", "  DulcetiOSRelease:\n", "  DulcetiOSReleaseGone:\n"),
+     "no DulcetiOSRelease target"),
 ]
 for label, mutate, reason in MUTATIONS:
     result = run_policy(mutate)

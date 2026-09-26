@@ -76,7 +76,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetMacRelease:
@@ -139,7 +139,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetMacTests:
@@ -182,7 +182,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetiOS:
@@ -230,7 +230,83 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+  DulcetiOSRelease:
+    type: application
+    platform: iOS
+    sources:
+      # The shared DulcetiOS folder minus the DEV target's partial plist: this target's plist is
+      # its own, below, and carries the background audio mode itself.
+      - path: DulcetiOS
+        excludes:
+          - BackgroundAudio.plist
+      - DulcetAppleShared
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
+        # Universal purchase (spec §22.2): the one PROD identifier, on the record macOS already uses.
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet
+        PRODUCT_NAME: Dulcet
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS App Store"
+    info:
+      # PROD-only directory, like DulcetMacRelease: no DEV target reads it, and
+      # tools/verify_release_policy.py holds it to a fixed key set with no URL anywhere, so a
+      # preconfigured server has no route into a PROD build (spec §22.3). Every key a DulcetiOS
+      # Release build gets from INFOPLIST_KEY_* settings or its partial plist is stated here
+      # instead, so the two channels differ only in identity, name and icon.
+      path: DulcetiOSRelease/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Dulcet
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSRequiresIPhoneOS: true
+        # Without `audio` iOS suspends playback when the screen locks or the app leaves the
+        # foreground.
+        UIBackgroundModes:
+          - audio
+        # An empty UILaunchScreen is the generated launch screen DulcetiOS gets from
+        # INFOPLIST_KEY_UILaunchScreen_Generation. Without one iOS runs the app in its 320x480
+        # compatibility mode.
+        UILaunchScreen: {}
+        # An iPad build that supports multitasking must declare all four orientations or App
+        # Store Connect rejects the upload.
+        UISupportedInterfaceOrientations~iphone:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSLocalNetworkUsageDescription: "Dulcet connects to the music server you choose, which may be on your local network."
+        # The type a drag onto the queue carries (DulcetQueueDragAndDrop.swift declares it with
+        # UTType(exportedAs:)); DEV gets it from its partial plist.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.legitimateapps.dulcet.queue-item
+            UTTypeDescription: Dulcet queue item
+            UTTypeConformsTo:
+              - public.data
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKitIOSTests:
@@ -265,7 +341,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetiOSDownloadIntegrationTests:
@@ -289,7 +365,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainIOSTests:
@@ -343,6 +419,18 @@ targets:
         PRODUCT_NAME: Dulcet DEV
         # See DulcetiOS: the background audio mode, merged into the generated plist.
         INFOPLIST_FILE: DulcetTV/BackgroundAudio.plist
+        # The layered app icon and the top-shelf images, one brand-assets set (tvOS requires both
+        # before App Store Connect accepts a build). Every configuration: actool fails a build
+        # whose catalog lacks the named set.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+      configs:
+        # Release is what release.yml archives for the tvOS DEV channel; Debug is untouched.
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+          PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI Dev tvOS App Store"
+          INFOPLIST_KEY_CFBundleDisplayName: Dulcet DEV
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
     preBuildScripts:
       - name: Compile Kotlin Framework
         basedOnDependencyAnalysis: false
@@ -351,7 +439,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKitTVOSTests:
@@ -377,7 +465,7 @@ targets:
             exit 0
           fi
           cd "$SRCROOT/.."
-          # Serialised: eight targets run this phase and Xcode builds targets in parallel. Two bare
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainTVOSTests:
@@ -439,6 +527,12 @@ schemes:
     build:
       targets:
         DulcetMacRelease: all
+    archive:
+      config: Release
+  DulcetiOSRelease:
+    build:
+      targets:
+        DulcetiOSRelease: all
     archive:
       config: Release
   DulcetTV:

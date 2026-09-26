@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""Regenerate the store-facing icon sets that tools/icon/build-icon does not write.
+
+Everything here is derived from tools/icon/dulcet.svg, the same artwork build-icon renders for
+macOS, so the platforms cannot drift apart. The PNGs are committed: no build runs this script,
+and it needs cairosvg and Pillow only when someone regenerates. Review the PNGs after a run; the
+"DEV" and "Dulcet" lettering is set in Helvetica through cairo's system font lookup, and a machine
+without that face substitutes another.
+
+Writes:
+  apple/DulcetiOS/Assets.xcassets/AppIcon.appiconset         PROD iOS/iPadOS, 1024 full-bleed RGB
+  apple/DulcetTV/Assets.xcassets/AppIconDev.brandassets      tvOS DEV: layered app icons (small
+                                                             and App Store) and both top-shelf images
+  android/app/src/main/res/mipmap-*                          phone launcher icon (adaptive + legacy)
+  android/app/src/dev/res/mipmap-*                           DEV flavour launcher icon, with the band
+  android/tv/src/main/res/mipmap-*                           TV launcher icon
+  android/tv/src/main/res/drawable-xhdpi/tv_banner.png       TV home-screen banner (320x180)
+
+Run from anywhere: tools/icon/build-platform-icons
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+try:
+    import cairosvg
+    from PIL import Image
+except ImportError as error:  # pragma: no cover - a regeneration-only dependency
+    raise SystemExit(f"build-platform-icons needs cairosvg and Pillow: {error}")
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
+SOURCE = (HERE / "dulcet.svg").read_text()
+
+GROUND_RGB = (7, 30, 32)          # the darkest ground stop; fills anything rendered transparent
+BAND = "#E0531F"                  # the DEV band colour build-icon uses
+INFO = {"author": "xcode", "version": 1}
+
+# The artwork, split into the layers a parallax icon needs. Coordinates are the 1024 canvas of
+# dulcet.svg, where the glyph is centred on x=512.
+DEFS = re.search(r"<defs>.*?</defs>", SOURCE, re.S).group(0)
+RESONANCE = re.search(r'<g fill="none" stroke="#E8B65C".*?</g>', SOURCE, re.S).group(0)
+FORK = (re.search(r'<g fill="none" stroke="url\(#brass\)".*?</g>', SOURCE, re.S).group(0)
+        + re.search(r'<rect x="466" y="712"[^>]*/>', SOURCE).group(0))
+
+
+def svg(view_box: tuple[float, float, float, float], body: str) -> str:
+    x, y, w, h = view_box
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x} {y} {w} {h}" '
+            f'width="{w}" height="{h}">{DEFS}{body}</svg>')
+
+
+def render(document: str, width: int, height: int) -> Image.Image:
+    png = cairosvg.svg2png(bytestring=document.encode(), output_width=width, output_height=height)
+    return Image.open(io.BytesIO(png)).convert("RGBA")
+
+
+def opaque(image: Image.Image) -> Image.Image:
+    flat = Image.new("RGB", image.size, GROUND_RGB)
+    flat.paste(image, mask=image.split()[3])
+    return flat
+
+
+def ground(view_box) -> str:
+    x, y, w, h = view_box
+    return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="url(#ground)"/>'
+            f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="url(#glow)"/>')
+
+
+def sheen(view_box) -> str:
+    x, y, w, h = view_box
+    return f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="url(#sheen)"/>'
+
+
+def dev_band(view_box, height_fraction: float = 0.13) -> str:
+    x, y, w, h = view_box
+    band_h = h * height_fraction
+    top = y + h - band_h
+    return (f'<rect x="{x}" y="{top}" width="{w}" height="{band_h}" fill="{BAND}"/>'
+            f'<text x="{x + w / 2}" y="{top + band_h * 0.73}" font-family="Helvetica" '
+            f'font-weight="bold" font-size="{band_h * 0.70}" letter-spacing="{band_h * 0.1}" '
+            f'text-anchor="middle" fill="#FFFFFF">DEV</text>')
+
+
+def wide_box(aspect: float) -> tuple[float, float, float, float]:
+    """A view box of the given width/height ratio, 1024 tall, centred on the glyph."""
+    width = 1024 * aspect
+    return (512 - width / 2, 0, width, 1024)
+
+
+def contents(path: Path, document: dict) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "Contents.json").write_text(json.dumps(document, indent=2) + "\n")
+
+
+def reset(path: Path) -> Path:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+    return path
+
+
+# --- iOS / iPadOS PROD --------------------------------------------------------------------------
+# One 1024 universal image, like AppIconDev beside it: iOS masks the corners itself and App Store
+# Connect rejects an iOS marketing icon with an alpha channel, so it is full-bleed and flattened.
+def ios_prod() -> None:
+    catalog = REPO / "apple/DulcetiOS/Assets.xcassets"
+    target = reset(catalog / "AppIcon.appiconset")
+    box = (100, 100, 824, 824)
+    opaque(render(svg(box, ground(box) + RESONANCE + FORK + sheen(box)), 1024, 1024)) \
+        .save(target / "icon_1024.png")
+    contents(target, {"images": [{"filename": "icon_1024.png", "idiom": "universal",
+                                  "platform": "ios", "size": "1024x1024"}], "info": INFO})
+
+
+# --- tvOS DEV -----------------------------------------------------------------------------------
+# App Store Connect requires a layered app icon (a small one at 400x240 @1x/@2x and a 1280x768
+# App Store one) and a top-shelf image. Three layers give the focus parallax: the fork and the DEV
+# band in front, the resonance arcs in the middle, the ground at the back. The back layer is opaque;
+# the others are transparent so the parallax can move them over it.
+def tvos_dev() -> None:
+    catalog = REPO / "apple/DulcetTV/Assets.xcassets"
+    contents(catalog, {"info": INFO})
+    brand = reset(catalog / "AppIconDev.brandassets")
+    box = wide_box(5 / 3)
+    # Listed front to back, the order an image stack's Contents.json takes: actool requires the
+    # LAST layer to be the opaque one, and reports a stack listed back to front as an error while
+    # the build still succeeds.
+    layers = {
+        "Front": (FORK + dev_band(box), False),
+        "Middle": (RESONANCE, False),
+        "Back": (ground(box), True),
+    }
+
+    def stack(name: str, sizes: list[tuple[str, int, int]]) -> None:
+        stack_dir = brand / f"{name}.imagestack"
+        contents(stack_dir, {"info": INFO, "layers": [
+            {"filename": f"{layer}.imagestacklayer"} for layer in layers]})
+        for layer, (body, is_opaque) in layers.items():
+            layer_dir = stack_dir / f"{layer}.imagestacklayer"
+            contents(layer_dir, {"info": INFO})
+            imageset = layer_dir / "Content.imageset"
+            imageset.mkdir(parents=True, exist_ok=True)
+            images = []
+            for scale, width, height in sizes:
+                filename = f"{layer.lower()}{'' if scale == '1x' else '@' + scale}.png"
+                picture = render(svg(box, body), width, height)
+                (opaque(picture) if is_opaque else picture).save(imageset / filename)
+                images.append({"filename": filename, "idiom": "tv", "scale": scale})
+            contents(imageset, {"images": images, "info": INFO})
+
+    stack("App Icon", [("1x", 400, 240), ("2x", 800, 480)])
+    stack("App Icon - App Store", [("1x", 1280, 768)])
+
+    def top_shelf(name: str, width: int) -> None:
+        shelf_box = wide_box(width / 720)
+        x, _, w, _ = shelf_box
+        # The glyph sits left of centre with the name beside it, both inside the middle of the
+        # frame: the system crops a top-shelf image's edges on some layouts.
+        body = (ground(shelf_box)
+                + f'<g transform="translate({-w * 0.12} 0)">{RESONANCE}{FORK}</g>'
+                + f'<text x="{512 + w * 0.04}" y="585" font-family="Helvetica" font-weight="bold" '
+                  f'font-size="190" fill="#F2D49A">Dulcet</text>'
+                + dev_band(shelf_box, 0.10) + sheen(shelf_box))
+        imageset = brand / f"{name}.imageset"
+        imageset.mkdir(parents=True)
+        images = []
+        for scale, factor in (("1x", 1), ("2x", 2)):
+            filename = f"top_shelf{'' if scale == '1x' else '@2x'}.png"
+            opaque(render(svg(shelf_box, body), width * factor, 720 * factor)).save(imageset / filename)
+            images.append({"filename": filename, "idiom": "tv", "scale": scale})
+        contents(imageset, {"images": images, "info": INFO})
+
+    top_shelf("Top Shelf Image", 1920)
+    top_shelf("Top Shelf Image Wide", 2320)
+
+    contents(brand, {"assets": [
+        {"filename": "App Icon - App Store.imagestack", "idiom": "tv", "role": "primary-app-icon",
+         "size": "1280x768"},
+        {"filename": "App Icon.imagestack", "idiom": "tv", "role": "primary-app-icon",
+         "size": "400x240"},
+        {"filename": "Top Shelf Image Wide.imageset", "idiom": "tv", "role": "top-shelf-image-wide",
+         "size": "2320x720"},
+        {"filename": "Top Shelf Image.imageset", "idiom": "tv", "role": "top-shelf-image",
+         "size": "1920x720"},
+    ], "info": INFO})
+
+
+# --- Android ------------------------------------------------------------------------------------
+# An adaptive icon is a 108dp square whose outer 18dp on each side may be masked away, so the
+# glyph is scaled into the central 66dp. The legacy PNGs are the 48dp icon every launcher that
+# ignores adaptive icons would show; minSdk is 26, so they are a fallback and never the default.
+DENSITIES = {"mdpi": 1.0, "hdpi": 1.5, "xhdpi": 2.0, "xxhdpi": 3.0, "xxxhdpi": 4.0}
+GLYPH_BOX = (512 - 380, 512 - 380, 760, 760)     # the arcs and fork, with air for the DEV pill
+ADAPTIVE_XML = """<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>
+"""
+
+
+def adaptive_foreground_box() -> tuple[float, float, float, float]:
+    # GLYPH_BOX must fill 66 of the 108dp, so the full layer is GLYPH_BOX * 108/66, centred.
+    size = GLYPH_BOX[2] * 108 / 66
+    return (512 - size / 2, 512 - size / 2 + 20, size, size)
+
+
+def android_icons(res: Path, dev: bool) -> None:
+    fg_box = adaptive_foreground_box()
+    band = ""
+    if dev:
+        # Inside the 66dp safe circle, under the fork, so every mask shape keeps it.
+        x, y, w, h = fg_box
+        cx, top = x + w / 2, 512 + 262
+        band = (f'<rect x="{cx - 150}" y="{top}" width="300" height="96" rx="48" fill="{BAND}"/>'
+                f'<text x="{cx}" y="{top + 70}" font-family="Helvetica" font-weight="bold" '
+                f'font-size="68" letter-spacing="8" text-anchor="middle" fill="#FFFFFF">DEV</text>')
+    square = (100, 100, 824, 824)
+    for density, factor in DENSITIES.items():
+        folder = res / f"mipmap-{density}"
+        folder.mkdir(parents=True, exist_ok=True)
+        layer = round(108 * factor)
+        render(svg(fg_box, RESONANCE + FORK + band), layer, layer) \
+            .save(folder / "ic_launcher_foreground.png")
+        if not dev:
+            # The DEV flavour overrides only the foreground and the legacy PNGs; the background,
+            # the themed-icon monochrome layer and the adaptive XML resolve from main.
+            opaque(render(svg(fg_box, ground(fg_box)), layer, layer)) \
+                .save(folder / "ic_launcher_background.png")
+            mono = svg(fg_box, re.sub(r'(stroke|fill)="(?:url\(#brass\)|#E8B65C)"',
+                                      r'\1="#FFFFFF"', RESONANCE + FORK))
+            render(mono, layer, layer).save(folder / "ic_launcher_monochrome.png")
+        legacy = round(48 * factor)
+        # Legacy square: the squircle artwork with its own transparent margin, as on macOS.
+        render(svg((0, 0, 1024, 1024), f'<clipPath id="sq"><rect x="100" y="100" width="824" '
+                   f'height="824" rx="185"/></clipPath><g clip-path="url(#sq)">'
+                   f'{ground(square)}{RESONANCE}{FORK}'
+                   f'{dev_band(square) if dev else ""}{sheen(square)}</g>'), legacy, legacy) \
+            .save(folder / "ic_launcher.png")
+        render(svg((0, 0, 1024, 1024), f'<clipPath id="ci"><circle cx="512" cy="512" r="440"/>'
+                   f'</clipPath><g clip-path="url(#ci)">{ground((72, 72, 880, 880))}{RESONANCE}'
+                   f'{FORK}{dev_band((72, 72, 880, 880), 0.16) if dev else ""}</g>'),
+               legacy, legacy).save(folder / "ic_launcher_round.png")
+    if dev:
+        return
+    anydpi = res / "mipmap-anydpi-v26"
+    anydpi.mkdir(parents=True, exist_ok=True)
+    (anydpi / "ic_launcher.xml").write_text(ADAPTIVE_XML)
+    (anydpi / "ic_launcher_round.xml").write_text(ADAPTIVE_XML)
+
+
+def tv_banner() -> None:
+    # 320x180 at xhdpi, the size Android TV's launcher row asks for. It carries the app name
+    # as text because the banner is the only label the TV home row shows.
+    box = wide_box(16 / 9)
+    x, _, w, _ = box
+    body = (ground(box)
+            + f'<g transform="translate({-w * 0.24} 0)">{RESONANCE}{FORK}</g>'
+            + f'<text x="{512 - w * 0.04}" y="590" font-family="Helvetica" font-weight="bold" '
+              f'font-size="230" fill="#F2D49A">Dulcet</text>' + sheen(box))
+    folder = REPO / "android/tv/src/main/res/drawable-xhdpi"
+    folder.mkdir(parents=True, exist_ok=True)
+    opaque(render(svg(box, body), 320, 180)).save(folder / "tv_banner.png")
+
+
+def main() -> int:
+    ios_prod()
+    tvos_dev()
+    android_icons(REPO / "android/app/src/main/res", dev=False)
+    android_icons(REPO / "android/app/src/dev/res", dev=True)
+    android_icons(REPO / "android/tv/src/main/res", dev=False)
+    tv_banner()
+    print("wrote the iOS PROD, tvOS DEV and Android icon sets")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

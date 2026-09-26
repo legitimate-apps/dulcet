@@ -32,6 +32,7 @@ on:
         options:
           - macos
           - ios
+          - tvos
       dry_run:
         description: Build, sign, export and validate without uploading
         required: true
@@ -44,8 +45,8 @@ permissions:
 
 # One queue per channel, and a newer dispatch WAITS rather than cancelling the running one: a
 # cancelled upload may already have reached App Store Connect, and the next run would reuse its
-# build number. Per channel, not per platform, because macOS and iOS share one App Store Connect
-# record and therefore one build-number sequence. verify_ci_policy.py exempts exactly this file.
+# build number. Per channel, not per platform, because every platform of a channel shares one App
+# Store Connect record and therefore one build-number sequence. verify_ci_policy.py exempts exactly this file.
 concurrency:
   group: release-${{ inputs.channel }}
   cancel-in-progress: false
@@ -133,6 +134,7 @@ jobs:
           DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64 }}
           DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64 }}
           DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64 }}
+          DULCET_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.DULCET_IOS_APP_STORE_PROFILE_BASE64 }}
           RELEASE_CHANNEL: ${{ steps.plan.outputs.channel }}
           RELEASE_PLATFORM: ${{ steps.plan.outputs.platform }}
           RELEASE_SCHEME: ${{ steps.plan.outputs.scheme }}

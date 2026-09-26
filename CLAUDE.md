@@ -58,7 +58,8 @@ measured — several CONF tests exist precisely to do that promotion.
   **`com.legitimateapps.dulcet`** — decided, and **deliberately independent of the marketing domain**,
   because a bundle identifier is immutable once an App Store Connect record exists and must not be
   hostage to a domain that could lapse. It matches the namespace already used by the LLC's published
-  applications on a domain the LLC already owns. Android `applicationId` is the same value.
+  applications on a domain the LLC already owns. The Android phone `applicationId` is the same value;
+  Android TV's is `com.legitimateapps.dulcet.tv`.
 - 🚨 **Never publish this app under any other namespace, and never reuse a namespace from an unrelated
   project that happens to be present in a local build environment.** A bundle id is the most permanent
   place such a mistake can land.
@@ -424,7 +425,7 @@ They are deliberately not reproduced in this repository.**
     literal script bodies including duplicate counts; it does not verify target attachment, ordering,
     shellPath, dependency flags or input/output files — the build-order guard covers attachment and
     ordering, and the rest needs regeneration plus review of the generated diff.
-43. **Eight Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
+43. **Nine Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
     targets in parallel**, so two Gradle invocations start together. Gradle does queue behind its own
     locks, but only for about 60 s: if the owner has not yielded by then it FAILS the build. Most
     pairs finish inside that window (a tvOS pair on green run 34596556005 ran concurrently for over

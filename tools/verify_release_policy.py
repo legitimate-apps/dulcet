@@ -11,8 +11,9 @@
 4. Every upload mechanism appears in exactly one step, guarded by the resolved plan's upload
    decision, which only an exact dry_run=false produces. No other workflow and no archive script
    contains one, and the export writes a package rather than uploading it.
-5. PROD has no configuration route for a preconfigured server (spec §22.3). Its Info.plist sits in
-   a directory only the PROD target reads and must hold exactly the allowlisted keys; its target
+5. PROD has no configuration route for a preconfigured server (spec §22.3). For each PROD target
+   (DulcetMacRelease, DulcetiOSRelease) the Info.plist sits in a directory only that target reads
+   and must hold exactly the allowlisted keys; its target
    settings and the project-level settings it inherits are allowlisted by NAME, so a server
    setting cannot hide behind an innocent one; no value on that path may hold a URL; and the
    archive passes no build setting but the build number. What this cannot see is a URL literal
@@ -41,6 +42,9 @@ RELEASE_SECRETS = {
     "DULCET_CI_SIGNING_P12_PASSWORD",
     "DULCET_DEV_IOS_APP_STORE_PROFILE_BASE64",
     "DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64",
+    # The PROD iOS profile. Optional in the signing wrapper, so its absence breaks no other plan;
+    # it must be set in the environment before the first prod/ios dispatch.
+    "DULCET_IOS_APP_STORE_PROFILE_BASE64",
     "DULCET_MAC_APP_STORE_PROFILE_BASE64",
     "DULCET_MAC_DEV_APP_STORE_PROFILE_BASE64",
 }
@@ -52,19 +56,44 @@ UPLOAD_MECHANISMS = re.compile(
     re.I,
 )
 ARCHIVE_SCRIPT = Path("tools/release/archive-and-export")
-PROD_PLIST = Path("apple/DulcetMacRelease/Info.plist")
-PROD_INFO_KEYS = {
-    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIconFile",
-    "CFBundleIconName", "CFBundleIdentifier", "CFBundleInfoDictionaryVersion", "CFBundleName",
-    "CFBundlePackageType", "CFBundleShortVersionString", "CFBundleVersion",
-    "ITSAppUsesNonExemptEncryption", "LSApplicationCategoryType", "LSMinimumSystemVersion",
-    "NSHumanReadableCopyright", "NSLocalNetworkUsageDescription",
+# Xcode fills these into every plist XcodeGen writes; they name the bundle, never a server.
+BUNDLE_KEYS = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIdentifier",
+    "CFBundleInfoDictionaryVersion", "CFBundleName", "CFBundlePackageType",
+    "CFBundleShortVersionString", "CFBundleVersion", "ITSAppUsesNonExemptEncryption",
+    "NSLocalNetworkUsageDescription",
 }
-PROD_TARGET_SETTINGS = {
-    "OTHER_LDFLAGS", "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_MODULE_NAME", "PRODUCT_NAME",
-    "CODE_SIGN_ENTITLEMENTS", "ASSETCATALOG_COMPILER_APPICON_NAME", "ENABLE_HARDENED_RUNTIME",
+SIGNING_SETTINGS = {
+    "OTHER_LDFLAGS", "PRODUCT_BUNDLE_IDENTIFIER", "PRODUCT_NAME", "ASSETCATALOG_COMPILER_APPICON_NAME",
     "CODE_SIGN_STYLE", "CODE_SIGN_IDENTITY", "PROVISIONING_PROFILE_SPECIFIER",
-    "CURRENT_PROJECT_VERSION",
+}
+# Every PROD target: its own plist, in a directory no other target reads, held to an exact key set,
+# and its own settings allowlisted by name.
+PROD_TARGETS = {
+    "DulcetMacRelease": {
+        "plist": Path("apple/DulcetMacRelease/Info.plist"),
+        "keys": BUNDLE_KEYS | {
+            "CFBundleIconFile", "CFBundleIconName", "LSApplicationCategoryType",
+            "LSMinimumSystemVersion", "NSHumanReadableCopyright",
+        },
+        "settings": SIGNING_SETTINGS | {
+            "PRODUCT_MODULE_NAME", "CODE_SIGN_ENTITLEMENTS", "ENABLE_HARDENED_RUNTIME",
+            "CURRENT_PROJECT_VERSION",
+        },
+    },
+    "DulcetiOSRelease": {
+        "plist": Path("apple/DulcetiOSRelease/Info.plist"),
+        "keys": BUNDLE_KEYS | {
+            "LSRequiresIPhoneOS", "UIBackgroundModes", "UILaunchScreen",
+            "UISupportedInterfaceOrientations~iphone", "UISupportedInterfaceOrientations~ipad",
+            "UTExportedTypeDeclarations",
+        },
+        "settings": SIGNING_SETTINGS | {"TARGETED_DEVICE_FAMILY"},
+        # Channel parity (spec §22.3): every key DEV's partial plist gives DulcetiOS, PROD states with
+        # the same value. A key added to DEV alone would otherwise ship a PROD build that behaves
+        # differently -- the queue's drag type was missing from PROD's first draft exactly this way.
+        "dev_partial": Path("apple/DulcetiOS/BackgroundAudio.plist"),
+    },
 }
 PROJECT_SETTINGS = {
     "SWIFT_VERSION", "ARCHS", "ENABLE_USER_SCRIPT_SANDBOXING", "GENERATE_INFOPLIST_FILE",
@@ -221,46 +250,74 @@ def check_prod_configuration(errors: list[str]) -> None:
     for name in sorted(set(inherited) - PROJECT_SETTINGS):
         errors.append(f"{project}: project-level setting {name} is not allowlisted, and PROD inherits it")
 
-    target = yaml_block(lines, ["targets", "DulcetMacRelease"])
+    target_names = re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(yaml_block(lines, ["targets"]) or []))
+    for name, rules in PROD_TARGETS.items():
+        check_prod_target(errors, project, lines, target_names, name, rules)
+
+
+def holds_url(value) -> bool:
+    if isinstance(value, dict):
+        return any(holds_url(item) for item in value.values())
+    if isinstance(value, list):
+        return any(holds_url(item) for item in value)
+    return isinstance(value, str) and "://" in value
+
+
+def check_prod_target(errors: list[str], project: Path, lines: list[str], target_names: list[str],
+                      name: str, rules: dict) -> None:
+    plist_path: Path = rules["plist"]
+    directory = plist_path.parent.name
+    target = yaml_block(lines, ["targets", name])
     if target is None:
-        errors.append(f"{project}: no DulcetMacRelease target")
+        errors.append(f"{project}: no {name} target")
         return
     settings = yaml_block(target, ["settings"]) or []
     own = mapping(yaml_block(settings, ["base"]) or [])
     if set(mapping(settings)) - {"base"}:
-        errors.append(f"{project}: DulcetMacRelease may declare settings.base only")
-    for name in sorted(set(own) - PROD_TARGET_SETTINGS):
-        errors.append(f"{project}: PROD target DulcetMacRelease declares {name}, which is not allowlisted")
-    for name, value in {**inherited, **own}.items():
+        errors.append(f"{project}: {name} may declare settings.base only")
+    for setting in sorted(set(own) - rules["settings"]):
+        errors.append(f"{project}: PROD target {name} declares {setting}, which is not allowlisted")
+    inherited = mapping(yaml_block(lines, ["settings", "base"]) or [])
+    for setting, value in {**inherited, **own}.items():
         if "://" in value:
-            errors.append(f"{project}: {name} carries a URL on the PROD configuration path")
+            errors.append(f"{project}: {setting} carries a URL on {name}'s PROD configuration path")
     info = mapping(yaml_block(target, ["info"]) or [])
-    if info.get("path") != "DulcetMacRelease/Info.plist":
-        errors.append(f"{project}: DulcetMacRelease must use its own DulcetMacRelease/Info.plist")
+    if info.get("path") != f"{directory}/Info.plist":
+        errors.append(f"{project}: {name} must use its own {directory}/Info.plist")
     sources = [code(line).strip() for line in yaml_block(target, ["sources"]) or []]
-    if any("DulcetMacRelease" in source for source in sources):
-        errors.append(f"{project}: the PROD plist directory must not be a source folder")
-    for other, other_lines in ((name, yaml_block(lines, ["targets", name]) or [])
-                               for name in re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(
-                                   yaml_block(lines, ["targets"]) or []))):
-        if other != "DulcetMacRelease" and any("DulcetMacRelease" in code(line) for line in other_lines):
-            errors.append(f"{project}: target {other} reads the PROD-only DulcetMacRelease directory")
+    if any(directory in source for source in sources):
+        errors.append(f"{project}: the PROD plist directory {directory} must not be a source folder")
+    for other in target_names:
+        if other != name and any(directory in code(line)
+                                 for line in yaml_block(lines, ["targets", other]) or []):
+            errors.append(f"{project}: target {other} reads the PROD-only {directory} directory")
 
-    if not PROD_PLIST.is_file():
-        errors.append(f"{PROD_PLIST} is missing")
+    if not plist_path.is_file():
+        errors.append(f"{plist_path} is missing")
         return
     try:
-        document = plistlib.loads(PROD_PLIST.read_bytes())
+        document = plistlib.loads(plist_path.read_bytes())
     except Exception as error:  # noqa: BLE001 - any parse failure is a policy failure
-        errors.append(f"{PROD_PLIST}: unreadable: {error}")
+        errors.append(f"{plist_path}: unreadable: {error}")
         return
     keys = set(document)
-    if keys != PROD_INFO_KEYS:
-        errors.append(f"{PROD_PLIST}: keys must be exactly the allowlist; extra {sorted(keys - PROD_INFO_KEYS)}, "
-                      f"missing {sorted(PROD_INFO_KEYS - keys)}")
+    if keys != rules["keys"]:
+        errors.append(f"{plist_path}: keys must be exactly the allowlist; extra {sorted(keys - rules['keys'])}, "
+                      f"missing {sorted(rules['keys'] - keys)}")
     for key, value in document.items():
-        if isinstance(value, str) and "://" in value:
-            errors.append(f"{PROD_PLIST}: {key} holds a URL")
+        if holds_url(value):
+            errors.append(f"{plist_path}: {key} holds a URL")
+    dev_partial = rules.get("dev_partial")
+    if dev_partial is not None:
+        try:
+            dev = plistlib.loads(dev_partial.read_bytes())
+        except Exception as error:  # noqa: BLE001 - a missing or broken DEV plist is a failure too
+            errors.append(f"{dev_partial}: unreadable: {error}")
+            return
+        for key, value in dev.items():
+            if document.get(key) != value:
+                errors.append(f"{plist_path}: {key} differs from DEV's {dev_partial}; the channels "
+                              "must differ only in identity, name and icon")
 
 
 def main() -> int:

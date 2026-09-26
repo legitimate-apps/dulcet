@@ -51,6 +51,14 @@ PLANS: dict[tuple[str, str], dict[str, str]] = {
         "destination": "generic/platform=iOS",
         "package_kind": "ipa",
     },
+    ("dev", "tvos"): {
+        "scheme": "DulcetTV",
+        "target": "DulcetTV",
+        "bundle_id": "com.legitimateapps.dulcet.dev",
+        "profile_name": "Dulcet CI Dev tvOS App Store",
+        "destination": "generic/platform=tvOS",
+        "package_kind": "ipa",
+    },
     ("prod", "macos"): {
         "scheme": "DulcetMacRelease",
         "target": "DulcetMacRelease",
@@ -59,18 +67,19 @@ PLANS: dict[tuple[str, str], dict[str, str]] = {
         "destination": "generic/platform=macOS",
         "package_kind": "pkg",
     },
+    # Same record as PROD macOS (universal purchase). The PROD cut gate applies as for macOS.
+    ("prod", "ios"): {
+        "scheme": "DulcetiOSRelease",
+        "target": "DulcetiOSRelease",
+        "bundle_id": "com.legitimateapps.dulcet",
+        "profile_name": "Dulcet CI iOS App Store",
+        "destination": "generic/platform=iOS",
+        "package_kind": "ipa",
+    },
 }
 
 REFUSALS: dict[tuple[str, str], str] = {
-    ("prod", "ios"): (
-        "there is no PROD iOS target yet (it will ship as com.legitimateapps.dulcet on the same "
-        "record as macOS); PROD ships macOS first (spec §23.1)"
-    ),
-    ("dev", "tvos"): (
-        "tvOS DEV is not deliverable yet: App Store Connect requires a layered tvOS app icon and "
-        "a top-shelf image, which the DulcetTV target does not have"
-    ),
-    ("prod", "tvos"): "there is no PROD tvOS target yet",
+    ("prod", "tvos"): "there is no PROD tvOS target yet; tvOS ships to DEV only",
 }
 
 

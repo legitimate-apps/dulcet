@@ -62,7 +62,7 @@ case "$RELEASE_PLATFORM" in
     info="$app/Contents/Info.plist"
     embedded_profile="$app/Contents/embedded.provisionprofile"
     ;;
-  ios)
+  ios|tvos)
     info="$app/Info.plist"
     embedded_profile="$app/embedded.mobileprovision"
     ;;
@@ -89,26 +89,45 @@ fi
 
 # Spec §22.3: PROD ships NO preconfigured server. tools/verify_release_policy.py closes the
 # configuration routes statically; this checks the artifact itself. The archived PROD Info.plist
-# may hold only the keys the source plist is allowlisted for plus the ones Xcode stamps into every
-# build (both lists OBSERVED on the build-4 archive), and no value anywhere in it may be a URL.
+# may hold only the keys its source plist is allowlisted for plus the ones Xcode stamps into every
+# build of that platform, and no value anywhere in it may be a URL. Both lists are OBSERVED on
+# Release builds of DulcetMacRelease and DulcetiOSRelease (Xcode 26.6). The macOS list previously
+# lacked NSLocalNetworkUsageDescription, which the PROD plist has declared since this script
+# landed, so a prod/macos run would have been refused here.
 if [[ "$RELEASE_CHANNEL" == prod ]]; then
   /usr/bin/plutil -convert json -o - "$info" | /usr/bin/python3 -c '
 import json, sys
-allowed = {
-    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIconFile",
-    "CFBundleIconName", "CFBundleIdentifier", "CFBundleInfoDictionaryVersion", "CFBundleName",
-    "CFBundlePackageType", "CFBundleShortVersionString", "CFBundleVersion",
-    "ITSAppUsesNonExemptEncryption", "LSApplicationCategoryType", "LSMinimumSystemVersion",
-    "NSHumanReadableCopyright",
+platform = sys.argv[1]
+common = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIdentifier",
+    "CFBundleInfoDictionaryVersion", "CFBundleName", "CFBundlePackageType",
+    "CFBundleShortVersionString", "CFBundleVersion", "ITSAppUsesNonExemptEncryption",
+    "NSLocalNetworkUsageDescription",
     "BuildMachineOSBuild", "CFBundleSupportedPlatforms", "DTCompiler", "DTPlatformBuild",
     "DTPlatformName", "DTPlatformVersion", "DTSDKBuild", "DTSDKName", "DTXcode", "DTXcodeBuild",
 }
+per_platform = {
+    "macos": {
+        "CFBundleIconFile", "CFBundleIconName", "LSApplicationCategoryType", "LSMinimumSystemVersion",
+        "NSHumanReadableCopyright",
+    },
+    "ios": {
+        "LSRequiresIPhoneOS", "UIBackgroundModes",
+        "UILaunchScreen", "UISupportedInterfaceOrientations~iphone",
+        "UISupportedInterfaceOrientations~ipad",
+        "CFBundleIcons", "CFBundleIcons~ipad", "MinimumOSVersion", "UIDeviceFamily",
+        "UIRequiredDeviceCapabilities", "UTExportedTypeDeclarations",
+    },
+}
+if platform not in per_platform:
+    sys.exit(f"no PROD Info.plist allowlist for platform {platform}")
+allowed = common | per_platform[platform]
 document = json.load(sys.stdin)
 extra = sorted(set(document) - allowed)
 urls = sorted(key for key, value in document.items() if "://" in json.dumps(value))
 if extra or urls:
     sys.exit(f"PROD Info.plist: unexpected keys {extra}, URL-valued keys {urls}")
-' || die "the PROD Info.plist is not the allowlisted, URL-free set; PROD must ship no preconfigured server"
+' "$RELEASE_PLATFORM" || die "the PROD Info.plist is not the allowlisted, URL-free set; PROD must ship no preconfigured server"
 fi
 
 /usr/bin/codesign --verify --deep --strict "$app" || die "archived app signature does not verify"

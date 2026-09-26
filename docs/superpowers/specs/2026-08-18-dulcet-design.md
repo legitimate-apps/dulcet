@@ -1856,9 +1856,10 @@ Playing is updated after `Ready` and after each `AttemptReplaced`, never specula
 so the system UI never shows a track that failed to start. Commands arriving for a stale session are
 rejected, not applied to the current one.
 
-**Revision 106.** Rating and like are **not registered** with the system command centre until the
-favourites outbox (§18.3) exists: a lock-screen heart whose handler answers "failed" is worse than
-none. **Artwork** reaches the system entry as image bytes that already passed the core's artwork
+**Revision 106.** Rating and like are **not registered** with the system command centre until a
+shell can reach the favourites outbox (§18.3): a lock-screen heart whose handler answers "failed" is
+worse than none. *Revision 112:* the outbox exists in the core (`MutationOutbox.kt`); what is
+missing is a shell that reaches it, so the condition is reachability, not existence. **Artwork** reaches the system entry as image bytes that already passed the core's artwork
 validation, keyed by playback session so a late image cannot land on a later track — never as a
 URL, because every artwork URL this client can build carries credentials. Every start stops the
 engine, and the stop clears its artwork, so an attempt that keeps its session -- Try Again (§12.1) --
@@ -2395,6 +2396,24 @@ Dulcet ships no third-party crash reporter and no analytics SDK. This is a secur
 a privacy one: the likeliest way a signed stream URL leaves a device is inside a crash report. Apple's
 own opt-in crash reporting is acceptable — the user consents at OS level and it does not carry our log
 buffer — and we still keep URLs out of log buffers (§13.4).
+
+**Privacy manifests (revision 112).** Each Apple app target — `DulcetMac`, `DulcetMacRelease`,
+`DulcetiOS`, `DulcetiOSRelease`, `DulcetTV` — and the `DulcetKit` package resource bundle ships a
+`PrivacyInfo.xcprivacy` declaring no tracking, no tracking domains and no collected data, which is
+what this section commits to. The required-reason API list is declared from what the binaries
+actually link, not from what the source appears to call, because the Kotlin/Native framework is
+invisible to a Swift grep: okio's Darwin file system brings `fstat` and `lstat` in. OBSERVED
+2026-09-26 by `nm -u` and selector strings on the Release binaries of the macOS PROD, iOS DEV, iOS
+PROD and tvOS DEV builds, which agree: `fstat`, `lstat`, `NSFileModificationDate`,
+`NSURLContentModificationDateKey`, `attributesOfItemAtPath:error:` (file timestamp), `NSUserDefaults`
+(user defaults) and `systemUptime` (system boot time). No disk-space API and no
+`mach_absolute_time` is linked. Declared reasons, each read from Apple's
+`NSPrivacyAccessedAPITypes` documentation on 2026-09-26 rather than recalled: user defaults
+**CA92.1** (the app's own defaults), file timestamp **C617.1** (files inside the app container) and
+system boot time **35F9.1** (elapsed time between in-app events). A Debug macOS build links more,
+volume-capacity keys among them, through its debug dylib; that is not what ships, and the scan is of
+Release binaries for that reason. Any change that adds a listed API — a free-space check before a
+download, say — adds its category and reason to all four files in the same change.
 
 ---
 
@@ -3111,7 +3130,7 @@ of the key.
 | home (§ below) | one activity-ordered or `newest` list per row, plus `getStarred2` | each row a single page | one list window per row |
 | search | `search3` (§16.15) | per-type offsets (§18.1) | **entities only**; result lists are not cached |
 | artwork | `getCoverArt` (§18.2) | — | the artwork cache, keyed by the whole versioned `coverArt` id |
-| lyrics | `getLyricsBySongId` / `getLyrics` (§18.4) | — | not cached in v1 |
+| lyrics | `getLyricsBySongId` / `getLyrics` (§18.4) | — | the seen-cache: one normalized document per track (`LyricsCache.sq`), purged with the namespace (§18.4, revision 112) |
 
 Rules the table does not show:
 
@@ -4968,8 +4987,10 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   production constructions are library sync's, for a server that cannot enumerate the whole library
   or a walk that will not terminate; every other production use is a type match in a mapping. In
   account setup it is reserved vocabulary, not a missing mapping for absent extension discovery
-  (§10.3 requires baseline login to proceed), and §10.4's circuit breaker has no production
-  implementation to supply one. Presentation tests that inject it do not make it a reachable
+  (§10.3 requires baseline login to proceed), and nothing on the account-connect path uses §10.4's
+  circuit breaker, so nothing there can supply one. *Revision 112:* the breaker itself exists
+  (`EndpointCircuitBreaker.kt`) and serves the lyrics read, the reader and the favourites outbox,
+  none of which a shell on `main` reaches yet. Presentation tests that inject it do not make it a reachable
   account-connect state; `docs/CONFORMANCE.md` records the audit.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
@@ -5907,12 +5928,15 @@ gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_r
 |---|---|---|---|---|
 | dev / macos | `DulcetMac` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Mac Dev App Store | signed `.pkg`, internal-only |
 | dev / ios | `DulcetiOS` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Dev iOS App Store | `.ipa`, internal-only |
+| dev / tvos | `DulcetTV` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Dev tvOS App Store | `.ipa`, internal-only |
 | prod / macos | `DulcetMacRelease` | `${BUNDLE_PREFIX}` | Dulcet CI Mac App Store | signed `.pkg` |
+| prod / ios | `DulcetiOSRelease` | `${BUNDLE_PREFIX}` | Dulcet CI iOS App Store | `.ipa` |
 
-Refused, with the reason printed: `prod/ios` (no PROD iOS target exists yet; it will ship as
-`${BUNDLE_PREFIX}` on the PROD record) and `dev/tvos` (App Store Connect requires a layered tvOS icon
-and a top-shelf image, which `DulcetTV` does not have; its profile, Dulcet CI Dev tvOS App Store,
-already exists). Internal-only is read back from the packaged `Info.plist` (`TFInternalTestingOnly`),
+Refused, with the reason printed: `prod/tvos` (no PROD tvOS target exists; tvOS ships to DEV only).
+*Revision 112* added `dev/tvos` — `DulcetTV` now carries the layered app icon and both top-shelf
+images App Store Connect requires, in one brand-assets set — and `prod/ios`, a `DulcetiOSRelease`
+target built like `DulcetMacRelease`: its own plist in a directory no other target reads, the same
+sources as `DulcetiOS` minus DEV's partial plist, and the production icon. Internal-only is read back from the packaged `Info.plist` (`TFInternalTestingOnly`),
 not assumed from the export options. The pairs
 live in `tools/release_plan.py`, which also refuses a plan whose profile differs from the target's
 `PROVISIONING_PROFILE_SPECIFIER` in `apple/project.yml`.
@@ -5943,8 +5967,13 @@ cancelled upload may already have reached App Store Connect and the next run wou
 
 **App Store Connect records.** Records cannot be created through the API (it answers that `apps` does
 not allow `CREATE`), so each is a one-time web-UI step: one DEV record, `${BUNDLE_PREFIX}.dev`, with
-macOS and iOS platforms, and the existing PROD record with iOS added when PROD iOS exists. An upload run
-whose record is absent fails in seconds, before the archive, naming the missing record.
+macOS and iOS platforms, and the existing PROD record. An upload run whose record is absent fails in
+seconds, before the archive, naming the missing record. *Revision 112:* a record must also carry the
+platform being uploaded, so the first `dev/tvos` upload needs tvOS added to the DEV record and the
+first `prod/ios` upload needs iOS added to the PROD record. The number step matches the record by
+bundle identifier only (OBSERVED in `tools/app_store_connect.py`, `matching_app`), so a missing
+platform is not caught before the archive; ASSUMED, not yet observed: that App Store Connect then
+refuses the validation or the upload.
 
 **The preconfigured-server guard (§22.3).** No build carries a preconfigured server today. What
 exists is the guard, and its reach is stated exactly:
@@ -5952,7 +5981,12 @@ exists is the guard, and its reach is stated exactly:
 - **Structural for configuration.** The two Mac targets no longer share a plist: PROD reads
   `apple/DulcetMacRelease/Info.plist`, DEV reads `apple/DulcetMacDev/Info.plist`, and neither directory
   is a source folder of the other channel. A DEV convenience value belongs in the DEV plist, which no
-  PROD build reads.
+  PROD build reads. *Revision 112:* the iOS pair is built the same way. `DulcetiOSRelease` reads
+  `apple/DulcetiOSRelease/Info.plist`, which states outright every key `DulcetiOS` gets from
+  `INFOPLIST_KEY_*` settings and its partial plist, and excludes that partial plist from its sources,
+  so no DEV-side plist reaches it. Stating the keys twice creates a drift risk, which the policy
+  closes: every key DEV's partial plist sets must appear in PROD's plist with the same value, and a
+  mutation control proves the check fires both ways.
 - **Allowlists, not name matching.** `verify_release_policy.py` holds the PROD plist to an exact key
   set, the PROD target's build settings and the project-level settings it inherits to allowlisted
   names, forbids project-level `configs`, and rejects any URL on that path; `release.yml` may pass no
@@ -5964,8 +5998,11 @@ exists is the guard, and its reach is stated exactly:
 
 **Signing material** is the CI-only Apple Distribution certificate, a CI-only Mac Installer
 Distribution certificate (a macOS App Store package must be installer-signed), the `Dulcet CI …`
-profiles (Mac App Store, Mac Dev App Store, Dev iOS App Store, Dev tvOS App Store) and the App Store
-Connect API key, all as `release`-environment secrets. Revoking the CI certificates breaks only CI.
+profiles (Mac App Store, Mac Dev App Store, Dev iOS App Store, Dev tvOS App Store, and — revision 112 —
+iOS App Store) and the App Store Connect API key, all as `release`-environment secrets. The iOS App
+Store profile is optional to the signing wrapper, so a `release` environment that does not hold it
+yet breaks no other plan; a `prod/ios` run without it fails at the archive, which finds no profile of
+that name. Revoking the CI certificates breaks only CI.
 The signing wrapper deletes decoded key files as soon as they are imported and unsets every secret
 variable before the archive runs.
 
@@ -6052,8 +6089,11 @@ not be produced is a support burden that arrives immediately.
   bundle ids, so **both are free and both must be created** — and creating them is the first CREATE
   operation the Phase-2 dry run exercises (§23.1).
 - Bundle identifiers under `${BUNDLE_PREFIX}` = **`com.legitimateapps.dulcet`** (header constants):
-  `${BUNDLE_PREFIX}.mac`, `${BUNDLE_PREFIX}.ios`, `${BUNDLE_PREFIX}.tv`, plus `${BUNDLE_PREFIX}.dev`
-  for the DEV channel (§22.2). Android `applicationId` `${BUNDLE_PREFIX}` and `${BUNDLE_PREFIX}.tv`.
+  exactly two Apple application identifiers, `${BUNDLE_PREFIX}` for PROD and `${BUNDLE_PREFIX}.dev`
+  for DEV, each shared by macOS, iOS, iPadOS and tvOS (universal purchase, §22.2; revision 112
+  corrects the per-platform `.mac`/`.ios`/`.tv` list this line carried). Android `applicationId`
+  `${BUNDLE_PREFIX}` for the phone (with `.dev` appended by its DEV flavour) and `${BUNDLE_PREFIX}.tv`
+  for Android TV, which has no DEV flavour yet.
 - 🚨 **A bundle identifier freezes on the first BUILD UPLOAD, not on app-record creation.** Revision 2
   said "once an App Store Connect app record exists," which is wrong and removes a real escape hatch.
   **OBSERVED**, Apple verbatim: *"A unique identifier for your app that is used throughout the system…
@@ -6366,6 +6406,53 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 112 (2026-09-26)** — ship readiness for the App Store and Google Play: privacy manifests,
+a PROD iOS target, tvOS DEV delivery, launcher icons, and the documentation corrections the
+completion audit listed. Numbered one above the highest revision on `main` when written (111);
+another branch may take the number first, so it may be renumbered at merge.
+
+1. **Privacy manifests** on every Apple app target and the `DulcetKit` bundle, declared from a
+   symbol scan of the Release binaries rather than from source (§13.7). The Kotlin/Native framework
+   is where `fstat` and `lstat` come from, so a grep of the Swift would have under-declared.
+2. **PROD iOS exists.** `DulcetiOSRelease` builds `${BUNDLE_PREFIX}` with display name "Dulcet" and
+   the production icon, under the same structural guard as `DulcetMacRelease` (§22.6): its own plist
+   in a PROD-only directory, an exact key set, no URL anywhere, allowlisted settings, and eight new
+   policy mutations that prove each guard fires. PROD and DEV plists must agree on every key DEV's
+   partial plist sets. That check exists because the first draft of the PROD plist omitted the
+   queue drag type (`UTExportedTypeDeclarations`), found by diffing the built DEV and PROD
+   `Info.plist`s. `release_plan.py` plans `prod/ios`, and the signing wrapper installs the iOS App
+   Store profile when the environment holds it.
+3. **tvOS DEV is deliverable.** `DulcetTV` carries a brand-assets set: a three-layer app icon, its
+   App Store counterpart, and both top-shelf images, all rendered from the one source mark by
+   `tools/icon/build-platform-icons`. An image stack lists its layers front to back, and actool
+   requires the last one to be opaque. A stack listed back to front is reported as an error while
+   the build still returns 0, so the build's exit code is not evidence the icon is valid.
+   `release_plan.py` plans `dev/tvos`, and only `prod/tvos` is refused.
+4. **The archive-time PROD plist check was wrong for macOS, and now covers both platforms.** It is
+   held to a per-platform allowlist. The macOS list lacked `NSLocalNetworkUsageDescription`, which
+   the PROD plist has carried since the channel was built. OBSERVED 2026-09-26: `main`'s check,
+   run against a Release build of `DulcetMacRelease`, exits 1 with "unexpected keys
+   ['NSLocalNetworkUsageDescription']". The first `prod/macos` dispatch would therefore have failed
+   at the archive step. The corrected check accepts that build.
+5. **The iOS launch screen was already fixed** (`INFOPLIST_KEY_UILaunchScreen_Generation`, before
+   this revision). Both iOS channels' built plists now carry a `UILaunchScreen`.
+6. **Android launcher icons.** The phone app now has adaptive icons with a monochrome layer and
+   legacy fallbacks for every density; the DEV flavour overrides only the foreground and legacy
+   bitmaps, with a DEV band. The TV app has the same icon, and a real 320x180 banner replaces a
+   placeholder rectangle.
+7. **Documentation corrections.**
+   - `CORPUS.md` said DEV ships on every merge; it is dispatched by hand.
+   - `CORPUS.md` said no self-hosted runner exists, while §21.3.1 admits one. It now says none builds
+     or tests the project, and names the exception.
+   - The working agreement said Android has one `applicationId`; Android TV's is `.tv`.
+   - §16.9 said lyrics are not cached; §18.4 caches them in the seen-cache.
+   - §12.10 made rating and like wait for an outbox that now exists; the condition is a shell that
+     reaches it.
+   - §18.12 said the circuit breaker had no production implementation. It has one, which no shell
+     reaches yet.
+   - §23.2 listed per-platform Apple bundle identifiers. There are two, shared across platforms.
+   - "Eight" targets running the Kotlin phase are now nine.
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it
