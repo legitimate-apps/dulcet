@@ -85,7 +85,8 @@ class ProductionSearchEnvironment : ExternalResource() {
         phase("server-search-done")
         // What this device has seen comes only from the production reader's own reads: one search
         // through it writes the server's answer into the seen-cache (§16.15 write-through).
-        val reader = AndroidLibraryReader.forAccount(app, account.toReaderAccount())
+        // No host is in the foreground here, and nothing is to read on a timer.
+        val reader = AndroidLibraryReader.forAccount(app, account.toReaderAccount(), foreground = false)
         val seen = mutableListOf<AndroidLibrarySearchPublication>()
         val search = reader.openSearch { seen += it }
         search.updateQuery("Dulcet")
@@ -129,7 +130,7 @@ class ProductionSearchEnvironment : ExternalResource() {
 
         // The seeded state, read back through a fresh production reader offline: the device's rows
         // for the query, and nothing asked of the server.
-        val check = AndroidLibraryReader.forAccount(app, account.toReaderAccount())
+        val check = AndroidLibraryReader.forAccount(app, account.toReaderAccount(), foreground = false)
         val offline = mutableListOf<AndroidLibrarySearchPublication>()
         check.setOnline(false)
         val probe = check.openSearch { offline += it }

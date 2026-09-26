@@ -39,6 +39,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.library.LibraryLifecycle
+import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.isOffline
 import com.legitimateapps.dulcet.library.playableTracks
@@ -91,7 +92,8 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     val playback = rememberPlaybackController()
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
         .collectAsStateWithLifecycle()
-    val library = remember(account) { LibrarySession(context, account) }
+    val foreground = hostInForeground()
+    val library = remember(account) { LibrarySession(context, account, foreground) }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect

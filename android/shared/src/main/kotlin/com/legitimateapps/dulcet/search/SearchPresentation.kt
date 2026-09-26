@@ -151,7 +151,8 @@ public class SearchIntentRouter(private val context: Context) {
 
 public interface SearchHostDependencies {
     public fun loadAccount(context: Context): SearchAccount?
-    public fun createPresenter(account: SearchAccount, context: Context): SearchPresenter
+    /** [foreground]: whether the host is in the foreground now, read from its lifecycle. */
+    public fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter
     public fun createRouter(context: Context): SearchIntentRouter
 }
 
@@ -171,8 +172,8 @@ public object ProductionSearchHostDependencies : SearchHostDependencies {
             )
         }
 
-    override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter =
-        SearchPresenter(account, AndroidLibrarySearchSource(context, account))
+    override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter =
+        SearchPresenter(account, AndroidLibrarySearchSource(context, account, foreground))
 
     override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
 }

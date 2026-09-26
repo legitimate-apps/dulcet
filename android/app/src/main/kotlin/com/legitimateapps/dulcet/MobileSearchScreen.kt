@@ -29,6 +29,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
@@ -55,7 +56,8 @@ internal fun MobileSearchRoute(
     val context = LocalContext.current
     // Keyed by the whole account: a changed password or address replaces the process's reader, and a
     // presenter still attached to the old one would never hear from it again.
-    val presenter = remember(account) { dependencies.createPresenter(account, context) }
+    val foreground = hostInForeground()
+    val presenter = remember(account) { dependencies.createPresenter(account, context, foreground) }
     val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)

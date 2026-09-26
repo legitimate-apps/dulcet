@@ -11,9 +11,11 @@ import com.legitimateapps.dulcet.library.toReaderAccount
  * publication carries the core's scope — `serverAndDevice`, `deviceWhileServerPending`,
  * `deviceOffline` with the seen-cache's counts, or `deviceServerFailed` with its kind. The reader is
  * shared with the library screens, so search follows the same reachability and favourites.
+ * [foreground] is whether the host is in the foreground now, for the reader if this creates it; the
+ * host's library session reports every change after that.
  */
-public class AndroidLibrarySearchSource(context: Context, account: SearchAccount) : SearchSource {
-    private val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount())
+public class AndroidLibrarySearchSource(context: Context, account: SearchAccount, foreground: Boolean) : SearchSource {
+    private val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), foreground)
 
     override fun open(listener: (AndroidLibrarySearchPublication) -> Unit): SearchSourceHandle {
         val search = reader.openSearch(listener)

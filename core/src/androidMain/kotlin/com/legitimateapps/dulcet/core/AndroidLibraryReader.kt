@@ -59,10 +59,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  * requests one, a reconnect already running is joined, and nothing is read before its outbox flush
  * and epoch read. The shell never flips the reader online itself.
  *
- * **Foreground.** Call [setForeground] on every change, the first included: a reader starts out told
- * the app is in the background, and nothing reads on a timer — the epoch cadence, or the automatic
- * retry of a reconnect whose epoch read failed transiently — until it is told otherwise (§16.11,
- * §16.14). A return to the foreground while offline and told reachable starts a reconnect.
+ * **Foreground.** [forAccount] takes whether the app is in the foreground at that moment, and a reader
+ * it creates starts from it; call [setForeground] on every change after that. Nothing reads on a
+ * timer — the epoch cadence, or the automatic retry of a reconnect whose epoch read failed
+ * transiently — while the app is in the background (§16.11, §16.14). A return to the foreground while
+ * offline and told reachable starts a reconnect.
  *
  * **A reconnect the reader starts itself** — its retry, its return to the foreground, a reachable
  * report while offline — completes to no caller: a shell learns of it only from what its screens
@@ -80,7 +81,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 public class AndroidLibraryReader internal constructor(
     /** The account this reader serves; null only for a reader composed by a test. */
     internal val account: AndroidLibraryReaderAccount?,
-    private val compose: (CoroutineScope) -> AndroidLibraryReaderComposition,
+    /** Builds the session in [readerScope]; the flag is the foreground state it starts in. */
+    private val compose: (scope: CoroutineScope, foreground: Boolean) -> AndroidLibraryReaderComposition,
     private val readerDispatcher: CloseableCoroutineDispatcher,
     mainDispatcher: CoroutineDispatcher,
     /**
@@ -88,6 +90,8 @@ public class AndroidLibraryReader internal constructor(
      * [closeCurrent] closed: this one composes only once that has terminated, or 45 s have passed.
      */
     predecessor: AndroidLibraryReader? = null,
+    /** Whether the app was in the foreground when this reader was created (see [reportedForeground]). */
+    initiallyForeground: Boolean,
 ) {
     /**
      * This reader waits for it before opening the database and, if it had not terminated by then,
@@ -134,12 +138,11 @@ public class AndroidLibraryReader internal constructor(
     private var composition: AndroidLibraryReaderComposition? = null
 
     /**
-     * The app's foreground state as last reported, and so as known whenever the session is built
-     * ([compose] applies it, and again to a session built after a failed setup). Background until a
-     * shell reports otherwise: the process's facade is usually built while its first host is still
-     * being created, before that host has started.
+     * The app's foreground state as last reported — at creation, then by [setForeground] — and so as
+     * known whenever the session is built: [compose] passes it to the session's construction, and
+     * again to a session built after a failed setup.
      */
-    private var reportedForeground = false
+    private var reportedForeground = initiallyForeground
 
     // What the platform last reported, applied again to a session built after a failed setup.
     private var reportedReachable: Boolean? = null
@@ -182,20 +185,27 @@ public class AndroidLibraryReader internal constructor(
     private fun compose() {
         var built: AndroidLibraryReaderComposition? = null
         composition = try {
-            compose(readerScope).also { made ->
+            // Built in the foreground state last reported, so a session built in the foreground
+            // starts its epoch cadence at construction. What that launches runs on this thread, and
+            // so only once this block has returned: the reports applied below reach the reader
+            // before any of it.
+            compose(readerScope, reportedForeground).also { made ->
                 built = made
                 made.session.favourites.addOutcomeListener(::fanOutOutcome)
                 made.session.reader.setNetworkConstrained(reportedConstrained)
                 reportedReachable?.let(made.session::setOnline)
-                // Last: in the foreground this starts the core's epoch cadence.
-                made.session.reader.setForeground(reportedForeground)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
             // A session built but not set up is released, so the next attempt does not open a second
-            // one beside it. The throwable's text is dropped, because it may carry the address or
-            // credentials.
+            // one beside it; told it is in the background first, so the epoch cadence its
+            // construction may have started stops with it. The throwable's text is dropped, because
+            // it may carry the address or credentials.
+            try {
+                built?.session?.reader?.setForeground(false)
+            } catch (_: Throwable) {
+            }
             try {
                 built?.release?.invoke()
             } catch (_: Throwable) {
@@ -398,8 +408,8 @@ public class AndroidLibraryReader internal constructor(
     }
 
     /**
-     * Foreground transitions; call it on every change, the first included — nothing reads on a timer
-     * until the app is reported in the foreground. The epoch cadence and a reconnect's automatic
+     * Foreground transitions after [forAccount], whose `foreground` argument stated the first; call it
+     * on every change. The epoch cadence and a reconnect's automatic
      * retry run only in the foreground (core policy, §16.11 and §16.14), and a return to the
      * foreground while offline and reported reachable starts a reconnect. A report made before the
      * reader is built is applied when it is built.
@@ -683,9 +693,17 @@ public class AndroidLibraryReader internal constructor(
          * The process's reader for [account], created the first time and shared afterwards. A request
          * for a different account — another id, address, user or password — closes the previous
          * reader first: v1 has one active account.
+         *
+         * [foreground] is whether the app is in the foreground NOW, read from the caller's lifecycle
+         * — required, with no default. A reader this call creates starts in that state: it reads on a
+         * timer (the epoch cadence, a reconnect's automatic retry) only in the foreground, so a
+         * default of `false` would silently disable the retry until a report, and `true` would read
+         * in the background. A reader already open for the account is returned as it is: it keeps
+         * the state its hosts reported with [setForeground], which each host's library session calls
+         * on every change.
          */
         @JvmStatic
-        public fun forAccount(context: Context, account: AndroidLibraryReaderAccount): AndroidLibraryReader {
+        public fun forAccount(context: Context, account: AndroidLibraryReaderAccount, foreground: Boolean): AndroidLibraryReader {
             val application = context.applicationContext
             val epochInterval = testEpochIntervalMillis
             return obtain(account) { previous ->
@@ -695,6 +713,7 @@ public class AndroidLibraryReader internal constructor(
                     newLibraryReaderDispatcher(),
                     Dispatchers.Main,
                     predecessor = previous,
+                    initiallyForeground = foreground,
                 )
             }
         }
@@ -811,7 +830,7 @@ private fun productionComposer(
     context: Context,
     account: AndroidLibraryReaderAccount,
     epochIntervalMillis: Long?,
-): (CoroutineScope) -> AndroidLibraryReaderComposition = { scope ->
+): (CoroutineScope, Boolean) -> AndroidLibraryReaderComposition = { scope, foreground ->
     var store: DulcetDatabaseStore? = null
     var transport: KtorLibraryEndpointTransport? = null
     try {
@@ -833,9 +852,14 @@ private fun productionComposer(
         AndroidLibraryReaderComposition(
             // No download source: downloads join the reader in phase R4, so nothing is published as
             // `downloaded` yet, and Android TV must be given none then either.
+            // No playlist editing reaches this facade yet, and the Android account does not carry the
+            // server's extensions, so `formPost` is off, as on Apple: without it an edit is batched
+            // within the parameter budget (§18.6), never refused for want of it.
             session = LibraryReaderSession(
                 opened.database, cache, live, scope,
                 epochIntervalMillis?.let { LibraryReaderConfig(epochIntervalMillis = it) } ?: LibraryReaderConfig(),
+                formPost = false,
+                foreground = foreground,
             ),
             release = {
                 live.close()

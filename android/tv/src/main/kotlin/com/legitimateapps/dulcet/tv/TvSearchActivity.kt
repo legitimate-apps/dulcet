@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AccountConnector
 import androidx.compose.ui.Modifier
@@ -89,7 +90,8 @@ private fun TvSearchRoute(account: SearchAccount, dependencies: SearchHostDepend
     val context = LocalContext.current
     // Keyed by the whole account: a changed password or address replaces the process's reader, and a
     // presenter still attached to the old one would never hear from it again.
-    val presenter = remember(account) { dependencies.createPresenter(account, context) }
+    val foreground = hostInForeground()
+    val presenter = remember(account) { dependencies.createPresenter(account, context, foreground) }
     val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)

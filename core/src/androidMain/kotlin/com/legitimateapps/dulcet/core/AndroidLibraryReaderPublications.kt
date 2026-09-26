@@ -285,6 +285,15 @@ public sealed interface AndroidLibraryChangeOutcome {
     public data class NotSaved(override val target: AndroidLibraryEntity, override val field: AndroidLibraryChangeField, val error: DomainError) :
         AndroidLibraryChangeOutcome
 
+    /**
+     * Kept unsent, with every change after it: the server asked to wait ([error] is `Server.Busy`),
+     * or this change's request was refused access and so was the `ping` sent to check the account
+     * ([error] is the ping's, whatever it was). A later flush sends it once the server accepts it;
+     * the item shows the change meanwhile.
+     */
+    public data class Held(override val target: AndroidLibraryEntity, override val field: AndroidLibraryChangeField, val error: DomainError) :
+        AndroidLibraryChangeOutcome
+
     /** It was changed elsewhere after this change was made; the server's value wins (§18.3). */
     public data class Superseded(override val target: AndroidLibraryEntity, override val field: AndroidLibraryChangeField, val serverValue: Int) :
         AndroidLibraryChangeOutcome
@@ -503,6 +512,7 @@ internal fun MutationField.toAndroid(): AndroidLibraryChangeField = when (this) 
 internal fun MutationOutcome.toAndroid(): AndroidLibraryChangeOutcome = when (this) {
     is MutationOutcome.Saved -> AndroidLibraryChangeOutcome.Saved(target.toAndroid(), field.toAndroid(), value)
     is MutationOutcome.NotSaved -> AndroidLibraryChangeOutcome.NotSaved(target.toAndroid(), field.toAndroid(), error)
+    is MutationOutcome.Held -> AndroidLibraryChangeOutcome.Held(target.toAndroid(), field.toAndroid(), error)
     is MutationOutcome.Superseded -> AndroidLibraryChangeOutcome.Superseded(target.toAndroid(), field.toAndroid(), serverValue)
     is MutationOutcome.NotRecorded -> AndroidLibraryChangeOutcome.NotRecorded(target.toAndroid(), field.toAndroid())
 }

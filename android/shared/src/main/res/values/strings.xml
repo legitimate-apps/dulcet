@@ -19,6 +19,7 @@
     <string name="library_error_busy">your server is busy</string>
     <string name="library_error_not_found">your server no longer has this</string>
     <string name="library_error_tls">your server\'s certificate isn\'t trusted</string>
+    <string name="library_error_access_refused">your server refused access</string>
     <string name="library_error_server">your server couldn\'t answer</string>
 
     <string name="library_unavailable_album">You haven\'t opened this album on this device. Connect to your server to see it.</string>
@@ -76,6 +77,8 @@
     <string name="library_favourite_remove">Remove from favourites</string>
     <string name="library_favourite_on">Favourite</string>
     <string name="library_change_not_saved">Couldn\'t save that change — %1$s</string>
+    <string name="library_change_held_busy">That change isn\'t sent yet — your server is busy. It will be sent later.</string>
+    <string name="library_change_held_refused">That change isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>
     <string name="library_change_superseded">Changed on another device — showing your server\'s value</string>
     <string name="library_change_not_recorded">Couldn\'t save that change on this device</string>
 

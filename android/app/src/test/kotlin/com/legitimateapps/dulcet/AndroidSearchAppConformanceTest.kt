@@ -80,7 +80,7 @@ class AndroidSearchTestApplication : Application(), SearchHostDependencyOwner {
     override val searchHostDependencies: SearchHostDependencies = object : SearchHostDependencies {
         override fun loadAccount(context: Context): SearchAccount = account
 
-        override fun createPresenter(account: SearchAccount, context: Context): SearchPresenter =
+        override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter =
             SearchPresenter(account, RankedMergedFixtureSearchSource()).also { presenter = it }
 
         override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)

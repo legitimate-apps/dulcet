@@ -47,9 +47,11 @@ import kotlinx.coroutines.flow.update
  * goes around it: the platform's default-network callback reports reachability with
  * [AndroidLibraryReader.setOnline] — whose `true`, while offline, REQUESTS a reconnect rather than
  * flipping any state — and [start] reconnects when the app comes to the foreground with a network.
- * **Foreground** is this session's host being started (§16.11): [start] and [stop] tell the reader
- * on every change, the first included, because a reader starts out told it is in the background and
- * reads nothing on a timer — neither the epoch cadence nor its reconnect retry — until told otherwise.
+ * **Foreground** is this session's host being started (§16.11): the reader, if this session creates
+ * it, starts in the state the constructor was given, and [start] and [stop] tell it every change —
+ * including a start of a host already started when this session was made, which the lifecycle
+ * observer replays. The reader reads nothing on a timer — neither the epoch cadence nor its reconnect
+ * retry — while told it is in the background.
  *
  * A reconnect that finds the server unreachable leaves the library [LibraryConnectionState.Offline].
  * The reader then retries by itself while the app is in the foreground and the platform reports a
@@ -68,8 +70,12 @@ public class LibrarySession internal constructor(
     private val reader: AndroidLibraryReader,
     private val connectivity: ConnectivityManager?,
 ) : AutoCloseable {
-    public constructor(context: Context, account: SearchAccount) : this(
-        AndroidLibraryReader.forAccount(context, account.toReaderAccount()),
+    /**
+     * [foreground]: whether the host is in the foreground now ([hostInForeground]), for the process's
+     * reader if this creates it. [start] and [stop] report every change after that.
+     */
+    public constructor(context: Context, account: SearchAccount, foreground: Boolean) : this(
+        AndroidLibraryReader.forAccount(context, account.toReaderAccount(), foreground),
         context.applicationContext.getSystemService(ConnectivityManager::class.java),
     )
 

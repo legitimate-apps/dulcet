@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -38,15 +39,20 @@ class AndroidLibraryReaderTest {
     private val server = SessionTestServer()
     private val readers = mutableListOf<AndroidLibraryReader>()
 
-    private fun session(scope: kotlinx.coroutines.CoroutineScope) = LibraryReaderSession(
-        database.database, store.bind(SessionEnv.BINDING), server, scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+    private fun session(
+        scope: kotlinx.coroutines.CoroutineScope,
+        foreground: Boolean,
+        config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+    ) = LibraryReaderSession(
+        database.database, store.bind(SessionEnv.BINDING), server, scope, config, formPost = false, foreground = foreground,
     )
 
     private fun reader(main: CoroutineDispatcher = Dispatchers.Unconfined): AndroidLibraryReader = AndroidLibraryReader(
         account = null,
-        compose = { scope -> AndroidLibraryReaderComposition(session(scope)) },
+        compose = { scope, foreground -> AndroidLibraryReaderComposition(session(scope, foreground)) },
         readerDispatcher = newLibraryReaderDispatcher(),
         mainDispatcher = main,
+        initiallyForeground = false,
     ).also { readers += it }
 
     /** A main thread that runs nothing until the test drains it: a publication can be caught queued. */
@@ -180,7 +186,7 @@ class AndroidLibraryReaderTest {
         val dispatcher = newLibraryReaderDispatcher()
         val reader = AndroidLibraryReader(
             account = null,
-            compose = { scope ->
+            compose = { scope, foreground ->
                 // Work of the reader's own, in flight at the close, whose cleanup takes a while.
                 scope.launch {
                     try {
@@ -191,10 +197,11 @@ class AndroidLibraryReaderTest {
                         releasedWhenCleanupRan.set(released.get())
                     }
                 }
-                AndroidLibraryReaderComposition(session(scope), release = { released.set(true) })
+                AndroidLibraryReaderComposition(session(scope, foreground), release = { released.set(true) })
             },
             readerDispatcher = dispatcher,
             mainDispatcher = Dispatchers.Unconfined,
+            initiallyForeground = false,
         ).also { readers += it }
         assertTrue(running.await(30, TimeUnit.SECONDS), "control: the work was running when the close began")
         reader.closeAndWait()
@@ -233,12 +240,12 @@ class AndroidLibraryReaderTest {
         val account = AndroidLibraryReaderAccount("provider", "http://127.0.0.1:1", "user", "password", true)
         val attempts = java.util.concurrent.atomic.AtomicInteger()
         val reader = AndroidLibraryReader.obtain(account) { previous ->
-            AndroidLibraryReader(account, { scope ->
+            AndroidLibraryReader(account, { scope, foreground ->
                 // The database cannot be opened at creation nor at the first call (a full disk, say);
                 // the third time it can.
                 if (attempts.incrementAndGet() <= 2) error("setup failed")
-                AndroidLibraryReaderComposition(session(scope))
-            }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, previous)
+                AndroidLibraryReaderComposition(session(scope, foreground))
+            }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, previous, initiallyForeground = false)
         }.also { readers += it }
         val waiting = Collections.synchronizedList(mutableListOf<AndroidLibraryPublication>())
         reader.openWindow(AndroidLibraryQuery.Artists()) { waiting += it }
@@ -281,10 +288,10 @@ class AndroidLibraryReaderTest {
         val account = AndroidLibraryReaderAccount("provider", "http://127.0.0.1:1", "user", "password", true)
         val attempts = java.util.concurrent.atomic.AtomicInteger()
         val reader = AndroidLibraryReader.obtain(account) { previous ->
-            AndroidLibraryReader(account, { scope ->
+            AndroidLibraryReader(account, { scope, foreground ->
                 if (attempts.incrementAndGet() <= 2) error("setup failed")
-                AndroidLibraryReaderComposition(session(scope))
-            }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, previous)
+                AndroidLibraryReaderComposition(session(scope, foreground))
+            }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, previous, initiallyForeground = false)
         }.also { readers += it }
         reader.setOnline(false) // Recorded, and applied at setup: the searches below answer from this device alone.
         val published = Collections.synchronizedList(mutableListOf<AndroidLibrarySearchPublication>())
@@ -324,8 +331,8 @@ class AndroidLibraryReaderTest {
         val second = AndroidLibraryReaderAccount("provider", "http://127.0.0.1:1", "someone-else", "password", true)
         val firstDispatcher = newLibraryReaderDispatcher()
         val firstReader = AndroidLibraryReader.obtain(first) { previous ->
-            AndroidLibraryReader(first, { scope -> AndroidLibraryReaderComposition(session(scope)) },
-                firstDispatcher, Dispatchers.Unconfined, previous)
+            AndroidLibraryReader(first, { scope, foreground -> AndroidLibraryReaderComposition(session(scope, foreground)) },
+                firstDispatcher, Dispatchers.Unconfined, previous, initiallyForeground = false)
         }.also { readers += it }
         val opened = CountDownLatch(1)
         firstReader.openWindow(AndroidLibraryQuery.Artists()) { opened.countDown() }
@@ -338,8 +345,8 @@ class AndroidLibraryReaderTest {
         try {
             secondReader = AndroidLibraryReader.obtain(second) { previous ->
                 assertSame(firstReader, previous)
-                AndroidLibraryReader(second, { scope -> composed.set(true); AndroidLibraryReaderComposition(session(scope)) },
-                    secondDispatcher, Dispatchers.Unconfined, previous)
+                AndroidLibraryReader(second, { scope, foreground -> composed.set(true); AndroidLibraryReaderComposition(session(scope, foreground)) },
+                    secondDispatcher, Dispatchers.Unconfined, previous, initiallyForeground = false)
             }.also { readers += it }
             Thread.sleep(200)
             assertFalse(firstReader.hasTerminated, "control: the predecessor is still running")
@@ -360,6 +367,73 @@ class AndroidLibraryReaderTest {
         assertFalse(composed.get(), "a reader closed before it was built never opened the database")
     }
 
+    /**
+     * The facade passes the foreground state it holds to the session's construction (§16.14): a
+     * reader created in the foreground retries a reconnect whose epoch read failed transiently with
+     * no [AndroidLibraryReader.setForeground] call at all. One created in the background, the
+     * control, reads once and no more.
+     */
+    @Test
+    fun aReaderCreatedInTheForegroundRetriesATransientFailureWithNoOtherReport() {
+        val fast = LibraryReaderConfig(lookAheadMaxPerViewport = 0, reconnectRetryInitialMillis = 50)
+        for (createdInForeground in listOf(false, true)) {
+            val sessions = LinkedBlockingQueue<LibraryReaderSession>()
+            val reader = AndroidLibraryReader(
+                account = null,
+                compose = { scope, foreground -> AndroidLibraryReaderComposition(session(scope, foreground, fast).also(sessions::put)) },
+                readerDispatcher = newLibraryReaderDispatcher(),
+                mainDispatcher = Dispatchers.Unconfined,
+                initiallyForeground = createdInForeground,
+            ).also { readers += it }
+            val session = assertNotNull(sessions.poll(30, TimeUnit.SECONDS), "the session was built")
+            fun <T> onReader(read: () -> T): T {
+                val answer = LinkedBlockingQueue<Result<T>>()
+                reader.onReader { answer.put(runCatching(read)) }
+                return assertNotNull(answer.poll(30, TimeUnit.SECONDS), "the reader's thread answered").getOrThrow()
+            }
+            fun reads() = onReader { server.count("getScanStatus") }
+
+            val connected = LinkedBlockingQueue<AndroidLibraryConnection>()
+            reader.reconnect { connected.put(it) }
+            assertEquals(true, connected.poll(30, TimeUnit.SECONDS)?.epochRead, "control: the reader connects")
+            reader.setOnline(false)
+            pollUntil("the reader offline") { !onReader { session.reader.online } }
+            onReader { server.failWithError["getScanStatus"] = DomainError.Transport.Timeout }
+            val before = reads()
+            // Reachable while offline: the reader starts a reconnect itself, and its epoch read fails
+            // transiently. Nothing here reports the foreground, in either pass.
+            reader.setOnline(true)
+            if (createdInForeground) {
+                pollUntil("the retries of a reader created in the foreground") { reads() - before >= 3 }
+                onReader { server.failWithError.clear() }
+                pollUntil("a retry to bring the reader back") { onReader { session.reader.online } }
+            } else {
+                pollUntil("the report's own reconnect") { reads() - before >= 1 }
+                Thread.sleep(600) // twelve times the first wait: 50 + 100 + 200 ms would be three retries
+                assertEquals(1, reads() - before, "a reader created in the background retried")
+                assertFalse(onReader { session.reader.online }, "control: the failed read left it offline")
+                onReader { server.failWithError.clear() }
+            }
+            reader.closeAndWait()
+        }
+    }
+
+    /** A change the flush kept unsent maps to held, with its error, never to another outcome. */
+    @Test
+    fun aHeldOutcomeMapsToHeldWithItsError() {
+        val album = LibraryEntityRef(LibraryEntityKind.Album, "album-1")
+        val busy = DomainError.Server.Busy(retryAfter = null)
+        assertEquals(
+            AndroidLibraryChangeOutcome.Held(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "album-1"), AndroidLibraryChangeField.Favourite, busy),
+            MutationOutcome.Held(album, MutationField.Starred, busy).toAndroid(),
+        )
+        val refused = DomainError.Auth.InvalidCredentials
+        assertEquals(
+            AndroidLibraryChangeOutcome.Held(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "album-1"), AndroidLibraryChangeField.Rating, refused),
+            MutationOutcome.Held(album, MutationField.Rating, refused).toAndroid(),
+        )
+    }
+
     /** A copy taken under the list's lock: the reader's thread appends while the test reads. */
     private fun <T> MutableList<T>.snapshot(): List<T> = synchronized(this) { toList() }
 
@@ -377,10 +451,10 @@ class AndroidLibraryReaderTest {
         val second = AndroidLibraryReaderAccount("provider", "http://127.0.0.1:1", "someone-else", "password", true)
         fun build(account: AndroidLibraryReaderAccount, dispatcher: kotlinx.coroutines.CloseableCoroutineDispatcher, previous: AndroidLibraryReader?,
                   composedAfterPredecessor: AtomicReference<Boolean?>) =
-            AndroidLibraryReader(account, { scope ->
+            AndroidLibraryReader(account, { scope, foreground ->
                 composedAfterPredecessor.set(previous?.hasTerminated ?: true)
-                AndroidLibraryReaderComposition(session(scope))
-            }, dispatcher, Dispatchers.Unconfined, previous).also { readers += it }
+                AndroidLibraryReaderComposition(session(scope, foreground))
+            }, dispatcher, Dispatchers.Unconfined, previous, initiallyForeground = false).also { readers += it }
         fun AndroidLibraryReader.awaitLive() {
             val live = CountDownLatch(1)
             openHomeRow(AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Newest)) {
@@ -451,10 +525,10 @@ class AndroidLibraryReaderTest {
 
         // The same server, bound as someone else: the change is discarded, and a reconnect says so.
         val other = CacheBinding(SessionEnv.BINDING.serverId, SessionEnv.BINDING.normalizedBaseUrl, "someone-else")
-        val second = AndroidLibraryReader(null, { scope ->
+        val second = AndroidLibraryReader(null, { scope, foreground ->
             AndroidLibraryReaderComposition(LibraryReaderSession(database.database, store.bind(other), server, scope,
-                LibraryReaderConfig(lookAheadMaxPerViewport = 0)))
-        }, newLibraryReaderDispatcher(), Dispatchers.Unconfined).also { readers += it }
+                LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = false, foreground = foreground))
+        }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, initiallyForeground = false).also { readers += it }
         assertEquals(1L, second.reconnectNow().discardedPendingChanges, "the discarded change is reported")
         assertEquals(1L, second.reconnectNow().discardedPendingChanges, "and again, until the person has been told")
         second.acknowledgeDiscardedChanges()

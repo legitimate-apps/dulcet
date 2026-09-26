@@ -73,7 +73,8 @@ public val LibraryObservation: SemanticsPropertyKey<LibraryObservationState> = S
 @Composable
 public fun LibraryEntry(account: SearchAccount, search: @Composable () -> Unit) {
     val context = LocalContext.current
-    val session = remember(account) { LibrarySession(context, account) }
+    val foreground = hostInForeground()
+    val session = remember(account) { LibrarySession(context, account, foreground) }
     var showingLibrary by remember { mutableStateOf(false) }
     var album by remember { mutableStateOf<String?>(null) }
     Box(Modifier.fillMaxSize().background(Color.White)) {
@@ -91,6 +92,15 @@ public fun LibraryEntry(account: SearchAccount, search: @Composable () -> Unit) 
     // usually after the reconnect has read the epoch; each publishes its cache before its own read.
     LibraryLifecycle(session)
 }
+
+/**
+ * Whether the host is in the foreground NOW — started, at least — for a reader created at this
+ * composition (§16.14). Only the value at the reader's creation matters: [LibraryLifecycle] reports
+ * every later change.
+ */
+@Composable
+public fun hostInForeground(): Boolean =
+    LocalLifecycleOwner.current.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
 /** Starts and stops [session] with the host's lifecycle and closes it when it leaves composition. */
 @Composable

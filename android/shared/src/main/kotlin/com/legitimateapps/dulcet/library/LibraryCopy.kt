@@ -128,9 +128,24 @@ public fun Resources.searchScopeLabel(scope: AndroidLibrarySearchScope?): String
 public fun Resources.outcomeLine(outcome: AndroidLibraryChangeOutcome?): String? = when (outcome) {
     null, is AndroidLibraryChangeOutcome.Saved -> null
     is AndroidLibraryChangeOutcome.NotSaved -> getString(R.string.library_change_not_saved, errorPhrase(outcome.error))
+    is AndroidLibraryChangeOutcome.Held -> when (val error = outcome.error) {
+        is DomainError.Server.Busy -> getString(R.string.library_change_held_busy)
+        else -> getString(R.string.library_change_held_refused, heldPhrase(error))
+    }
     is AndroidLibraryChangeOutcome.Superseded -> getString(R.string.library_change_superseded)
     is AndroidLibraryChangeOutcome.NotRecorded -> getString(R.string.library_change_not_recorded)
 }
+
+/**
+ * Why a held change was refused: the `ping`'s error. A 403 or 407 with no envelope is a refusal of
+ * access (by the server or a proxy), not a server that could not answer.
+ */
+private fun Resources.heldPhrase(error: DomainError): String =
+    if (error is DomainError.Server.HttpStatus && (error.status == 403 || error.status == 407)) {
+        getString(R.string.library_error_access_refused)
+    } else {
+        errorPhrase(error)
+    }
 
 public fun Resources.errorPhrase(error: DomainError): String = getString(
     when (error) {
