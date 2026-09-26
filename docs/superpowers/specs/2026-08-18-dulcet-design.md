@@ -1938,12 +1938,33 @@ It now keeps the whole contract, as the Apple shell does:
   holds controls: **OBSERVED** (Robolectric native graphics, 2026-09-26) on a 360 × 640 dp phone the
   bottom-edge notice (y 564-624) covered Shuffle, Previous, Play/Pause and Next, and on TV with three
   or more Up Next entries it covered the list and a row the D-pad focuses (y 460-500 against row 2 at
-  446-498). The cover takes no input, so on it the notice covers no control on either layout: on the
-  same phone it sits at y 307-367, 108 dp above the nearest control, and on TV at y 394-434 inside
-  the cover (58-418 × 90-450), clear of the list at x 466. The full player's root blocks touches from
-  reaching the pages beneath it with a pointer handler rather than `clickable`, because a clickable
-  merges its descendants: the notice was part of the player's one label, and a screen reader could
-  not reach it on its own. A skip clears the failure line: the next entry's preparing state follows.
+  446-498). The cover takes no input, so on it the notice covers no control on either layout. The
+  phone's region is the cover at its paused size (0.86 of its box, centred), so the notice lies on
+  the cover as drawn whether it plays or has settled back: on the same phone, paused, it sits at
+  y 285-345 on the drawn cover, 129 dp above the nearest control; on TV at y 394-434 inside the
+  cover (58-418 × 90-450), clear of the list at x 466. A region narrower than 240 dp -- a cover in a
+  small or split-screen window -- draws the card with 8 dp margins, no glyph and 12/14 of the text
+  size, so the words keep the width.
+  **The full player fits the window it is given.** The phone app locks no orientation and runs in
+  split screen. **OBSERVED** (Robolectric native graphics, 2026-09-26): the stacked layout measured
+  its full-width cover first, so in a 640 × 360 or 1280 × 800 landscape window, a 360 × 320 split
+  and a 320 × 480 portrait window the transport row measured 0 × 0, and in landscape the notice on
+  the cover was drawn below the window. The player now lays itself out for its window: taller than
+  wide, stacked, with the controls beneath the cover measured first so the cover shrinks rather
+  than squeezing them (unchanged where the full-width cover fits); wider than tall, the cover beside
+  the title, scrubber and transport, or, when the side beside the cover is narrower than the
+  transport's compact 256 dp, the transport across the window beneath both. The transport is
+  compact (48 dp skips, a 64 dp Play) when its row is narrower than its full 304 dp. In every one
+  of those windows each control is whole and inside the window, none overlaps another or the
+  cover, and the notice lies whole on the drawn cover over no control.
+  The full player's root blocks touches from reaching the pages beneath it with a pointer handler
+  rather than `clickable`, because a clickable merges its descendants: the notice was part of the
+  player's one label, and a screen reader could not reach it on its own. **The pages beneath it are
+  hidden from a screen reader while it is open** (`clearAndSetSemantics` on the frame's scaffold):
+  the old clickable root had covered them, and without it the accessibility layer still exposed the
+  page's rows, the now-playing bar and the tabs beneath the player, and an accessibility click
+  activated a row the person could not see. A skip clears the failure line: the next entry's
+  preparing state follows.
 - **Whose failure it is** comes from the same `playbackFailureOwner`. Two Android mappings were
   wrong for it and are corrected: Media3's decoding failures (`ERROR_CODE_DECODING_FAILED`,
   `DECODER_INIT_FAILED`, `DECODING_FORMAT_UNSUPPORTED`, `DECODING_FORMAT_EXCEEDS_CAPABILITIES`) crossed
@@ -1971,11 +1992,17 @@ It now keeps the whole contract, as the Apple shell does:
   `Skipped` and keeps the session, so Play then restarts the entry (`restartCurrent`, which begins
   no pass itself). The first of those is reached with a pass that is not empty: once the core moves
   on from the engine's attempt -- a natural end, or a skip past its failure -- the controller drops
-  that attempt's plan, so while the next entry resolves the engine holds nothing the controller acts
-  on, and a skip after a failure before the engine had the entry leaves it holding nothing too. A
-  Play pressed then must begin the pass, or a later failure stops on an entry the skip should have
-  reached. Before the plan was dropped, a Previous in that window sought the attempt that was over
-  and did nothing, and restart was offered for it. Skip (`next`), Previous (`previous`), a pick
+  that attempt's plan, so while the next entry resolves Play takes the resolving branch, and a skip
+  after a failure before the engine had the entry leaves the engine holding nothing too. A Play
+  pressed then must begin the pass, or a later failure stops on an entry the skip should have
+  reached. With no plan nothing seeks or restarts the attempt that is over: a seek from the app or
+  the media session is refused, restart is not offered, and Previous moves to the entry before.
+  Before the plan was dropped, a Previous in that window sought the attempt that was over and did
+  nothing, and restart was offered for it; before seeks were gated on the plan, a seek still reached
+  it, and after the queue ended the system's Play -- Media3's play-button handling, which on an ended
+  player seeks to the default position before it plays -- sought the ended track back to its start.
+  The Play that follows begins a new attempt through the core. Pause always reaches the engine, so
+  in that window it stops asking to play at once rather than when the next entry starts. Skip (`next`), Previous (`previous`), a pick
   from a list (a new queue), a pick in Up Next (`jumpTo`), shuffle and repeat call the core
   functions that begin a pass. Previous on the first entry of a stream that cannot seek restarts it
   as a new session (`restartCurrent`); it reports the press first, so it begins a pass there too. The engine
@@ -2057,9 +2084,14 @@ with code 70, are skipped past; and the pass holds on Android -- a repeat-all qu
 plays and then fails stops at the entry already skipped, and the person's Play -- after Pause, after
 Stop, or while the next entry is still resolving, both after the engine failed the entry and after a
 failure before the engine had it (`pauseThenPlayWhileTheEntrySkippedToIsResolvingBeginsANewPass`) --
-lets the skip reach it again; once a skip has moved on, restart is not offered for the attempt that
-is over and Previous moves rather than seeking it; and Previous restarting an unseekable first entry
-begins a pass. `AndroidMedia3EngineTest` pins the decode codes as the track's and a network
+lets the skip reach it again; once a skip or a natural end has moved on, nothing seeks or restarts
+the attempt that is over -- restart is not offered, seeks from the app and the media session are
+refused, and Previous moves -- and Pause reaches the engine at once
+(`whileTheNextEntryResolvesNothingSeeksOrRestartsTheAttemptThatIsOver`,
+`pauseWhileTheNextEntryResolvesTellsTheEngineAtOnce`); after the queue ends, the system's Play, driven
+through Media3's own play-button handling, seeks nothing and begins a new attempt
+(`theSystemsPlayAfterTheQueueEndsBeginsANewAttemptAndReplaysNothing`); and Previous restarting an
+unseekable first entry begins a pass. `AndroidMedia3EngineTest` pins the decode codes as the track's and a network
 code as the connection's. The notice: `PhoneSkipNoticeTest` (one node, one announced sentence, a
 polite live region, four seconds from the skip, longer when the person asked Android for more time,
 withdrawn at once, not shown late, the shorter
@@ -2067,12 +2099,18 @@ sentence in a region too short for the long one while TalkBack still hears the l
 through, and the phone surface showing the controller's notice), `PhoneSkipNoticePlacementTest` and
 `SkipNoticeMeasuredTextTest` under Robolectric's native graphics, which measure text as a device
 does (the full player's notice is its own node in the merged tree with a polite live region and is
-screen-reader focusable; on a 360 × 640 dp phone, at the default text size and at twice it, it lies
-on the cover and overlaps no node that can be tapped, dragged, scrolled or focused, with the eight
-player controls among those checked; a tap on the player does not reach the page beneath it; the
+screen-reader focusable; on a 360 × 640 dp phone, paused, it lies on the cover as drawn and overlaps
+no node that can be tapped, dragged, scrolled or focused, with the eight player controls among those
+checked, naming the track at the default text size and drawing the shorter sentence at twice it; a
+tap on the player does not reach the page beneath it, and while it is open the accessibility node
+provider exposes nothing of the page, the bar or the tabs beneath it and refuses an accessibility
+click on a covered row, and exposes them again once it closes; the
 page shows the notice above the now-playing bar and the tabs until the player opens, and then only
 the player's own exists; the text stops growing at 1.5 ×; and the sentence naming the track gives
-way at a region three times its card), and `TvSkipNoticePlacementTest` (with three and with eight
+way at a region three times its card), `PhonePlayerWindowSizesTest` (in 640 × 360 and 1280 × 800
+landscape windows, a 360 × 320 split, a 320 × 480 portrait window and an 800 × 1280 tablet, every
+control of the full player is whole and inside the window, none overlaps another or the cover, and
+the notice lies whole on the drawn cover over no control), and `TvSkipNoticePlacementTest` (with three and with eight
 Up Next entries the notice lies on the cover and overlaps no focusable node, with the transport,
 the list and its first three rows among those checked) beside `TvSkipNoticeTest` (the TV player
 announces it with no failure line; a connection failure shows the line and no notice), all
@@ -2089,7 +2127,9 @@ notice went; and the server's play count rose for the next track and not for the
 phone the notice ended above the now-playing bar and the tabs with a margin from both sides; on TV,
 on the revision before the notice moved onto the cover, it sat in the lower half and clear of the
 title. Neither proof has run since the move; the full player's and TV's placement is the native
-Robolectric tests' above. The proofs bound how long the notice stayed only from
+Robolectric tests' above. The TV proof now also requires the notice in the left half of the screen,
+the cover's side, clear of the Up Next list; the cover has no accessibility node, so "on the cover"
+itself is the Robolectric test's. The proofs bound how long the notice stayed only from
 above (within 20 seconds); its four seconds are the Robolectric test's. TalkBack itself did not run:
 that it reads the node is ASSUMED from the node's semantics.
 
@@ -6108,7 +6148,16 @@ phone and a focusable Up Next row on TV with three or more entries. It now lies 
 absent from the merged tree, and the overlap checks named the covered controls. Five notice mutants
 survived every test then, and each now has a test that kills it: the text-size cap removed; the
 page's notice removed; the page's notice shown while the player is open; the player's notice
-removed; and the accessibility timeout ignored. (Numbered after the highest revision on `main` when written; renumbers at
+removed; and the accessibility timeout ignored. **Corrected in review, round 3:** removing the root's `clickable` had also
+removed what hid the pages beneath the open player from a screen reader -- the accessibility layer
+exposed the page's rows, the now-playing bar and the tabs, and an accessibility click activated a
+covered row -- so the frame now hides them while the player is open. Moving the notice onto the
+cover had put it below the window in landscape, where the player's own stacked layout already
+squeezed its transport to 0 × 0 in every landscape, split-screen and short window; the player now
+lays itself out for its window (rule 8). "Nothing acts on the attempt that is over" was false for
+seek: a seek from the app or the media session, and the seek Media3 sends before Play on an ended
+player, still reached it; seeks are now gated on the plan. Pause in that window now reaches the
+engine at once. Each of those fixes has a test that failed first on the code before it. (Numbered after the highest revision on `main` when written; renumbers at
 merge.)
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required

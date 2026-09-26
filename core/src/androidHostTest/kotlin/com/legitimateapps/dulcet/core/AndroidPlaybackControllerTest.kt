@@ -561,31 +561,109 @@ class AndroidPlaybackControllerTest {
     }
 
     /**
-     * Once the core has moved past the engine's failed attempt, nothing acts on that attempt while
-     * the next entry resolves: restart is not offered, and Previous moves to the entry before
-     * instead of seeking a track that is over.
+     * Plays a to [position] and ends its attempt [how] -- a skip past its failure, or a natural end
+     * -- with b held resolving, so the engine still holds a's attempt, which is over. Returns the
+     * continuation that lets b resolve.
      */
-    @Test fun afterASkipNothingActsOnTheFailedAttemptWhileTheNextEntryResolves() {
-        var pending: Continuation<PlaybackResolutionResult>? = null
-        var request: PlaybackResolveRequest? = null
-        Fixture(resolve = { r ->
-            if (r.itemId.rawId == "b" && request == null) { request = r; suspendCoroutine { pending = it } } else resolved(r)
-        }).use { f ->
-            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+    private fun endAWhileBResolves(f: Fixture, how: String, position: Long, held: () -> Continuation<PlaybackResolutionResult>?):
+        Continuation<PlaybackResolutionResult> {
+        f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+        f.probe.state = androidx.media3.common.Player.STATE_READY
+        f.probe.events()
+        f.probe.position = position
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+        assertTrue(f.controller.state.value.canRestart, "$how: the control requires a restart offered while a plays")
+        when (how) {
+            "skip" -> f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            "natural end" -> { f.probe.state = androidx.media3.common.Player.STATE_ENDED; f.probe.events() }
+            else -> error(how)
+        }
+        val pending = assertNotNull(held(), "$how: the control requires b to be resolving")
+        assertEquals(1, f.controller.state.value.currentIndex, "$how: the control requires the queue on b")
+        assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId }, "$how: the control requires the engine to hold a")
+        return pending
+    }
+
+    /**
+     * Once the core has moved past the engine's attempt -- a skip past its failure, or a natural end
+     * -- nothing seeks or restarts that attempt while the next entry resolves: restart is not
+     * offered, a seek from the app or the media session reaches nothing, and Previous moves to the
+     * entry before instead of seeking a track that is over.
+     */
+    @Test fun whileTheNextEntryResolvesNothingSeeksOrRestartsTheAttemptThatIsOver() {
+        for (how in listOf("skip", "natural end")) {
+            var pending: Continuation<PlaybackResolutionResult>? = null
+            var request: PlaybackResolveRequest? = null
+            Fixture(resolve = { r ->
+                if (r.itemId.rawId == "b" && request == null) { request = r; suspendCoroutine { pending = it } } else resolved(r)
+            }).use { f ->
+                val held = endAWhileBResolves(f, how, if (how == "skip") 4_000 else 39_000) { pending }
+                assertFalse(f.controller.state.value.canRestart, "$how: a is over, so there is nothing to restart")
+                f.controller.seek(1_000)
+                f.controller.sessionPlayer.seekTo(2_000)
+                f.controller.sessionPlayer.seekToDefaultPosition()
+                assertEquals(emptyList(), f.probe.seekCommands, "$how: no seek may reach the attempt that is over")
+                f.controller.skipToPrevious()
+                assertEquals(emptyList(), f.probe.seekCommands, "$how: Previous must not seek the attempt that is over")
+                assertEquals(0, f.controller.state.value.currentIndex, "$how: Previous moves to the entry before")
+                held.resume(resolved(assertNotNull(request)))
+                assertEquals(listOf("a", "a"), f.prepared.map { it.itemId.rawId }, "$how: a starts again, and the abandoned b does not")
+            }
+        }
+    }
+
+    /**
+     * Pause while the next entry resolves reaches the engine at once, so the media session stops
+     * reporting that it is asked to play, and the entry that resolves then starts paused.
+     */
+    @Test fun pauseWhileTheNextEntryResolvesTellsTheEngineAtOnce() {
+        for (how in listOf("skip", "natural end")) {
+            var pending: Continuation<PlaybackResolutionResult>? = null
+            var request: PlaybackResolveRequest? = null
+            Fixture(resolve = { r ->
+                if (r.itemId.rawId == "b" && request == null) { request = r; suspendCoroutine { pending = it } } else resolved(r)
+            }).use { f ->
+                f.controller.play()
+                val held = endAWhileBResolves(f, how, 4_000) { pending }
+                assertTrue(f.probe.requested, "$how: the control requires the engine asked to play")
+                f.controller.pause()
+                assertFalse(f.probe.requested, "$how: Pause must reach the engine while b resolves")
+                assertFalse(f.controller.sessionPlayer.playWhenReady, "$how: the media session must not report playing")
+                assertFalse(f.controller.state.value.playWhenReady, "$how: the app must show Play")
+                assertNull(f.controller.state.value.error, "$how: a Pause the engine refuses is not a failure")
+                held.resume(resolved(assertNotNull(request)))
+                assertEquals(listOf("a", "b"), f.prepared.map { it.itemId.rawId }, "$how: the control requires b prepared")
+                assertFalse(f.probe.requested, "$how: b starts paused")
+            }
+        }
+    }
+
+    /**
+     * After the queue ends, the system's Play -- the notification's, the lock screen's, a headset's
+     * -- goes through Media3's play-button handling: on an ended player it seeks to the default
+     * position and then plays. Neither may replay the attempt that is over; Play begins a new one
+     * through the core.
+     */
+    @Test fun theSystemsPlayAfterTheQueueEndsBeginsANewAttemptAndReplaysNothing() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("only"), 0, AndroidQueueSource.Album, "Album", "album-id")
             f.probe.state = androidx.media3.common.Player.STATE_READY
             f.probe.events()
-            f.probe.position = 4_000
+            f.probe.position = 39_000
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
-            assertTrue(f.controller.state.value.canRestart, "The control requires a restart offered four seconds into a")
-            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
-            val held = assertNotNull(pending, "The control requires the skip to b to be resolving")
-            assertEquals(1, f.controller.state.value.currentIndex, "The control requires the queue on b")
-            assertFalse(f.controller.state.value.canRestart, "a is over, so there is nothing to restart")
-            f.controller.skipToPrevious()
-            assertEquals(emptyList(), f.probe.seekCommands, "Previous must not seek the failed attempt")
-            assertEquals(0, f.controller.state.value.currentIndex, "Previous moves to the entry before")
-            held.resume(resolved(assertNotNull(request)))
-            assertEquals(listOf("a", "a"), f.prepared.map { it.itemId.rawId }, "a starts again, and the abandoned b does not")
+            val first = f.controller.state.value.playbackSessionId
+            f.probe.state = androidx.media3.common.Player.STATE_ENDED
+            f.probe.events()
+            assertNull(f.controller.state.value.playbackSessionId, "The control requires the queue to have ended")
+            assertTrue(androidx.media3.common.util.Util.shouldShowPlayButton(f.controller.sessionPlayer),
+                "The control requires the system to offer Play")
+            assertTrue(androidx.media3.common.util.Util.handlePlayButtonAction(f.controller.sessionPlayer),
+                "The control requires Media3 to have acted on Play")
+            assertEquals(emptyList(), f.probe.seekCommands, "The ended attempt must not be sought back to its start")
+            assertEquals(listOf("only", "only"), f.prepared.map { it.itemId.rawId }, "Play begins a new attempt")
+            val second = assertNotNull(f.controller.state.value.playbackSessionId, "Play begins a new session")
+            assertNotEquals(first, second)
+            assertTrue(f.controller.state.value.playWhenReady)
         }
     }
 

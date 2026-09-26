@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -164,8 +165,13 @@ internal fun PhoneFrame(
     tabs: @Composable () -> Unit,
     page: @Composable () -> Unit,
 ) {
+    val covered = playerOpen && playback != null
     Box(Modifier.fillMaxSize()) {
         Scaffold(
+            // While the full player covers them, a screen reader must reach nothing of the page,
+            // the now-playing bar or the tabs: an accessibility action bypasses touch hit testing,
+            // so a hidden row it reached would start a queue the person cannot see.
+            modifier = if (covered) Modifier.clearAndSetSemantics {} else Modifier,
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
                 Column {
@@ -182,7 +188,7 @@ internal fun PhoneFrame(
             }
         }
         AnimatedVisibility(
-            visible = playerOpen && playback != null,
+            visible = covered,
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {

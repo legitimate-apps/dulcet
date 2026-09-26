@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -31,7 +32,9 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -139,12 +142,21 @@ class PhoneSkipNoticePlacementTest {
         assertTrue(notice.boundsInRoot.height > 0f, "The control requires the notice drawn")
         assertEquals(emptyList(), covered.map { describe(it) },
             "At font scale $fontScale the notice ${notice.boundsInRoot} covers these controls")
-        // Over the cover, which takes no input, and inside it.
+        // Over the cover, which takes no input, and inside it as it is drawn: paused, as here, the
+        // cover settles back to PAUSED_COVER_SCALE of its box.
+        assertEquals(listOf("Play"), compose.onNodeWithTag("player.playpause").fetchSemanticsNode().config
+            .getOrNull(SemanticsProperties.ContentDescription), "The control requires playback paused")
         val cover = compose.onNodeWithTag("player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        assertTrue(cover.contains(notice.boundsInRoot), "The notice ${notice.boundsInRoot} must lie on the cover $cover")
+        val inset = cover.width * (1 - PAUSED_COVER_SCALE) / 2
+        val drawn = Rect(cover.left + inset, cover.top + inset, cover.right - inset, cover.bottom - inset)
+        assertTrue(drawn.contains(notice.boundsInRoot), "The notice ${notice.boundsInRoot} must lie on the drawn cover $drawn")
+        // The sentence naming the track fits a third of the cover at the default size; at twice
+        // the size it would not, and the shorter sentence stands in.
+        assertEquals(if (fontScale > 1f) "Couldn’t play a track. Skipped." else sentence, notice.config[SkipNoticeDrawnSentence],
+            "At font scale $fontScale")
         val nearest = checked.filter { it.boundsInRoot.top >= notice.boundsInRoot.bottom }.minOfOrNull { it.boundsInRoot.top }
         println("SKIP NOTICE PLACEMENT phone 360x640 font-scale=$fontScale title-height=${title}dp " +
-            "notice=${notice.boundsInRoot} cover=$cover controls-checked=${checked.size} " +
+            "notice=${notice.boundsInRoot} cover=$cover drawn-cover=$drawn controls-checked=${checked.size} " +
             "nearest-control-top-below=$nearest drawn=${notice.config[SkipNoticeDrawnSentence]}")
     }
 
@@ -192,6 +204,59 @@ class PhoneSkipNoticePlacementTest {
         val shown = compose.onAllNodes(hasTestTag(SKIP_NOTICE_TAG), useUnmergedTree = true).fetchSemanticsNodes()
         assertEquals(1, shown.size, "With the player open exactly one notice may exist, or two live regions announce it")
         assertTrue(inside(shown.single(), "player.full"), "The notice shown must be the player's own")
+    }
+
+    /**
+     * While the full player is open a screen reader reaches nothing beneath it -- the page, the
+     * now-playing bar or the tabs. An accessibility action bypasses touch hit testing, so a covered
+     * row it could reach would start a queue the person cannot see. Once the player closes, all of it
+     * is reachable again.
+     */
+    @Test fun aScreenReaderReachesNothingBeneathTheOpenPlayer() {
+        val manager = context.getSystemService(AccessibilityManager::class.java)
+        shadowOf(manager).setEnabled(true)
+        shadowOf(manager).setTouchExplorationEnabled(true)
+        var open by mutableStateOf(false)
+        var beneath = 0
+        compose.setContent {
+            MaterialTheme {
+                PhoneFrame(account, playing(), controller, open, { open = it },
+                    tabs = { Box(Modifier.fillMaxWidth().height(80.dp).testTag("tabs").clickable { beneath++ }) }) {
+                    Box(Modifier.fillMaxSize().testTag("page.row").semantics { contentDescription = "Library row" }
+                        .clickable { beneath++ })
+                }
+            }
+        }
+        compose.waitForIdle()
+        val provider = composeView(compose.activity.window.decorView).accessibilityNodeProvider
+        val beneathTags = listOf("page.row", "player.mini", "tabs")
+        fun ids(tags: List<String>) = tags.associateWith { tag ->
+            compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().single().id
+        }
+        fun reachable(id: Int) = provider.createAccessibilityNodeInfo(id)?.isVisibleToUser == true
+        val closed = ids(beneathTags)
+        assertTrue(closed.values.all(::reachable), "The control requires the page, the bar and the tabs reachable: $closed")
+
+        open = true
+        compose.waitForIdle()
+        val player = ids(listOf("player.close", "player.playpause", "player.next", "player.scrubber", SKIP_NOTICE_TAG))
+        assertTrue(player.values.all(::reachable), "The control requires the player's controls and notice reachable")
+        assertEquals(emptyList(), closed.filterValues { provider.createAccessibilityNodeInfo(it) != null }.keys.toList(),
+            "A screen reader must reach nothing beneath the open player")
+        assertEquals(emptyList(), beneathTags.filter { compose.onAllNodes(hasTestTag(it)).fetchSemanticsNodes().isNotEmpty() },
+            "Nothing beneath the open player may remain in the merged tree a screen reader is handed")
+        assertFalse(provider.performAction(closed.getValue("page.row"), AccessibilityNodeInfo.ACTION_CLICK, null),
+            "An accessibility click must not reach the covered row")
+        compose.waitForIdle()
+        assertEquals(0, beneath, "Nothing beneath the open player may be activated")
+
+        open = false
+        compose.waitForIdle()
+        val again = ids(beneathTags)
+        assertTrue(again.values.all(::reachable), "Once the player closes, the page, the bar and the tabs are reachable again")
+        assertTrue(provider.performAction(again.getValue("page.row"), AccessibilityNodeInfo.ACTION_CLICK, null))
+        compose.waitForIdle()
+        assertEquals(1, beneath, "The control requires an accessibility click to reach the page once the player closes")
     }
 
     private fun inside(node: SemanticsNode, tag: String) =

@@ -11,8 +11,10 @@ import org.junit.runner.RunWith
 
 /**
  * The lean-back player skips a track that holds no audio (spec §12.12), with the notice in the
- * lower half of the screen, on the cover, and no failure line, and the next track plays. Opt-in;
- * see [SkipProbeProof].
+ * lower half of the screen and the left half, where the cover is -- clear of the Up Next list,
+ * which starts past the middle -- and clear of the title, and no failure line, and the next track
+ * plays. The cover itself has no accessibility node, so "on the cover" is checked by
+ * `TvSkipNoticePlacementTest` under Robolectric, not here. Opt-in; see [SkipProbeProof].
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidTvEmulatorAutoSkipProofTest {
@@ -29,6 +31,9 @@ class AndroidTvEmulatorAutoSkipProofTest {
             val metrics = context.resources.displayMetrics
             check(notice.top > metrics.heightPixels / 2 && notice.bottom < metrics.heightPixels) {
                 "The notice $notice must sit in the lower half of ${metrics.heightPixels}"
+            }
+            check(notice.left >= 0 && notice.right < metrics.widthPixels / 2) {
+                "The notice $notice must sit in the left half of ${metrics.widthPixels}, on the cover's side"
             }
             val title = SkipProbeProof.boundsOf(root, SkipProbeProof.PLAYABLE)
             check(title.all { !Rect.intersects(it, notice) }) { "The notice $notice covers the title $title" }

@@ -205,10 +205,12 @@ public class AndroidPlaybackController internal constructor(
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
             // The engine's attempt is over once it ends or the core moves on from it -- a natural
-            // end, or a skip past its failure. Nothing may act on it while the next entry
-            // resolves: Previous would seek a track that is over, restart would be offered, and
-            // Play would take the branch for an engine holding an entry rather than the one for
-            // an entry still resolving, whose report begins the pass (spec §12.12 rule 3).
+            // end, or a skip past its failure -- and the controller drops its plan. While the next
+            // entry resolves, nothing then seeks or restarts that attempt: seeks from the app and
+            // the media session are refused, restart is not offered, Previous moves to the entry
+            // before instead of seeking a track that is over, and Play takes the branch for an
+            // entry still resolving, whose report begins the pass (spec §12.12 rule 3). Pause
+            // still reaches the engine, so it stops asking to play.
             if (event is PlaybackEngineEvent.EndedNaturally || transition.startDirective != null) activePlan = null
             publish()
             if (event is PlaybackEngineEvent.Ready) {
@@ -353,15 +355,18 @@ public class AndroidPlaybackController internal constructor(
     public fun pause() {
         if (!live()) return
         wantsPlay = false
-        if (activePlan != null) command(PlaybackCommand.Pause(id()))
-        else publish()
+        // Always to the engine, even with no attempt in progress: one that is over, or one of a
+        // queue that has ended, would otherwise go on asking to play, and the media session would
+        // report it. An engine holding nothing refuses the Pause, which is not a failure.
+        command(PlaybackCommand.Pause(id()))
     }
     public fun togglePlayPause() {
         if (!live()) return
         if (wantsPlay && queue.snapshot().currentSession != null) pause() else play()
     }
+    /** Seeks the attempt in progress. With none -- one resolving, or one that is over -- there is nothing to seek. */
     public fun seek(positionMilliseconds: Long) {
-        if (!live()) return
+        if (!live() || activePlan == null) return
         command(PlaybackCommand.Seek(id(), positionMilliseconds.coerceAtLeast(0).milliseconds))
     }
     private fun seekBy(deltaMilliseconds: Long) {
