@@ -64,9 +64,10 @@ class ReaderReconnectRetryTest {
     /** A session whose downloads hook always names album 3's first track, with that track cached. */
     private suspend fun TestScope.withDownloadedAlbum3(env: SessionEnv): LibraryReaderSession {
         val session = LibraryReaderSession(
-            env.database.database, env.cache(), env.server, env.scope,
-            LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+            env.database.database, env.cache(), env.server, env.scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
             downloads = DownloadedTrackSource { setOf("album-0003-track-0") },
+            formPost = false,
+            foreground = false,
         )
         session.reader.connect()
         session.reader.open(LibraryQuery.Album(albumId(3))) {}.also { advanceUntilIdle() }.close()
@@ -414,6 +415,8 @@ class ReaderReconnectRetryTest {
         val readerScope = CoroutineScope(env.scope.coroutineContext + Job(env.scope.coroutineContext[Job]))
         val session = LibraryReaderSession(
             env.database.database, env.cache(), env.server, readerScope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+            formPost = false,
+            foreground = false,
         )
         session.reader.connect()
         session.reader.setForeground(true)
@@ -429,5 +432,180 @@ class ReaderReconnectRetryTest {
         advanceUntilIdle()
         assertEquals(closedAt, currentTime, "a timer outlived the closed reader")
         assertEquals(1, readings.times.size, "a closed reader retried")
+    }
+
+    // ---- The foreground at construction (round-6 review) ----------------------------------------------
+
+    /**
+     * The app's foreground state at launch is a required constructor argument. A session constructed
+     * in the foreground retries a transient reconnect failure by itself, with no `setForeground`
+     * call. It used to start out in the background whatever the app was doing, so a shell that
+     * reported only CHANGES never retried until the app went to the background and came back.
+     */
+    @Test
+    fun aSessionConstructedInTheForegroundRetriesWithNoForegroundReport() = sessionTest { env ->
+        val session = env.session(foreground = true)
+        assertTrue(session.reader.foreground, "the construction's foreground state was not taken")
+        session.reader.connect()
+        session.reader.open(grid) {}
+        runCurrent()
+        session.setOnline(false)
+        runCurrent()
+        val readings = readings(env)
+        readings.failure = DomainError.Transport.Timeout
+        session.setOnline(true)
+        runCurrent()
+        assertEquals(1, readings.times.size, "fixture: the report's reconnect read once")
+        readings.failure = null
+        advanceTimeBy(session.reader.config.reconnectRetryInitialMillis + 1)
+        runCurrent()
+        assertEquals(2, readings.times.size, "a session launched in the foreground did not retry")
+        assertTrue(session.reader.online)
+        session.reader.setForeground(false)
+    }
+
+    // ---- The four retry survivors of round 5, each observable (the round-6 review's probes) -----------
+
+    /** A reader scope of its own, so a test can count what is still scheduled in it. */
+    private fun TestScope.scoped(env: SessionEnv): Pair<LibraryReaderSession, Job> {
+        val job = Job(env.scope.coroutineContext[Job])
+        val scope = CoroutineScope(env.scope.coroutineContext + job)
+        return LibraryReaderSession(
+            env.database.database, env.cache(), env.server, scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+            formPost = false,
+            foreground = false,
+        ) to job
+    }
+
+    /** Active coroutines under [this], counted recursively: the reader's scope is a child of the one given. */
+    private fun Job.active(): Int = children.sumOf { (if (it.isActive) 1 else 0) + it.active() }
+
+    private fun failScans(env: SessionEnv, error: () -> DomainError?) {
+        env.server.base.beforeRespond = { if (it.endpoint == "getScanStatus") error()?.let { e -> throw LibraryRequestFailure(e) } }
+    }
+
+    /** R53a1. A transient failure in the background schedules nothing: no timer is left pending. */
+    @Test
+    fun aTransientFailureInTheBackgroundLeavesNoTimer() = sessionTest { env ->
+        val (session, _) = scoped(env)
+        session.reader.connect()
+        session.reader.setForeground(true)
+        session.reader.setForeground(false)
+        session.setOnline(false)
+        runCurrent()
+        failScans(env) { DomainError.Transport.Timeout }
+        session.setOnline(true)
+        runCurrent()
+        assertFalse(session.reader.online, "fixture: the reconnect failed")
+        val at = currentTime
+        advanceUntilIdle()
+        assertEquals(at, currentTime, "a timer was left pending in the background")
+    }
+
+    /** R53b1. A move to the background drops a pending retry: nothing is left scheduled. */
+    @Test
+    fun aMoveToTheBackgroundDropsAPendingRetry() = sessionTest { env ->
+        val (session, _) = scoped(env)
+        session.reader.connect()
+        session.reader.setForeground(true)
+        session.setOnline(false)
+        runCurrent()
+        failScans(env) { DomainError.Transport.Timeout }
+        session.setOnline(true)
+        runCurrent()
+        session.reader.setForeground(false)
+        val at = currentTime
+        advanceUntilIdle()
+        assertEquals(at, currentTime, "a retry outlived the move to the background")
+    }
+
+    /** N7f. An unreachable report drops a pending retry: one coroutine fewer, against a control. */
+    @Test
+    fun anUnreachableReportDropsAPendingRetry() = sessionTest { env ->
+        val (session, job) = scoped(env)
+        session.reader.connect()
+        session.reader.setForeground(true)
+        session.setOnline(false)
+        runCurrent()
+        val control = job.active()
+        failScans(env) { DomainError.Transport.Timeout }
+        session.setOnline(true)
+        runCurrent()
+        assertEquals(control + 1, job.active(), "fixture: a retry is pending")
+        session.setOnline(false)
+        runCurrent()
+        assertEquals(control, job.active(), "a retry outlived the unreachable report")
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * N7g. A reconnect the shell asks for while the platform reports the server unreachable times
+     * out: it schedules nothing, and does not grow the backoff — the first retry after the next
+     * reachable report still waits the initial 2 s.
+     */
+    @Test
+    fun aFailureWhileReportedUnreachableNeitherSchedulesNorGrowsTheBackoff() = sessionTest { env ->
+        val (session, job) = scoped(env)
+        session.reader.connect()
+        session.reader.setForeground(true)
+        session.setOnline(false)
+        runCurrent()
+        val control = job.active()
+        val times = mutableListOf<Long>()
+        env.server.base.beforeRespond = {
+            if (it.endpoint == "getScanStatus") {
+                times += currentTime
+                throw LibraryRequestFailure(DomainError.Transport.Timeout)
+            }
+        }
+        session.reader.reconnect()
+        runCurrent()
+        assertEquals(1, times.size, "fixture: the asked-for reconnect read the epoch")
+        assertEquals(control, job.active(), "a retry was scheduled while reported unreachable")
+        session.setOnline(true)
+        runCurrent()
+        advanceTimeBy(10_001)
+        runCurrent()
+        val gaps = times.zipWithNext { a, b -> b - a }
+        assertEquals(session.reader.config.reconnectRetryInitialMillis, gaps[1], "the first retry after the report: $gaps")
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * Five transient failures in the foreground, then success: the grid says `live` once, last, and
+     * never `offline` in between — no flicker over the whole chain. This pins behaviour that was
+     * already right.
+     */
+    @Test
+    fun aChainOfTransientFailuresNeverFlickers() = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        session.reader.setForeground(true)
+        session.setOnline(false)
+        runCurrent()
+        var failures = 5
+        env.server.base.beforeRespond = {
+            if (it.endpoint == "getScanStatus" && failures > 0) {
+                failures -= 1
+                throw LibraryRequestFailure(DomainError.Transport.Timeout)
+            }
+        }
+        val from = pubs.all.size
+        session.setOnline(true)
+        repeat(40) {
+            advanceTimeBy(5_000)
+            env.clock.now += 5_000
+            runCurrent()
+        }
+        assertEquals(0, failures, "fixture: every failure was spent")
+        assertTrue(session.reader.online)
+        val labels = pubs.all.drop(from).map { it.value.freshness.label() }
+        assertEquals(1, labels.count { it == "Live" }, "labels: $labels")
+        assertEquals("Live", labels.last(), "labels: $labels")
+        assertFalse(labels.any { it == "cached(Offline)" }, "labels: $labels")
+        session.reader.setForeground(false)
     }
 }

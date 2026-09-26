@@ -58,7 +58,7 @@ class PlaylistEditingFifthReviewTest {
         ): LibraryReaderSession =
             LibraryReaderSession(
                 database.database, store.bind(PlaylistEnv.BINDING), hooked, scope, config,
-                otherOutboxes = otherOutboxes, formPost = true,
+                otherOutboxes = otherOutboxes, formPost = true, foreground = false,
             ).also { s ->
                 s.playlists.addOutcomeListener(outcomes::add)
                 s.favourites.addOutcomeListener { fav += it }

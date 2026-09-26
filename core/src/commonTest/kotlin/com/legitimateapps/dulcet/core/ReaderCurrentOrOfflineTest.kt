@@ -35,12 +35,13 @@ class ReaderCurrentOrOfflineTest {
     /** A session whose downloads hook names album 3's first track, throwing while [failing] says so. */
     private suspend fun TestScope.withDownloadedAlbum3(env: SessionEnv, failing: () -> Boolean, calls: () -> Unit): LibraryReaderSession {
         val session = LibraryReaderSession(
-            env.database.database, env.cache(), env.server, env.scope,
-            LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+            env.database.database, env.cache(), env.server, env.scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
             downloads = DownloadedTrackSource {
                 calls()
                 if (failing()) error("hook failed") else setOf("album-0003-track-0")
             },
+            formPost = false,
+            foreground = false,
         )
         session.reader.connect()
         session.reader.open(LibraryQuery.Album(albumId(3))) {}.also { advanceUntilIdle() }.close()
@@ -624,5 +625,115 @@ class ReaderCurrentOrOfflineTest {
         env.driver.failRead = null
         assertEquals(1, env.driver.failedReads, "fixture: exactly the reconnect check could not be read")
         assertEquals(listOf("cached(Revalidating)", "Live"), pubs.all.drop(mark).map { it.value.freshness.label() })
+    }
+
+    // ---- The label follows the read; an owed "load more" is made (round-6 review) ----------------------
+
+    /**
+     * The reviewer's b6. A fresh grid with nothing coming for it stays quiet during a reconnect —
+     * it goes on saying `offline` rather than announce a read nobody makes. But while the
+     * reconnect is held the person scrolls and pages, and the grid reads a page live. From the
+     * moment that read starts the label follows it: `revalidating`, never `offline`. It used to
+     * publish the 200 rows it had just read from the server as `offline`.
+     */
+    @Test
+    fun aQuietScreenThatReadsDuringTheReconnectSaysRevalidatingNeverOffline() = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        session.reader.open(LibraryQuery.Artists()) {}
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        env.server.base.holdMatching = { it.endpoint == "getArtists" }
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: the reconnect is held")
+        assertTrue(session.reader.online, "fixture: past the transition")
+        assertEquals("cached(Offline)", pubs.last.freshness.label(), "fixture: the fresh grid is quiet")
+        val from = pubs.all.size
+        val lists = env.server.count("getAlbumList2")
+        handle.setViewport(90, 99)
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals(1, env.server.count("getAlbumList2") - lists, "fixture: one page is read live")
+        val during = pubs.all.drop(from).map { "${it.value.freshness.label()}/${it.value.items.size}" }
+        assertEquals(200, pubs.last.items.size, "fixture: the page arrived: $during")
+        assertFalse(during.any { it.startsWith("cached(Offline)") }, "a screen reading live said offline: $during")
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness, "not live once the reconnect ended")
+    }
+
+    /**
+     * The reviewer's r6. A "load more" (offset 100) waits for the only slot when the platform
+     * reports the server unreachable, and the send gate refuses it. That extend is owed, and the
+     * reconnect makes it — no viewport report needed. Until it is made the grid never says `live`:
+     * the one `live` it publishes is its last, with 200 rows and more to load. The refused extend
+     * used to be dropped, so the grid said `live` at 100 rows and never loaded the rest until the
+     * person scrolled away and back.
+     */
+    @Test
+    fun aLoadMoreRefusedAtTheQueueIsMadeByTheReconnect() = sessionTest { env ->
+        val session = env.session(config = oneSlot)
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        assertEquals(100, pubs.last.items.size, "fixture: one page")
+        handle.setViewport(90, 99)
+        env.server.base.holdMatching = { it.endpoint == "getAlbum" && it.parameters["id"] == albumId(3) }
+        session.reader.open(LibraryQuery.Album(albumId(3))) {}
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: album 3 holds the only slot")
+        handle.loadMore()
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        val offline = env.server.log.size
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(emptyList(), env.server.endpoints().drop(offline), "fixture: the extend is refused unsent")
+        assertEquals(100, pubs.last.items.size, "fixture: the extend was not made offline")
+        val mark = env.server.log.size
+        val pubMark = pubs.all.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        val offsets = env.server.log.drop(mark).filter { it.endpoint == "getAlbumList2" }.map { it.parameters["offset"] }
+        assertTrue("100" in offsets, "the refused extend (offset 100) was not made at the reconnect: $offsets")
+        val seen = pubs.all.drop(pubMark).map { "${it.value.freshness.label()}/${it.value.items.size}" }
+        assertEquals(listOf("Live/200"), seen.filter { it.startsWith("Live") }, "live while the extend was owed: $seen")
+        assertEquals("Live/200", seen.last(), "seen: $seen")
+        assertEquals(LibraryCoverage.Open, pubs.last.coverage, "200 of 250 rows must say there is more to load")
+    }
+
+    /** The same for a "load more" asked for while offline: nothing is sent, and the reconnect makes it. */
+    @Test
+    fun aLoadMoreAskedForOfflineIsMadeByTheReconnect() = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        handle.setViewport(90, 99)
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        val offline = env.server.log.size
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals(emptyList(), env.server.endpoints().drop(offline), "a load more was sent offline")
+        val mark = env.server.log.size
+        val pubMark = pubs.all.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        val offsets = env.server.log.drop(mark).filter { it.endpoint == "getAlbumList2" }.map { it.parameters["offset"] }
+        assertEquals(listOf("100"), offsets, "the load more asked for offline was not made, once, at the reconnect")
+        val seen = pubs.all.drop(pubMark).map { "${it.value.freshness.label()}/${it.value.items.size}" }
+        assertEquals(listOf("Live/200"), seen.filter { it.startsWith("Live") }, "seen: $seen")
+        assertEquals("Live/200", seen.last(), "seen: $seen")
     }
 }

@@ -468,7 +468,7 @@ class PlaylistEditingThirdReviewTest {
             }
             val session = LibraryReaderSession(
                 database.database, SeenCacheStore(database, clock).bind(PlaylistEnv.BINDING), wrapper, scope,
-                LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = true,
+                LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = true, foreground = false,
             )
             val outcomes = mutableListOf<PlaylistEditOutcome>()
             session.playlists.addOutcomeListener(outcomes::add)

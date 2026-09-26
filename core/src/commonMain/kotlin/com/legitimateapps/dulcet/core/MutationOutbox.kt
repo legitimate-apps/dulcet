@@ -840,6 +840,12 @@ private fun PendingMutation.parameters(): Map<String, String> = when (field) {
  * changes, then [otherOutboxes] (the scrobble outbox) — before the epoch read (§16.14 step 1). This
  * is the assembly the shells' facades construct (R2a, R3). [formPost]: the account's server
  * advertises the OpenSubsonic `formPost` extension (§18.6).
+ *
+ * [foreground] is whether the app is in the foreground NOW, as the shell's lifecycle says at
+ * construction. It is required, with no default: the reader reads on a timer — the epoch cadence,
+ * a reconnect's automatic retry — only in the foreground, so a default would fail silently one way
+ * (no retry for a shell that forgot) or the other (reads in the background). The shell still
+ * reports every later change through [LibraryReader.setForeground].
  */
 internal class LibraryReaderSession(
     database: DulcetDatabase,
@@ -851,6 +857,8 @@ internal class LibraryReaderSession(
     otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
     /** Required: whether the account's server advertises the OpenSubsonic `formPost` extension (§18.6). */
     formPost: Boolean,
+    /** Required: whether the app is in the foreground at construction (§16.14). */
+    foreground: Boolean,
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
@@ -907,6 +915,7 @@ internal class LibraryReaderSession(
     internal val openSearchCount: Int get() = searches.size
 
     init {
+        reader.setForeground(foreground)
         // The reader, not this session, owns reachability: it revalidates the searches when it goes
         // offline and when a reconnect revalidates the screen, whichever entry point the shell called.
         reader.addVisibleSurface {

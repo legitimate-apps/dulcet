@@ -57,7 +57,7 @@ class PlaylistEditingFourthReviewTest {
         val fav = mutableListOf<MutationOutcome>()
 
         fun session(config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0)): LibraryReaderSession =
-            LibraryReaderSession(database.database, store.bind(PlaylistEnv.BINDING), hooked, scope, config, formPost = true).also { s ->
+            LibraryReaderSession(database.database, store.bind(PlaylistEnv.BINDING), hooked, scope, config, formPost = true, foreground = false).also { s ->
                 s.playlists.addOutcomeListener(outcomes::add)
                 s.favourites.addOutcomeListener { fav += it }
             }

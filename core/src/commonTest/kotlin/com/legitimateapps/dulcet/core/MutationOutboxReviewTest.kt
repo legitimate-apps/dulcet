@@ -100,6 +100,7 @@ class MutationOutboxReviewTest {
             val session = LibraryReaderSession(
                 store.database, SeenCacheStore(store, ManualWallClock()).bind(SessionEnv.BINDING), env.server, scope,
                 formPost = false,
+                foreground = false,
             )
             val outcomes = mutableListOf<MutationOutcome>()
             session.favourites.addOutcomeListener { outcomes += it }
@@ -460,7 +461,7 @@ class MutationOutboxReviewTest {
             suspendCoroutine { c -> d.invokeOnCompletion { c.resume(d.getCompleted()) } }
         }
         val session = LibraryReaderSession(env.database.database, env.store.bind(SessionEnv.BINDING), transport, env.scope,
-            LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = false)
+            LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = false, foreground = false)
         session.reader.connect()
         session.reader.open(grid) {}.also { advanceUntilIdle() }.close()
         env.server.holdAfterAnswer += "search3"

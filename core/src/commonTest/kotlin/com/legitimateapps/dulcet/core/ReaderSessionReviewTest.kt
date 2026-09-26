@@ -248,9 +248,10 @@ class ReaderSessionReviewTest {
         val session = primed(
             env,
             LibraryReaderSession(
-                env.database.database, env.cache(), env.server, env.scope,
-                LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+                env.database.database, env.cache(), env.server, env.scope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
                 downloads = DownloadedTrackSource { setOf(downloaded) },
+                formPost = false,
+                foreground = false,
             ),
         )
         val pubs = Recorder<LibrarySearchPublication>(env.server)
