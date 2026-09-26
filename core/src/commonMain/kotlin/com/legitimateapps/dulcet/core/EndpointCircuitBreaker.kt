@@ -27,9 +27,13 @@ import kotlin.time.TimeSource
  *   failure reopens the breaker for another full period. A straggler — a call admitted before the
  *   breaker opened, answering late — is not the trial: its failure is recorded as the latest error
  *   and changes nothing else, and its success closes nothing, so the trial stays in flight and no
- *   second one can be admitted beside it. The trial is recognised by its [Admission.Allowed]
- *   instance, never by a flag a caller passes, so a trial admitted before a [reset] cannot end one
- *   admitted after it.
+ *   second one can be admitted beside it. That holds for the whole open state — during the period,
+ *   with a trial out, and after the period before one is admitted — and for an ordinary opening as
+ *   much as a 429. **Deliberate: one trial decides.** A concurrent call's success landing after
+ *   the opening failure does not close the breaker, so recovery waits out the period (five minutes
+ *   by default) and then the trial's answer; do not "fix" that back. The trial is recognised by
+ *   its [Admission.Allowed] instance, never by a flag a caller passes, so a trial admitted before a
+ *   [reset] cannot end one admitted after it.
  * - **An explicit request is admitted as the trial at once**, inside the period: the person asked
  *   (a Retry control), which is not the automatic traffic the period exists to hold back. It is
  *   still the single trial — refused while another is in flight — and its failure starts a new
@@ -113,8 +117,10 @@ internal class EndpointCircuitBreaker(
 
     /**
      * A successful call to [endpoint], by the call [admission] admitted; ignored across a [reset].
-     * Closed, any success resets the count. Open, only the trial's own success closes it: a
-     * straggler's ends neither the hold nor the trial in flight.
+     * Closed, any success resets the count. Open — the whole open state, after the period
+     * has ended too — only the trial's own success closes it: a straggler's
+     * ends neither the hold nor the trial in flight, and after an ordinary opening that makes
+     * recovery wait for the trial by design (one trial decides; see the class comment).
      */
     fun recordSuccess(endpoint: String, admission: Admission.Allowed) {
         if (admission.generation != generation) return

@@ -1195,14 +1195,20 @@ app stayed open):
   place; the feature publishes what it has stored, or `unavailable`, with the latest failure.
 - **The period** is five minutes of monotonic time (ASSUMED: a chosen value, not a measured one;
   §18.8 — never the wall clock, never persisted). Then exactly one trial is admitted; while it is
-  out every other call is refused. A success closes the breaker; **the trial's own** failure reopens
-  it for another full period; a cancelled trial gives its slot back. Only the trial does either: a
-  straggler — a call admitted before the breaker opened, answering late — holds no slot, so its
-  failure is recorded as the diagnostic and changes nothing else, its success closes nothing, and
-  its cancellation frees nothing. The breaker recognises the trial by the admission it handed out,
-  not by a flag. (Corrected at the second review: a straggler's failure used to end the trial, and a
-  Retry then sent a second one beside it. Corrected after the seventh review: a straggler's success
-  closed the breaker, ending a 429 hold and forgetting the trial in flight.)
+  out every other call is refused. **The trial's own** success closes the breaker; its failure
+  reopens it for another full period; a cancelled trial gives its slot back. Only the trial does any
+  of these: a straggler — a call admitted before the breaker opened, answering late — holds no slot,
+  so its failure is recorded as the diagnostic and changes nothing else, its success closes nothing,
+  and its cancellation frees nothing. That holds for the whole time the breaker is open — during the
+  period, with a trial out, and after the period before a trial is admitted — and for an ordinary
+  three-failure opening as much as a 429. **Deliberate: one trial decides.** A concurrent call's
+  success landing after the opening failure therefore does not close the breaker, and recovery
+  waits out the period (five minutes) and then the trial's answer; do not "fix" that back. The
+  breaker recognises the trial by the admission it handed out, not by a flag. (Corrected at the
+  second review: a straggler's failure used to end the trial, and a Retry then sent a second one
+  beside it. Corrected after the seventh review, §28 item 23 (ah): any success closed the breaker,
+  so a straggler's ended a 429 hold, forgot the trial in flight, and closed an ordinary opening
+  early.)
 - **The person can ask now.** An explicit user request — a Retry control, never an automatic refresh
   — is admitted at once as the single trial, inside the period: it is not the automatic traffic the
   period exists to hold back. It is still the one trial (refused while another is out), and its
@@ -1214,10 +1220,11 @@ app stayed open):
   breaker introduces no second one. A 429 without `Retry-After` opens for the period. **A hold
   already running is never shortened by any later failure**: a straggler's 429 extends it and never
   ends the trial in flight, and the trial's own failure — a 429 or any other — opens a new hold that
-  ends at the later of its own end and the running one's. Only the trial's own success ends a hold
-  early. The explicit request is still admitted inside it. (Corrected after the seventh review: the
-  trial's own failure replaced the hold, so a trial timing out after a straggler's longer 429 was
-  re-admitted one period later, before the server's `Retry-After` had ended.)
+  ends at the later of its own end and the running one's. Within one connection only the trial's
+  own success ends a hold early; a reconnect's reset also ends it (below). The explicit request is
+  still admitted inside it. (Corrected after the seventh review, §28 item 23 (ag): the trial's own
+  failure replaced the hold, so a trial timing out after a straggler's longer 429 was re-admitted
+  one period later, before the server's `Retry-After` had ended.)
   The breaker holds no reader-wide state: a lyrics 429 never pauses the outbox flushes (§18.6).
   Stated plainly: the period and the cap are both five minutes today, so `Retry-After` cannot yet
   lengthen the hold — what the 429 changes is that one answer opens the breaker, where three
@@ -4173,11 +4180,13 @@ as failures. **A 429 opens the breaker on that one answer**, for the longer of t
 server's `Retry-After`, the latter never beyond the reader's busy cap (`LIBRARY_BUSY_CAP` in
 `LibraryReader.kt`, the cap §18.6's flushes use; the full rule is §10.4's). Inside that hold no
 automatic read sends anything; `retry` still does. No later failure shortens that hold, the
-trial's own included, and nothing but the trial's success ends it early. A lyrics 429 never feeds
-the reader's own wait, so it never pauses the favourite and playlist flushes. **A failure that is not the request's** —
-the device's database failing as the read is issued, before anything is sent — is published as the
-reader's internal failure, sends nothing, and neither counts toward the breaker nor clears its count
-(§10.4). **Only a well-formed answer, trimmed to the caps, is ever stored, and only an empty
+trial's own included; within one connection nothing but the trial's success ends it early, and a
+reconnect's reset ends it as it ends every breaker state (below). A lyrics 429 never feeds the
+reader's own wait, so it never pauses the favourite and playlist flushes. **A failure that is not
+the request's** — the device's database failing as the read is issued, before anything is sent — is
+published as the reader's internal failure, sends nothing, and neither counts toward the breaker nor
+clears its count (§10.4).
+**Only a well-formed answer, trimmed to the caps, is ever stored, and only an empty
 document or a code-70 answer from `getLyricsBySongId` is stored as "no lyrics"**: a refused read, a
 transport failure, a failure envelope, a malformed body and an answer refused as too large leave the
 store exactly as it was, so a transient failure can never be remembered as a track without lyrics. A
@@ -7386,9 +7395,17 @@ fresh disposable server before landing; items 11–14 are what that review chang
     failure replaced the hold already running, so with a 60 s period, after a straggler's 429 asked
     for 200 s, the trial's timeout re-admitted a trial 60 s later — the new hold now ends at the
     later of the two, for an ordinary failure and a shorter 429 alike (latent while the period
-    equals the busy cap); (ah) found while fixing it — a straggler's success closed the open
-    breaker, ending a 429 hold and forgetting the trial in flight, where §10.4 already said only the
-    trial closes it — it now changes nothing while the breaker is open (§10.4, §18.4).
+    equals the busy cap); (ah) found while fixing it — any success closed the open breaker, so a
+    straggler's ended a 429 hold and forgot the trial in flight, which §10.4's "only the trial"
+    implied but did not say — it now changes nothing while the breaker is open, for the whole open
+    state. The consequence is deliberate and now stated in §10.4: after an ordinary three-failure
+    opening, a concurrent call's late success no longer closes the breaker, so recovery waits out
+    the full period (five minutes) and then the trial's answer — one trial decides (§10.4, §18.4).
+    **Eighth review** (maintainer's decisions): the "only the trial's success ends a hold early"
+    wording in §10.4 and §18.4 is qualified to one connection, since a reconnect's reset also ends
+    one (the reset is unchanged); the success rule is pinned in the window after the period with no
+    trial admitted, where a guard applied only while a hold ran or a trial was out passed every
+    earlier test.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

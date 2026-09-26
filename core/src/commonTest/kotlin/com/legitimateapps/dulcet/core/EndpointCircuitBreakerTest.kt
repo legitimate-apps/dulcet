@@ -177,6 +177,30 @@ class EndpointCircuitBreakerTest {
         assertOrdinary(breaker.admit(E))
     }
 
+    /**
+     * The same holds for the whole open state, not only while a hold runs or a trial is out, and
+     * for an ordinary three-failure opening as much as a 429: one trial decides. A concurrent
+     * call's late success — during the period, or after it with no trial admitted yet — closes
+     * nothing, so recovery waits for the period and then the trial's own answer. Deliberate.
+     */
+    @Test
+    fun aStragglersSuccessAfterTheHoldEndedStillLeavesTheNextCallTheTrial() {
+        val stragglers = List(2) { ordinary() }
+        repeat(3) { breaker.recordFailure(E, timeout, ordinary()) }
+        now += 10
+        breaker.recordSuccess(E, stragglers[0])
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E), "a concurrent call's success closed an ordinary opening")
+        // The period ends and nothing has been admitted since.
+        now += 60_000
+        assertFalse(breaker.isOpen(E), "the hold has ended: the window this test is about")
+        breaker.recordSuccess(E, stragglers[1])
+        // Still the trial, not an ordinary admission: the straggler's success closed nothing.
+        val trial = trial(breaker.admit(E))
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E), "no second call beside the trial")
+        breaker.recordSuccess(E, trial)
+        assertOrdinary(breaker.admit(E))
+    }
+
     @Test
     fun failuresOfAnyClassAddUp() {
         // A proxy alternating a 502 page with a timeout is one unhealthy endpoint, not two.
