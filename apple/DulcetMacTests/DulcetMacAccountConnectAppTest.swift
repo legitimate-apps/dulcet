@@ -898,6 +898,185 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         return "[" + entries + "]"
     }
 
+    /// The production reader, through the production Kotlin facade, against the disposable
+    /// server: a connected launch paints the library live and renders it; a relaunch with the
+    /// account saved paints the same library from what this device saw, before any loading state
+    /// and with nothing sent (CONF-76, CONF-10b); Reconnect then brings it live in place.
+    ///
+    /// The credential store is in memory -- an ad-hoc signed host cannot reach the data-protection
+    /// Keychain -- so what this proves starts at the store boundary: everything after it is the
+    /// shipping reader, database and facade.
+    func readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL = try XCTUnwrap(
+            environment["DULCET_CONFORMANCE_BASE_URL"],
+            "The live conformance fixture URL must be supplied"
+        )
+        let components = URLComponents(string: baseURL)
+        guard components?.scheme == "http", components?.host == "127.0.0.1",
+              environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true" else {
+            XCTFail("Reader fixture refused: \(baseURL.debugDescription) is not a disposable loopback server")
+            throw SearchHostedAppTestError.invalidFixture
+        }
+        let databaseName = "dulcet-reader-hosted-\(UUID().uuidString).db"
+        let providerInstanceID = "macos-reader-\(UUID().uuidString)"
+        let credentials = ReaderHostedCredentialStore()
+        func makeStore() -> (DulcetPresentationStore, DulcetLibrarySession) {
+            let session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName))
+            let source = DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(),
+                credentialStore: credentials,
+                playbackController: SearchIntentPlaybackController(),
+                providerInstanceIDFactory: { providerInstanceID },
+                librarySession: session
+            )
+            return (DulcetPresentationStore(source: source), session)
+        }
+        let fixtureAlbums: Set<String> = ["Double Lines", "Threshold Boundary"]
+
+        // 1. First launch: connect, then read the albums live.
+        let (first, firstSession) = makeStore()
+        XCTAssertFalse(first.readerOwnsLibrary, "Nothing is saved yet, so nothing is read")
+        first.accountServerURL = baseURL
+        first.accountUsername = fixtureUsername
+        first.accountPassword = fixturePassword
+        first.accountAllowLocalHTTP = true
+        first.submitAccountConnection()
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "connect: state=\(first.snapshot.state) mode=\(firstSession.mode)"
+        ) {
+            first.snapshot.accountConnected && firstSession.mode == .connected && firstSession.reader != nil
+        }
+        XCTAssertTrue(first.readerOwnsLibrary, "A connected account's library is the reader's")
+        var livePublications: [DulcetLibraryWindow] = []
+        let liveAlbums = try XCTUnwrap(firstSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
+            livePublications.append($0)
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "live albums: \(livePublications.map { ($0.freshness, $0.items.map(\.displayTitle)) })"
+        ) {
+            guard let last = livePublications.last, last.freshness == .live else { return false }
+            return fixtureAlbums.isSubset(of: Set(last.items.map(\.displayTitle)))
+        }
+        let liveTitles = livePublications.last?.items.map(\.displayTitle) ?? []
+        let doubleLines = try XCTUnwrap(livePublications.last?.items.first { $0.displayTitle == "Double Lines" })
+        var liveAlbumPage: DulcetLibraryWindow?
+        let albumPage = try XCTUnwrap(firstSession.reader).subscribeWindow(.album(rawID: doubleLines.id.rawID)) {
+            liveAlbumPage = $0
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "live album page: \(String(describing: liveAlbumPage?.freshness))"
+        ) {
+            liveAlbumPage?.freshness == .live && liveAlbumPage?.items.isEmpty == false
+        }
+        let liveTrackTitles = liveAlbumPage?.items.map(\.displayTitle) ?? []
+
+        // The production root renders the reader's library: album tiles, by the identifier the
+        // established proofs use, labelled with what the reader published.
+        first.selectDestination(.library)
+        let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
+        NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
+        defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
+        let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: first))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        let tile = try await accessibilityElement(
+            identifiedBy: "dulcet.library.album",
+            in: hostingView,
+            timeout: .seconds(20)
+        )
+        let tileLabel = accessibilityLabel(tile) ?? ""
+        XCTAssertTrue(
+            liveTitles.contains { tileLabel.hasPrefix($0) },
+            "A rendered album tile must be one the reader published; label=\(tileLabel.debugDescription)"
+        )
+        liveAlbums.close()
+        albumPage.close()
+        window.orderOut(nil)
+        await withCheckedContinuation { continuation in
+            firstSession.close { continuation.resume() }
+        }
+        XCTAssertNotNil(try credentials.load(), "The account stays saved across the relaunch")
+
+        // 2. Relaunch with the account saved: the library paints from this device, sending nothing.
+        let (second, secondSession) = makeStore()
+        XCTAssertEqual(second.snapshot.state, .libraryBrowse, "A saved account opens straight into its library")
+        XCTAssertEqual(second.selectedDestination, .library)
+        XCTAssertEqual(secondSession.mode, .deviceOnly, "Nothing is sent until Reconnect is chosen")
+        var cachedPublications: [DulcetLibraryWindow] = []
+        let cachedAlbums = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
+            cachedPublications.append($0)
+        }
+        var cachedAlbumPage: [DulcetLibraryWindow] = []
+        let cachedPage = try XCTUnwrap(secondSession.reader).subscribeWindow(.album(rawID: doubleLines.id.rawID)) {
+            cachedAlbumPage.append($0)
+        }
+        try await waitUntil(
+            timeout: .seconds(10),
+            failureMessage: "cached publications: albums=\(cachedPublications.count) page=\(cachedAlbumPage.count)"
+        ) {
+            !cachedPublications.isEmpty && !cachedAlbumPage.isEmpty
+        }
+        let firstCached = try XCTUnwrap(cachedPublications.first)
+        // Offline, not revalidating: a reader told it may send would revalidate this same cache.
+        guard case .cached(.offline, _) = firstCached.freshness else {
+            XCTFail("The first publication must be what this device saw, offline, not \(firstCached.freshness)")
+            return
+        }
+        XCTAssertEqual(firstCached.items.map(\.displayTitle), liveTitles,
+            "The relaunch paints the albums this device saw, in the order it saw them")
+        XCTAssertFalse(cachedPublications.contains { $0.freshness == .loading },
+            "A cached open never shows a loading state")
+        guard case .cached = cachedAlbumPage[0].freshness else {
+            XCTFail("The album page's first publication must be cached, not \(cachedAlbumPage[0].freshness)")
+            return
+        }
+        XCTAssertEqual(cachedAlbumPage[0].items.map(\.displayTitle), liveTrackTitles,
+            "The album page paints the tracks this device saw")
+
+        // 3. Reconnect, as the library's own button does: in place, and live again.
+        dulcetReaderRetry(second)
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "reconnect: mode=\(secondSession.mode) state=\(second.snapshot.state)"
+        ) {
+            secondSession.mode == .connected && second.snapshot.accountConnected
+        }
+        XCTAssertEqual(second.selectedDestination, .library, "Reconnect keeps the person in their library")
+        cachedAlbums.close()
+        cachedPage.close()
+        var reconnected: DulcetLibraryWindow?
+        let liveAgain = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
+            reconnected = $0
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "after reconnect: \(String(describing: reconnected?.freshness))"
+        ) {
+            reconnected?.freshness == .live
+        }
+        XCTAssertEqual(reconnected?.items.map(\.displayTitle), liveTitles)
+        liveAgain.close()
+        await withCheckedContinuation { continuation in
+            secondSession.close { continuation.resume() }
+        }
+        print("DULCET MAC READER PASS albums=\(liveTitles.count) tracks=\(liveTrackTitles.count)"
+            + " first-cached=\(firstCached.freshness) tile=\(tileLabel.debugDescription)")
+    }
+
     private func waitUntil(
         timeout: Duration,
         failureMessage: @autoclosure () -> String,
@@ -1460,4 +1639,27 @@ private final class SingleFireMonotonicLibraryRefreshScheduler: DulcetLibraryRef
 @MainActor
 private final class InertLibraryRefreshOperation: DulcetLibraryRefreshOperation {
     func cancel() {}
+}
+
+/// An in-memory credential store that remembers the provider instance, as the Keychain store does.
+private final class ReaderHostedCredentialStore: DulcetProviderInstanceCredentialStoring {
+    private var persisted: DulcetAccountConnectRequest?
+    private(set) var providerInstanceID: String?
+    private(set) var credentialGeneration: Int64 = 0
+
+    func load() throws -> DulcetAccountConnectRequest? { persisted }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        persisted = request
+        credentialGeneration += 1
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        persisted = request
+        self.providerInstanceID = providerInstanceID
+        credentialGeneration += 1
+    }
+    func delete() throws {
+        persisted = nil
+        providerInstanceID = nil
+        credentialGeneration += 1
+    }
 }

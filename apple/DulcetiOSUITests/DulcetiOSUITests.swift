@@ -608,6 +608,140 @@ final class DulcetiOSUITests: XCTestCase {
         add(attachment)
     }
 
+    /// Opens an album from the library the way a person finds one by name: the Recently Added
+    /// grid under a phone's Library list, or Albums in a regular window's sidebar.
+    @MainActor
+    private func openLibraryAlbum(_ album: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
+            return false
+        }
+        if !compact, !openSidebarLibrarySection("albums", in: app) { return false }
+        let tile = app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
+        guard tile.waitForExistence(timeout: 30), scrollIntoView(tile, in: app) else {
+            XCTFail("The library must show the \(album) tile: " + app.debugDescription)
+            return false
+        }
+        tile.tap()
+        let title = app.staticTexts["dulcet.album.title"].firstMatch
+        guard title.waitForExistence(timeout: 10), title.label == album else {
+            XCTFail("The tile must open \(album): " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    /// Whether the server holds the named album as a favourite, read over `/rest/search3` with the
+    /// disposable account. Nil, with a failure recorded, on any error or on no single match.
+    @MainActor
+    private func readServerAlbumStarred(_ album: String, configuration: LivePlaybackConfiguration) -> Bool? {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((configuration.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: configuration.serverURL) else {
+            XCTFail("The server URL is malformed (withheld)")
+            return nil
+        }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/search3"
+        components.queryItems = [
+            URLQueryItem(name: "u", value: configuration.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+            URLQueryItem(name: "f", value: "json"),
+            URLQueryItem(name: "query", value: album),
+            URLQueryItem(name: "songCount", value: "0"),
+            URLQueryItem(name: "albumCount", value: "20"),
+            URLQueryItem(name: "artistCount", value: "0"),
+        ]
+        guard let url = components.url else {
+            XCTFail("The request URL could not be built (withheld)")
+            return nil
+        }
+        /// Written once by the completion handler, read after the semaphore it signals.
+        final class Outcome: @unchecked Sendable {
+            var data: Data?
+        }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 { outcome.data = data }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            XCTFail("/rest/search3 did not answer within 15 s")
+            return nil
+        }
+        // The URL carries a token, so a failure names the step, never the request.
+        guard let data = outcome.data,
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let envelope = document["subsonic-response"] as? [String: Any],
+              envelope["status"] as? String == "ok" else {
+            XCTFail("/rest/search3 did not return an ok envelope")
+            return nil
+        }
+        let albums = (envelope["searchResult3"] as? [String: Any])?["album"] as? [[String: Any]] ?? []
+        let matches = albums.filter { $0["name"] as? String == album }
+        guard matches.count == 1, let match = matches.first else {
+            XCTFail("\(matches.count) albums named \(album); exactly one is required")
+            return nil
+        }
+        // Subsonic carries `starred` only on a favourite.
+        return match["starred"] != nil
+    }
+
+    /// Polls until the server's favourite state is `expected` or the timeout passes.
+    @MainActor
+    private func awaitServerAlbumStarred(
+        _ album: String,
+        configuration: LivePlaybackConfiguration,
+        expected: Bool,
+        timeout: TimeInterval
+    ) -> Bool? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = readServerAlbumStarred(album, configuration: configuration)
+        while observed != nil, observed != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            observed = readServerAlbumStarred(album, configuration: configuration)
+        }
+        return observed
+    }
+
+    /// Waits for the injected account's live connection to be confirmed where a person confirms
+    /// it: Sign Out on the Connection destination. A first launch stays on Connection while it
+    /// connects; a launch with a saved account opens straight into that account's library
+    /// (CONF-10b) and connects there, so Connection is opened the way a person opens it.
+    @MainActor
+    private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
+        let signOut = app.buttons["Sign Out"].firstMatch
+        if signOut.waitForExistence(timeout: 5) { return true }
+        guard openDestination(
+            "Connection",
+            sidebarIdentifier: "dulcet.sidebar.settings",
+            in: app,
+            compact: compact
+        ) else { return false }
+        return signOut.waitForExistence(timeout: 30)
+    }
+
+    /// Opens one of the library's own places from a regular-width sidebar -- Albums, to find an
+    /// album by name the way a person does. Library itself opens on Home, whose rows scroll
+    /// sideways and so cannot bring a named album into view by scrolling the page.
+    @MainActor
+    private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
+        let row = app.staticTexts["dulcet.sidebar.section.\(section)"].firstMatch
+        guard row.waitForExistence(timeout: 10), row.isHittable else {
+            XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
+            return false
+        }
+        row.tap()
+        return true
+    }
+
     /// Reaches a top-level destination the way a person does on the window's size class: the tab
     /// bar on a compact window, the sidebar on a regular one.
     @MainActor
@@ -828,7 +962,7 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         XCTAssertLessThan(window.frame.width, 700,
                           "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
-        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+        guard awaitLiveAccountConnection(in: app, compact: true) else {
             XCTFail("The live account connection must succeed first")
             return
         }
@@ -914,6 +1048,124 @@ final class DulcetiOSUITests: XCTestCase {
                         + " page=\(openedLabel)")
         print("DULCET GRID TILE OBSERVED first-opened=\(firstOpened)"
             + " covered-tile=\(targetLabel.debugDescription) covered-opened=\(openedLabel.debugDescription)")
+    }
+
+    /// The library is the reader's, end to end, on whichever destination runs this (the window's
+    /// width decides the navigation, and the log names it):
+    ///
+    /// 1. A favourite made on an album page shows at once and reaches the server (CONF-84).
+    /// 2. Relaunched with the account saved and no account hook, the app opens straight into the
+    ///    library this device saw -- tiles painted, Reconnect offered, nothing sent (CONF-76,
+    ///    CONF-10b) -- and the favourite is still shown.
+    /// 3. Search there reads the device and says so (CONF-79's offline scope).
+    /// 4. Reconnect brings the library back in place, and the favourite is removed again, so the
+    ///    disposable server ends as it started.
+    ///
+    /// The server is read back over `/rest` with the disposable account; that read never writes.
+    @MainActor
+    func testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite() {
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let album = "Double Lines"
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url",
+            configuration.serverURL,
+            "-dulcet-debug-account-username",
+            configuration.username,
+            "-dulcet-debug-account-password",
+            configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        let compact = window.frame.width < 700
+        print("DULCET READER PROOF destination=\(compact ? "compact" : "regular") window=\(window.frame)")
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The live account connection must succeed first")
+            return
+        }
+
+        // 1. Favourite the album, from a known starting point whatever an earlier run left.
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return }
+        let heart = app.buttons["dulcet.album.favorite"].firstMatch
+        guard heart.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must offer its heart: " + app.debugDescription)
+            return
+        }
+        if heart.label == "Remove Favorite" {
+            heart.tap()
+            guard waitForLabel("Favorite", of: heart, timeout: 5),
+                  awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false else {
+                XCTFail("An earlier run's favourite could not be cleared first")
+                return
+            }
+        }
+        XCTAssertEqual(readServerAlbumStarred(album, configuration: configuration), false,
+            "The control: the server must not already hold the favourite this proof makes")
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "The heart must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: true, timeout: 20), true,
+            "The favourite must reach the server")
+
+        // 2. Relaunch with nothing but the saved account.
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
+        guard reconnect.waitForExistence(timeout: 15) else {
+            XCTFail("A saved account must open straight into its library and offer Reconnect: " + app.debugDescription)
+            return
+        }
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return }
+        XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
+            "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
+        let seenLine = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Showing what")
+        ).firstMatch
+        XCTAssertTrue(seenLine.waitForExistence(timeout: 5),
+            "The album page must say it is showing what this device saw: " + app.debugDescription)
+
+        // 3. Search reads the device from the first characters and labels its scope.
+        guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
+            return
+        }
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 5) else {
+            XCTFail("The search field must exist: " + app.debugDescription)
+            return
+        }
+        field.tap()
+        field.typeText("Dou")
+        let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 10),
+            "Device search must answer without the server: " + app.debugDescription)
+        let scope = app.descendants(matching: .any)["dulcet.search.scope"].firstMatch
+        XCTAssertTrue(scope.waitForExistence(timeout: 5), "The results must say they come from this device")
+        let scopeLabel = scope.exists ? scope.label : "<none>"
+        let resultLabel = firstResult.exists ? firstResult.label : "<none>"
+        XCTAssertTrue(resultLabel.hasPrefix(album), "Rank 0 must be the album this device saw; got \(resultLabel)")
+        _ = dismissKeyboardIfPresent(in: app)
+
+        // 4. Reconnect in place, then leave the server as it was found.
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
+            return
+        }
+        guard reconnect.waitForExistence(timeout: 10) else {
+            XCTFail("Reconnect must still be offered in the library: " + app.debugDescription)
+            return
+        }
+        reconnect.tap()
+        XCTAssertTrue(reconnect.waitForNonExistence(timeout: 30),
+            "Reconnect must bring the library back without leaving it: " + app.debugDescription)
+        guard openLibraryAlbum(album, in: app, compact: compact), heart.waitForExistence(timeout: 10) else { return }
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20), false,
+            "Removing the favourite must reach the server")
+        print("DULCET READER PROOF PASS destination=\(compact ? "compact" : "regular")"
+            + " relaunch=device-only scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)")
     }
 
     /// A track that cannot play because of what it is -- here, an MP3 whose frames do not decode --
@@ -1095,7 +1347,7 @@ final class DulcetiOSUITests: XCTestCase {
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+        guard awaitLiveAccountConnection(in: app, compact: true) else {
             XCTFail("The live account connection must succeed first")
             return nil
         }
@@ -1218,12 +1470,13 @@ final class DulcetiOSUITests: XCTestCase {
             700,
             "This proof requires a regular-width iPad window; an iPhone is invalid evidence"
         )
-        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+        guard awaitLiveAccountConnection(in: app, compact: false) else {
             XCTFail("The live account connection must succeed first")
             return
         }
         guard requireProofMarkers(in: app) else { return }
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false),
+              openSidebarLibrarySection("albums", in: app) else {
             return
         }
         XCTAssertFalse(
@@ -1423,22 +1676,19 @@ final class DulcetiOSUITests: XCTestCase {
         // the canary at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryRank = 2
-        // The rendered order is a product contract, not a server one: results are ranked by match
-        // quality first, then by kind with tracks ahead of albums, then by the order the server
-        // returned them. The server lists the matching album ahead of every track; the app does
-        // not. Asserting each rank's identity makes drift in either fail here, naming what it
-        // observed, rather than silently relocating the canary to another rank.
-        //
-        // OBSERVED: this query matches four rows, the fourth being the matching album, and the
-        // results list materializes its rows lazily -- so the album row is not addressable on a
-        // compact window. These three ranks are asserted on every destination; the rendered
-        // result count below pins the full arity without depending on an offscreen row, and the
-        // macOS control, whose table renders every row at once, pins the album's rank.
-        let rankedLabels = [
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        // The rows this query must render, each exactly once. Their ORDER is not asserted here:
+        // search reads the device first and the server's answer replaces rows in place and
+        // appends the rest (spec §16.15), so which rank a row takes depends on what this device
+        // already held when the last keystroke landed -- a matter of typing speed against the
+        // debounce, not of correctness. The ranking itself is the core's, and its tests pin it.
+        // What this proof keeps is what only the app can show: every rank carries its own
+        // identifier and its own row, and activating one rank plays that row, not rank zero.
+        let expectedLabels: Set<String> = [
             "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
             "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
+            canaryLabel,
+            "Threshold Boundary, Dulcet Fixtures, Album",
         ]
         let renderedResultCount = "4 results"
 
@@ -1471,7 +1721,7 @@ final class DulcetiOSUITests: XCTestCase {
             )
         }
 
-        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+        guard awaitLiveAccountConnection(in: app, compact: windowExpectation == .compactWidth) else {
             XCTFail("The live account connection must succeed before search is attempted")
             return
         }
@@ -1575,26 +1825,35 @@ final class DulcetiOSUITests: XCTestCase {
         // Every rank is addressed by its own identifier and checked against the row that belongs
         // there. A view that stamped one constant identifier on every row would satisfy rank zero
         // and then fail to produce rank one at all.
-        var rankedResults: [XCUIElement] = []
-        for rank in rankedLabels.indices {
+        // Labels are read as each rank is reached: the list is lazy, so reaching a low rank can
+        // scroll a high one out of the hierarchy, and re-reading it would throw.
+        var observedLabels: [String] = []
+        var scrolledDuringWalk = false
+        for rank in 0..<expectedLabels.count {
             let result = app.buttons["dulcet.search.result.\(rank)"].firstMatch
-            guard result.waitForExistence(timeout: 10) else {
-                XCTFail("Rank \(rank) must render its own identifier: " + app.debugDescription)
-                return
+            if !result.waitForExistence(timeout: rank == 0 ? 10 : 5) {
+                scrolledDuringWalk = true
+                guard scrollIntoView(result, in: app) else {
+                    XCTFail("Rank \(rank) must render its own identifier: " + app.debugDescription)
+                    return
+                }
             }
-            XCTAssertEqual(
-                result.label,
-                rankedLabels[rank],
-                "Rank \(rank) rendered accessibility text (title, credits, album, kind)"
+            let label = result.label
+            XCTAssertTrue(
+                expectedLabels.contains(label),
+                "Rank \(rank) rendered \(label.debugDescription), which this query does not match"
             )
-            rankedResults.append(result)
+            XCTAssertFalse(observedLabels.contains(label), "Rank \(rank) repeats an earlier rank's row")
+            observedLabels.append(label)
         }
-        // Captured while the rows are still on screen: after activation the search surface is
-        // replaced and re-reading these elements throws rather than returning a stale value.
-        let observedLabels = rankedResults.map(\.label)
+        XCTAssertEqual(Set(observedLabels), expectedLabels, "Every matching row must render once")
+        guard let canaryRank = observedLabels.firstIndex(of: canaryLabel) else {
+            XCTFail("The canary must render: observed \(observedLabels)")
+            return
+        }
         XCTAssertNotEqual(
-            rankedResults[0].label,
-            rankedLabels[canaryRank],
+            canaryRank,
+            0,
             "The canary must not render at rank zero, or this proof cannot tell rank from arity"
         )
         // The app's own count of the ranked list. Asserting it keeps the arity pinned even
@@ -1609,7 +1868,7 @@ final class DulcetiOSUITests: XCTestCase {
         // The legacy letterboxed iPhone canvas needed this; a full-display iPhone may expose
         // every row already. Keep the reachability check for smaller windows and keyboards,
         // and preserve the rank assertions above independently of any scrolling.
-        let canaryResult = rankedResults[canaryRank]
+        let canaryResult = app.buttons["dulcet.search.result.\(canaryRank)"].firstMatch
         let resultsList = app.scrollViews.firstMatch
         guard resultsList.waitForExistence(timeout: 5) else {
             XCTFail("The ranked results must render in a scrollable list: " + app.debugDescription)
@@ -1617,7 +1876,12 @@ final class DulcetiOSUITests: XCTestCase {
         }
         var scrollAttempts = 0
         while scrollAttempts < 6 && !isReachableForTap(canaryResult, in: window) {
-            resultsList.swipeUp()
+            // The walk above may have scrolled past the canary: a row above the window, or one
+            // the lazy list has already released after a scroll, is reached by going back up.
+            let above = canaryResult.exists
+                ? canaryResult.frame.midY < window.frame.midY
+                : scrolledDuringWalk
+            if above { resultsList.swipeDown() } else { resultsList.swipeUp() }
             scrollAttempts += 1
         }
 
@@ -1841,7 +2105,7 @@ final class DulcetiOSUITests: XCTestCase {
             allowLocalNetworkAccessIfRequested()
         }
 
-        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+        guard awaitLiveAccountConnection(in: app, compact: false) else {
             XCTFail("The live account connection must succeed before playback is attempted")
             return
         }
@@ -1880,7 +2144,7 @@ final class DulcetiOSUITests: XCTestCase {
             sidebarIdentifier: "dulcet.sidebar.library",
             in: app,
             compact: false
-        ) else { return }
+        ), openSidebarLibrarySection("albums", in: app) else { return }
 
         // A queue restored from an earlier run on this simulator puts the canary in the
         // now-playing bar at launch, and the bar's label names the track. Every label query here

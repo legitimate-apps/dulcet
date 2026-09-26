@@ -1047,7 +1047,9 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     }
 }
 
-private final class DulcetCoreWindowListener: NSObject, AppleLibraryWindowListener {
+// Unchecked because its one stored property is an immutable main-actor closure, and the facade
+// delivers on the main thread (spec §16.18), where the closure is entered.
+private final class DulcetCoreWindowListener: NSObject, AppleLibraryWindowListener, @unchecked Sendable {
     private let handler: @MainActor (DulcetLibraryWindow) -> Void
 
     init(handler: @escaping @MainActor (DulcetLibraryWindow) -> Void) {
@@ -1060,7 +1062,7 @@ private final class DulcetCoreWindowListener: NSObject, AppleLibraryWindowListen
     }
 }
 
-private final class DulcetCoreSearchListener: NSObject, AppleLibrarySearchListener {
+private final class DulcetCoreSearchListener: NSObject, AppleLibrarySearchListener, @unchecked Sendable {
     private let handler: @MainActor (DulcetReaderSearchPublication) -> Void
 
     init(handler: @escaping @MainActor (DulcetReaderSearchPublication) -> Void) {
@@ -1073,7 +1075,7 @@ private final class DulcetCoreSearchListener: NSObject, AppleLibrarySearchListen
     }
 }
 
-private final class DulcetCoreOutcomeListener: NSObject, AppleLibraryFavouriteOutcomeListener {
+private final class DulcetCoreOutcomeListener: NSObject, AppleLibraryFavouriteOutcomeListener, @unchecked Sendable {
     private let handler: @MainActor (DulcetFavouriteOutcome) -> Void
 
     init(handler: @escaping @MainActor (DulcetFavouriteOutcome) -> Void) {

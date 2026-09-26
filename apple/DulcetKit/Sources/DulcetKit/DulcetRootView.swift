@@ -848,7 +848,11 @@ private struct DulcetSidebar: View {
                 case nil:
                     return
                 case let .destination(destination):
-                    if destination == .library, store.readerOwnsLibrary, store.librarySection != .home {
+                    // Library, chosen from elsewhere, comes back as it was left. Chosen while
+                    // showing a page, it returns to that section's root; chosen at a section's
+                    // root, it goes Home.
+                    if destination == .library, store.readerOwnsLibrary, store.selectedDestination == .library,
+                       store.readerPath.isEmpty, store.librarySection != .home {
                         store.selectLibrarySection(.home)
                     } else {
                         store.navigate(to: destination)
@@ -977,6 +981,21 @@ private struct DulcetStateSurface: View {
                     onControl: store.sendPlaybackControl,
                     onEdit: store.editQueue
                 )
+#if os(macOS)
+                // The heart for what is playing, in the window's toolbar (§16.20).
+                .toolbar {
+                    if let session = store.librarySession, session.reader != nil,
+                       player.current.id.providerInstanceID == session.account?.providerInstanceID {
+                        ToolbarItem(placement: .primaryAction) {
+                            DulcetFavouriteButton(
+                                target: DulcetFavouriteTarget(kind: .track, id: player.current.id),
+                                published: session.knownFavourites[player.current.id] ?? player.current.isFavorite,
+                                title: player.current.title
+                            )
+                        }
+                    }
+                }
+#endif
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()
             } else if snapshot.state == .nowPlayingFailed {

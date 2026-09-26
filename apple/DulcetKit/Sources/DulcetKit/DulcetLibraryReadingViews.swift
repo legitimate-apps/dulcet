@@ -248,6 +248,7 @@ struct DulcetFavouriteButton: View {
     let published: Bool?
     var title: String = ""
     var size: Font = .body
+    var identifier = "dulcet.reader.favorite"
 
     var body: some View {
         if let session = store.librarySession {
@@ -277,7 +278,7 @@ struct DulcetFavouriteButton: View {
 #endif
             .accessibilityLabel(on ? DulcetStrings.unfavorite : DulcetStrings.favorite)
             .accessibilityValue(stateDescription(state, title: title, on: on))
-            .accessibilityIdentifier("dulcet.reader.favorite")
+            .accessibilityIdentifier(identifier)
         }
     }
 
@@ -476,7 +477,7 @@ struct DulcetReaderTile: View {
         .dulcetMediaButtonStyle(hover: .lift)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityIdentifier("dulcet.reader.\(item.kind.rawValue)")
+        .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
         .dulcetReaderItemContextMenu(item)
     }
 
@@ -491,7 +492,7 @@ struct DulcetReaderTile: View {
     }
 
     private var accessibilityLabel: String {
-        let base = subtitle.isEmpty ? item.displayTitle : "\(item.displayTitle), \(subtitle)"
+        let base = subtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, subtitle)
         guard store.librarySession?.isFavourite(item.id, published: item.isFavourite) == true else { return base }
         return DulcetStrings.readerFavoriteAccessibility(base)
     }
@@ -540,7 +541,7 @@ struct DulcetReaderListRow: View {
             .dulcetMediaButtonStyle()
             .accessibilityElement(children: .combine)
             .accessibilityLabel(subtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, subtitle))
-            .accessibilityIdentifier("dulcet.reader.\(item.kind.rawValue)")
+            .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
             if let target = item.favouriteTarget {
                 DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle)
             }
@@ -802,6 +803,15 @@ extension DulcetHomeRow {
         }
     }
 
+    var symbolName: String {
+        switch self {
+        case .recentlyAdded: "clock"
+        case .recentlyPlayed: "clock.arrow.circlepath"
+        case .mostPlayed: "chart.bar"
+        case .favourites: "heart"
+        }
+    }
+
     /// Where "See All" goes.
     var fullList: DulcetReaderRoute {
         switch self {
@@ -869,42 +879,91 @@ struct DulcetReaderHomeView: View {
         DulcetReaderPage(title: DulcetStrings.library) { width in
             DulcetReaderAccountBanner()
             if listsSections {
+                // A phone's Library, as the platform's own music app lays it out: every section as
+                // a row, then what was added recently as a grid -- one scroll direction throughout.
                 VStack(spacing: 0) {
                     ForEach(DulcetLibrarySection.allCases.filter { $0 != .home }) { section in
-                        Button {
+                        DulcetReaderHomeLink(
+                            title: section.title,
+                            symbolName: section.symbolName,
+                            identifier: "dulcet.reader.section.\(section.rawValue)"
+                        ) {
                             store.pushReaderPage(.section(section))
-                        } label: {
-                            HStack(spacing: DulcetSpacing.xs) {
-                                Image(systemName: section.symbolName)
-                                    .frame(width: 28)
-                                    .dulcetForeground(.accentIconOnWindow)
-                                    .accessibilityHidden(true)
-                                Text(section.title)
-                                    .font(.title3)
-                                    .dulcetForeground(.primaryTextOnWindow)
-                                Spacer()
-                                Image(systemName: "chevron.forward")
-                                    .font(.caption.weight(.semibold))
-                                    .dulcetForeground(.secondaryTextOnWindow)
-                                    .accessibilityHidden(true)
-                            }
-                            .frame(minHeight: 48)
-                            .contentShape(Rectangle())
                         }
-                        .dulcetMediaButtonStyle()
-                        .accessibilityIdentifier("dulcet.reader.section.\(section.rawValue)")
-                        Divider()
+                    }
+                    ForEach([DulcetHomeRow.recentlyPlayed, .mostPlayed]) { row in
+                        DulcetReaderHomeLink(
+                            title: row.title,
+                            symbolName: row.symbolName,
+                            identifier: "dulcet.reader.home.\(row.rawValue).all"
+                        ) {
+                            store.pushReaderPage(row.fullList)
+                        }
                     }
                 }
-            }
-            ForEach(DulcetHomeRow.allCases) { row in
-                DulcetReaderShelf(row: row, width: width)
+                DulcetReaderRecentlyAddedGrid(width: width)
+            } else {
+                ForEach(DulcetHomeRow.allCases) { row in
+                    DulcetReaderShelf(row: row, width: width)
+                }
             }
         }
     }
 }
 
-/// One home row, as a horizontal shelf.
+/// One row of a phone's Library list.
+struct DulcetReaderHomeLink: View {
+    let title: String
+    let symbolName: String
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DulcetSpacing.xs) {
+                Image(systemName: symbolName)
+                    .frame(width: 28)
+                    .dulcetForeground(.accentIconOnWindow)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.title3)
+                    .dulcetForeground(.primaryTextOnWindow)
+                Spacer()
+                Image(systemName: "chevron.forward")
+                    .font(.caption.weight(.semibold))
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .dulcetMediaButtonStyle()
+        .accessibilityIdentifier(identifier)
+        Divider()
+    }
+}
+
+/// Recently added albums as a grid below a phone's Library list, extended as it scrolls.
+struct DulcetReaderRecentlyAddedGrid: View {
+    let width: CGFloat
+
+    var body: some View {
+        DulcetReaderScreen(query: .homeRow(.recentlyAdded)) { model in
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                Text(DulcetHomeRow.recentlyAdded.title)
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.top, DulcetSpacing.sm)
+                DulcetReaderListBody(model: model) { _ in
+                    DulcetReaderGrid(model: model, width: width)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.reader.home.recentlyAdded")
+        }
+    }
+}
+
 struct DulcetReaderShelf: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
@@ -1174,6 +1233,7 @@ struct DulcetReaderTrackListPage: View {
                     .multilineTextAlignment(compact ? .center : .leading)
                     .lineLimit(nil)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("dulcet.\(kind.rawValue).title")
                 if let item, !item.credits.isEmpty {
                     DulcetArtistLink(credits: item.credits, font: .title3)
                 }
@@ -1189,15 +1249,21 @@ struct DulcetReaderTrackListPage: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(playable.isEmpty)
-                    .accessibilityIdentifier("dulcet.reader.play")
+                    .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
                     Button(DulcetStrings.shuffle, systemImage: "shuffle") {
                         store.playReaderTracks(playable, shuffle: true, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
                     }
                     .buttonStyle(.bordered)
                     .disabled(playable.isEmpty)
-                    .accessibilityIdentifier("dulcet.reader.shuffle")
+                    .accessibilityIdentifier("dulcet.\(kind.rawValue).shuffle")
                     if let item, let target = item.favouriteTarget {
-                        DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle, size: .title3)
+                        DulcetFavouriteButton(
+                            target: target,
+                            published: item.isFavourite,
+                            title: item.displayTitle,
+                            size: .title3,
+                            identifier: "dulcet.\(kind.rawValue).favorite"
+                        )
                     }
                 }
                 .padding(.top, DulcetSpacing.xxs)

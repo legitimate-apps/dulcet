@@ -39,18 +39,21 @@ final class DulcetTVUITests: XCTestCase {
         // the canary at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryRank = 2
-        // The rendered order is a product contract, not a server one: results are ranked by match
-        // quality first, then by kind with tracks ahead of albums, then by the order the server
-        // returned them. The server lists the matching album ahead of every track; the app does
-        // not. Asserting the whole order makes drift in either fail here, naming what it observed,
-        // rather than silently relocating the canary to another rank.
-        let rankedLabels = [
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        // The rows this query must render, each exactly once. Their ORDER is not asserted here:
+        // search reads the device first and the server's answer replaces rows in place and
+        // appends the rest (spec §16.15), so which rank a row takes depends on what this device
+        // already held when the last keystroke landed -- typing speed against the debounce, not
+        // correctness. The ranking is the core's, and its tests pin it. What this control keeps
+        // is what only the app can show: every rank carries its own identifier and its own row,
+        // and selecting one rank plays that row, not rank zero.
+        let expectedLabels: Set<String> = [
             "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
             "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
+            canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
+        let rankCount = expectedLabels.count
         let app = XCUIApplication()
 
         // The ordinary root, launched with no setup arguments at all: every section is already
@@ -75,31 +78,13 @@ final class DulcetTVUITests: XCTestCase {
         ]
         app.launch()
 
-        // Connecting an account leaves the person on Connection, which is where a real first run
-        // leaves them too. Search is somewhere else, and only the section bar goes there.
-        XCTAssertTrue(
-            app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60),
-            "The live account connection must succeed before navigation is attempted: " + app.debugDescription
-        )
-        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Connection")
+        // Search is somewhere else, and only the section bar goes there.
+        let launch = try awaitLaunchAndLiveConnection(app)
         XCTAssertFalse(
             app.textFields["dulcet.search.field"].firstMatch.exists,
             "Search must not already be on screen, or reaching it proves nothing: " + app.debugDescription
         )
-        // A defined initial focus: the remote starts on one of the section's own named controls,
-        // inside the content rather than on the bar, so the first press does something the person
-        // asked for. Which control is the section's business -- an idle form focuses its first
-        // field, a saved account focuses Reconnect -- so this pins the section, not the row.
-        XCTAssertNil(focusedSection(app), "Launch focus belongs in the section, not on the bar")
-        let launchFocus = try XCTUnwrap(
-            focusedControlIdentifier(app),
-            "Launch must place remote focus on a named control: " + app.debugDescription
-        )
-        XCTAssertTrue(
-            launchFocus.hasPrefix("dulcet.account-connect."),
-            "Launch focus must be a Connection control, observed \(launchFocus): " + app.debugDescription
-        )
-        print("DULCET TV LAUNCH section=Connection focus=\(launchFocus) search-present=false")
+        print("DULCET TV LAUNCH section=\(launch.section) focus=\(launch.focus) search-present=false")
 
         // Reach Search the way a person does. Up-navigation, not the exit command: see
         // focusSectionBarViaUpNavigation.
@@ -240,7 +225,7 @@ final class DulcetTVUITests: XCTestCase {
         // there. A view that stamped one constant identifier on every row would satisfy rank zero
         // and then fail to produce rank one at all.
         var observedLabels: [String] = []
-        for rank in rankedLabels.indices {
+        for rank in 0..<rankCount {
             let result = app.buttons["dulcet.search.result.\(rank)"].firstMatch
             if !result.waitForExistence(timeout: rank == 0 ? 30 : 5) {
                 // The result list is lazy and the section bar takes screen height from it, so a
@@ -259,17 +244,26 @@ final class DulcetTVUITests: XCTestCase {
             // and re-reading an element that has left the hierarchy throws rather than returning
             // a stale value.
             let label = result.label
-            XCTAssertEqual(label, rankedLabels[rank], "Rank \(rank) rendered accessibility text")
+            XCTAssertTrue(
+                expectedLabels.contains(label),
+                "Rank \(rank) rendered \(label.debugDescription), which this query does not match"
+            )
+            XCTAssertFalse(observedLabels.contains(label), "Rank \(rank) repeats an earlier rank's row")
             observedLabels.append(label)
         }
+        XCTAssertEqual(Set(observedLabels), expectedLabels, "Every matching row must render once")
+        let canaryRank = try XCTUnwrap(
+            observedLabels.firstIndex(of: canaryLabel),
+            "The canary must render: observed \(observedLabels)"
+        )
         XCTAssertNotEqual(
-            observedLabels[0],
-            rankedLabels[canaryRank],
+            canaryRank,
+            0,
             "The canary must not render at rank zero, or this control cannot tell rank from arity"
         )
         XCTAssertFalse(
-            app.buttons["dulcet.search.result.\(rankedLabels.count)"].firstMatch.exists,
-            "The ranked list must end at rank \(rankedLabels.count - 1): " + app.debugDescription
+            app.buttons["dulcet.search.result.\(rankCount)"].firstMatch.exists,
+            "The ranked list must end at rank \(rankCount - 1): " + app.debugDescription
         )
         print("DULCET TV RANKS labels=\(observedLabels)")
 
@@ -279,7 +273,7 @@ final class DulcetTVUITests: XCTestCase {
         let canaryResult = app.buttons["dulcet.search.result.\(canaryRank)"].firstMatch
         for _ in 0..<16 {
             if canaryResult.exists, canaryResult.hasFocus { break }
-            let focusedRank = rankedLabels.indices.first { rank in
+            let focusedRank = (0..<rankCount).first { rank in
                 let row = app.buttons["dulcet.search.result.\(rank)"].firstMatch
                 return row.exists && row.hasFocus
             }
@@ -325,7 +319,7 @@ final class DulcetTVUITests: XCTestCase {
             "The section bar must return to Library from Now Playing: " + app.debugDescription
         )
         XCTAssertTrue(
-            app.staticTexts["Albums"].firstMatch.waitForExistence(timeout: 30),
+            app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 30),
             "Returning to Library must present the library, not the section it came from: " + app.debugDescription
         )
         XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Library")
@@ -371,11 +365,14 @@ final class DulcetTVUITests: XCTestCase {
             "-dulcet-debug-account-password", password,
         ]
         app.launch()
-        XCTAssertTrue(
-            app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60),
-            "The live account connection must succeed before the exit command is exercised: " + app.debugDescription
-        )
-        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Connection")
+        let launch = try awaitLaunchAndLiveConnection(app)
+        if launch.section != "Connection" {
+            // Reaching Connection through the bar leaves focus on the bar; the press under test
+            // needs it inside the surface, where a launch on Connection would have put it.
+            for _ in 0..<4 where focusedSection(app) != nil {
+                XCUIRemote.shared.press(.down)
+            }
+        }
         XCTAssertNil(focusedSection(app), "Must start with focus inside the Connection surface, not on the bar")
         let priorFocus = try XCTUnwrap(
             focusedControlIdentifier(app),
@@ -409,6 +406,61 @@ final class DulcetTVUITests: XCTestCase {
             "A nil inner onExitCommand on the idle Connection surface must fall through to "
                 + "DulcetTVSectionNavigation's outer handler and return focus to the bar: " + app.debugDescription
         )
+    }
+
+    /// The launch, then the injected account's live connection, confirmed where a person confirms
+    /// it: Sign Out on Connection. A first launch stays on Connection while the account connects.
+    /// A launch with an account already saved -- an earlier test on this simulator -- opens
+    /// straight into that account's library (CONF-10b) and connects there; Connection is then
+    /// reached through the section bar, as a person reaches it. Either way the launch places
+    /// remote focus on a named control inside the section, never on the bar, so the first press
+    /// does something the person asked for.
+    @MainActor
+    private func awaitLaunchAndLiveConnection(
+        _ app: XCUIApplication
+    ) throws -> (section: String, focus: String) {
+        let launchSections = ["Connection", "Library"]
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        var section = ""
+        repeat {
+            let bar = app.navigationBars.firstMatch
+            section = bar.exists ? bar.identifier : ""
+            if launchSections.contains(section) { break }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while ContinuousClock.now < deadline
+        XCTAssertTrue(
+            launchSections.contains(section),
+            "Launch must open Connection, or a saved account's Library; observed \(section.debugDescription): "
+                + app.debugDescription
+        )
+        XCTAssertNil(focusedSection(app), "Launch focus belongs in the section, not on the bar")
+        let focus = try XCTUnwrap(
+            focusedControlIdentifier(app),
+            "Launch must place remote focus on a named control: " + app.debugDescription
+        )
+        if section == "Connection" {
+            // Which control is the section's business -- an idle form focuses its first field --
+            // so this pins the section, not the row.
+            XCTAssertTrue(
+                focus.hasPrefix("dulcet.account-connect."),
+                "Launch focus must be a Connection control, observed \(focus): " + app.debugDescription
+            )
+        } else {
+            XCTAssertTrue(
+                focus.hasPrefix("dulcet."),
+                "Launch focus must be one of the library's own controls, observed \(focus): " + app.debugDescription
+            )
+            XCTAssertTrue(
+                selectSection(app, "settings"),
+                "The section bar must reach Connection from Library: " + app.debugDescription
+            )
+        }
+        XCTAssertTrue(
+            app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 60),
+            "The live account connection must succeed before navigation is attempted: " + app.debugDescription
+        )
+        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Connection")
+        return (section, focus)
     }
 
     /// The section whose bar control currently holds remote focus, or nil while focus is inside
