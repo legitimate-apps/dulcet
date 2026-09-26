@@ -358,11 +358,20 @@ public object PlaylistConformanceContract {
         // failed before its cleanup — shares no name with this one, so no count below includes it.
         val run = Random.nextLong().toULong().toString(16).takeLast(8)
         suspend fun named(name: String) = parseReaderPlaylists(env.raw.body("getPlaylists")).filter { it.name == name }
-        // Recorded offline, so no flush starts on its own: each flush below is the one named.
-        fun createOffline(name: String, songs: List<String>): String {
+        // Each change is recorded offline, so no flush starts on its own. Reachable again, the reader
+        // reconnects, and the reconnect's first step is the outbox flush (§16.14): that flush is the
+        // one that sends the change, and it has ended — the reconnect with it, so nothing more is
+        // in flight — before the scenario goes on. Every later flush is the one named.
+        suspend fun offline(change: () -> Unit) {
             env.session.setOnline(false)
-            val localId = env.session.playlists.create(name, songs).localId!!
+            change()
             env.session.setOnline(true)
+            val reconnected = env.session.reader.reconnect()
+            check(reconnected is ReaderConnectionOutcome.Read) { "CONF-89: the reconnect did not read the server: $reconnected" }
+        }
+        suspend fun createOffline(name: String, songs: List<String>): String {
+            var localId = ""
+            offline { localId = env.session.playlists.create(name, songs).localId!! }
             return localId
         }
 
@@ -376,8 +385,7 @@ public object PlaylistConformanceContract {
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val writesBefore = env.writes.size
-        val adoptedLocal = createOffline(adoptedName, adoptedSongs)
-        env.session.playlists.flush() // delivered; the answer lost
+        val adoptedLocal = createOffline(adoptedName, adoptedSongs) // delivered; the answer lost
         env.session.playlists.flush() // found: the only playlist of that name not listed before the send
         val adopted = named(adoptedName)
         adopted.forEach { env.cleanup += it.rawId }
@@ -393,8 +401,7 @@ public object PlaylistConformanceContract {
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
         val ambiguousWritesBefore = env.writes.size
-        val ambiguousLocal = createOffline(ambiguousName, listOf(songs[4]))
-        env.session.playlists.flush() // delivered; the answer lost
+        val ambiguousLocal = createOffline(ambiguousName, listOf(songs[4])) // delivered; the answer lost
         val landed = named(ambiguousName).map { it.rawId }
         landed.forEach { env.cleanup += it }
         val (_, elsewhere) = env.raw.create(ambiguousName, listOf(songs[4]))
@@ -404,8 +411,8 @@ public object PlaylistConformanceContract {
         val ambiguousCreates = env.writes.drop(ambiguousWritesBefore).count { it == "createPlaylist" }
         val named = env.outcomes.filterIsInstance<PlaylistEditOutcome.PossibleDuplicate>().singleOrNull()?.candidates.orEmpty()
         env.outcomes.clear()
-        landed.singleOrNull()?.let { env.session.setOnline(false); env.session.playlists.chooseCreated(ambiguousLocal, it); env.session.setOnline(true) }
-        env.session.playlists.flush() // adopts the one chosen
+        landed.singleOrNull()?.let { offline { env.session.playlists.chooseCreated(ambiguousLocal, it) } } // adopts the one chosen
+        env.session.playlists.flush()
         val chosenOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
         val chosenId = env.session.reader.playlistOverlay.resolve(ambiguousLocal)
         val ambiguousAfter = named(ambiguousName)
@@ -417,10 +424,12 @@ public object PlaylistConformanceContract {
         val cancelledName = "CONF-89 lost then deleted $run"
         env.loseAnswer["createPlaylist"] = 1
         env.outcomes.clear()
-        val cancelledLocal = createOffline(cancelledName, listOf(songs[2]))
-        env.session.playlists.flush() // delivered; the answer lost
+        val cancelledLocal = createOffline(cancelledName, listOf(songs[2])) // delivered; the answer lost
         val cancelledDeletesBefore = env.writes.count { it == "deletePlaylist" }
-        env.session.playlists.delete(cancelledLocal)
+        // Deleted offline, so the reconnect's flush — run before its epoch read, the reader still
+        // offline — is the one that names the candidate; the delete the person then confirms by its id
+        // needs that candidate known here, which only a re-read owed to the reconnect makes it.
+        offline { env.session.playlists.delete(cancelledLocal) }
         env.session.playlists.flush()
         val cancelledDeleteWrites = env.writes.count { it == "deletePlaylist" } - cancelledDeletesBefore
         val cancelledOutcomes = env.outcomes.map(::outcomeName)
@@ -428,7 +437,7 @@ public object PlaylistConformanceContract {
         cancelledBefore.forEach { env.cleanup += it.rawId }
         val candidates = env.outcomes.filterIsInstance<PlaylistEditOutcome.PossiblyCreated>().singleOrNull()?.candidates.orEmpty()
         env.outcomes.clear()
-        candidates.forEach { env.session.setOnline(false); env.session.playlists.delete(it); env.session.setOnline(true) }
+        candidates.forEach { offline { env.session.playlists.delete(it) } }
         env.session.playlists.flush()
         val confirmedDeleteOutcome = env.outcomes.map(::outcomeName).joinToString(",").ifEmpty { "none" }
         val cancelledAfterConfirm = named(cancelledName)
@@ -442,8 +451,7 @@ public object PlaylistConformanceContract {
         env.cleanup += older
         env.dropRequest["createPlaylist"] = 1
         env.outcomes.clear()
-        val olderLocal = createOffline(olderName, listOf(songs[3]))
-        env.session.playlists.flush() // never delivered, and not provably so
+        val olderLocal = createOffline(olderName, listOf(songs[3])) // never delivered, and not provably so
         val deletesBefore = env.writes.count { it == "deletePlaylist" }
         env.session.playlists.delete(olderLocal)
         env.session.playlists.flush()

@@ -3744,7 +3744,10 @@ passes every test that only checks the end.
 2. read the catalog epoch (two requests); a changed epoch makes every cached catalog read stale by
    comparison (§16.11 rule 2);
 3. revalidate the visible screen (§16.11 rule 3) — which, for a window whose stored epoch differs,
-   is the rebase of §16.12;
+   is the rebase of §16.12 — and re-read, once, each list that a flush run while the reader was
+   offline changed on the server and could not re-read then, unless a screen showing it was just
+   revalidated (a playlist created or deleted by step 1; §28 revision 104 item 33, "After the
+   integration CI");
 4. if the epoch changed, re-read the albums that contain downloads, at concurrency 1 (§16.11 rule 4);
 5. nothing else. There is no catch-up walk, no bulk refetch, and nothing re-read because it is old.
 
@@ -8489,6 +8492,59 @@ fresh disposable server before landing; items 11–14 are what that review chang
     work merged before it. After the round-7 review, against that review's header, it is three
     documentation comments: the held error kinds, the sign-out count, and the outcome
     subscription's kinds. No declaration was added, removed or changed.
+
+    **After the integration CI.** The integration's first CI run failed CONF-89's lost-create test on
+    the Linux conformance job: the ambiguous case expected `PossibleDuplicate` and got `Created`.
+    OBSERVED 2026-09-26 against a disposable Navidrome 0.63.2 on a local high port: that test failed
+    5 of 5 runs at the integration head and passed 5 of 5 on `main`. Two causes, one in the
+    scenario and one in the reader.
+    - **The scenario raced the reconnect.** `PlaylistConformanceContract.lostCreate` recorded each
+      change offline, reported the server reachable, then ran a flush it called "the one named".
+      Since item 29 that report requests a reconnect whose first step is the outbox flush (§16.14),
+      so two flushes ran, and scheduling decided which one sent the create and which one resolved
+      it. In 4 of the 5 runs the reconnect's flush resolved the lost create before the scenario made
+      its namesake elsewhere, and adopted it. That was right for what the server then held, so the
+      case no longer tested the ambiguity it names. It is the same defect as the three item-21 tests
+      of round 8, in the conformance contract that round did not reach. The scenario now waits for
+      the reconnect, whose flush is the send, and requires that reconnect to read the server. Every
+      later flush is the one it names.
+    - **A flush run offline dropped its list re-read.** After its own write, a flush re-reads the
+      playlist list through a window, and no window reads while the reader is offline. So the
+      re-read was dropped silently, not owed. A reconnect's flush runs offline by design (§16.14
+      step 1). The failure path: a lost create is deleted offline; the reconnect's flush names what
+      the send may have made (`PossiblyCreated`); that candidate never reaches the cache; and the
+      delete the person then confirms by its id is refused as `NotCached`. This failed in 5 of 5
+      runs, the one where the race went the scenario's way included. On `main` no flush ran offline.
+      The re-read is now owed to the next successful reconnect, which makes it at step 3, after the
+      epoch read. It is made once, and not at all for a list whose open screen step 3 has just
+      revalidated. A re-read refused again is owed again. The pre-send record of a create is
+      unchanged: it is still the listing the flush sends just before the create, through the
+      outbox's own request path. It comes from neither the cache nor a clock.
+    - **Red first.** `PlaylistReconnectFlushTest`'s three tests were run against the integration head
+      and all three failed, each on its stated assertion: `NotCached` where the confirmed delete was
+      due, and no re-read after the epoch read, both at the reconnect that named the candidate and at
+      the next one after a reconnect that failed. The scenario now deletes the cancelled create
+      offline, so a reconnect's flush names the candidate. With the scenario change and without the
+      reader change, CONF-89 fails with `confirmedDeleteOutcome=none` and one playlist left. With
+      both changes it passed 5 of 5 runs on the JVM.
+    - **Live.** OBSERVED 2026-09-26, every test counted from the JUnit XML. The whole `core-conformance`
+      suite ran against fresh disposable Navidrome 0.63.2 pairs, the fixture and its purge-default
+      twin, one pair per platform, with the redirect, untrusted-TLS and proxy fixtures, as CI runs it.
+      `jvmTest`: 66 of 67 passed, and `macosArm64Test` 68 of 70. The failure common to both is
+      `StallDiagnosticsTest.localAuthenticationFailureCompletesInstrumentedRequests`, which requires
+      the fixture at port 4533, and these runs used another port. The other macOS failure is
+      `DarwinURLCacheIsolationConformanceTest`. It counts connections on the redirect fixture, and
+      an earlier run on the same fixture had already spent its count. On a freshly started fixture it
+      passed 1 of 1. The local ffmpeg is one patch release behind the pin, as recorded above. A first
+      attempt that ran both platforms against one server pair also failed CONF-42 on both platforms,
+      and CONF-14a, CONF-51, CONF-70..74 and CONF-89's run without `formPost` on macOS. That pair's corpus predated the
+      lyrics sidecar, and the JVM run had left its transcode cache warm and its music folder
+      changed. None of those failed on fresh pairs.
+    - **Forced.** OBSERVED 2026-09-26 on macOS arm64, counted from the JUnit XML with every task
+      forced to execute (`--rerun-tasks`, 86 of 86 tasks executed): `jvmTest` ran 945 tests,
+      `macosArm64Test` 991 and `testAndroidHostTest` 1,037, each with 0 failures. That is three more
+      than above in each suite, the three new tests. The seven compiles passed, the macOS debug
+      framework linked, and the parity gate passed.
 
     **Not reached.**
     - No Swift compiles against the header yet.

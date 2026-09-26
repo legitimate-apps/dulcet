@@ -364,6 +364,7 @@ internal class LibraryReader(
                     }
                     visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
                     revalidateSurfaces()
+                    makeOwedListRereads()
                     if (baseline.epochKey == null || baseline.epochKey != reading.epoch.key) recheckDownloadedAlbums()
                     completedSequence = CompletedSequence(reading.epoch.key)
                     reconnectRetryDelayMillis = config.reconnectRetryInitialMillis
@@ -616,6 +617,16 @@ internal class LibraryReader(
      * through a detached window that is never published.
      */
     internal suspend fun rereadList(query: LibraryQuery) {
+        // Offline, no window reads (§16.14) — and an outbox flush does run offline: a reconnect's own,
+        // before its epoch read, and one while the platform reports the server reachable and a
+        // reconnect has yet to succeed. The re-read is owed to the reconnect that brings the reader
+        // back; dropped, the playlist the flush just wrote stays unknown here, and an edit of it — the
+        // delete the person confirms of a playlist a lost create may have made — is refused as not
+        // cached.
+        if (!online) {
+            owedListRereads += query
+            return
+        }
         val open = visibleHandles().filter { it.query == query }
         if (open.isNotEmpty()) {
             open.first().revalidate(RevalidateCause.Refresh)
@@ -623,6 +634,27 @@ internal class LibraryReader(
             return
         }
         ListWindow(this, query, ListRequestSpec.of(query)) { }.revalidate(RevalidateCause.Refresh)
+        // Gone offline while it read: whether it was read is unknown, and the detached window that
+        // would owe it is discarded here. Owed, it costs at most one read more.
+        if (!online) owedListRereads += query
+    }
+
+    /**
+     * The one-response lists [rereadList] could not re-read because the reader was offline, each
+     * owed once to the next successful reconnect.
+     */
+    private val owedListRereads = mutableSetOf<LibraryQuery>()
+
+    /**
+     * A successful reconnect's revalidation step makes every owed re-read — after the flush and the
+     * epoch read, as every read of a reconnect is (§16.14). A list with a screen open was revalidated
+     * by that step already, and a one-response list always reads when revalidated, so it is not read
+     * twice. One refused again, the reader gone offline meanwhile, is owed again.
+     */
+    private suspend fun makeOwedListRereads() {
+        val owed = owedListRereads.toList()
+        owedListRereads.clear()
+        owed.filter { query -> visibleHandles().none { it.query == query } }.forEach { rereadList(it) }
     }
 
     // ---- Opening ------------------------------------------------------------------------------------
