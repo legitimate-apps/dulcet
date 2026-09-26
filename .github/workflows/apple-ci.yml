@@ -23,15 +23,15 @@ jobs:
   # implicates whichever step is active rather than a failed assertion, which is why the heavy
   # steps carry their own caps; those are unchanged by the split.
   #
-  # 95 = ceil(1.5 x 60.2 / 5) x 5. 60.2 minutes is this leg's PROJECTED maximum, not a
-  # measurement: the sum, per green single-job run since #136, of the steps now in this job and
-  # the job's own overhead, plus a framework link costed at the whole `Build all Apple frameworks`
-  # step. The largest is 58.7 (run 35955374570), plus 1.5 for the compact-shell isolation step
-  # that run predates (its measured maximum is 1.53). Re-measure once the leg has history.
+  # 80 = ceil(1.5 x 51.5 / 5) x 5. 51.5 minutes is this leg's MEASURED maximum over its green
+  # runs on the split (run 36196670168; the others took 43.9 to 49.5). It replaces the 60.2-minute
+  # projection the leg was first sized from (95). Each step cap here plus the rest of that leg, as
+  # measured, is at most 74.1 (the compact-shell step's 25 in the same run), so no healthy step can
+  # be killed by the job instead of by its own cap. Re-measure as the leg's history grows.
   apple-platform:
     name: apple-platform
     runs-on: macos-26
-    timeout-minutes: 95
+    timeout-minutes: 80
     # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -640,17 +640,16 @@ jobs:
   # proof that talks to the disposable server. It builds the app schemes its
   # `test-without-building` legs reuse, so it is the longer leg and the run's critical path.
   #
-  # 110 = ceil(1.5 x 71.3 / 5) x 5. 71.3 minutes is this leg's PROJECTED maximum, not a
-  # measurement: the largest per-run sum, over the green single-job runs since #136, of the steps
-  # now in this job and the job's own overhead (62.3 in run 36010624442, framework build
-  # included), plus 9 minutes ASSUMED for the three app builds above the composite. It must stay
-  # above the composite's own 67-minute cap plus the rest of the leg, or a slow-but-healthy
-  # composite would be killed by the job and reported against whichever step was active.
-  # Re-measure once the leg has history.
+  # 115 = ceil(1.5 x 74.6 / 5) x 5. 74.6 minutes is this leg's MEASURED maximum over its green
+  # runs on the split (run 36205806012; the others took 44.6 to 63.1). It replaces the 71.3-minute
+  # projection the leg was first sized from (110), which that run exceeded. It must stay above the
+  # composite's own 85-minute cap plus the rest of the leg, or a slow-but-healthy composite would
+  # be killed by the job and reported against whichever step was active: the rest has measured
+  # 12.4 to 18.5 minutes, so 85 + 18.5 = 103.5. Re-measure as the leg's history grows.
   apple-conformance:
     name: apple-conformance
     runs-on: macos-26
-    timeout-minutes: 110
+    timeout-minutes: 115
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -827,7 +826,13 @@ jobs:
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
       - name: Assert Darwin conformance preconditions
-        timeout-minutes: 67
+        # 85, raised from 67 (ceil(2 x 33.38), sized on the single job). On the split it measured 30.7
+        # to 62.2 minutes. 62.2 (run 36205806012) was a slow host, not a stall: 12 of its 13 phases ran
+        # longer than in the run before, and it left 4.8 minutes. The split also moved the three
+        # library-sync devices' first boots into this step. The step rule's ceil(2 x 62.2) = 125 would
+        # not fit inside a leg sized by spec §21.5 rule 5, so this is a set value, 1.37x the measured
+        # maximum, and the leg cap above is checked against it.
+        timeout-minutes: 85
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}

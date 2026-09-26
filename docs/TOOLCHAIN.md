@@ -59,9 +59,9 @@ The calibrated `apple-ci` timeout is **30 minutes**. Four times the observed com
 of headroom while still releasing a hosted Apple concurrency slot promptly if the job hangs.
 Recalibrate from a representative sample when the serial workload materially changes.
 That single-job calibration is historical: `apple-ci` is now two parallel hosted-macOS legs behind a
-required aggregator job. Each leg's timeout is sized from a projection built from earlier runs'
-step timings, and is to be re-sized from the legs' own measured history. The arithmetic sits
-where each job is declared in `.github/workflows/apple-ci.yml` (spec §21.5).
+required aggregator job. Each leg's timeout is 1.5 times that leg's own measured maximum, rounded
+up to five minutes, and is re-sized as the legs' history grows. The arithmetic sits where each job
+is declared in `.github/workflows/apple-ci.yml` (spec §21.5 rule 5).
 
 Evidence: [GitHub Actions run 32452865876](https://github.com/legitimate-apps/dulcet/actions/runs/32452865876),
 job `96684430341`.

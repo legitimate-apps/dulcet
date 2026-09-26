@@ -4382,7 +4382,7 @@ concurrency:
 ```
 
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
-2026-09-06, then per leg since the split — 95 `apple-platform`, 110 `apple-conformance`, 5 for the
+2026-09-06, then per leg since the split — 80 `apple-platform`, 115 `apple-conformance`, 5 for the
 aggregator — with per-step caps on the heavy steps; see §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
@@ -4580,11 +4580,16 @@ because the median is above 75 minutes. Either reading adopts the split.
    conformance leg and the aggregator. Attempt 2's aggregator downloaded
    `dulcet-apple-parity-evidence-apple-platform-36188503621-1` alongside the conformance leg's
    `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
-5. **Each leg's timeout is 1.5 times its projected maximum, rounded up to a multiple of 5:** 95
-   minutes for `apple-platform` (projected maximum 60.2) and 110 for `apple-conformance`
-   (projected maximum 71.3). The aggregator gets 5. Per-step caps are unchanged, and the conformance leg's cap
-   stays above the composite's 67-minute cap plus the rest of the leg. Re-size both from measured
-   leg history, which replaces the projection.
+5. **Each leg's timeout is 1.5 times its measured maximum, rounded up to a multiple of 5:** 80
+   minutes for `apple-platform` (measured maximum 51.5, run 36196670168) and 115 for
+   `apple-conformance` (measured maximum 74.6, run 36205806012). The aggregator gets 5. The legs
+   were first sized the same way from projected maxima, 95 from 60.2 and 110 from 71.3; measured
+   history replaced the projection once the conformance leg exceeded its own. Each leg's cap must
+   also exceed every one of its step caps plus the rest of that leg as measured, or a healthy step
+   is killed by the job and reported against whichever step was active: the worst case is 74.1
+   for the platform leg and 103.5 for the conformance leg. The composite's own cap is 85 minutes,
+   raised from the single job's 67 after it measured 62.2 on a slow host. Every other per-step cap
+   is unchanged. Re-size from the legs' history as it grows.
 6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
    aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
    test each leg's result for `success` in an unconditional step. It must make exactly one direct
@@ -4618,11 +4623,18 @@ That is rule 5's host-contention class. In 36036076261, the aggregator failed at
 check, before reading any evidence. Two runs were green on their first attempt: 36196670168
 (platform 51.5, conformance 57.4, composite 42.0, wall 57.7 minutes) and 36201409613, the first on
 top of the reader conformance suite (CONF-70..75), which runs a second Navidrome around the
-macOS leg (platform 44.2, conformance 63.1, composite 47.0 of its 67-minute cap, wall 63.4). That
-suite's macOS class passed 8 of 8 in 83.3 seconds, and the aggregator's evidence rose from
+macOS leg (platform 44.2, conformance 63.1, composite 47.0 of its then 67-minute cap, wall 63.4).
+That suite's macOS class passed 8 of 8 in 83.3 seconds, and the aggregator's evidence rose from
 `tests=55 reports=44` to `tests=55 reports=45`: one more JUnit report and no new citation. The app
-builds took 6.4 minutes in both. The run's wall time is the longer leg plus the aggregator, so two
-legs at these figures finish in 45–64 minutes, against the single job's 92–108.
+builds took 6.4 minutes in both. Run 36205806012, on top of the search-paging change that added
+three citations, was green on its first attempt too, with `tests=58 reports=45`. Its platform leg
+took 43.9 minutes, its conformance leg 74.6 and its wall time 74.9, and its composite took 62.2 of
+67 minutes. On the same 7 GiB, 3-CPU runner shape as 36201409613, 12 of the composite's 13
+host-pressure phases ran longer (one ran 12 seconds shorter), by 912 seconds in total, which is the
+whole 15.2-minute difference, and no single phase accounted for most of it: a slow host, not a
+stall. Rule 5's caps were re-sized from it. The run's wall time is the longer leg plus
+the aggregator, so two legs at these figures finish in 45–75 minutes, against the single job's
+92–108.
 
 **Considered and NOT adopted — with the condition under which each becomes right.**
 
@@ -5267,8 +5279,8 @@ was written. Another branch may take the same number first, so it may be renumbe
    about 2 minutes for a third slot (§21.5).
 3. **The projected wall time is ASSUMED until measured:** median ~62.5 and max ~72.3 minutes, against
    the single job's median of 98.3. The previous estimate, "~92 -> ~65" from 26 older runs, is
-   consistent with it. The leg timeouts, 95 and 110, are sized from the projection and must be
-   re-sized from measured leg history.
+   consistent with it. The leg timeouts were first sized from the projection, 95 and 110; item 6
+   re-sizes them from measured leg history.
 4. **§21.1's "one serial `apple-ci` job" is replaced**, in the caveat, the table and the timeout list.
    The hosted-macOS concurrency cap is now cited: 5 on every non-Enterprise plan, from GitHub's
    *Actions limits* page, fetched 2026-09-24. §12.4's "runs serially inside the required `apple-ci`
@@ -5281,8 +5293,15 @@ was written. Another branch may take the same number first, so it may be renumbe
    kept the green leg's `attempt` output, and the aggregator verified that attempt's evidence
    (run 36188503621). The projection's 9 assumed minutes of app builds measured 4.3 to 6.4.
    Green first attempts took 57.7 minutes of wall time (36196670168) and 63.4 once the reader
-   conformance suite had landed (36201409613). Wall time: longer leg plus a few seconds. Leg timeouts stay at 95 and 110 until the legs have a
-   history rather than two samples.
+   conformance suite had landed (36201409613). Run 36205806012 was green on its first attempt on
+   top of the search-paging change: platform 43.9, conformance 74.6, composite 62.2 of its 67-minute
+   cap, wall 74.9, and `tests=58 reports=45`. Its conformance leg exceeded the 71.3-minute
+   projection, so the caps were re-sized from measurement, by rule 5's formula: `apple-platform`
+   95 -> 80 (measured maximum 51.5), `apple-conformance` 110 -> 115 (74.6). The composite's step cap
+   was raised 67 -> 85, a set value rather than the step rule's ceil(2 x 62.2) = 125, which no leg
+   cap sized by rule 5 could contain. Checked for each leg: its cap exceeds every step cap plus
+   the rest of the leg as measured (74.1 platform, 103.5 conformance). Wall time: longer leg plus a
+   few seconds.
 
 **Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
 count is raw, before anything is dropped or de-duplicated. The songs walk already counted that way; the
