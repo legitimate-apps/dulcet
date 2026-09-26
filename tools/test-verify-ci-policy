@@ -971,6 +971,476 @@ assert len(shape_cases_run) == EXPECTED_SHAPE_CASES == len(set(shape_cases_run))
 )
 print(f"apple-ci shape controls passed: {len(shape_cases_run)}/{EXPECTED_SHAPE_CASES}")
 
+
+# ---------------------------------------------------------------------------------------------
+# Artifact names across a partial re-run. "Re-run failed jobs" re-runs only the failed jobs and the
+# ones that need them, as a new attempt. OBSERVED in core-ci run 36238393531: attempt 2 re-ran one
+# emulator leg and the required job, which then asked for
+# `dulcet-core-conformance-android-evidence-36238393531-2` -- named after ITS OWN attempt, from a
+# job that had not re-run -- and failed. The fixture has core-ci's shape: a plain job and a matrix
+# job upload attempt-scoped evidence, and the aggregator downloads each artifact by the attempt
+# output of the job that produced it. Each rejection asserts exit 1 AND the rule's own sentence.
+RERUN_WORKFLOW = """name: synthetic-core-ci
+on:
+  pull_request:
+concurrency:
+  group: synthetic-core-ci
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    steps:
+      - name: Preserve the two core-ci database gates
+        run: |
+          python3 tools/migration_gate.py
+          ./gradlew :core:verifySqlDelightMigration
+      - name: Upload build evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: results
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      attempt-phone: ${{ matrix.surface == 'phone' && matrix.rep == 1 && github.run_attempt || '' }}
+      attempt-tv: ${{ matrix.surface == 'tv' && matrix.rep == 1 && github.run_attempt || '' }}
+    strategy:
+      matrix:
+        surface: [phone, tv]
+        rep: ${{ fromJSON(github.event.inputs.reps || '[1]') }}
+        include:
+          - surface: phone
+            results: phone-results
+    steps:
+      - name: Upload emulator evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: emulator-${{ matrix.surface }}${{ matrix.rep != 1 && format('-rep{0}', matrix.rep) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: results
+  gate:
+    if: ${{ always() }}
+    needs: [build, emulator]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BUILD_RESULT: ${{ needs.build.result }}
+      EMULATOR_RESULT: ${{ needs.emulator.result }}
+    steps:
+      - name: Require every job
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$EMULATOR_RESULT" = success
+      - name: Download build evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: build-evidence-${{ github.run_id }}-${{ needs.build.outputs.attempt }}
+          path: build-results
+      - name: Download phone evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: emulator-phone-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-phone }}
+          path: phone-results
+      - name: Download TV evidence
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: emulator-tv-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}
+          path: tv-results
+      - name: Verify evidence
+        run: python3 tools/verify-parity-evidence build-results phone-results tv-results
+"""
+
+REAL_CORE_CI = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "core-ci.yml"
+
+
+def real_core_ci(mutate):
+    """Apply a mutation to the repository's own core-ci.yml rather than to a fixture."""
+    def apply(_: str) -> str:
+        return mutate(REAL_CORE_CI.read_text())
+    return apply
+
+
+OWN_ATTEMPT = "by its OWN attempt"
+SUMMARY_JOB = '  summary:\n    needs: [build]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - name: Download build evidence for a summary\n        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0\n        with:\n          name: build-evidence-${{ github.run_id }}-${{ needs.build.outputs.attempt }}\n          path: summary-results\n      - name: Summarise\n        run: ls summary-results\n'
+RESULT_STEP = '      - name: Require build, Linux conformance and both emulator legs\n'
+RERUN_CASES = (
+    ("the partial-re-run shape is accepted", lambda t: t, ""),
+    ("the repository's own core-ci.yml is accepted", real_core_ci(lambda t: t), ""),
+    # The defect as it was on main, applied to the real file: the required job names ITS attempt.
+    ("the real core-ci.yml downloading by its own attempt is rejected",
+     real_core_ci(edit("${{ needs.conformance-env-linux.outputs.attempt }}",
+                       "${{ github.run_attempt }}")),
+     OWN_ATTEMPT),
+    ("the real core-ci.yml reading phone evidence by the TV leg's attempt is rejected",
+     real_core_ci(edit("dulcet-android-emulator-phone-${{ github.run_id }}-"
+                       "${{ needs.android-emulator.outputs.attempt-phone }}",
+                       "dulcet-android-emulator-phone-${{ github.run_id }}-"
+                       "${{ needs.android-emulator.outputs.attempt-tv }}")),
+     "which no upload in android-emulator produces"),
+    ("a download named after the aggregator's own attempt is rejected",
+     edit("${{ needs.build.outputs.attempt }}", "${{ github.run_attempt }}"), OWN_ATTEMPT),
+    ("a pattern keyed on the aggregator's own attempt is rejected",
+     edit("          name: emulator-tv-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}\n",
+          "          pattern: emulator-tv-*-${{ github.run_attempt }}\n"), OWN_ATTEMPT),
+    ("a download by pattern with no producing attempt is rejected",
+     edit("          name: emulator-tv-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}\n",
+          "          pattern: emulator-tv-${{ github.run_id }}-*\n"),
+     "must download by an exact name that carries the producing job's attempt output"),
+    # A matrix combines its members' outputs, so one unguarded output is whichever member finished
+    # last: after a re-run of one surface it is the wrong attempt for the other.
+    ("one attempt output shared by every matrix member is rejected",
+     lambda t: edit("${{ needs.emulator.outputs.attempt-tv }}", "${{ needs.emulator.outputs.attempt }}")(
+         edit("${{ needs.emulator.outputs.attempt-phone }}", "${{ needs.emulator.outputs.attempt }}")(
+             edit("      attempt-phone: ${{ matrix.surface == 'phone' && matrix.rep == 1 && github.run_attempt || '' }}\n",
+                  "      attempt: ${{ github.run_attempt }}\n")(t))),
+     "from EVERY matrix member"),
+    # The stale-evidence case: phone's artifact named by TV's attempt reads a superseded phone
+    # attempt whenever only the phone leg was re-run.
+    ("one surface's evidence named by another surface's attempt is rejected",
+     edit("emulator-phone-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-phone }}",
+          "emulator-phone-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}"),
+     "downloads emulator-phone-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}, "
+     "which no upload in emulator produces"),
+    ("an attempt output that does not pin the repetition is rejected",
+     edit("attempt-tv: ${{ matrix.surface == 'tv' && matrix.rep == 1 && github.run_attempt || '' }}",
+          "attempt-tv: ${{ matrix.surface == 'tv' && github.run_attempt || '' }}"),
+     "downloads emulator-tv-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}, "
+     "which no upload in emulator produces"),
+    ("a guard on something other than the matrix is rejected",
+     edit("attempt-tv: ${{ matrix.surface == 'tv' && matrix.rep == 1 && github.run_attempt || '' }}",
+          "attempt-tv: ${{ github.event_name == 'push' && github.run_attempt || '' }}"),
+     "only matrix.<key> == <literal> terms are understood"),
+    ("an attempt output that is not the attempt is rejected",
+     edit("      attempt: ${{ github.run_attempt }}\n", "      attempt: ${{ github.run_number }}\n"),
+     "job build output attempt is not an attempt output"),
+    ("a missing attempt output is rejected",
+     edit("    outputs:\n      attempt: ${{ github.run_attempt }}\n", ""),
+     "job build output attempt is not defined"),
+    ("an attempt output of a job the aggregator does not need is rejected",
+     edit("    needs: [build, emulator]\n", "    needs: [emulator]\n"),
+     "reads needs.build, which it does not need"),
+    ("a download whose name no upload produces is rejected",
+     edit("name: build-evidence-${{ github.run_id }}-${{ needs.build.outputs.attempt }}",
+          "name: build-results-${{ github.run_id }}-${{ needs.build.outputs.attempt }}"),
+     "which no upload in build produces"),
+    # The other half of attempt scoping: a name without the attempt collides with the earlier
+    # attempt's immutable artifact, and `overwrite: true` would delete a superseded failure's
+    # evidence -- the evidence a re-run is most likely to be needed for.
+    ("an upload name without the attempt is rejected",
+     edit("          name: build-evidence-${{ github.run_id }}-${{ github.run_attempt }}\n",
+          "          name: build-evidence-${{ github.run_id }}\n          overwrite: true\n"),
+     "uploads build-evidence-${{ github.run_id }} without ${{ github.run_attempt }}"),
+    # A matrix-style guard on a job with no matrix cannot select anything: it is always the one job.
+    ("a matrix-style guard in a job with no matrix is rejected",
+     edit("      attempt: ${{ github.run_attempt }}\n",
+          "      attempt: ${{ matrix.surface == 'phone' && github.run_attempt || '' }}\n"),
+     "job build output attempt guards an attempt output in a job without a matrix"),
+    # Guarded to repetition 2, whose artifact carries `-rep2`: the rep-1 name read here is then
+    # named by an attempt output no rep-1 member sets.
+    ("an attempt output guarded to another repetition is rejected",
+     edit("attempt-tv: ${{ matrix.surface == 'tv' && matrix.rep == 1 && github.run_attempt || '' }}",
+          "attempt-tv: ${{ matrix.surface == 'tv' && matrix.rep == 2 && github.run_attempt || '' }}"),
+     "downloads emulator-tv-${{ github.run_id }}-${{ needs.emulator.outputs.attempt-tv }}, "
+     "which no upload in emulator produces"),
+    # The stale-evidence argument rests on core-ci testing every result BEFORE reading evidence. Each
+    # of these twelve edits to the real core-ci.yml defeated that, and each was accepted before the
+    # aggregator rules were applied to core-ci (review of #152, SHOULD-FIX 1).
+    ("the real core-ci.yml without its result check is rejected",
+     real_core_ci(lambda t: t[:t.index(RESULT_STEP)] + t[t.index("      # Each download names"):]),
+     "job core-ci must require needs.core-build.result to equal success"),
+    ("the real core-ci.yml with a result check that may fail is rejected",
+     real_core_ci(edit(RESULT_STEP, RESULT_STEP + "        continue-on-error: true\n")),
+     "job core-ci must require needs.core-build.result to equal success"),
+    ("the real core-ci.yml with a result check that never runs is rejected",
+     real_core_ci(edit(RESULT_STEP, RESULT_STEP + "        if: false\n")),
+     "job core-ci must require needs.android-emulator.result to equal success"),
+    ("the real core-ci.yml without if: always() is rejected",
+     real_core_ci(edit("    name: core-ci\n    if: ${{ always() }}\n", "    name: core-ci\n")),
+     "job core-ci must run if: ${{ always() }}"),
+    ("the real core-ci.yml not testing the emulator result is rejected",
+     real_core_ci(edit('          test "$ANDROID_EMULATOR_RESULT" = success\n', "")),
+     "job core-ci must require needs.android-emulator.result to equal success"),
+    ("the real core-ci.yml admitting a cancelled job is rejected",
+     real_core_ci(edit('test "$CORE_BUILD_RESULT" = success', 'test "$CORE_BUILD_RESULT" != failure')),
+     "job core-ci must require needs.core-build.result to equal success"),
+    ("the real core-ci.yml with a producer that cannot fail is rejected",
+     real_core_ci(edit("    name: core-build\n", "    name: core-build\n    continue-on-error: true\n")),
+     "job core-build sets continue-on-error"),
+    ("the real core-ci.yml with an evidence check that may fail is rejected",
+     real_core_ci(edit("      - name: Verify Android parity evidence executed and passed\n",
+                       "      - name: Verify Android parity evidence executed and passed\n"
+                       "        continue-on-error: true\n")),
+     "step 'Verify Android parity evidence executed and passed' must be unconditional and blocking"),
+    ("the real core-ci.yml with an optional download is rejected",
+     real_core_ci(edit("      - name: Download Android app evidence\n",
+                       "      - name: Download Android app evidence\n        continue-on-error: true\n")),
+     "step 'Download Android app evidence' must be unconditional and blocking"),
+    ("the real core-ci.yml without the TV download is rejected",
+     real_core_ci(lambda t: t[:t.index("      - name: Download Android TV emulator evidence\n")]
+                  + t[t.index("      - name: Verify Android parity evidence"):]),
+     "exports attempt output attempt-tv, which no core-ci download names"),
+    ("the real core-ci.yml reading evidence with gh run download is rejected",
+     real_core_ci(lambda t: t[:t.index("      - name: Download Android TV emulator evidence\n")]
+                  + "      - name: Download Android TV emulator evidence\n"
+                    "        run: gh run download ${{ github.run_id }} -n "
+                    "dulcet-android-emulator-tv-${{ github.run_id }}-${{ github.run_attempt }} "
+                    "-D android-emulator-tv-results\n"
+                  + t[t.index("      - name: Verify Android parity evidence"):]),
+     "reads artifacts from the shell (gh run download or the artifacts API)"),
+    ("the real core-ci.yml reading another run's artifact is rejected",
+     real_core_ci(edit("          path: android-app-results\n",
+                       "          path: android-app-results\n          run-id: 1\n")),
+     "sets run-id, so it can read another run's artifacts"),
+    # Results tested after the evidence is read: the order is the argument, not a style choice.
+    ("an aggregator that downloads before testing results is rejected",
+     lambda t: edit("      - name: Require every job\n        run: |\n"
+                    "          test \"$BUILD_RESULT\" = success\n"
+                    "          test \"$EMULATOR_RESULT\" = success\n", "")(t).replace(
+         "      - name: Verify evidence\n",
+         "      - name: Require every job\n        run: |\n"
+         "          test \"$BUILD_RESULT\" = success\n"
+         "          test \"$EMULATOR_RESULT\" = success\n      - name: Verify evidence\n"),
+     "tests needs.build.result only after downloading evidence"),
+    # A name that depends on a value only the runner knows cannot be proven equal to the download.
+    ("an upload name that depends on a runtime value is rejected",
+     edit("          name: build-evidence-${{ github.run_id }}-${{ github.run_attempt }}\n",
+          "          name: build-evidence${{ github.event.inputs.suffix && '' || '' }}-"
+          "${{ github.run_id }}-${{ github.run_attempt }}\n"),
+     "which no upload in build produces"),
+    ("an evidence path the aggregator never downloads is rejected",
+     edit("verify-parity-evidence build-results phone-results tv-results",
+          "verify-parity-evidence build-results phone-results tv-results extra-results"),
+     "verify-parity-evidence reads extra-results, which gate never downloads"),
+    # core-ci is required by name, so it is held to the rules even once it downloads nothing.
+    ("the real core-ci.yml with no evidence check at all is rejected",
+     real_core_ci(lambda t: t[:t.index("      # Each download names")]),
+     "job core-ci must make exactly one direct python3 tools/verify-parity-evidence call, and makes 0"),
+    # The aggregator rules bind jobs that certify evidence, not every job that downloads: a summary
+    # job, or one half of a split release, keeps only the naming and attempt rules (review round 2).
+    ("a plain downloading summary job is accepted",
+     lambda t: t + SUMMARY_JOB, ""),
+    ("a downloading job that verifies evidence without testing results is rejected",
+     lambda t: t + SUMMARY_JOB.replace(
+         "        run: ls summary-results\n",
+         "        run: python3 tools/verify-parity-evidence summary-results\n"),
+     "job summary must require needs.build.result to equal success"),
+    # The shell-read ban names Actions artifacts, not every path that says "artifacts".
+    ("a local path containing artifacts is accepted",
+     edit("          ./gradlew :core:verifySqlDelightMigration\n",
+          "          ./gradlew :core:verifySqlDelightMigration\n          ls build/artifacts/1\n"),
+     ""),
+    ("an artifacts API read from the shell is rejected",
+     edit("          ./gradlew :core:verifySqlDelightMigration\n",
+          "          ./gradlew :core:verifySqlDelightMigration\n"
+          "          gh api repos/o/r/actions/artifacts/1/zip > evidence.zip\n"),
+     "reads artifacts from the shell"),
+    # A `test ... = success` line only fails a job in a shell that runs it.
+    ("a result check in a non-shell step is rejected",
+     edit("      - name: Require every job\n",
+          "      - name: Require every job\n        shell: python\n"),
+     "job gate must require needs.build.result to equal success"),
+    ("a run_attempt in a download's path only is accepted",
+     edit("          path: build-results\n",
+          "          path: build-results\n      - name: Stage\n        run: echo ${{ github.run_attempt }}\n"),
+     ""),
+)
+EXPECTED_RERUN_CASES = 40
+rerun_cases_run: list[str] = []
+
+
+def rerun_case_failure(name: str, mutate, expected: str, verifier: Path = VERIFIER) -> str | None:
+    """Why the case fails against `verifier`, or None when it passes."""
+    text = mutate(RERUN_WORKFLOW)
+    if expected and text in (RERUN_WORKFLOW, REAL_CORE_CI.read_text()):
+        return f"{name}: the mutation changed nothing, so it proves nothing"
+    with tempfile.TemporaryDirectory(prefix="dulcet-rerun-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "core-ci.yml").write_text(text)
+        result = subprocess.run([sys.executable, str(verifier)], cwd=root, text=True,
+                                capture_output=True, check=False)
+    if not expected:
+        if result.returncode != 0:
+            return f"{name}: expected acceptance, got {result.returncode}\n{result.stderr}"
+    else:
+        if result.returncode != 1:
+            return (f"{name}: expected exit 1, got {result.returncode} -- a rule that "
+                    f"reports and still exits 0 is not a gate\n{result.stderr}")
+        if expected not in result.stderr:
+            return (f"{name}: rejected, but not by the rule under test; expected "
+                    f"{expected!r}\n{result.stderr}")
+    return None
+
+
+def run_rerun_case(name: str, mutate, expected: str) -> None:
+    failure = rerun_case_failure(name, mutate, expected)
+    if failure:
+        raise AssertionError(failure)
+    rerun_cases_run.append(name)
+    print(f"PASS: partial re-run: {name}")
+
+
+for rerun_case in RERUN_CASES:
+    run_rerun_case(*rerun_case)
+# Counted against a declared constant, not the tuple's length: emptying RERUN_CASES must fail.
+assert len(rerun_cases_run) == EXPECTED_RERUN_CASES == len(set(rerun_cases_run)), (
+    f"partial re-run controls ran {len(rerun_cases_run)} of {EXPECTED_RERUN_CASES}: {rerun_cases_run}"
+)
+print(f"partial re-run controls passed: {len(rerun_cases_run)}/{EXPECTED_RERUN_CASES}")
+
+
+# ---------------------------------------------------------------------------------------------
+# Mutants of the verifier's partial-re-run and aggregator rules, kept here so the claim "each rule
+# has a control that fails without it" can be re-checked rather than taken on trust. Each entry
+# edits verify_ci_policy.py once, and names the case that must fail against the edited copy. The
+# edit text must occur exactly once, so a refactor that moves the code fails here loudly instead of
+# silently testing nothing. Sources, in order: the implementer's first 8; three of the four the
+# review of #152 found surviving (the fourth is the equivalent mutant recorded below); 11 for the
+# aggregator rules added in response to that review; four the review's round 2 killed but had not
+# recorded; and five for round 2's changes (result checks outside a shell, aggregator scoping, the
+# shell-read pattern).
+CHECKER_MUTANTS = (
+    ("rule not wired", "    errors.extend(partial_rerun_errors(workflow, lines))\n", "    pass\n",
+     "the real core-ci.yml downloading by its own attempt is rejected"),
+    ("own-attempt rule off",
+     'if any(ATTEMPT_CONTEXT in inputs.get(key, "") for key in SELECTING_INPUTS):', "if False:",
+     "the real core-ci.yml downloading by its own attempt is rejected"),
+    ("pairing ignores the member bindings", "produced.add(evaluate_template(",
+     "produced.add(name if True else evaluate_template(",
+     "the real core-ci.yml reading phone evidence by the TV leg's attempt is rejected"),
+    ("an unguarded matrix output accepted", "    if guard is None:\n        return (\"reports",
+     "    if False:\n        return (\"reports",
+     "one attempt output shared by every matrix member is rejected"),
+    ("upload-name rule off", "            if ATTEMPT_CONTEXT not in name:\n",
+     "            if False:\n", "an upload name without the attempt is rejected"),
+    ("needs membership off", "                if producer not in spans or producer not in needed:",
+     "                if producer not in spans:",
+     "an attempt output of a job the aggregator does not need is rejected"),
+    ("matrix never detected", '                matrix = "strategy" in properties[producer] and any(',
+     "                matrix = False and any(", "the partial-re-run shape is accepted"),
+    ("&& always yields its right side", "            left = right if truthy(left) else left",
+     "            left = right", "the partial-re-run shape is accepted"),
+    # The review's four survivors.
+    ("== always true", "            same = equal(left, unary())",
+     "            same = (equal(left, unary()), True)[1]",
+     "an attempt output guarded to another repetition is rejected"),
+    ("an unbound value is truthy", '        return known(value) not in (False, 0, "", None)',
+     '        return True if isinstance(value, Opaque) else known(value) not in (False, 0, "", None)',
+     "an upload name that depends on a runtime value is rejected"),
+    ("a matrix-style guard accepted without a matrix",
+     '        return {} if guard is None and "||" not in expression(value) else (',
+     '        return {} if True else (',
+     "a matrix-style guard in a job with no matrix is rejected"),
+    # Review SHOULD-FIX 1: the aggregator rules, one mutant per rule.
+    ("aggregator rules not wired", "    errors.extend(aggregator_errors(workflow, lines))\n",
+     "    pass\n", "the real core-ci.yml without its result check is rejected"),
+    ("results may be tested after the downloads", "            elif min(positions) > first_download:",
+     "            elif False:", "an aggregator that downloads before testing results is rejected"),
+    ("a conditional result check counts",
+     '            if "if" in step or step.get("continue-on-error", "false") != "false":\n                continue\n',
+     "", "the real core-ci.yml with a result check that never runs is rejected"),
+    ("if: always() not required",
+     '        if expression(str(props.get("if", ""))) not in ("${{ always() }}", "always()"):',
+     "        if False:", "the real core-ci.yml without if: always() is rejected"),
+    ("downloads may be optional", "        for index in verify_steps + download_steps:",
+     "        for index in verify_steps:", "the real core-ci.yml with an optional download is rejected"),
+    ("a producer may set continue-on-error", "        for job_name in [aggregator, *legs]:",
+     "        for job_name in [aggregator]:",
+     "the real core-ci.yml with a producer that cannot fail is rejected"),
+    ("an unread attempt output accepted", "                if (ATTEMPT_CONTEXT in value\n",
+     "                if (False\n", "the real core-ci.yml without the TV download is rejected"),
+    ("shell artifact reads accepted",
+     '            if ARTIFACT_READ_IN_SHELL.search(code_before_comment(str(step.get("run", "")))):',
+     "            if False:", "the real core-ci.yml reading evidence with gh run download is rejected"),
+    ("another run's artifact accepted", "            if foreign:", "            if False:",
+     "the real core-ci.yml reading another run's artifact is rejected"),
+    ("an undownloaded verify path accepted",
+     '            if not argument.startswith("$RUNNER_TEMP/") and argument not in download_paths:',
+     "            if False:", "an evidence path the aggregator never downloads is rejected"),
+    ("a required check that downloads nothing is not an aggregator",
+     "        or (required_check(job) and (listed(properties[job].get(\"needs\"))",
+     "        or (False and (listed(properties[job].get(\"needs\"))",
+     "the real core-ci.yml with no evidence check at all is rejected"),
+    # Killed by the round-1 cases, recorded after review round 2.
+    ("the produced-name equality skipped", "                if name not in produced:",
+     "                if False:",
+     "the real core-ci.yml reading phone evidence by the TV leg's attempt is rejected"),
+    ("guard terms after the first ignored", '    for term in guard.split(" && "):',
+     '    for term in guard.split(" && ")[:1]:', "the partial-re-run shape is accepted"),
+    ("a missing attempt output tolerated",
+     "                bindings = attempt_output_bindings(value, matrix) if value else (",
+     "                bindings = attempt_output_bindings(value, matrix) if value else {} if True else (",
+     "a missing attempt output is rejected"),
+    ("a pattern-only download accepted", "            if not name or not references:",
+     "            if name and not references:",
+     "a download by pattern with no producing attempt is rejected"),
+    # Review round 2.
+    ("a result check outside a shell counts",
+     '            if str(step.get("shell", "bash")) not in {"bash", "sh"}:\n                continue\n',
+     "", "a result check in a non-shell step is rejected"),
+    ("every downloader treated as an aggregator", "        if verifies(job)\n",
+     "        if verifies(job) or any(downloads(step) for step in steps[job])\n",
+     "a plain downloading summary job is accepted"),
+    ("a verifying job exempt unless required", "        if verifies(job)\n", "        if False\n",
+     "a downloading job that verifies evidence without testing results is rejected"),
+    ("the shell-read pattern matches local paths",
+     '    r"\\bgh\\s+run\\s+download\\b|\\brepos/\\S+/actions/(?:runs/\\S+/)?artifacts\\b")',
+     '    r"\\bgh\\s+run\\s+download\\b|/actions/artifacts\\b|/artifacts/\\d")',
+     "a local path containing artifacts is accepted"),
+    ("the shell-read pattern misses the artifacts API",
+     '    r"\\bgh\\s+run\\s+download\\b|\\brepos/\\S+/actions/(?:runs/\\S+/)?artifacts\\b")',
+     '    r"\\bgh\\s+run\\s+download\\b")',
+     "an artifacts API read from the shell is rejected"),
+)
+# One mutant is EQUIVALENT, recorded so nobody spends time on it again: adding an unresolvable
+# upload name to `produced` raw can never pair, because the raw name still contains
+# github.run_attempt and a download that names github.run_attempt is rejected before pairing. It
+# must survive every case; if a change ever makes it killable, that is worth knowing too.
+EQUIVALENT_MUTANTS = (
+    ("an unresolved upload name added raw",
+     "                    except Unresolved:\n                        continue\n",
+     "                    except Unresolved:\n                        produced.add(expression(str("
+     "(upload.get(\"with\") or {}).get(\"name\", \"\"))))\n"),
+)
+EXPECTED_CHECKER_MUTANTS = 31
+checker_mutants_killed: list[str] = []
+rerun_case_index = {case[0]: case for case in RERUN_CASES}
+
+
+def mutated_verifier(directory: Path, label: str, old: str, new: str) -> Path:
+    source = VERIFIER.read_text()
+    if source.count(old) != 1:
+        raise AssertionError(f"checker mutant {label!r}: expected its text exactly once in "
+                             f"{VERIFIER.name}, found {source.count(old)}; update the mutant")
+    path = directory / VERIFIER.name
+    path.write_text(source.replace(old, new))
+    return path
+
+
+with tempfile.TemporaryDirectory(prefix="dulcet-checker-mutants-") as mutant_directory:
+    for label, old, new, killer in CHECKER_MUTANTS:
+        verifier = mutated_verifier(Path(mutant_directory), label, old, new)
+        if rerun_case_failure(*rerun_case_index[killer], verifier=verifier) is None:
+            raise AssertionError(f"checker mutant {label!r} SURVIVED {killer!r}")
+        checker_mutants_killed.append(label)
+        print(f"PASS: checker mutant killed: {label} (by {killer!r})")
+    for label, old, new in EQUIVALENT_MUTANTS:
+        verifier = mutated_verifier(Path(mutant_directory), label, old, new)
+        killers = [case[0] for case in RERUN_CASES
+                   if rerun_case_failure(*case, verifier=verifier) is not None]
+        if killers:
+            raise AssertionError(f"equivalent mutant {label!r} is now killed by {killers}; "
+                                 "move it to CHECKER_MUTANTS")
+        print(f"PASS: equivalent mutant survives every case, as recorded: {label}")
+assert len(checker_mutants_killed) == EXPECTED_CHECKER_MUTANTS == len(set(checker_mutants_killed)), (
+    f"checker mutants killed {len(checker_mutants_killed)} of {EXPECTED_CHECKER_MUTANTS}"
+)
+print(f"checker mutants killed: {len(checker_mutants_killed)}/{EXPECTED_CHECKER_MUTANTS}")
+
 if "--completion-child" not in sys.argv:
     run_completion_mutation_case(("core",))
     run_completion_mutation_case(("apple",))
