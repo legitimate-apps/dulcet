@@ -130,6 +130,12 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     @Test fun anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack() =
         scenarios.anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack()
 
+    @Test fun aTransientReconnectFailureIsRetriedInTheForegroundOnly() =
+        scenarios.aTransientReconnectFailureIsRetriedInTheForegroundOnly()
+
+    @Test fun anUnreachableAnswerArrivingInTheBackgroundStartsNoRead() =
+        scenarios.anUnreachableAnswerArrivingInTheBackgroundStartsNoRead()
+
     /** Selected with the remote, a track plays its album from there and opens the TV's Now Playing. */
     @Test fun aTrackSelectedWithTheRemotePlaysTheAlbumFromThatTrackAndOpensNowPlaying() =
         scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {

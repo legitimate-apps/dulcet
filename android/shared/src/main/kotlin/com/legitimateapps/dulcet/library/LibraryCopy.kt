@@ -88,8 +88,9 @@ private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().
 /**
  * The connection's own failure, stated once above the screen (§16.14), when a reconnect that did not
  * read the epoch — a timeout, credentials, TLS, the server's own error — left the reader offline.
- * Every screen's own line then says "offline"; this one says why. Null otherwise, including for a
- * failed reconnect of a reader that is still online, whose screens keep reading.
+ * Each screen's own line says `offline` when the reader retries that failure by itself, and the
+ * failure itself when it does not (§16.14); this one says why either way. Null otherwise, including
+ * for a failed reconnect of a reader that is still online, whose screens keep reading.
  */
 public fun Resources.connectionLine(state: LibraryConnectionState): String? =
     if (state is LibraryConnectionState.Failed && state.readerOffline) {
@@ -145,14 +146,19 @@ public fun Resources.errorPhrase(error: DomainError): String = getString(
     },
 )
 
-/** Whether the person can do something about this state with a reconnect. */
+/**
+ * Whether the screen offers "Try again", a reconnect: offline, or a failure. A failure the reader
+ * does not retry by itself — credentials, a security or protocol failure, the device's own — waits
+ * for the person to ask (§16.14), and the screens may be the only place it shows: a reconnect the
+ * reader started itself, such as its own retry, reports its outcome to no session.
+ */
 public fun AndroidLibraryFreshness.offersRetry(): Boolean = isOffline() || when (this) {
-    is AndroidLibraryFreshness.Cached -> (reason as? AndroidLibraryCachedReason.Failed)?.error.isTransport()
-    is AndroidLibraryFreshness.Unavailable -> (reason as? AndroidLibraryUnavailableReason.Failed)?.error.isTransport()
+    is AndroidLibraryFreshness.Cached ->
+        reason is AndroidLibraryCachedReason.Failed || reason == AndroidLibraryCachedReason.InternalFailure
+    is AndroidLibraryFreshness.Unavailable ->
+        reason is AndroidLibraryUnavailableReason.Failed || reason == AndroidLibraryUnavailableReason.InternalFailure
     else -> false
 }
-
-private fun DomainError?.isTransport(): Boolean = this is DomainError.Transport
 
 private fun Resources.reasonPhrase(reason: AndroidLibraryCachedReason): String = when (reason) {
     AndroidLibraryCachedReason.Offline -> getString(R.string.library_reason_offline)

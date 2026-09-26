@@ -220,12 +220,36 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         val mark = proxy.size()
         val reconnectsBefore = observed().reconnects
+        val framesBefore = HOME.associateWith { frames(it).size }
+        // The last visible read is held, so the sequence has a step left after the others are
+        // answered. The reader revalidates the rows one after another, so holding an earlier row's
+        // read would stall the rows behind it until the request timed out (30 s), and the sequence
+        // would end with that row failed instead of still coming.
+        val heldRow = { seen: CountingProxy.Seen -> seen.endpoint == "getStarred2" }
+        proxy.hold(heldRow)
         environment.network.restore()
+        await("every visible read but the held one answered") {
+            val since = proxy.since(mark)
+            since.any { heldRow(it) && !it.answered } && since.count { it.endpoint == "getAlbumList2" && it.answered } == 3
+        }
+        awaitQuiet(held = true)
+        // Positive, so a row still showing its offline frame cannot pass it: every row says it is
+        // revalidating, the three answered ones included, and none says live.
+        assertTrue(HOME.all { (last(it).freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Revalidating },
+            "every row says revalidating, and none live, while the reconnect still has a read to make: ${HOME.map { last(it).freshness }}")
+        proxy.release()
         await("the reconnect to finish") {
             observed().reconnects > reconnectsBefore && observed().connections.last() is LibraryConnectionState.Online &&
                 HOME.all { last(it).freshness == AndroidLibraryFreshness.Live }
         }
         awaitQuiet()
+        // Each row says `live` exactly once during the reconnect, as its last publication (§16.14);
+        // that none said it early was asserted above, while a read was held.
+        val reconnectFrames = HOME.associateWith { frames(it).drop(framesBefore.getValue(it)).map { frame -> frame.freshness } }
+        for ((row, seen) in reconnectFrames) {
+            assertEquals(1, seen.count { it == AndroidLibraryFreshness.Live }, "$row says live once: $seen")
+            assertEquals(AndroidLibraryFreshness.Live, seen.last(), "$row says live at the end: $seen")
+        }
         val sent = readerRequests(mark)
         val names = sent.map { it.endpoint }
         assertEquals("star", names.firstOrNull(), "the outbox flush goes first: $names")
@@ -248,6 +272,14 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             await("the reconnect to fail") { observed().connections.last() is LibraryConnectionState.Failed }
             assertTrue((observed().connections.last() as LibraryConnectionState.Failed).readerOffline, "the reader is still offline")
             compose.onNodeWithTag("library.connection").assertTextContains("Couldn't connect to your server — ", substring = true)
+            // An answer that is not a Subsonic envelope is not a failure the reader retries by itself,
+            // so every screen says what failed rather than "offline" (§16.14), and offers "Try again".
+            await("every home row to state the failure") {
+                HOME.all { (last(it).freshness as? AndroidLibraryFreshness.Cached)?.reason is AndroidLibraryCachedReason.Failed }
+            }
+            compose.onNodeWithTag("library.home.0.freshness").assertTextContains("your server couldn't answer", substring = true)
+            compose.onNodeWithTag("library.home.0.freshness").assert(!hasText("offline", substring = true))
+            compose.onNodeWithTag("library.home.0.retry").assertExists()
             proxy.fail(null)
         }
         failAReconnect()
@@ -387,9 +419,11 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     /**
      * A reconnect that finds the server unreachable while the platform reports a network takes the
-     * reader offline: the session tells the reader the server is unreachable, and every screen says
-     * offline. A return to the foreground and trying again each tell the reader the platform's view —
-     * reachable — before reconnecting, so it is not left believing what the failed reconnect found.
+     * reader offline, and every screen says offline. The reader was online, so the session takes it
+     * offline with an unreachable report and then tells it the platform's view again — reachable — so
+     * the reader goes on retrying by itself. A return to the foreground and trying again each tell
+     * the reader the platform's view before reconnecting, and a reconnect that fails while the reader
+     * is already offline tells it nothing.
      */
     fun anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack() {
         ui.openLibrary()
@@ -412,32 +446,175 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
         assertTrue(proxy.since(mark).any { it.endpoint in EPOCH_READS && it.answered && it.status == 0 },
             "control: the reconnect's epoch read reached the proxy and was dropped: ${proxy.since(mark)}")
-        assertEquals(false, observed().reachabilityReports.last(), "the reader was told the server is unreachable")
+        assertEquals(listOf(false, true), observed().reachabilityReports.takeLast(2),
+            "the online reader was taken offline, then told the platform's view again")
 
         // Back to the foreground while the server still cannot be reached. The platform reports a
-        // network, so the reader is told so before the reconnect, and the reconnect then tells it
-        // otherwise: a return does not leave the reader with what the previous reconnect told it.
+        // network, so the reader is told so before the reconnect; the reconnect found the reader
+        // offline, so nothing more is told.
         val beforeReturn = observed().reachabilityReports.size
         val answersBeforeReturn = observed().reconnectAnswers
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         await("the second foreground reconnect to be answered") { observed().reconnectAnswers > answersBeforeReturn }
-        assertEquals(listOf(true, false), observed().reachabilityReports.drop(beforeReturn),
-            "a return to the foreground told the reader the platform's view, then the reconnect's")
+        assertEquals(listOf(true), observed().reachabilityReports.drop(beforeReturn),
+            "a return to the foreground told the reader the platform's view, and the failed reconnect nothing")
 
-        // "Try again", from the album's refresh: the reader is told reachable, then reconnects.
-        proxy.drop(null)
+        // "Try again", from the album's refresh, while the server still cannot be reached: the reader
+        // is told reachable once, and reconnects.
         val reports = observed().reachabilityReports.size
+        val answersBeforeTry = observed().reconnectAnswers
         compose.onNodeWithTag("album.refresh").performClick()
-        await("trying again to reconnect") {
-            observed().connections.last() is LibraryConnectionState.Online && last("album:$album").freshness == AndroidLibraryFreshness.Live
-        }
+        await("trying again to be answered") { observed().reconnectAnswers > answersBeforeTry }
         val told = observed().reachabilityReports.drop(reports)
         assertEquals(listOf(true), told, "trying again told the reader the platform's view, once")
+        assertEquals(LibraryConnectionState.Offline(DomainError.Transport.Unreachable), observed().connections.last())
+
+        // The server answers again, and the library comes back: by the reader's own retry, or by the
+        // refresh, whichever comes first.
+        proxy.drop(null)
+        compose.onNodeWithTag("album.refresh").performClick()
+        await("the album live again") {
+            observed().connections.last() is LibraryConnectionState.Online && last("album:$album").freshness == AndroidLibraryFreshness.Live
+        }
         assertNoCredentialLeak()
         println("SHELL OBSERVED $platform unreachable-server offline=${LibraryConnectionState.Offline(DomainError.Transport.Unreachable)} " +
             "told-after-try-again=$told")
     }
+
+    /**
+     * A reconnect whose epoch read fails transiently is retried by the reader itself while the app is
+     * in the foreground (§16.14), and not while it is in the background. Every epoch read's
+     * connection is closed unanswered — the server unreachable while the platform reports a network —
+     * so each attempt shows at the forwarder, and the session's own reconnect count shows that none
+     * of the retries is the session's. Once the server answers again, the reader's retry brings the
+     * library back with no action from the person, and the session follows it online without a
+     * reconnect of its own.
+     */
+    fun aTransientReconnectFailureIsRetriedInTheForegroundOnly() {
+        ui.openLibrary()
+        awaitHomeLive()
+        awaitQuiet()
+        environment.network.lose()
+        await("the library to say offline") {
+            observed().connections.last() is LibraryConnectionState.Offline && HOME.all { last(it).freshness.isOfflineCached() }
+        }
+        awaitQuiet()
+
+        // The network returns and the session's reconnect finds the server unreachable.
+        proxy.drop { it.endpoint == "getScanStatus" }
+        val mark = proxy.size()
+        val reconnects = observed().reconnects
+        val answers = observed().reconnectAnswers
+        environment.network.restore()
+        await("the session's reconnect to find the server unreachable") {
+            observed().reconnectAnswers > answers &&
+                observed().connections.last() == LibraryConnectionState.Offline(DomainError.Transport.Unreachable)
+        }
+        assertEquals(true, observed().reachabilityReports.last(), "the reader is left told the platform's view")
+        val sessionReads = scanStatusReads(mark)
+        assertTrue(sessionReads >= 1, "control: the session's reconnect read the epoch: ${proxy.since(mark)}")
+
+        // In the foreground the reader tries again by itself: at least twice.
+        await("the reader to retry by itself") { scanStatusReads(mark) >= sessionReads + 2 }
+        assertEquals(reconnects + 1, observed().reconnects, "the session started one reconnect; the retries are the reader's")
+        assertTrue(HOME.all { last(it).freshness.isOfflineCached() }, "a failure the reader retries says offline")
+        assertTrue(proxy.since(mark).filter { it.endpoint == "getScanStatus" }.all { it.status == 0 },
+            "control: every epoch read was dropped: ${proxy.since(mark)}")
+        val foregroundRetries = scanStatusReads(mark) - sessionReads
+
+        // In the background it stops: nothing for longer than the next wait. (The session is read
+        // through the screen, so its counts are taken while the activity is started.)
+        val returnAnswers = observed().reconnectAnswers
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        awaitQuiet(composed = false)
+        val backgroundMark = proxy.size()
+        idleRealTime(BACKGROUND_RETRY_WATCH_MILLIS)
+        assertEquals(emptyList(), readerRequests(backgroundMark).map { it.endpoint }, "no retry in the background")
+
+        // Back in the foreground, still unreachable: the session's reconnect fails again, and the
+        // reader's retry — its wait reset by the return — succeeds once the server answers.
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        await("the return's reconnect to find the server unreachable") {
+            observed().reconnectAnswers > returnAnswers &&
+                observed().connections.last() == LibraryConnectionState.Offline(DomainError.Transport.Unreachable)
+        }
+        val reconnectsBeforeRecovery = observed().reconnects
+        val recoveryMark = proxy.size()
+        proxy.drop(null)
+        await("the reader's own retry to bring the library back") {
+            observed().connections.last() is LibraryConnectionState.Online && HOME.all { last(it).freshness == AndroidLibraryFreshness.Live }
+        }
+        assertTrue(proxy.since(recoveryMark).any { it.endpoint == "getScanStatus" && it.status == 200 },
+            "control: an epoch read was answered: ${proxy.since(recoveryMark)}")
+        assertEquals(reconnectsBeforeRecovery, observed().reconnects,
+            "the session followed the reader's own retry online without a reconnect of its own")
+        assertNoCredentialLeak()
+        println("SHELL OBSERVED $platform transient-retry session-reconnects=1 foreground-retries=$foregroundRetries " +
+            "background-requests=0 background-watch-ms=$BACKGROUND_RETRY_WATCH_MILLIS " +
+            "recovered-by-reader-retry=true session-reconnects-on-recovery=0")
+    }
+
+    /**
+     * A reconnect that found the server unreachable with the reader online takes the reader offline
+     * with an unreachable report, and in the foreground tells it the platform's view again, which
+     * starts a read. When that answer arrives after the app has left the foreground, the session
+     * tells the reader only that the server is unreachable: nothing is read in the background, and
+     * the return to the foreground tells the platform's view once.
+     */
+    fun anUnreachableAnswerArrivingInTheBackgroundStartsNoRead() {
+        ui.openLibrary()
+        awaitHomeLive()
+        awaitQuiet()
+
+        // Leave the foreground, then come back with the return's epoch read held, and later dropped.
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        awaitQuiet(composed = false)
+        proxy.hold { it.endpoint == "getScanStatus" }
+        proxy.drop { it.endpoint == "getScanStatus" }
+        val mark = proxy.size()
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        await("the return's epoch read to be issued, and held") {
+            proxy.since(mark).any { it.endpoint == "getScanStatus" && !it.answered }
+        }
+        val reports = observed().reachabilityReports.size
+        val answers = observed().reconnectAnswers
+        assertIs<LibraryConnectionState.Connecting>(observed().connections.last(), "setup: the return's reconnect is running")
+
+        // The app leaves the foreground, and only then is the read answered: its connection closes.
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        shadowOf(Looper.getMainLooper()).idle()
+        val releaseMark = proxy.size()
+        proxy.release()
+        val dropped = kotlin.time.TimeSource.Monotonic.markNow()
+        while (proxy.since(mark).any { it.endpoint == "getScanStatus" && !it.answered }) {
+            check(dropped.elapsedNow().inWholeMilliseconds < WAIT_MILLIS) { "the held read was never answered: ${proxy.since(mark)}" }
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(20)
+        }
+        idleRealTime(BACKGROUND_ANSWER_WATCH_MILLIS)
+        assertEquals(emptyList(), readerRequests(releaseMark).map { it.endpoint }, "nothing is read in the background")
+
+        // Back in the foreground: the answer reached the session while it was stopped — the
+        // unreachable report it made then is the marker — and the return tells the platform's view once.
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        await("the second return's reconnect to find the server unreachable") {
+            observed().reconnectAnswers >= answers + 2 &&
+                observed().connections.last() == LibraryConnectionState.Offline(DomainError.Transport.Unreachable)
+        }
+        val told = observed().reachabilityReports.drop(reports)
+        assertEquals(listOf(false, true), told,
+            "the background answer told unreachable only; the return told the platform's view once")
+        proxy.drop(null)
+        await("the library back online") {
+            observed().connections.last() is LibraryConnectionState.Online && HOME.all { last(it).freshness == AndroidLibraryFreshness.Live }
+        }
+        assertNoCredentialLeak()
+        println("SHELL OBSERVED $platform background-unreachable-answer told=$told background-requests=0 " +
+            "background-watch-ms=$BACKGROUND_ANSWER_WATCH_MILLIS")
+    }
+
+    private fun scanStatusReads(mark: Int) = proxy.since(mark).count { it.endpoint == "getScanStatus" }
 
     /**
      * A playable track selected on an album screen plays the album from that track (§14.1): the
@@ -761,6 +938,19 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         /** Seen in the home row, never opened, and never read by CONF-76's offline leg. */
         const val GRID_ONLY_ALBUM = "Paging Atlas"
         const val CADENCE_MILLIS = 400L
+
+        /**
+         * Longer than the reader's next retry wait after two retries (8 s: 2 s doubling, ASSUMED
+         * figures, §16.14), so a retry the background failed to stop would land inside it.
+         */
+        const val BACKGROUND_RETRY_WATCH_MILLIS = 12_000L
+
+        /**
+         * Watched from the held read's close, not from the session handling the answer: long enough
+         * for a read started at once by that answer to show. The reports assertion after it does not
+         * depend on this length.
+         */
+        const val BACKGROUND_ANSWER_WATCH_MILLIS = 3_000L
         const val UNAVAILABLE_ALBUM_COPY = "You haven't opened this album on this device. Connect to your server to see it."
         const val PLAYS_ON_RECONNECT_COPY = "Not downloaded. It'll play when you reconnect."
         const val NOT_AVAILABLE_OFFLINE_COPY = "Not available offline"

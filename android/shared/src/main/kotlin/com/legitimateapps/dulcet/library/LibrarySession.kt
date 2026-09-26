@@ -46,14 +46,23 @@ import kotlinx.coroutines.flow.update
  * **Reachability (§16.14).** The reader has one way back online, its reconnect, and this session never
  * goes around it: the platform's default-network callback reports reachability with
  * [AndroidLibraryReader.setOnline] — whose `true`, while offline, REQUESTS a reconnect rather than
- * flipping any state — and [start] reconnects when the app comes to the foreground with a network. A
- * reconnect whose transport found the server unreachable reports it unreachable, so every screen says
- * offline rather than failing request by request. Any other failure (a timeout, credentials, TLS, the
- * server's own error) is [LibraryConnectionState.Failed]: when it left the reader offline the screens
- * state it with its reason and "Try again"; a reader that was online — a fresh one is — stays online
- * and its screens keep reading. While offline or failed-offline, the next network report, foreground,
- * [retry] or [refresh] tries again. Every callback of this class runs on the main thread, the
- * platform's network callbacks included.
+ * flipping any state — and [start] reconnects when the app comes to the foreground with a network.
+ * **Foreground** is this session's host being started (§16.11): [start] and [stop] tell the reader
+ * on every change, the first included, because a reader starts out told it is in the background and
+ * reads nothing on a timer — neither the epoch cadence nor its reconnect retry — until told otherwise.
+ *
+ * A reconnect that finds the server unreachable leaves the library [LibraryConnectionState.Offline].
+ * The reader then retries by itself while the app is in the foreground and the platform reports a
+ * network (§16.14), so this session does not: it only takes a reader that the failed reconnect left
+ * online (a fresh one is) offline, so every screen says offline rather than failing request by
+ * request. Any other failure (a timeout, credentials, TLS, the server's own error) is
+ * [LibraryConnectionState.Failed]: when it left the reader offline the connection line states it with
+ * "Try again", and the screens say `offline` (a failure the reader retries itself) or the failure (one
+ * it does not); a reader that was online stays online and its screens keep reading. While offline or
+ * failed-offline, the next network report, foreground, [retry] or [refresh] tries again, and live
+ * content arriving meanwhile — the reader's own reconnect succeeded — brings this session back online
+ * with it. Every callback
+ * of this class runs on the main thread, the platform's network callbacks included.
  */
 public class LibrarySession internal constructor(
     private val reader: AndroidLibraryReader,
@@ -73,9 +82,13 @@ public class LibrarySession internal constructor(
     public val connection: StateFlow<LibraryConnectionState> = connectionState.asStateFlow()
 
     private fun setConnection(state: LibraryConnectionState) {
+        if (state is LibraryConnectionState.Online) serverReportsNoEpoch = state.serverReportsNoEpoch
         connectionState.value = state
         observationState.update { it.copy(connections = (it.connections + state).takeLast(MAX_FRAMES)) }
     }
+
+    /** What the last successful reconnect said of the server's scan stamp; the self-heal reuses it. */
+    private var serverReportsNoEpoch = false
 
     private val latestOutcomes = MutableStateFlow<Map<AndroidLibraryEntity, AndroidLibraryChangeOutcome>>(emptyMap())
 
@@ -219,18 +232,22 @@ public class LibrarySession internal constructor(
     public fun start() {
         if (closed || started) return
         started = true
-        reader.setForeground(true)
         defaultNetwork = runCatching { connectivity?.activeNetwork }.getOrNull()
         registerNetworkCallback()
-        if (networkAvailable()) {
+        val network = networkAvailable()
+        if (network) {
             reportConstraint()
-            // The platform's view, told again: the process's reader outlives sessions, and a
-            // reconnect never changes what it was last told (§16.14).
+            // The platform's view, told again: the process's reader outlives sessions, and nothing
+            // reported a change while this session was stopped.
             tell(true)
-            reconnect()
         } else {
             report(false)
         }
+        // After the reachability, so a reader still told reachable from before is not sent to
+        // reconnect with no network. In the foreground, offline and told reachable, the reader
+        // starts a reconnect itself (§16.14); the one below joins it, for its outcome.
+        reader.setForeground(true)
+        if (network) reconnect()
     }
 
     /** The app left the foreground: nothing reads the epoch in the background (§16.11). */
@@ -244,8 +261,8 @@ public class LibrarySession internal constructor(
     /**
      * "Try again": a reconnect, the only way back online. With no network at all there is nothing to
      * try — the reader is not told the server is reachable when the platform says nothing is. With
-     * one, the reader is told so first: a reconnect that found the server unreachable told it
-     * otherwise ([reconnected]), and a reconnect never changes what the reader was last told.
+     * one, the reader is told so first, the platform's view, so the reconnect never depends on what
+     * it was told before; a reconnect never changes that itself.
      */
     public fun retry() {
         if (closed) return
@@ -351,8 +368,8 @@ public class LibrarySession internal constructor(
 
     /**
      * What the reader is told the server's reachability is. The core keeps only the latest thing it
-     * was told (§16.14): it never changes it itself, and it retries a reconnect that failed on its
-     * own side only while that says reachable.
+     * was told (§16.14) and never changes it itself; it retries a reconnect that failed transiently
+     * only while that says reachable and the app is in the foreground.
      */
     private fun tell(reachable: Boolean) {
         observationState.update { it.copy(reachabilityReports = it.reachabilityReports + reachable) }
@@ -394,9 +411,19 @@ public class LibrarySession internal constructor(
             outcome.epochRead -> setConnection(LibraryConnectionState.Online(outcome.serverReportsNoEpoch))
             outcome.error.meansUnreachable() -> when {
                 // Nothing changed while it ran: the server cannot be reached, and every screen says so.
+                // A reader the reconnect found offline stays offline and retries by itself, in the
+                // foreground, while told reachable (§16.14). One that was online stays online, its
+                // screens each failing; an unreachable report is the one way to take it offline, and
+                // the platform's view is then told again, which requests a reconnect — one epoch read
+                // at once — that the reader goes on retrying by itself. Only in the foreground with a
+                // network: an answer arriving after stop() must not start a read in the background,
+                // and start() tells the platform's view again on return.
                 generation == reachabilityGeneration -> {
                     setConnection(LibraryConnectionState.Offline(outcome.error))
-                    tell(false)
+                    if (outcome.readerOnline) {
+                        tell(false)
+                        if (started && networkAvailable()) tell(true)
+                    }
                 }
                 // A new network arrived while it ran: that network is tried once.
                 else -> reconnect()
@@ -412,17 +439,24 @@ public class LibrarySession internal constructor(
         val window = open { publication ->
             surface.deliver(publication)
             // Live content means the reader is reading again while this session still says it
-            // reads nothing: its setup, which had failed, succeeded at a later call; the core's own
-            // retry of a reconnect that failed on its side succeeded (§16.14), which no outcome
-            // reports here; or another session's reconnect succeeded. The failure shown is stale.
-            // In the foreground, a reconnect settles it, with the flush and the epoch read a fresh
-            // reader has not had. After the core's own retry that is one sequence more than needed
-            // (the epoch read and the visible screen again), because the facade cannot tell the two
-            // apart. In the background nothing is read (§16.11), and start() reconnects on return.
-            val state = connectionState.value
-            if (started && publication.freshness == AndroidLibraryFreshness.Live &&
-                state is LibraryConnectionState.Failed && state.readerOffline) {
-                reconnect()
+            // reads nothing. A screen says `live` only once a reconnect has run every step (§16.14).
+            // - Offline: the reader's own reconnect brought it back — its retry, or the one an
+            //   unreachable-then-reachable report starts — which no outcome reports here. That
+            //   reconnect ran the whole sequence, so the session only follows it online, with the
+            //   scan-stamp statement of its last successful reconnect. It starts no reconnect of its
+            //   own, so a server alternating between answering and not cannot drive a loop here.
+            // - Failed with the reader offline: its setup, which had failed, succeeded at a later
+            //   call, or the reader's own retry of a transient failure succeeded. A reconnect settles
+            //   it, with the flush and the epoch read a fresh reader has not had; after the reader's
+            //   own retry that is one sequence more than needed (the epoch read, and the visible
+            //   screen if it is due), because the facade cannot tell the two apart.
+            // In the background nothing is read (§16.11), and start() reconnects on return.
+            if (started && publication.freshness == AndroidLibraryFreshness.Live) {
+                when (val state = connectionState.value) {
+                    is LibraryConnectionState.Offline -> setConnection(LibraryConnectionState.Online(serverReportsNoEpoch))
+                    is LibraryConnectionState.Failed -> if (state.readerOffline) reconnect()
+                    else -> Unit
+                }
             }
             observationState.update { current ->
                 val frames = current.surfaces[key].orEmpty() + LibraryFrame.of(publication)
@@ -500,7 +534,7 @@ public sealed interface LibraryConnectionState {
      * The epoch could not be read for another reason (a timeout, credentials, TLS, the server's own
      * failure; null for the device's own, including a setup that failed). [readerOffline] when the
      * reader reads nothing after it — it was offline, and only an epoch read brings it back (§16.14),
-     * or its setup failed — which is when the screens say so, with this reason.
+     * or its setup failed — which is when the connection line states this reason.
      */
     public data class Failed(val error: DomainError?, val readerOffline: Boolean) : LibraryConnectionState
 
@@ -523,8 +557,8 @@ public data class LibraryObservationState(
     val surfaces: Map<String, List<LibraryFrame>> = emptyMap(),
     /**
      * Every reachability the session told the reader, in order: the platform's reports, and the
-     * session's own — unreachable after a reconnect found the server so, reachable again before a
-     * reconnect it starts with a network.
+     * session's own — reachable again before a reconnect it starts with a network, and unreachable
+     * then reachable when a reconnect found the server unreachable while the reader was online.
      */
     val reachabilityReports: List<Boolean> = emptyList(),
     val reconnects: Int = 0,

@@ -79,5 +79,11 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     @Test fun anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack() =
         scenarios.anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack()
 
+    @Test fun aTransientReconnectFailureIsRetriedInTheForegroundOnly() =
+        scenarios.aTransientReconnectFailureIsRetriedInTheForegroundOnly()
+
+    @Test fun anUnreachableAnswerArrivingInTheBackgroundStartsNoRead() =
+        scenarios.anUnreachableAnswerArrivingInTheBackgroundStartsNoRead()
+
     @Test fun aTrackTappedPlaysTheAlbumFromThatTrack() = scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {}
 }

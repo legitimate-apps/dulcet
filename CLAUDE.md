@@ -464,7 +464,10 @@ They are deliberately not reproduced in this repository.**
     thread idle. It is timing-dependent, so it reads as a flake: 2 of 8 album-play runs passed.
     Idle the main looper inside such a condition (`shadowOf(Looper.getMainLooper()).idle()`), as a
     device's always runs: 8 of 8. The reader's publications also arrive by the main looper; its
-    waits work only because they read the screen through finders (spec §28 revision 104 item 34).
+    waits work only because they read the screen through finders (spec §28 revision 104 item 35).
+    ➡️ The converse trap: a finder on an activity moved to `CREATED` fails at once with "No compose
+    hierarchies found", not with the state you wanted. Take any counts read through the screen
+    before stopping the activity; while stopped, count at the forwarder and idle the looper directly.
 
 ## Review and delegation
 

@@ -59,6 +59,17 @@ import kotlinx.coroutines.withTimeoutOrNull
  * requests one, a reconnect already running is joined, and nothing is read before its outbox flush
  * and epoch read. The shell never flips the reader online itself.
  *
+ * **Foreground.** Call [setForeground] on every change, the first included: a reader starts out told
+ * the app is in the background, and nothing reads on a timer — the epoch cadence, or the automatic
+ * retry of a reconnect whose epoch read failed transiently — until it is told otherwise (§16.11,
+ * §16.14). A return to the foreground while offline and told reachable starts a reconnect.
+ *
+ * **A reconnect the reader starts itself** — its retry, its return to the foreground, a reachable
+ * report while offline — completes to no caller: a shell learns of it only from what its screens
+ * publish. A failure no timer retries (credentials, security, an unrecognised server, the reader's
+ * own) is then stated by every screen in place of `offline`, until a report, a return to the
+ * foreground or a reconnect settles it.
+ *
  * **Credentials** reach only the transport. Nothing published here has a field that can carry a URL,
  * a query string or server error text.
  *
@@ -122,8 +133,15 @@ public class AndroidLibraryReader internal constructor(
 
     private var composition: AndroidLibraryReaderComposition? = null
 
-    // What the platform last reported, applied again to a session built after a failed setup.
+    /**
+     * The app's foreground state as last reported, and so as known whenever the session is built
+     * ([compose] applies it, and again to a session built after a failed setup). Background until a
+     * shell reports otherwise: the process's facade is usually built while its first host is still
+     * being created, before that host has started.
+     */
     private var reportedForeground = false
+
+    // What the platform last reported, applied again to a session built after a failed setup.
     private var reportedReachable: Boolean? = null
     private var reportedConstrained = false
 
@@ -379,7 +397,13 @@ public class AndroidLibraryReader internal constructor(
         }
     }
 
-    /** Foreground transitions: the epoch cadence while in the foreground is core policy (§16.11). */
+    /**
+     * Foreground transitions; call it on every change, the first included — nothing reads on a timer
+     * until the app is reported in the foreground. The epoch cadence and a reconnect's automatic
+     * retry run only in the foreground (core policy, §16.11 and §16.14), and a return to the
+     * foreground while offline and reported reachable starts a reconnect. A report made before the
+     * reader is built is applied when it is built.
+     */
     public fun setForeground(foreground: Boolean) {
         onReader {
             reportedForeground = foreground
