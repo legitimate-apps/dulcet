@@ -302,6 +302,25 @@ VALIDATIONS = [
      "DulcetKit_DulcetKit.bundle/settings.plist contains DulcetPreconfiguredServer"),
     ("iOS DEV with the server key, which DEV may carry", "ios", "dev", IOS_PROD,
      {"Dulcet": b"DulcetPreconfiguredServer"}, 0, ""),
+    # Round 3: any address in a PROD bundle names an allowlisted host, whatever the file and encoding.
+    ("iOS PROD with a resource naming a server under another name", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"bin", "endpoint.json": b'{"url":"https://music.home.arpa:4533"}'}, 1,
+     "Dulcet.app/endpoint.json contains addresses on hosts ['music.home.arpa'], which are not allowlisted"),
+    ("iOS PROD with a UTF-16 address in its binary (a Kotlin string)", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\xcf\xfa\xed\xfe" + "http://192.168.1.20:4533/rest".encode("utf-16-le")}, 1,
+     "Dulcet.app/Dulcet contains addresses on hosts ['192.168.1.20']"),
+    ("iOS PROD with a big-endian UTF-16 address in a nested bundle", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"bin", "DulcetKit_DulcetKit.bundle/x.strings": "\ufeffHTTPS://Srv.Home.Arpa/".encode("utf-16-be")}, 1,
+     "hosts ['srv.home.arpa']"),
+    ("iOS PROD with credentials before the host", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"https://user:secret@music.home.arpa/"}, 1, "hosts ['user']"),
+    ("iOS PROD with only the allowlisted addresses a Release build carries", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"Enter the full http:// or https:// address.\0https://music.example.com\0https://support.apple.com/x\0"
+                + "http://127\\.0\\.0\\.1:[1-9]".encode("utf-16-le") + "https://ktor.io/docs/faq.html".encode("utf-16-le"),
+      "PrivacyInfo.xcprivacy": b'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'},
+     0, ""),
+    ("iOS DEV with a server address, which DEV may carry", "ios", "dev", IOS_PROD,
+     {"Dulcet": b"https://music.home.arpa:4533"}, 0, ""),
 ]
 for label, platform, channel, info, files, code_expected, reason in VALIDATIONS:
     result = run_validator(platform, channel, info, files)
@@ -418,6 +437,100 @@ def pbx_extra_prod_resource(root: Path) -> None:
     start = text.index(f"\t\t{phase} /* Resources */ = {{")
     at = text.index("files = (\n", start) + len("files = (\n")
     path.write_text(text[:at] + f"\t\t\t\t{build_file},\n" + text[at:])
+PBXPROJ = "apple/Dulcet.xcodeproj/project.pbxproj"
+IOS_RELEASE_SCHEME = "apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetiOSRelease.xcscheme"
+KOTLIN_SCRIPT = "tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n"
+KOTLIN_SCRIPT_PBX = "tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\\n"
+
+
+def edit_all(relative: str, old: str, new: str):
+    """Every occurrence: a script phase every target shares is edited in all nine places at once."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text()
+        if old not in text:
+            raise SystemExit(f"mutation anchor missing in {relative}: {old!r}")
+        path.write_text(text.replace(old, new))
+    return apply
+
+
+def native_target(text: str, name: str) -> tuple[str, dict]:
+    objects = policy.parse_pbxproj(text)["objects"]
+    return next((key, item) for key, item in objects.items()
+                if item.get("isa") == "PBXNativeTarget" and item["name"] == name)
+
+
+def pbx_synchronized_group(targets: tuple[str, ...], dev_only_exception: bool = False):
+    """A synchronized folder of endpoint files attached to `targets`, optionally with a membership
+    exception that removes its file from DulcetiOS only -- so PROD alone compiles it in."""
+    def apply(root: Path) -> None:
+        path = root / PBXPROJ
+        text = path.read_text()
+        group, exception = "5EED0000000000000000000A", "5EED0000000000000000000B"
+        exceptions = ""
+        if dev_only_exception:
+            dev_id, _ = native_target(text, "DulcetiOS")
+            exceptions = f" exceptions = ({exception}, );"
+            text = text.replace("/* Begin PBXGroup section */",
+                                f"/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */\n\t\t{exception} = "
+                                f"{{isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = (endpoint.txt, ); "
+                                f"target = {dev_id}; }};\n/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */\n\n"
+                                "/* Begin PBXGroup section */", 1)
+        text = text.replace("/* Begin PBXGroup section */",
+                            f"/* Begin PBXFileSystemSynchronizedRootGroup section */\n\t\t{group} = {{isa = "
+                            f"PBXFileSystemSynchronizedRootGroup;{exceptions} path = DulcetEndpoint; sourceTree = \"<group>\"; }};\n"
+                            "/* End PBXFileSystemSynchronizedRootGroup section */\n\n/* Begin PBXGroup section */", 1)
+        for name in targets:
+            identifier, _ = native_target(text, name)
+            anchor = f"\t\t{identifier} /* {name} */ = {{\n\t\t\tisa = PBXNativeTarget;\n"
+            text = text.replace(anchor, anchor + f"\t\t\tfileSystemSynchronizedGroups = (\n\t\t\t\t{group},\n\t\t\t);\n", 1)
+        path.write_text(text)
+        (root / "apple/DulcetEndpoint").mkdir()
+        (root / "apple/DulcetEndpoint/endpoint.txt").write_text("https://srv.invalid\n")
+    return apply
+
+
+def pbx_target_key(name: str, line: str):
+    def apply(root: Path) -> None:
+        path = root / PBXPROJ
+        text = path.read_text()
+        identifier, _ = native_target(text, name)
+        anchor = f"\t\t{identifier} /* {name} */ = {{\n\t\t\tisa = PBXNativeTarget;\n"
+        path.write_text(text.replace(anchor, anchor + f"\t\t\t{line}\n", 1))
+    return apply
+
+
+def pbx_package_repointed(root: Path) -> None:
+    """PROD's DulcetKit product re-pointed at another local package exporting the same product name."""
+    path = root / PBXPROJ
+    text = path.read_text()
+    _, target = native_target(text, "DulcetiOSRelease")
+    product = target["packageProductDependencies"][0]
+    anchor = f"\t\t{product} /* DulcetKit */ = {{\n\t\t\tisa = XCSwiftPackageProductDependency;\n"
+    reference = "5EED0000000000000000000C"
+    text = text.replace(anchor, anchor + f"\t\t\tpackage = {reference};\n", 1)
+    text = text.replace("/* End XCLocalSwiftPackageReference section */",
+                        f"\t\t{reference} = {{\n\t\t\tisa = XCLocalSwiftPackageReference;\n\t\t\trelativePath = DulcetKitProd;\n"
+                        "\t\t};\n/* End XCLocalSwiftPackageReference section */", 1)
+    path.write_text(text)
+
+
+def pbx_duplicate_object(root: Path) -> None:
+    """A well-formed second copy of iOS PROD's Release configuration, with the same object id, placed
+    first and carrying a compile condition. Which copy Xcode keeps is not this policy's to guess."""
+    path = root / PBXPROJ
+    text = path.read_text()
+    objects = policy.parse_pbxproj(text)["objects"]
+    _, target = native_target(text, "DulcetiOSRelease")
+    identifier = next(item for item in objects[target["buildConfigurationList"]]["buildConfigurations"]
+                      if objects[item]["name"] == "Release")
+    start = text.index(f"\t\t{identifier} /* Release */ = {{")
+    end = text.index("\n\t\t};\n", start) + len("\n\t\t};\n")
+    original = text[start:end]
+    evil = original.replace("buildSettings = {\n", "buildSettings = {\n\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = X;\n", 1)
+    path.write_text(text[:start] + evil + original + text[end:])
+
+
 MUTATIONS = [
     ("a pull_request trigger", edit(WORKFLOW, "on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
      "workflow_dispatch only"),
@@ -435,7 +548,7 @@ MUTATIONS = [
     ("an unknown secret", edit(WORKFLOW, "secrets.DULCET_ASC_KEY_ID }}", "secrets.DULCET_ASC_KEY_IDX }}"),
      "does not hold"),
     ("a server setting passed to the build", edit(WORKFLOW, "          RELEASE_BUILD_NUMBER:", "          DULCET_DEV_SERVER_URL: x\n          RELEASE_BUILD_NUMBER:"),
-     "passes a server, URL or plist setting"),
+     "sets environment variable DULCET_DEV_SERVER_URL, which is not allowlisted"),
     ("another workflow reading a release secret", edit(".github/workflows/core-ci.yml", "jobs:\n", "env:\n  LEAK: ${{ secrets.DULCET_CI_SIGNING_P12_BASE64 }}\njobs:\n"),
      "only release.yml may read the release secrets"),
     ("a server setting on the PROD target", edit("apple/project.yml", PROD_ANCHOR,
@@ -584,11 +697,111 @@ MUTATIONS = [
      "DulcetiOSRelease info.properties declares DulcetHome"),
     ("an archive that skips the bundle validator", edit("tools/release/archive-and-export", "/usr/bin/python3 tools/release/validate-app-bundle", "true tools/release/validate-app-bundle"),
      "must run tools/release/validate-app-bundle"),
+    # Round 3: hand edits to generated files. tools/verify_xcodegen_regeneration refuses the whole class
+    # in apple-ci; each route is also refused here by name, on Linux, with its own rule.
+    ("a pre-action on the iOS PROD scheme", edit(IOS_RELEASE_SCHEME, "      <BuildActionEntries>",
+                                                  '      <PreActions>\n         <ExecutionAction ActionType = "Xcode.IDEStandardExecutionActionsCore.'
+                                                  'ExecutionActionType.ShellScriptAction">\n            <ActionContent title = "x" scriptText = '
+                                                  '"echo https://srv.invalid &gt; e">\n            </ActionContent>\n         </ExecutionAction>\n'
+                                                  "      </PreActions>\n      <BuildActionEntries>"),
+     "DulcetiOSRelease.xcscheme: has PreActions; a scheme action runs a shell script inside the PROD build"),
+    ("a post-action on the macOS PROD scheme", edit("apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetMacRelease.xcscheme",
+                                                    "   </BuildAction>", "      <PostActions>\n      </PostActions>\n   </BuildAction>"),
+     "DulcetMacRelease.xcscheme: has PostActions"),
+    ("scheme environment variables on the iOS PROD scheme", edit(IOS_RELEASE_SCHEME, "   </LaunchAction>",
+                                                                 "      <EnvironmentVariables>\n      </EnvironmentVariables>\n   </LaunchAction>"),
+     "element EnvironmentVariables is not one XcodeGen writes for a PROD scheme [allowlist: SCHEME_ELEMENTS"),
+    ("a synchronized folder on the iOS PROD target only", pbx_synchronized_group(("DulcetiOSRelease",)),
+     "DulcetiOSRelease must build exactly DulcetiOS's files, script phases, packages and dependencies; their synchronized folders differ"),
+    ("a shared synchronized folder whose file only DEV excludes", pbx_synchronized_group(("DulcetiOS", "DulcetiOSRelease"), dev_only_exception=True),
+     "their synchronized folders differ"),
+    ("an unknown key on the iOS PROD target", pbx_target_key("DulcetiOSRelease", "packageReferences = ();"),
+     "carries packageReferences, which XcodeGen does not write for it and this policy does not compare [allowlist: TARGET_OBJECT_KEYS"),
+    ("PROD's package product re-pointed at another package of the same product name", pbx_package_repointed,
+     "their packages (by location and requirement, not product name) differ"),
+    ("a duplicated object id in the committed project", pbx_duplicate_object, "unreadable: duplicate key"),
+    ("a committed project whose braces do not balance", edit(PBXPROJ, "\trootObject = ", "\t{rootObject = "),
+     "unreadable: the file ends inside an open { or ( -- truncated, or braces that do not balance"),
+    ("a truncated committed project", lambda root: (root / PBXPROJ).write_text((root / PBXPROJ).read_text()[:-40]),
+     "the file ends inside an open { or ("),
+    # Round 3: scripts every target runs, which could branch on the channel.
+    ("a shared script branching on the bundle identifier", both(
+        edit_all("apple/project.yml", KOTLIN_SCRIPT, KOTLIN_SCRIPT + '          [ "$PRODUCT_BUNDLE_IDENTIFIER" = x ] && echo https://srv.invalid > e\n'),
+        edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + '[ \\"$PRODUCT_BUNDLE_IDENTIFIER\\" = x ] && echo https://srv.invalid > e\\n')),
+     "reads a channel-distinguishing variable $PRODUCT_BUNDLE_IDENTIFIER"),
+    ("a shared script branching on the configuration (project.yml only)",
+     edit_all("apple/project.yml", KOTLIN_SCRIPT, KOTLIN_SCRIPT + '          case "${CONFIGURATION}" in Release) echo x;; esac\n'),
+     "apple/project.yml:74 script: reads a channel-distinguishing variable $CONFIGURATION"),
+    ("a shared script reading the target name (committed project only)",
+     edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + 'echo $(TARGET_NAME)\\n'),
+     "reads a channel-distinguishing variable $TARGET_NAME"),
+    ("a shared script reading a plist setting", edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + 'echo $INFOPLIST_KEY_CFBundleDisplayName\\n'),
+     "reads a channel-distinguishing variable $INFOPLIST_KEY_CFBundleDisplayName"),
+    ("a shared script copying a value from the build machine's environment",
+     edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + 'printf %s \\"${DULCET_LOCAL_ENDPOINT:-}\\" > e\\n'),
+     "reads a channel-distinguishing variable $DULCET_LOCAL_ENDPOINT"),
+    ("a shared script reading an unlisted neutral variable", edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + 'cp x \\"$TARGET_BUILD_DIR\\"\\n'),
+     "reads a variable $TARGET_BUILD_DIR; a script every target runs could use it to write something into PROD alone (spec §22.3) "
+     "[allowlist: SCRIPT_VARIABLES"),
+    ("a shared script dumping the environment", edit_all(PBXPROJ, KOTLIN_SCRIPT_PBX, KOTLIN_SCRIPT_PBX + 'printenv > e\\n'),
+     "reads the whole environment (printenv)"),
+    ("a script phase's output path naming the product", edit(PBXPROJ, "\t\t\toutputPaths = (\n", "\t\t\toutputPaths = (\n\t\t\t\t\"$(PRODUCT_NAME).txt\",\n"),
+     "reads a channel-distinguishing variable $PRODUCT_NAME"),
+    ("a script phase run by another interpreter", edit(PBXPROJ, "\t\t\tshellPath = /bin/sh;\n", "\t\t\tshellPath = /usr/bin/python3;\n"),
+     "shellPath must be /bin/sh"),
+    # Round 3: the environment release.yml hands the archive.
+    ("a release.yml variable from a repository variable", edit(WORKFLOW, "          RELEASE_BUILD_NUMBER:",
+                                                                "          DULCET_LOCAL_ENDPOINT: ${{ vars.DULCET_LOCAL_ENDPOINT }}\n          RELEASE_BUILD_NUMBER:"),
+     "sets environment variable DULCET_LOCAL_ENDPOINT, which is not allowlisted; the environment reaches the archive and every "
+     "script phase [allowlist: RELEASE_ENV in tools/verify_release_policy.py; adding to it is a spec §22.3 decision"),
+    ("a release.yml job-level variable", edit(WORKFLOW, "      TZ: UTC\n", "      TZ: UTC\n      DULCET_HOME: music.invalid\n"),
+     "sets environment variable DULCET_HOME, which is not allowlisted"),
+    ("a release.yml export of an unlisted name", edit(WORKFLOW, '          export RELEASE_ROOT="$RUNNER_TEMP/release"\n',
+                                                      '          export RELEASE_ROOT="$RUNNER_TEMP/release"\n          export DULCET_HOME=x\n'),
+     "sets environment variable DULCET_HOME, which is not allowlisted"),
+    ("a release.yml write to $GITHUB_ENV", edit(WORKFLOW, '          export RELEASE_ROOT="$RUNNER_TEMP/release"\n',
+                                                '          export RELEASE_ROOT="$RUNNER_TEMP/release"\n          echo "X=y" >> "$GITHUB_ENV"\n'),
+     "uses $GITHUB_ENV"),
+    ("a release.yml repository variable anywhere", edit(WORKFLOW, "RELEASE_SCHEME: ${{ steps.plan.outputs.scheme }}", "RELEASE_SCHEME: ${{ vars.SCHEME }}"),
+     "uses a repository variable (vars.)"),
+    # Round 3: what the project.yml reader cannot read fails closed, with a message.
+    ("a conditional setting key in project.yml", edit("apple/project.yml", IOS_PROD_ANCHOR, IOS_PROD_ANCHOR + "        OTHER_SWIFT_FLAGS[sdk=iphoneos*]: -DX\n"),
+     "key 'OTHER_SWIFT_FLAGS[sdk=iphoneos*]' is not one this policy can read"),
+    ("a project.yml that is not text", lambda root: (root / "apple/project.yml").write_bytes(b"\xff\xfe\x00name: Dulcet\n"),
+     "the release policy could not read this repository (UnicodeDecodeError"),
+    # Round 3: a generated plist key maps to the key Xcode writes, and the refusal says what to do.
+    ("DEV iOS generating a scene manifest PROD's plist lacks", both(
+        edit("apple/project.yml", DEV_IOS_RELEASE, DEV_IOS_RELEASE + "          INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES\n"),
+        pbx("DulcetiOS", "Release", add_setting("INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;"))),
+     "Info.plist UIApplicationSceneManifest: DulcetiOS and DulcetiOSRelease must declare it identically (apple/DulcetiOSRelease/Info.plist "
+     "lacks it; INFOPLIST_KEY_UIApplicationSceneManifest_Generation makes Xcode generate UIApplicationSceneManifest, whose content a "
+     "hand-written PROD plist cannot be compared with, so declare UIApplicationSceneManifest explicitly in both plists instead)"),
 ]
+FOOTER = "violation(s) of spec §22.3/§22.6 (PROD must be unable to carry a server). The rules and every allowlist live in tools/verify_release_policy.py"
 for label, mutate, reason in MUTATIONS:
     result = run_policy(mutate)
     expect(result.returncode == 1 and reason in result.stderr,
            f"release policy must reject {label} ({reason!r}); rc={result.returncode} stderr={result.stderr!r}")
+    # A refusal with no remedy invites a workaround: every one names where the rules live and §22.3.
+    expect(FOOTER in result.stderr, f"release policy's refusal of {label} must name its remedy; stderr={result.stderr!r}")
+# Every allowlist refusal names its constant, where it lives, and that extending it is a §22.3 decision.
+for label, mutation, constant in [
+    ("a PROD setting whose name does not say server", edit("apple/project.yml", PROD_ANCHOR, PROD_ANCHOR + '        DULCET_HOME: "x"\n'),
+     "PROD_TARGETS['DulcetMacRelease']['settings']"),
+    ("a project-level setting", edit("apple/project.yml", '    MARKETING_VERSION: "0.1.0"\n', '    MARKETING_VERSION: "0.1.0"\n    DEAD_CODE_STRIPPING: YES\n'),
+     "PROJECT_SETTINGS"),
+    ("a test target using postBuildScripts", edit("apple/project.yml", "  DulcetKitIOSTests:\n",
+                                                  "  DulcetExtraTests:\n    type: bundle.unit-test\n    platform: iOS\n    sources:\n      - DulcetKitIOSTests\n"
+                                                  "    postBuildScripts:\n      - name: x\n        script: echo\n  DulcetKitIOSTests:\n"),
+     "TARGET_KEYS"),
+    ("an extra top-level key", edit("apple/project.yml", "packages:\n", "include:\n  - x.yml\npackages:\n"), "TOP_LEVEL_KEYS"),
+    ("an extra PROD plist key", edit(IOS_PLIST, "<dict>\n", "<dict>\n\t<key>DulcetHome</key>\n\t<string>x</string>\n"),
+     "PROD_TARGETS['DulcetiOSRelease']['keys']"),
+]:
+    result = run_policy(mutation)
+    wanted = f"[allowlist: {constant} in tools/verify_release_policy.py; adding to it is a spec §22.3 decision made in review"
+    expect(result.returncode == 1 and wanted in result.stderr,
+           f"the refusal of {label} must name {constant} and §22.3; stderr={result.stderr!r}")
 
 # The sanctioned home for a DEV convenience server (spec §22.6): its DEV-only plist. The parity rule
 # exempts exactly that key, so this must pass, or the rule leaves DEV no place to put one.

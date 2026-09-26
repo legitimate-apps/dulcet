@@ -40,6 +40,13 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Xcode builds the committed project, so a hand edit to it or to a generated scheme or plist
+      # is a route into a PROD build that project.yml never shows (spec §22.3, §22.6). This
+      # regenerates with the pinned, digest-checked XcodeGen and fails on any difference, then
+      # proves it fails on three such edits. Seconds; here because XcodeGen needs macOS.
+      - name: Require every generated Apple project file to be the pinned XcodeGen's output
+        timeout-minutes: 3
+        run: python3 tools/verify_xcodegen_regeneration --self-test
       - name: Require partial promotion conditions to resolve or declare a block
         run: python3 tools/verify_promotion_conditions.py
       - name: Prove account-removal recovery rejects stale cleanup

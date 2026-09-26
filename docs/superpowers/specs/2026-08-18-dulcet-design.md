@@ -6019,14 +6019,51 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
   shared code, a PROD plist or a build setting. The code that reads it therefore has to live in a
   DEV-only source directory, which the twins rule does not yet admit. Adding the first DEV server is
   a reviewed change to that rule, and none exists today.
-- **The artifact.** `release.yml` may pass no server, URL, `-xcconfig` or `INFOPLIST_KEY_` setting,
-  and the archive may override only the build number. After archiving,
+- **Generated files are generated (revision 112, round 3).** Review showed three PROD-only routes
+  through hand edits to generated files, two of them reaching a real Release build: a scheme
+  pre-action, a synchronized folder attached to the PROD target alone, and a PROD package product
+  re-pointed at another package exporting the same product name. `apple-ci`'s platform leg now runs
+  `tools/verify_xcodegen_regeneration` first: it regenerates `apple/` with the pinned XcodeGen (its
+  release archive checked against a SHA-256 before it runs), fails on any byte of difference in the
+  project, its schemes, its workspace or a plist XcodeGen writes, and fails on a committed file
+  XcodeGen no longer writes. It then proves it fires on three such edits. That closes the class,
+  since none of those states is one XcodeGen emits from an accepted `project.yml`. It is macOS-only,
+  so the policy also refuses each route by name, on Linux: PROD schemes may hold only the elements
+  XcodeGen writes (`SCHEME_ELEMENTS`) and never a pre- or post-action; a twin target may carry only
+  the keys XcodeGen writes (`TARGET_OBJECT_KEYS`); twins must resolve synchronized folders (with the
+  exceptions that apply to each) and package products (by the package's location and requirement,
+  not the product name) to the same things; and a duplicated object id or an unbalanced file is
+  refused by name.
+- **Scripts cannot branch on the channel.** Every script phase, in `project.yml` and in the committed
+  project, may read only the variables in `SCRIPT_VARIABLES` and no command that dumps the
+  environment. A script shared identically by both twins passes the twins rule, so it could otherwise
+  write something into PROD alone by testing the bundle identifier, configuration, product or target
+  name, or a value from the build machine. The shell must be `/bin/sh`. What a script's *invoked*
+  file reads is not followed: `tools/run-gradle-exclusive` runs the Kotlin framework task, which reads
+  `CONFIGURATION`, and DEV and PROD are both archived in Release.
+- **The artifact.** `release.yml` may set only the environment names in `RELEASE_ENV`, by `env:` or
+  `export`, and may not use `$GITHUB_ENV`, `$GITHUB_PATH` or a repository variable (`vars.`), since
+  the environment reaches the archive and every script phase. It may pass no URL, `-xcconfig` or
+  `INFOPLIST_KEY_` setting, and the archive may override only the build number. After archiving,
   `tools/release/validate-app-bundle` holds the built PROD `Info.plist` to its platform's allowlist
   plus the keys Xcode stamps into every build, with no URL-valued entry. It also fails the release if
   any file in the PROD bundle contains the server key, in UTF-8 or UTF-16, whichever route put it
-  there.
+  there, or an `http://` or `https://` address whose host is not in `URL_HOSTS`, in UTF-8 or either
+  UTF-16 byte order. That list was read from every file of Release builds of both PROD targets
+  (OBSERVED 2026-09-26): the bare scheme prefixes in UI copy, `www.apple.com` (plist DTDs),
+  `support.apple.com`, `music.example.com` (a placeholder), `music.example.invalid` and
+  `query.invalid` (reserved names in shared code), `localhost` and `127.0.0.1` (Ktor's default and a
+  loopback pattern), and `ktor.io` and `youtrack.jetbrains.com` (library diagnostics). The scan
+  catches a server that arrived under any name and by any route, as long as it is written out as an
+  address.
+- **Remedies.** Every refusal ends by naming where the rules live and spec §22.3, and every allowlist
+  refusal names its constant and says that extending it is a §22.3 decision made in review. A
+  refusal with no path forward invites a workaround, so none is silent about how to proceed.
+  Anything the policy cannot read — a key it cannot parse, a file that is not text — fails closed
+  with a message rather than being skipped.
 - **Not covered:** a server address compiled into Swift or Kotlin shared by both channels under a name
-  other than the key. No build configuration can exclude that, so it remains a review obligation.
+  other than the key, and assembled at run time rather than written out as an address. No build
+  configuration can exclude that, so it remains a review obligation.
 - **No CI job builds either PROD target (OBSERVED 2026-09-26: neither `DulcetMacRelease` nor
   `DulcetiOSRelease` appears in any workflow).** The first build of a PROD target is the archive step
   of a `release.yml` dispatch, so a change that compiles for DEV and breaks PROD is found only then,
@@ -6506,8 +6543,9 @@ another branch may take the number first, so it may be renumbered at merge.
      bundle containing the server key. The policy requires the archive script to call it.
    - **The preconfigured-server guard is enforced on the committed project, not only on its
      source** (§22.6). The review showed configuration routes that bypassed the old guard, and the
-     bypass reached a Release build. Each route is now refused, and each refusal has a mutation
-     control in `tools/test-release-channel`.
+     bypass reached a Release build. Each route that review listed is now refused, and each refusal
+     has a mutation control in `tools/test-release-channel`. That claim covers the routes tested
+     then; the second review found more, which item 9 records.
    - **DEV/PROD parity covers build settings, not only DEV's partial plist.** Twins must match in
      Release settings, declared Info.plist, entitlements and build membership, except for §22.3's
      list. A DEV iOS build gaining `UIRequiresFullScreen`, building with `-Onone`, or dropping its
@@ -6517,9 +6555,39 @@ another branch may take the number first, so it may be renumbered at merge.
      is proven to fail.
    - **Recorded, not fixed:** no CI job builds a PROD target, so a `release.yml` archive is the first
      PROD build (§22.6).
-   - **Counts:** the release-channel controls went from 25 policy mutations on `main` to 63. The
-     first commit of this revision claimed eight new ones and added ten; review added 28 more. There
-     are also 17 bundle-validation controls and 2 controls that must be accepted.
+   - **Counts:** the release-channel policy mutations went from 25 on `main` to 35 in the first
+     commit of this revision, which claimed eight new ones and added ten, and to 68 after the first
+     review, which added 33. There were also 17 bundle-validation controls and 2 controls that must
+     be accepted. Item 9 gives the counts after the second review.
+9. **Corrections from the second adversarial review of this revision.** Each item below was a route
+   the first round's guard accepted, replayed from the reviewer's probes and now refused.
+   - **Hand edits to generated files.** A PROD scheme pre-action (it ran in a real `xcodebuild` of
+     `DulcetiOSRelease`), a synchronized folder attached to PROD alone (Xcode copied its file into
+     the app), and a PROD package product re-pointed at another package of the same product name
+     were all accepted. That Xcode would then link the other package is ASSUMED; it was not built. `apple-ci` now regenerates the project with the pinned XcodeGen and fails on
+     any difference, which closes the class, and the policy refuses each route by name (§22.6).
+   - **A shared script that branches on the channel.** The twins rule compared script phases for
+     equality, so one script added identically to every target could still write an address into
+     PROD alone by testing `$PRODUCT_BUNDLE_IDENTIFIER`, or copy one from the build machine. Scripts
+     may now read only an allowlist of variables.
+   - **`release.yml`'s environment.** A name that did not say "server", such as
+     `DULCET_LOCAL_ENDPOINT: ${{ vars.X }}`, passed the old denylist. It is now an allowlist, and
+     `$GITHUB_ENV`, `$GITHUB_PATH` and repository variables are refused.
+   - **The artifact scan finds addresses, not only the key.** A PROD bundle carrying an address on
+     a host outside an allowlist read from real Release builds now fails the release (§22.6).
+   - **Refusals name their remedy.** Each names where the rules live and §22.3, and each allowlist
+     refusal names its constant. `INFOPLIST_KEY_UIApplicationSceneManifest_Generation` now maps to
+     the key Xcode writes, `UIApplicationSceneManifest`, where the old message named a key nobody can
+     add. The refusal then says to declare that key in both plists. A duplicated object id and a file
+     whose braces do not balance are named as such, where both used to report `list index out of
+     range`. A `project.yml` key the reader cannot parse, such as a conditional `KEY[sdk=…]`, now
+     fails closed where it was skipped.
+   - **Counts:** 95 policy mutations (27 added, each shown to be accepted by the first round's
+     policy), 23 bundle-validation controls (6 added) and the 2 controls that must be accepted.
+     Five more controls assert that an allowlist refusal names its constant and §22.3, and every
+     rejection is checked for the remedy line. `tools/verify_xcodegen_regeneration --self-test`
+     proves that the regeneration check fails on a scheme pre-action, a hand-added scheme and an
+     edited generated plist.
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it

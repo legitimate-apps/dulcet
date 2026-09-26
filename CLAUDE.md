@@ -99,6 +99,9 @@ python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
 python3 tools/verify_release_policy.py
 python3 tools/test-release-channel
+# macOS only: regenerates apple/ with the pinned XcodeGen and fails on any byte of difference.
+# apple-ci runs it first; `--xcodegen "$(command -v xcodegen)"` skips the download.
+tools/verify_xcodegen_regeneration --self-test
 ```
 
 🚨 **`BUILD SUCCESSFUL` is not evidence that tests ran.** An up-to-date Gradle test task prints it in
@@ -421,6 +424,8 @@ They are deliberately not reproduced in this repository.**
     the old script. Regenerate with `cd apple && xcodegen generate` (version pinned in
     `docs/TOOLCHAIN.md`; 2.46.0 reproduces the committed project byte-for-byte), and note that a
     rebase may textually merge the pbxproj into something XcodeGen would not produce.
+    `tools/verify_xcodegen_regeneration` (first step of apple-ci's platform leg) now fails on
+    exactly that: any generated file that is not the pinned XcodeGen's output, byte for byte.
     `tools/verify_xcode_script_phases.py` (parity-gate, stdlib-only, no Xcode) compares multisets of
     literal script bodies including duplicate counts; it does not verify target attachment, ordering,
     shellPath, dependency flags or input/output files — the build-order guard covers attachment and

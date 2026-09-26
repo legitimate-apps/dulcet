@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Require every file XcodeGen writes to be exactly what the pinned XcodeGen generates from
+apple/project.yml -- the project, its schemes and workspace, and the plists it writes.
+
+    verify_xcodegen_regeneration [--xcodegen PATH] [--self-test]
+
+Xcode builds the committed apple/Dulcet.xcodeproj, not project.yml, and nothing regenerates it during a
+build. A hand edit to a generated file is therefore a route into a PROD build that no review of
+project.yml sees: a scheme pre-action, a synchronized folder or a package re-pointed on the PROD
+target alone (spec §22.3, §22.6). tools/verify_release_policy.py refuses each of those by name; this
+closes the class, because none of them is a state the pinned XcodeGen emits from an accepted
+project.yml.
+
+It regenerates into a scratch copy of apple/ with the committed project removed, so a file XcodeGen
+no longer writes (a hand-added scheme) is found as well as a file it writes differently. The pinned
+version is gradle/libs.versions.toml's `xcodegen`; without --xcodegen the release archive for that
+version is downloaded and checked against the SHA-256 below before it runs. --self-test then proves
+the check fires: a scheme pre-action, a hand-added scheme and an edited generated plist must each fail.
+
+macOS only in practice (XcodeGen needs Foundation's plist and Xcode-format support), so apple-ci runs it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import hashlib
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+APPLE = "apple"
+PROJECT = "Dulcet.xcodeproj"
+# The release archive of each XcodeGen version this repository has pinned, by SHA-256. Bumping the
+# version in gradle/libs.versions.toml without adding its digest here fails, by design: the binary that
+# decides what the project should contain is itself pinned.
+ARCHIVES = {
+    "2.46.0": "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806",
+}
+URL = "https://github.com/yonaskolb/XcodeGen/releases/download/{version}/xcodegen.zip"
+# Never inputs or outputs of generation: build products and per-user state.
+IGNORED = {"build", "DerivedData", ".build", ".swiftpm", "xcuserdata", ".DS_Store"}
+REMEDY = ("Regenerate with the pinned XcodeGen (`cd apple && xcodegen generate`, version in "
+          "gradle/libs.versions.toml and docs/TOOLCHAIN.md) and commit the result. A generated file is never "
+          "edited by hand; change apple/project.yml instead (spec §22.3, §22.6).")
+
+
+def pinned_version() -> str:
+    return tomllib.loads((REPO / "gradle/libs.versions.toml").read_text())["versions"]["xcodegen"]
+
+
+def fetch(version: str, scratch: Path) -> Path:
+    digest = ARCHIVES.get(version)
+    if digest is None:
+        raise SystemExit(f"no pinned archive digest for XcodeGen {version}: add its SHA-256 to ARCHIVES in "
+                         f"{Path(__file__).name} in the same change that bumps the version")
+    archive = scratch / "xcodegen.zip"
+    with urllib.request.urlopen(URL.format(version=version), timeout=60) as response:
+        archive.write_bytes(response.read())
+    actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if actual != digest:
+        raise SystemExit(f"XcodeGen {version} archive has SHA-256 {actual}, pinned {digest}; refusing to run it")
+    subprocess.run(["unzip", "-q", str(archive), "-d", str(scratch)], check=True)
+    return scratch / "xcodegen/bin/xcodegen"
+
+
+def require_version(binary: Path, version: str) -> None:
+    reported = subprocess.run([str(binary), "--version"], capture_output=True, text=True, check=True).stdout.strip()
+    if reported != f"Version: {version}":
+        raise SystemExit(f"{binary} reports {reported!r}; the pin is XcodeGen {version}")
+
+
+def files(root: Path) -> dict[str, bytes]:
+    found = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if path.is_file() and not IGNORED.intersection(relative.parts):
+            found[str(relative)] = path.read_bytes()
+    return found
+
+
+def problems(apple: Path, binary: Path, scratch: Path) -> list[str]:
+    """Every difference between the committed generated files under `apple` and a fresh generation."""
+    copy = scratch / "apple"
+    shutil.rmtree(copy, ignore_errors=True)
+    shutil.copytree(apple, copy, ignore=shutil.ignore_patterns(*IGNORED), symlinks=True)
+    shutil.rmtree(copy / PROJECT)
+    before = files(copy)
+    result = subprocess.run([str(binary), "generate", "--spec", "project.yml", "--quiet"], cwd=copy,
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return [f"xcodegen generate failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"]
+    after = files(copy)
+    committed = files(apple)
+    found = []
+    # Everything XcodeGen wrote: the whole project directory, and each file outside it that generation
+    # created or rewrote (Info.plists from `info:`, entitlements from `entitlements:`).
+    generated = {name for name in after if name.startswith(PROJECT + "/")}
+    generated |= {name for name in after if not name.startswith(PROJECT + "/") and before.get(name) != after[name]}
+    for name in sorted(generated | {name for name in committed if name.startswith(PROJECT + "/")}):
+        if name not in after:
+            found.append(f"{APPLE}/{name}: committed, but XcodeGen does not generate it")
+        elif name not in committed:
+            found.append(f"{APPLE}/{name}: XcodeGen generates it, but it is not committed")
+        elif committed[name] != after[name]:
+            diff = list(difflib.unified_diff(
+                committed[name].decode("utf-8", "replace").splitlines(),
+                after[name].decode("utf-8", "replace").splitlines(),
+                f"committed/{APPLE}/{name}", f"generated/{APPLE}/{name}", lineterm="", n=1))
+            shown = "\n".join(diff[:40]) + ("\n..." if len(diff) > 40 else "")
+            found.append(f"{APPLE}/{name}: differs from what XcodeGen generates\n{shown}")
+    return found
+
+
+def self_test(binary: Path, scratch: Path) -> list[str]:
+    """Each mutation is a hand edit review found reaching a PROD build, or the shape of one. The check
+    must fail on each, naming the file, or it is not a check."""
+    failures = []
+    scheme = f"{PROJECT}/xcshareddata/xcschemes/DulcetiOSRelease.xcscheme"
+
+    def pre_action(apple: Path) -> None:
+        path = apple / scheme
+        text = path.read_text()
+        anchor = "      <BuildActionEntries>"
+        assert anchor in text, "scheme anchor missing"
+        path.write_text(text.replace(anchor, '      <PreActions>\n         <ExecutionAction ActionType = '
+                                     '"Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">\n'
+                                     '            <ActionContent title = "x" scriptText = "true">\n            </ActionContent>\n'
+                                     '         </ExecutionAction>\n      </PreActions>\n' + anchor, 1))
+
+    def extra_scheme(apple: Path) -> None:
+        shutil.copy(apple / scheme, apple / f"{PROJECT}/xcshareddata/xcschemes/DulcetiOSReleaseServer.xcscheme")
+
+    def generated_plist(apple: Path) -> None:
+        path = apple / "DulcetiOSRelease/Info.plist"
+        text = path.read_text()
+        path.write_text(text.replace("<dict>\n", "<dict>\n\t<key>DulcetHome</key>\n\t<string>x</string>\n", 1))
+
+    for label, mutate, expected in (
+            ("a PROD scheme pre-action", pre_action, f"{APPLE}/{scheme}: differs"),
+            ("a hand-added scheme", extra_scheme, "DulcetiOSReleaseServer.xcscheme: committed, but XcodeGen does not"),
+            ("a hand-edited generated plist", generated_plist, f"{APPLE}/DulcetiOSRelease/Info.plist: differs")):
+        mutated = scratch / "mutated-apple"
+        shutil.rmtree(mutated, ignore_errors=True)
+        shutil.copytree(REPO / APPLE, mutated, ignore=shutil.ignore_patterns(*IGNORED), symlinks=True)
+        mutate(mutated)
+        found = problems(mutated, binary, scratch)
+        if not any(expected in problem for problem in found):
+            failures.append(f"self-test: {label} was not refused as {expected!r}; found {found[:3]}")
+    return failures
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--xcodegen", type=Path, help="an installed xcodegen of the pinned version")
+    parser.add_argument("--self-test", action="store_true", help="also prove the check fails on hand edits")
+    arguments = parser.parse_args()
+    version = pinned_version()
+    with tempfile.TemporaryDirectory(prefix="dulcet-xcodegen-") as directory:
+        scratch = Path(directory)
+        binary = arguments.xcodegen or fetch(version, scratch)
+        require_version(binary, version)
+        found = problems(REPO / APPLE, binary, scratch)
+        if found:
+            print("\n".join(found), file=sys.stderr)
+            print(f"\n{len(found)} generated file(s) differ from XcodeGen {version}'s output. {REMEDY}", file=sys.stderr)
+            return 1
+        print(f"apple/{PROJECT} and every file it generates are exactly XcodeGen {version}'s output")
+        if arguments.self_test:
+            failures = self_test(binary, scratch)
+            if failures:
+                print("\n".join(failures), file=sys.stderr)
+                return 1
+            print("self-test: a PROD scheme pre-action, a hand-added scheme and an edited generated plist are each refused")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -21,13 +21,25 @@
      it reads, held to an exact key set, and the committed settings equal what project.yml declares;
    - each PROD target and its DEV twin build the same files, packages and dependencies, and differ in
      Release settings, declared Info.plist and entitlements only by §22.3's channel list;
+   - PROD schemes carry no pre- or post-action and no element outside SCHEME_ELEMENTS; PROD targets
+     carry no target key outside TARGET_OBJECT_KEYS, and twins resolve synchronized folders and
+     packages to the same things (a package by its location and requirement, not its product name);
+   - no script phase reads a variable outside SCRIPT_VARIABLES, so no script can branch on the channel,
+     and release.yml passes only the environment names in RELEASE_ENV;
    - the server key appears only in a DEV-only plist, and the archive script runs
-     tools/release/validate-app-bundle, which re-checks the built PROD bundle itself.
+     tools/release/validate-app-bundle, which re-checks the built PROD bundle itself, including every
+     http(s) host it contains.
+   Every generated file is also required to be byte-for-byte what the pinned XcodeGen produces from
+   project.yml (tools/verify_xcodegen_regeneration, run in apple-ci), which closes the class of hand
+   edits to generated files as a whole; the direct checks here say which rule a route broke.
    What this cannot see is a server address compiled into code shared by both channels under another
    name -- that is review's job, not this gate's.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
-mutated copies. Exits 1 with every violation listed.
+mutated copies. Exits 1 with every violation listed. Anything it cannot read fails closed.
+
+Every allowlist below is a spec §22.3 decision. A refusal names the constant to extend; extending it
+is a reviewed change to this file, never a workaround elsewhere.
 """
 
 from __future__ import annotations
@@ -178,6 +190,51 @@ IMPLICIT_PLIST_KEYS = {
     "CFBundleInfoDictionaryVersion", "CFBundleName", "CFBundlePackageType",
     "CFBundleShortVersionString", "CFBundleVersion", "LSRequiresIPhoneOS",
 }
+# The keys a PROD target or its DEV twin may carry: what XcodeGen 2.46.0 writes, each compared between
+# the twins below (fileSystemSynchronizedGroups by folder and by the exceptions that apply to each). A
+# key outside this set is a way to add inputs this policy does not compare.
+TARGET_OBJECT_KEYS = {
+    "isa", "buildConfigurationList", "buildPhases", "buildRules", "dependencies", "name",
+    "packageProductDependencies", "productName", "productReference", "productType",
+    "fileSystemSynchronizedGroups",
+}
+# The elements a PROD scheme may contain, as XcodeGen writes them. PreActions and PostActions run a
+# shell script inside the build with the target's settings in its environment, so they are refused by
+# name as well as by absence from this list.
+SCHEME_ELEMENTS = {
+    "Scheme", "BuildAction", "BuildActionEntries", "BuildActionEntry", "BuildableReference",
+    "TestAction", "MacroExpansion", "Testables", "LaunchAction", "BuildableProductRunnable",
+    "ProfileAction", "AnalyzeAction", "ArchiveAction",
+}
+# The only variables a build-phase script may read. Every target runs the same script, so a script that
+# reads the bundle identifier, configuration, product or target name, a plist setting, or anything
+# from the build machine's environment could write something into PROD alone. Those names can never be
+# added here; a new neutral one is a reviewed §22.3 change.
+SCRIPT_VARIABLES = {"OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED", "SRCROOT"}
+CHANNEL_VARIABLES = re.compile(
+    r"PRODUCT_BUNDLE_IDENTIFIER|CONFIGURATION|PRODUCT_NAME|PRODUCT_MODULE_NAME|TARGET_NAME|INFOPLIST_"
+    r"|DEV|PROD|RELEASE|DEBUG|CHANNEL|SERVER|ENDPOINT|URL")
+# Commands that read the whole environment at once, which a variable allowlist cannot see through.
+ENVIRONMENT_DUMPS = re.compile(r"\bprintenv\b|\benviron\b|\bENVIRON\b|(?:^|[;&|(\s])env(?:\s|$)|\bexport\s+-p\b"
+                               r"|\bdeclare\s+-[a-z]*p|\bcompgen\b|(?:^|[;&|]\s*)set\s*(?:$|[;&|])", re.M)
+# Every environment name release.yml may set, on the job or on a step. An allowlist rather than a list
+# of suspicious spellings: `DULCET_LOCAL_ENDPOINT: ${{ vars.X }}` names no server and holds one.
+RELEASE_ENV = {
+    "TZ", "HOMEBREW_NO_AUTO_UPDATE", "RELEASE_CHANNEL", "RELEASE_PLATFORM", "RELEASE_DRY_RUN",
+    "RELEASE_REF", "GITHUB_TOKEN", "BUNDLE_ID", "FAMILY", "UPLOAD", "RELEASE_SCHEME",
+    "RELEASE_BUNDLE_ID", "RELEASE_PROFILE_NAME", "RELEASE_DESTINATION", "RELEASE_PACKAGE_KIND",
+    "RELEASE_MARKETING_VERSION", "RELEASE_INTERNAL_ONLY", "RELEASE_BUILD_NUMBER", "PACKAGE", "APP_ID",
+    "BUILD_NUMBER", "CHANNEL", "PLATFORM", "VERSION", "APP_RECORD", "OUTCOME",
+    # exported inside run blocks
+    "RELEASE_TAGS_AT_HEAD", "RELEASE_ROOT", "RELEASE_DERIVED_DATA",
+} | RELEASE_SECRETS
+POLICY_FILE = "tools/verify_release_policy.py"
+
+
+def extend(constant: str) -> str:
+    """The remedy every allowlist refusal carries: where the list lives and whose decision it is."""
+    return (f" [allowlist: {constant} in {POLICY_FILE}; adding to it is a spec §22.3 decision made in "
+            "review, never a workaround elsewhere]")
 
 
 def code(line: str) -> str:
@@ -250,8 +307,19 @@ def check(errors: list[str]) -> None:
         errors.append(f"{RELEASE}: exactly one upload step, guarded by steps.plan.outputs.upload == 'true'; "
                       f"found {len(uploads)} step(s) with an upload mechanism")
 
-    if any(re.search(r"server|://|-xcconfig|INFOPLIST_KEY_", code(line), re.I) for line in lines):
-        errors.append(f"{RELEASE}: passes a server, URL or plist setting; PROD must be unable to carry one")
+    # The environment reaches xcodebuild and every script phase, so release.yml may set only known
+    # names, by `env:` or by `export`, and may not set any through $GITHUB_ENV, $GITHUB_PATH or `vars`.
+    for name in sorted(set(release_env_names(lines)) - RELEASE_ENV):
+        errors.append(f"{RELEASE}: sets environment variable {name}, which is not allowlisted; the environment "
+                      "reaches the archive and every script phase" + extend("RELEASE_ENV"))
+    for pattern, what in ((r"\bGITHUB_ENV\b", "$GITHUB_ENV"), (r"\bGITHUB_PATH\b", "$GITHUB_PATH"),
+                          (r"\$\{\{[^}]*\bvars\.", "a repository variable (vars.)")):
+        if any(re.search(pattern, code(line)) for line in lines):
+            errors.append(f"{RELEASE}: uses {what}, which can hand the build a value no review sees; "
+                          "PROD must be unable to carry a server (spec §22.3)")
+    if any(re.search(r"://|-xcconfig|INFOPLIST_KEY_", code(line), re.I) for line in lines):
+        errors.append(f"{RELEASE}: passes a URL, an xcconfig or a plist setting; PROD must be unable to carry a "
+                      "server (spec §22.3)")
 
     if not ARCHIVE_SCRIPT.is_file():
         errors.append(f"{ARCHIVE_SCRIPT} is missing")
@@ -287,6 +355,24 @@ def check(errors: list[str]) -> None:
     check_prod_configuration(errors)
 
 
+def release_env_names(lines: list[str]) -> list[str]:
+    """Every name release.yml puts into an environment: keys of any `env:` mapping, and `export NAME`."""
+    names = []
+    for index, line in enumerate(lines):
+        match = re.fullmatch(r"( *)(?:- )?env:", code(line))
+        if match:
+            indent = len(match.group(1)) + (2 if code(line).lstrip().startswith("- ") else 0)
+            for nested in lines[index + 1:]:
+                stripped = code(nested)
+                if stripped.strip() and len(stripped) - len(stripped.lstrip()) <= indent:
+                    break
+                entry = re.fullmatch(r"( *)([^\s:#]+):.*", stripped)
+                if entry and len(entry.group(1)) == indent + 2:
+                    names.append(entry.group(2))
+        names += re.findall(r"(?:^\s*|[;&|]\s*)export\s+([A-Za-z_][A-Za-z0-9_]*)", code(line))
+    return names
+
+
 def yaml_block(lines: list[str], path: list[str]) -> list[str] | None:
     """Lines under a nested key path of block-style YAML, by indentation (no dependency)."""
     body = lines
@@ -313,7 +399,7 @@ def yaml_block(lines: list[str], path: list[str]) -> list[str] | None:
 
 
 def mapping(lines: list[str]) -> dict[str, str]:
-    entries = [re.fullmatch(r"( *)([A-Za-z0-9_]+):\s*(.*)", code(line)) for line in lines]
+    entries = [re.fullmatch(r"( *)([A-Za-z0-9_~]+):\s*(.*)", code(line)) for line in lines]
     entries = [entry for entry in entries if entry]
     if not entries:
         return {}
@@ -354,19 +440,26 @@ def check_yaml_shape(errors: list[str], project: Path, lines: list[str]) -> None
             errors.append(f"{where}: flow-style mapping; write block YAML so this policy can read it")
         if re.search(r"(?:^|\s)(?:[&*!][^\s]|<<\s*:|\?\s)", line) or line.strip() == "---":
             errors.append(f"{where}: YAML anchor, alias, merge key, tag or complex key; not readable here")
+        key = re.match(r"\s*(?:-\s+)?([^\s\"'#-][^:]*?):(?:\s|$)", line)
+        if key and not re.fullmatch(r"[A-Za-z0-9_~]+", key.group(1)):
+            errors.append(f"{where}: key {key.group(1)!r} is not one this policy can read (letters, digits, _ and ~); "
+                          "a conditional or dotted key would be skipped rather than checked, so it fails closed "
+                          "(spec §22.3)")
     for number, line in structure:
         match = re.fullmatch(r"([A-Za-z0-9_]+):(?:\s.*)?", line)
         if not line.startswith(" ") and (not match or match.group(1) not in TOP_LEVEL_KEYS):
             errors.append(f"{project}:{number}: top-level {line.split(':')[0]!r} is not one of "
                           f"{sorted(TOP_LEVEL_KEYS)}; configFiles, settingGroups, targetTemplates and "
-                          "include can each put settings into a build unseen")
+                          "include can each put settings into a build unseen" + extend("TOP_LEVEL_KEYS"))
     for section, allowed in (("options", OPTIONS_KEYS), ("settings", {"base"})):
         for name in sorted(set(mapping(yaml_block(lines, [section]) or [])) - allowed):
-            errors.append(f"{project}: {section}.{name} is not allowed; only {sorted(allowed)}")
+            errors.append(f"{project}: {section}.{name} is not allowed; only {sorted(allowed)}"
+                          + extend("OPTIONS_KEYS" if section == "options" else "the settings sections in check_yaml_shape"))
     targets = yaml_block(lines, ["targets"]) or []
     for target in re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(targets)):
         for key in sorted(set(mapping(yaml_block(targets, [target]) or [])) - TARGET_KEYS):
-            errors.append(f"{project}: target {target} uses {key}, which is not one of {sorted(TARGET_KEYS)}")
+            errors.append(f"{project}: target {target} uses {key}, which is not one of {sorted(TARGET_KEYS)}"
+                          + extend("TARGET_KEYS"))
 
 
 def source_paths(target: list[str]) -> list[str]:
@@ -387,10 +480,13 @@ def check_prod_configuration(errors: list[str]) -> None:
         return
     lines = project.read_text().splitlines()
     check_yaml_shape(errors, project, lines)
+    for number, script in yaml_scripts(lines):
+        errors.extend(script_problems(f"{project}:{number} script", script))
 
     inherited = mapping(yaml_block(lines, ["settings", "base"]) or [])
     for name in sorted(set(inherited) - PROJECT_SETTINGS):
-        errors.append(f"{project}: project-level setting {name} is not allowlisted, and PROD inherits it")
+        errors.append(f"{project}: project-level setting {name} is not allowlisted, and PROD inherits it"
+                      + extend("PROJECT_SETTINGS"))
 
     target_names = re.findall(r"(?m)^  ([A-Za-z0-9_]+):\s*$", "\n".join(yaml_block(lines, ["targets"]) or []))
     for name, rules in PROD_TARGETS.items():
@@ -419,7 +515,8 @@ def check_prod_target(errors: list[str], project: Path, lines: list[str], target
     if set(mapping(settings)) - {"base"}:
         errors.append(f"{project}: {name} may declare settings.base only")
     for setting in sorted(set(own) - rules["settings"]):
-        errors.append(f"{project}: PROD target {name} declares {setting}, which is not allowlisted")
+        errors.append(f"{project}: PROD target {name} declares {setting}, which is not allowlisted"
+                      + extend(f"PROD_TARGETS[{name!r}]['settings']"))
     inherited = mapping(yaml_block(lines, ["settings", "base"]) or [])
     for setting, value in {**inherited, **own}.items():
         if "://" in value:
@@ -462,7 +559,7 @@ def check_prod_target(errors: list[str], project: Path, lines: list[str], target
     keys = set(document)
     if keys != rules["keys"]:
         errors.append(f"{plist_path}: keys must be exactly the allowlist; extra {sorted(keys - rules['keys'])}, "
-                      f"missing {sorted(rules['keys'] - keys)}")
+                      f"missing {sorted(rules['keys'] - keys)}" + extend(f"PROD_TARGETS[{name!r}]['keys']"))
     for key, value in document.items():
         if holds_url(value):
             errors.append(f"{plist_path}: {key} holds a URL")
@@ -491,6 +588,16 @@ def check_scheme_file(errors: list[str], name: str) -> None:
     if blueprints != {name} or archive is None or archive.get("buildConfiguration") != "Release":
         errors.append(f"{path}: must reference {name} alone and archive Release; found {sorted(map(str, blueprints))}, "
                       f"archive {None if archive is None else archive.get('buildConfiguration')}")
+    for element in sorted({item.tag for item in tree.iter()}):
+        if element in ("PreActions", "PostActions", "ExecutionAction"):
+            errors.append(f"{path}: has {element}; a scheme action runs a shell script inside the PROD build with "
+                          "its settings in the environment, so no PROD scheme may carry one (spec §22.3)")
+        elif element not in SCHEME_ELEMENTS:
+            errors.append(f"{path}: element {element} is not one XcodeGen writes for a PROD scheme"
+                          + extend("SCHEME_ELEMENTS"))
+    containers = {item.get("ReferencedContainer") for item in tree.iter("BuildableReference")}
+    if containers != {"container:Dulcet.xcodeproj"}:
+        errors.append(f"{path}: must reference targets in container:Dulcet.xcodeproj only, found {sorted(map(str, containers))}")
 
 
 # --- the committed Xcode project -------------------------------------------------------------------
@@ -530,6 +637,10 @@ def parse_pbxproj(text: str):
                 if tokens[index] != ("p", "="):
                     raise ValueError(f"expected '=' after {str(key)[:40]!r}")
                 index += 1
+                if key in result:
+                    raise ValueError(f"duplicate key {str(key)[:40]!r} in one dictionary (an object id or a setting "
+                                     "written twice). Xcode keeps one copy and this policy cannot know which, and "
+                                     "XcodeGen never writes one: regenerate with the pinned XcodeGen")
                 result[key] = value()
                 if tokens[index] != ("p", ";"):
                     raise ValueError(f"expected ';' after {str(key)[:40]!r}")
@@ -548,18 +659,30 @@ def parse_pbxproj(text: str):
 
     try:
         root = value()
-    except (IndexError, ValueError) as error:
-        raise ValueError(str(error) or "truncated") from error
+    except IndexError as error:
+        raise ValueError("the file ends inside an open { or ( -- truncated, or braces that do not balance; "
+                         "regenerate with the pinned XcodeGen") from error
     if not isinstance(root, dict) or not isinstance(root.get("objects"), dict):
         raise ValueError("not an Xcode project")
     return root
 
 
+class GeneratedPlistValue(str):
+    """An Info.plist value Xcode generates from an INFOPLIST_KEY_*_Generation setting."""
+
+
 def plist_from_setting(name: str, value: str):
     """The Info.plist entry an INFOPLIST_KEY_* build setting produces."""
     key = name[len("INFOPLIST_KEY_"):]
-    if key == "UILaunchScreen_Generation":
-        return ("UILaunchScreen", {}) if value == "YES" else (None, None)
+    generated = re.fullmatch(r"(.+)_Generation", key)
+    if generated:
+        # `<Key>_Generation = YES` makes Xcode write <Key> with content it generates. The launch screen's
+        # is an empty dictionary (OBSERVED in both iOS channels' Release builds). Any other generated
+        # content cannot be predicted here, so it compares as a marker a hand-written plist never equals,
+        # and the refusal says so (see check_twins).
+        if value != "YES":
+            return None, None
+        return generated.group(1), {} if generated.group(1) == "UILaunchScreen" else GeneratedPlistValue(name)
     suffix = re.fullmatch(r"(.+)_(iPhone|iPad)", key)
     if suffix:
         key = f"{suffix.group(1)}~{suffix.group(2).lower()}"
@@ -597,6 +720,16 @@ def check_project_objects(errors: list[str], lines: list[str], root: dict) -> se
             errors.append(f"{PBXPROJ}: configuration {item.get('name')} ({identifier}) is based on an xcconfig, "
                           "whose settings nothing here can see; no configuration may have one")
 
+    for identifier, item in objects.items():
+        if item.get("isa") == "PBXShellScriptBuildPhase":
+            where = f"{PBXPROJ}: script phase {item.get('name')!r} ({identifier})"
+            errors.extend(script_problems(where, "\n".join(
+                [str(item.get("shellScript", ""))] + [str(path) for key in ("inputPaths", "outputPaths",
+                 "inputFileListPaths", "outputFileListPaths") for path in item.get(key, [])])))
+            if item.get("shellPath") != "/bin/sh":
+                errors.append(f"{where}: shellPath must be /bin/sh, found {item.get('shellPath')!r}; another "
+                              "interpreter would read the script in a way this policy does not (spec §22.3)")
+
     project_configs = configurations(objects.get(root.get("rootObject"), {}))
     declared = mapping(yaml_block(lines, ["settings", "base"]) or [])
     for configuration, settings in project_configs.items():
@@ -606,7 +739,7 @@ def check_project_objects(errors: list[str], lines: list[str], root: dict) -> se
             continue
         for name in sorted(set(settings) - allowed):
             errors.append(f"{PBXPROJ}: project-level {configuration} setting {name} is not allowlisted, "
-                          "and PROD inherits it")
+                          "and PROD inherits it" + extend("XCODEGEN_PROJECT_SETTINGS (or PROJECT_SETTINGS)"))
         check_values(errors, f"project-level {configuration}", settings, PINNED_PROJECT_SETTINGS)
         for name, value in declared.items():
             if settings.get(name) != value:
@@ -624,7 +757,7 @@ def check_project_objects(errors: list[str], lines: list[str], root: dict) -> se
         for configuration, settings in prod_configs.items():
             for setting in sorted(set(settings) - rules["settings"] - XCODEGEN_TARGET_SETTINGS):
                 errors.append(f"{PBXPROJ}: PROD target {name} ({configuration}) sets {setting}, "
-                              "which is not allowlisted")
+                              "which is not allowlisted" + extend(f"PROD_TARGETS[{name!r}]['settings']"))
             if settings.get("INFOPLIST_FILE") != plist_setting:
                 errors.append(f"{PBXPROJ}: PROD target {name} ({configuration}) must read {plist_setting}")
             check_values(errors, f"PROD target {name} ({configuration})", settings, PINNED_TARGET_SETTINGS)
@@ -651,7 +784,8 @@ def check_values(errors: list[str], where: str, settings: dict, pinned: dict[str
             errors.append(f"{PBXPROJ}: {where} {setting} carries a URL")
     for setting, value in pinned.items():
         if setting in settings and settings[setting] != value:
-            errors.append(f"{PBXPROJ}: {where} {setting} must be exactly {value!r}, found {settings[setting]!r}")
+            errors.append(f"{PBXPROJ}: {where} {setting} must be exactly {value!r}, found {settings[setting]!r}"
+                          + extend("PINNED_PROJECT_SETTINGS / PINNED_TARGET_SETTINGS"))
 
 
 def check_generated(errors: list[str], lines: list[str], target: str, configs: dict[str, dict]) -> None:
@@ -696,7 +830,7 @@ def check_twins(errors: list[str], objects: dict, name: str, prod: dict, prod_se
         if prod_settings.get(setting) != dev_settings.get(setting):
             errors.append(f"{PBXPROJ}: Release {setting} differs between {dev_name} "
                           f"({dev_settings.get(setting)!r}) and {name} ({prod_settings.get(setting)!r}); "
-                          "only spec §22.3's channel settings may")
+                          "only spec §22.3's channel settings may; set it identically on both" + extend("CHANNEL_SETTINGS"))
     dev_plist, problems = declared_plist(dev_settings)
     prod_document, prod_problems = declared_plist(prod_settings)
     errors.extend(problems + prod_problems)
@@ -704,8 +838,13 @@ def check_twins(errors: list[str], objects: dict, name: str, prod: dict, prod_se
         if dev_plist.get(key) != prod_document.get(key):
             side = f"{dev_name} lacks it" if key not in dev_plist else \
                 f"{prod_plist} lacks it" if key not in prod_document else "the values differ"
+            generated = [value for value in (dev_plist.get(key), prod_document.get(key))
+                         if isinstance(value, GeneratedPlistValue)]
+            if generated:
+                side += (f"; {generated[0]} makes Xcode generate {key}, whose content a hand-written PROD plist "
+                         f"cannot be compared with, so declare {key} explicitly in both plists instead")
             errors.append(f"Info.plist {key}: {dev_name} and {name} must declare it identically ({side}); "
-                          "only name, icon and the DEV-only server key may differ")
+                          "only name, icon and the DEV-only server key may differ" + extend("CHANNEL_PLIST_KEYS"))
 
     dev_id, prod_id = dev_settings.get("PRODUCT_BUNDLE_IDENTIFIER", ""), prod_settings.get("PRODUCT_BUNDLE_IDENTIFIER", "")
 
@@ -723,32 +862,92 @@ def check_twins(errors: list[str], objects: dict, name: str, prod: dict, prod_se
         return plistlib.loads(text.encode())
 
     if entitlements(dev_settings, True) != entitlements(prod_settings, False):
-        errors.append(f"entitlements of {dev_name} and {name} must match apart from the bundle identifier")
+        errors.append(f"entitlements of {dev_name} and {name} must match apart from the bundle identifier "
+                      "(spec §22.3); change both files together")
 
-    def membership(target: dict):
+    def package(identifier: str):
+        """A package product by what it resolves to: its name and the package it comes from, located by
+        path or URL with its version requirement. The product name alone lets PROD link another package."""
+        product = objects.get(identifier, {})
+        reference = objects.get(product.get("package"), {}) if "package" in product else None
+        return (product.get("productName", "?"),
+                None if reference is None else tuple(sorted((key, str(value)) for key, value in reference.items())))
+
+    def synchronized(target: dict, identifier: str):
+        """A synchronized folder, with only the exception sets that apply to this target."""
+        group = dict(objects.get(identifier, {}))
+        exceptions = [objects.get(item, {}) for item in group.pop("exceptions", [])]
+        own = sorted(str(sorted((key, str(value)) for key, value in item.items() if key != "target"))
+                     for item in exceptions if objects.get(item.get("target"), {}) is target)
+        return str(sorted((key, str(value)) for key, value in group.items())), own
+
+    def membership(target: dict) -> dict[str, object]:
         phases = []
         for identifier in target.get("buildPhases", []):
-            phase = objects[identifier]
+            phase = objects.get(identifier, {})
             if phase.get("isa") == "PBXShellScriptBuildPhase":
-                phases.append((phase["isa"], phase.get("name"), phase.get("shellScript"),
-                               tuple(phase.get("inputPaths", [])), tuple(phase.get("outputPaths", []))))
+                phases.append(str(sorted((key, str(value)) for key, value in phase.items())))
                 continue
             members = []
             for entry in phase.get("files", []):
-                build_file = objects.get(entry, {})
-                if "fileRef" in build_file:
-                    members.append(build_file["fileRef"])
-                else:
-                    members.append("product:" + objects.get(build_file.get("productRef"), {}).get("productName", "?"))
+                build_file = dict(objects.get(entry, {}))
+                if "productRef" in build_file:
+                    build_file["productRef"] = package(build_file["productRef"])
+                members.append(str(sorted((key, str(value)) for key, value in build_file.items())))
             phases.append((phase.get("isa"), phase.get("dstSubfolderSpec"), phase.get("dstPath"), tuple(sorted(members))))
-        packages = sorted(objects.get(item, {}).get("productName", "?") for item in target.get("packageProductDependencies", []))
-        depends = sorted(objects.get(objects.get(item, {}).get("target"), {}).get("name", "?")
-                         for item in target.get("dependencies", []))
-        return phases, packages, depends, target.get("buildRules", [])
+        return {
+            "build phases (files, per-file settings and scripts)": phases,
+            "packages (by location and requirement, not product name)":
+                sorted(package(item) for item in target.get("packageProductDependencies", [])),
+            "dependencies": sorted(objects.get(objects.get(item, {}).get("target"), {}).get("name", "?")
+                                   for item in target.get("dependencies", [])),
+            "build rules": sorted(str(sorted((key, str(value)) for key, value in objects.get(item, {}).items()))
+                                  for item in target.get("buildRules", [])),
+            "synchronized folders": sorted(synchronized(target, item)
+                                           for item in target.get("fileSystemSynchronizedGroups", [])),
+        }
 
-    if membership(prod) != membership(dev):
-        errors.append(f"{PBXPROJ}: {name} must build exactly {dev_name}'s files, script phases, packages and "
-                      "dependencies; a resource or source only PROD carries is a route for a server")
+    for target_name, target in ((name, prod), (dev_name, dev)):
+        for key in sorted(set(target) - TARGET_OBJECT_KEYS):
+            errors.append(f"{PBXPROJ}: target {target_name} carries {key}, which XcodeGen does not write for it and "
+                          "this policy does not compare" + extend("TARGET_OBJECT_KEYS"))
+    prod_members, dev_members = membership(prod), membership(dev)
+    for aspect in prod_members:
+        if prod_members[aspect] != dev_members[aspect]:
+            errors.append(f"{PBXPROJ}: {name} must build exactly {dev_name}'s files, script phases, packages and "
+                          f"dependencies; their {aspect} differ, and an input only PROD carries is a route for a "
+                          "server (spec §22.3)")
+
+
+def script_problems(where: str, script: str) -> list[str]:
+    """A build-phase script may read only SCRIPT_VARIABLES, and nothing that dumps the environment.
+    Every target runs the same script, so this is what stops one script branching on the channel."""
+    problems = []
+    body = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+    names = set(re.findall(r"\$\{?#?!?([A-Za-z_][A-Za-z0-9_]*)|\$\(([A-Za-z_][A-Za-z0-9_]*)\)", body))
+    for name in sorted({first or second for first, second in names} - SCRIPT_VARIABLES):
+        kind = "a channel-distinguishing variable" if CHANNEL_VARIABLES.search(name) else "a variable"
+        problems.append(f"{where}: reads {kind} ${name}; a script every target runs could use it to write something "
+                        "into PROD alone (spec §22.3)" + extend("SCRIPT_VARIABLES"))
+    if ENVIRONMENT_DUMPS.search(body):
+        problems.append(f"{where}: reads the whole environment ({ENVIRONMENT_DUMPS.search(body).group(0).strip()}), "
+                        "which a variable allowlist cannot see through (spec §22.3)")
+    return problems
+
+
+def yaml_scripts(lines: list[str]) -> list[tuple[int, str]]:
+    """(line number, body) of every block scalar in project.yml: the script phases."""
+    scripts, start, indent = [], None, 0
+    for number, raw in enumerate(lines + ["\x00"], 1):
+        if start is not None:
+            if raw.strip() and len(raw) - len(raw.lstrip(" ")) <= indent or raw == "\x00":
+                scripts.append((start, "\n".join(lines[start:number - 1])))
+                start = None
+            else:
+                continue
+        if re.search(r"(?:^\s*-|:)\s*[|>][-+0-9]*$", code(raw)):
+            start, indent = number, len(raw) - len(raw.lstrip(" "))
+    return scripts
 
 
 def check_server_marker(errors: list[str], dev_only_plists: set[Path]) -> None:
@@ -760,14 +959,22 @@ def check_server_marker(errors: list[str], dev_only_plists: set[Path]) -> None:
             continue
         if SERVER_KEY.encode() in path.read_bytes():
             errors.append(f"{path}: contains {SERVER_KEY}, which may appear only in a DEV-only plist "
-                          f"({', '.join(sorted(map(str, dev_only_plists))) or 'none found'})")
+                          f"({', '.join(sorted(map(str, dev_only_plists))) or 'none found'}); spec §22.3, §22.6")
 
 
 def main() -> int:
     errors: list[str] = []
-    check(errors)
+    try:
+        check(errors)
+    except Exception as error:  # noqa: BLE001 - a policy that cannot read its input must not pass it
+        errors.append(f"the release policy could not read this repository ({type(error).__name__}: {error}); "
+                      "it fails closed rather than skip what it could not read (spec §22.3)")
     if errors:
         print("\n".join(errors), file=sys.stderr)
+        print(f"\n{len(errors)} violation(s) of spec §22.3/§22.6 (PROD must be unable to carry a server). The rules "
+              f"and every allowlist live in {POLICY_FILE}; a refusal marked [allowlist: …] names the constant to "
+              "extend, in review. Generated files are fixed by regenerating with the pinned XcodeGen, never by hand.",
+              file=sys.stderr)
         return 1
     print("release policy valid")
     return 0
