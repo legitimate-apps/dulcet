@@ -57,11 +57,13 @@ private const val MAX_NOTICE_FONT_SCALE = 1.5f
 /**
  * The brief notice for a track the queue skipped because it could not play (spec §12.12 rule 5):
  * "Couldn't play “title”. Skipped." It is drawn at the bottom of the region this is given, which
- * the caller chooses to end above its now-playing bar and navigation, and it never takes more than
- * a third of that region's height: when the sentence naming the title would, it says "Couldn't
+ * the caller chooses so that the notice covers no control: a page's content region, ending above
+ * its now-playing bar and navigation, or a player's cover art, which takes no input. It never takes
+ * more than a third of that region's height: when the sentence naming the title would, it says "Couldn't
  * play a track. Skipped." instead. It is never truncated. It draws no pointer handling, so taps
  * pass through it to whatever is beneath. TalkBack announces it once as it appears, as one whole
- * sentence naming the track, whichever sentence is drawn.
+ * sentence naming the track, whichever sentence is drawn -- provided no ancestor merges its
+ * descendants' semantics (a `clickable` does), which would fold it into that ancestor's label.
  *
  * It shows for [SKIP_NOTICE_MILLIS] (longer when the person has asked Android for more time to
  * read), measured from when the skip happened, so a surface that appears later shows only what is

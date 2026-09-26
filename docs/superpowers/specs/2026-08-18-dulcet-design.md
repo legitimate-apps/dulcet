@@ -1928,17 +1928,33 @@ It now keeps the whole contract, as the Apple shell does:
   has asked Android to give content that disappears, measured from the skip on the monotonic clock,
   so a surface that appears later shows only what is left. Its text stops growing at 1.5 × the
   default size, it wraps rather than truncates, and it draws the shorter sentence when the one
-  naming the track would take more than a third of its region's height. On the phone the region ends
-  above the now-playing bar and the tab row, and in the full player above the system navigation bar;
-  on TV it is drawn along the player's bottom edge, at most 720 dp wide. A skip clears the failure
-  line: the next entry's preparing state follows.
+  naming the track would take more than a third of its region's height. On the phone's pages the
+  region is the whole content region between the top of the screen and the now-playing bar and tab
+  row, so a third of it is measured with the page's title and search field included, where Apple's
+  is the height between the page's navigation bar and the now-playing bar; the notice is drawn at its
+  bottom and can lie over the page's scrolling rows, as a snackbar does, never over the bar or the
+  tabs. **In the full player and on TV the region is the cover art**, and the notice lies along the
+  cover's bottom edge, where Apple draws it along the player's own bottom edge. On Android that edge
+  holds controls: **OBSERVED** (Robolectric native graphics, 2026-09-26) on a 360 × 640 dp phone the
+  bottom-edge notice (y 564-624) covered Shuffle, Previous, Play/Pause and Next, and on TV with three
+  or more Up Next entries it covered the list and a row the D-pad focuses (y 460-500 against row 2 at
+  446-498). The cover takes no input, so on it the notice covers no control on either layout: on the
+  same phone it sits at y 307-367, 108 dp above the nearest control, and on TV at y 394-434 inside
+  the cover (58-418 × 90-450), clear of the list at x 466. The full player's root blocks touches from
+  reaching the pages beneath it with a pointer handler rather than `clickable`, because a clickable
+  merges its descendants: the notice was part of the player's one label, and a screen reader could
+  not reach it on its own. A skip clears the failure line: the next entry's preparing state follows.
 - **Whose failure it is** comes from the same `playbackFailureOwner`. Two Android mappings were
   wrong for it and are corrected: Media3's decoding failures (`ERROR_CODE_DECODING_FAILED`,
   `DECODER_INIT_FAILED`, `DECODING_FORMAT_UNSUPPORTED`, `DECODING_FORMAT_EXCEEDS_CAPABILITIES`) crossed
   as `Transport.Unreachable` and now cross as `Playback.NoPlayableSource`, Apple's `undecodable`; and a
   `getSong` answered with a failed envelope crossed as `Protocol.MalformedEnvelope` whatever its code,
   and now crosses as the code's own `DomainError` (code 70 is `Server.Known(70)`, the track's).
-  Container parse failures already crossed as `Protocol.UnexpectedBinary`. **OBSERVED** on an API 34
+  Container parse failures already crossed as `Protocol.UnexpectedBinary`. Code 0 from `getSong` is
+  the track's by the same table, deliberately: rule 1 justifies code 0 by `stream`'s answer for a
+  file that has gone, while for `getSong` the reference server uses 70 there and 0 is its generic
+  error, so on this path code 0 extends the rule rather than following that measurement. The guard
+  bounds what it costs. **OBSERVED** on an API 34
   arm64 emulator (2026-09-26): the Skip Probe's undecodable MP3, which AVFoundation fails with
   `decodeFailed`, is not a failure on Android at all -- the platform's software MP3 decoder
   (`c2.android.mp3.decoder`) rendered all 380 frames (437,760 samples per channel) and Media3
@@ -1953,8 +1969,16 @@ It now keeps the whole contract, as the Apple shell does:
   as it is pressed (`recordPlayRequested`), whatever the engine's readiness -- while the entry is
   being resolved, while the engine holds it, and after Stop, which on Android reports the attempt
   `Skipped` and keeps the session, so Play then restarts the entry (`restartCurrent`, which begins
-  no pass itself). Skip (`next`), Previous (`previous`), a pick from a list (a new queue), a pick in
-  Up Next (`jumpTo`), shuffle and repeat call the core functions that begin a pass. The engine
+  no pass itself). The first of those is reached with a pass that is not empty: once the core moves
+  on from the engine's attempt -- a natural end, or a skip past its failure -- the controller drops
+  that attempt's plan, so while the next entry resolves the engine holds nothing the controller acts
+  on, and a skip after a failure before the engine had the entry leaves it holding nothing too. A
+  Play pressed then must begin the pass, or a later failure stops on an entry the skip should have
+  reached. Before the plan was dropped, a Previous in that window sought the attempt that was over
+  and did nothing, and restart was offered for it. Skip (`next`), Previous (`previous`), a pick
+  from a list (a new queue), a pick in Up Next (`jumpTo`), shuffle and repeat call the core
+  functions that begin a pass. Previous on the first entry of a stream that cannot seek restarts it
+  as a new session (`restartCurrent`); it reports the press first, so it begins a pass there too. The engine
   reports a natural end (`EndedNaturally`, from Media3's `STATE_ENDED`). The core's
   Play-with-no-session reset is not reached: Android's session ends only with the queue's natural
   end, which has begun a pass already, or with the engine's release, which closes the controller.
@@ -1963,9 +1987,12 @@ It now keeps the whole contract, as the Apple shell does:
   control; the failure line asks the person to choose the song again, which is a new queue); queue
   edits (no surface moves, removes or adds an entry); and a disconnect, sign-out or change of
   server (no Android surface offers one). The controller lives as long as its account's playback
-  service, and closing it withdraws the notice. **A divergence:** Android's Previous, past three
-  seconds into a seekable track, restarts it by seeking, as a music player's back button does, rather
-  than moving; it begins no pass, because it reaches no entry. Apple's Previous always moves.
+  service, and closing it withdraws the notice. A skip while the TV's browse screens are in front is
+  silent there: TV draws the notice only in its player, and the browse screens have no playback
+  surface. **A divergence:** Android's Previous on a seekable track restarts it by seeking, as a
+  music player's back button does, rather than moving, when it is past three seconds or when it is
+  the first entry with nothing before it; it begins no pass, because it reaches no entry and starts
+  no session. Apple's Previous always moves.
 - **Not changed:** the first song of a pick is read with `getSong` before any queue exists, so a
   failure there is presented and skips nothing; and Android's failure line keeps its own copy.
 
@@ -2028,23 +2055,41 @@ and no failure line in any publication, a second skip gives a new notice, and cl
 withdraws it; a connection failure still stops and presents, and the person's Next then clears it; a failure resolving an entry, and a `getSong` answered
 with code 70, are skipped past; and the pass holds on Android -- a repeat-all queue whose second entry
 plays and then fails stops at the entry already skipped, and the person's Play -- after Pause, after
-Stop, or while the entry is still resolving -- lets the skip reach it again. `AndroidMedia3EngineTest` pins the decode codes as the track's and a network
+Stop, or while the next entry is still resolving, both after the engine failed the entry and after a
+failure before the engine had it (`pauseThenPlayWhileTheEntrySkippedToIsResolvingBeginsANewPass`) --
+lets the skip reach it again; once a skip has moved on, restart is not offered for the attempt that
+is over and Previous moves rather than seeking it; and Previous restarting an unseekable first entry
+begins a pass. `AndroidMedia3EngineTest` pins the decode codes as the track's and a network
 code as the connection's. The notice: `PhoneSkipNoticeTest` (one node, one announced sentence, a
-polite live region, four seconds from the skip, withdrawn at once, not shown late, the shorter
+polite live region, four seconds from the skip, longer when the person asked Android for more time,
+withdrawn at once, not shown late, the shorter
 sentence in a region too short for the long one while TalkBack still hears the long one, taps passing
-through, and the phone surface showing the controller's notice) and `TvSkipNoticeTest` (the TV player
-announces it with no failure line; a connection failure shows the line and no notice), both
-Robolectric in `core-ci`. **Each new core test failed on the code before the change**; the notice is
-new, so its tests are held to mutants instead, and every rule but one equivalent branch has a mutant
-a named test kills (revision 112). **OBSERVED locally, 2026-09-26, on API 34 arm64 emulators against the disposable
+through, and the phone surface showing the controller's notice), `PhoneSkipNoticePlacementTest` and
+`SkipNoticeMeasuredTextTest` under Robolectric's native graphics, which measure text as a device
+does (the full player's notice is its own node in the merged tree with a polite live region and is
+screen-reader focusable; on a 360 × 640 dp phone, at the default text size and at twice it, it lies
+on the cover and overlaps no node that can be tapped, dragged, scrolled or focused, with the eight
+player controls among those checked; a tap on the player does not reach the page beneath it; the
+page shows the notice above the now-playing bar and the tabs until the player opens, and then only
+the player's own exists; the text stops growing at 1.5 ×; and the sentence naming the track gives
+way at a region three times its card), and `TvSkipNoticePlacementTest` (with three and with eight
+Up Next entries the notice lies on the cover and overlaps no focusable node, with the transport,
+the list and its first three rows among those checked) beside `TvSkipNoticeTest` (the TV player
+announces it with no failure line; a connection failure shows the line and no notice), all
+Robolectric in `core-ci`. **Each new core test failed on the code before the change**, and the
+review round's tests each failed first against the code or the mutant they pin; the notice is new,
+so its tests are held to mutants instead, and every rule has a mutant a named test kills (revision
+112). **OBSERVED locally, 2026-09-26, on API 34 arm64 emulators against the disposable
 reference server with the "No Audio Skip Probe" album; not run by CI**
 (`AndroidEmulatorAutoSkipProofTest`, `AndroidTvEmulatorAutoSkipProofTest`, opt-in with
 `dulcetSkipProbe=true`): the production controller, started on the album's first track, skipped it;
 the notice naming it was in the accessibility tree as one node with no children and a polite live
 region; the queue moved to the next track with no failure line and its media time advanced; the
 notice went; and the server's play count rose for the next track and not for the skipped one. On the
-phone the notice ended above the now-playing bar and the tabs with a margin from both sides; on TV it
-sat in the lower half and clear of the title. The proofs bound how long the notice stayed only from
+phone the notice ended above the now-playing bar and the tabs with a margin from both sides; on TV,
+on the revision before the notice moved onto the cover, it sat in the lower half and clear of the
+title. Neither proof has run since the move; the full player's and TV's placement is the native
+Robolectric tests' above. The proofs bound how long the notice stayed only from
 above (within 20 seconds); its four seconds are the Robolectric test's. TalkBack itself did not run:
 that it reads the node is ASSUMED from the node's semantics.
 
@@ -6018,8 +6063,8 @@ does not share this controller"; that was wrong. `AndroidPlaybackController` dri
 with no notice and left the failure line on screen while the next entry played. §12.12 rule 7's
 sentence is replaced by rule 8, which says what Android now does, what it reports so that rules 3
 and 4 hold, which pass-beginning actions are unreachable there (a gapless handover, Try Again, queue
-edits, disconnect, sign-out and a change of server), and one divergence (Previous past three seconds
-restarts by seeking and begins no pass). Two Android mappings that kept the rule from ever applying
+edits, disconnect, sign-out and a change of server), and one divergence (Previous on a seekable track
+restarts it by seeking, past three seconds or on the first entry, and begins no pass). Two Android mappings that kept the rule from ever applying
 are corrected: Media3's decoding failures crossed as `Transport.Unreachable`, and a failed `getSong`
 envelope crossed as `Protocol.MalformedEnvelope` whatever its code. A resolution failure now reaches
 the core as `FailedBeforeStart`. Measured on the way, and recorded in rule 8: the Skip Probe's
@@ -6037,14 +6082,33 @@ Play not reported in any branch, after Stop, or with the engine holding the entr
 kept when a skip is noted, which the emulator caught first -- the notice is published before the
 next entry starts, so for that one publication the notice and the failure line showed together, and
 the test now checks every publication, not the last; the line kept when `start` begins an attempt;
-`close` keeping the notice; a `getSong` code ignored; a resolution failure not reported. One
-survives and is equivalent on Android: Play not reported while nothing has reached the engine yet.
-That branch is reached only while a restored entry, or one Play restarted after Stop, is resolving;
-the first holds an empty pass, the second's pass was just cleared by that Play, and the attempt's
-restore mark decides nothing on Android, whose shell decides play or pause itself. **Mutants,
-notice, each killed:** the phone surface and the TV surface drawing nothing, no live region, a
+`close` keeping the notice; a `getSong` code ignored; a resolution failure not reported.
+**Corrected in review: Play not reported while the entry is still resolving is not equivalent.** The
+first version of this revision said it was, reasoning that the branch is reached only while a
+restored entry, or one Play restarted after Stop, is resolving, with a pass that is empty or was
+just cleared. That missed a case: a skip past a failure before the engine had the entry leaves the
+engine holding nothing while the next entry resolves, with the failed entry in the pass, so a Play
+pressed then must begin a new pass, or a later failure stops where the skip should have reached the
+entry again. The test named for this branch never entered it: the controller kept the failed
+attempt's plan after the engine failed it, so Play took the branch for an engine holding an entry.
+The review's probe, now `pauseThenPlayWhileTheEntrySkippedToIsResolvingBeginsANewPass`, enters the
+branch and kills the mutant (31 tests, 1 failure, on the mutant; every earlier test passes there).
+The controller now drops the plan once the core moves on from the engine's attempt, so the named test
+enters the branch as well, and restart and Previous no longer act on an attempt that is over
+(`afterASkipNothingActsOnTheFailedAttemptWhileTheNextEntryResolves`, which failed first: restart was
+still offered). Previous restarting an unseekable first entry now begins a pass
+(`previousRestartingAnUnseekableFirstEntryBeginsANewPass`, which failed first: the queue stopped on
+that entry). **Mutants, notice, each killed:** the phone surface and the TV surface drawing nothing, no live region, a
 notice that never expires, no shorter-sentence fallback, a notice that takes taps, and the drawn
-sentence announced instead of the whole one. (Numbered after the highest revision on `main` when written; renumbers at
+sentence announced instead of the whole one. **Corrected in review, the notice:** the full player drew
+it inside its clickable root, which merged it into the player's one label, so "one node, one
+sentence" did not hold there; and its bottom-edge placement covered the transport on a 360 × 640 dp
+phone and a focusable Up Next row on TV with three or more entries. It now lies on the cover in both
+(rule 8), and the tests that pin that failed first on the old placement: the notice's node was
+absent from the merged tree, and the overlap checks named the covered controls. Five notice mutants
+survived every test then, and each now has a test that kills it: the text-size cap removed; the
+page's notice removed; the page's notice shown while the player is open; the player's notice
+removed; and the accessibility timeout ignored. (Numbered after the highest revision on `main` when written; renumbers at
 merge.)
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required

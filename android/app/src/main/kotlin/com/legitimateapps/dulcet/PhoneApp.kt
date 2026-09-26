@@ -118,43 +118,64 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     )
     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
 
+    PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it }, tabs = {
+        NavigationBar {
+            NavigationBarItem(
+                selected = tab == PhoneTab.Library && routes.isEmpty(),
+                onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
+                icon = { Icon(DulcetIcons.LibraryMusic, null) },
+                label = { Text(stringResource(R.string.tab_library)) },
+                modifier = Modifier.testTag("library.open"),
+            )
+            NavigationBarItem(
+                selected = tab == PhoneTab.Search && routes.isEmpty(),
+                onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
+                icon = { Icon(DulcetIcons.Search, null) },
+                label = { Text(stringResource(R.string.tab_search)) },
+                modifier = Modifier.testTag("search.open"),
+            )
+        }
+    }) {
+        val route = routes.lastOrNull()
+        when {
+            route?.startsWith("album:") == true ->
+                AlbumScreen(account, index.album(route.removePrefix("album:")), playingRawId, actions)
+            route?.startsWith("artist:") == true ->
+                ArtistScreen(account, index, index.artist(route.removePrefix("artist:")), actions)
+            tab == PhoneTab.Library -> LibraryHome(account, library, libraryState, index, playingRawId, actions)
+            else -> MobileSearchRoute(account, dependencies) { result ->
+                playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
+            }
+        }
+    }
+}
+
+/**
+ * The phone's frame: the page above the now-playing bar and the tabs, the full player over all of
+ * them while [playerOpen], and the skip notice (spec §12.12 rule 5) on whichever is in front.
+ */
+@Composable
+internal fun PhoneFrame(
+    account: SearchAccount,
+    playbackState: AndroidPlaybackState,
+    playback: AndroidPlaybackController?,
+    playerOpen: Boolean,
+    setPlayerOpen: (Boolean) -> Unit,
+    tabs: @Composable () -> Unit,
+    page: @Composable () -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
                 Column {
-                    if (playbackState.hasSession) MiniPlayer(account, playbackState, playback) { playerOpen = true }
-                    NavigationBar {
-                        NavigationBarItem(
-                            selected = tab == PhoneTab.Library && routes.isEmpty(),
-                            onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
-                            icon = { Icon(DulcetIcons.LibraryMusic, null) },
-                            label = { Text(stringResource(R.string.tab_library)) },
-                            modifier = Modifier.testTag("library.open"),
-                        )
-                        NavigationBarItem(
-                            selected = tab == PhoneTab.Search && routes.isEmpty(),
-                            onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
-                            icon = { Icon(DulcetIcons.Search, null) },
-                            label = { Text(stringResource(R.string.tab_search)) },
-                            modifier = Modifier.testTag("search.open"),
-                        )
-                    }
+                    if (playbackState.hasSession) MiniPlayer(account, playbackState, playback) { setPlayerOpen(true) }
+                    tabs()
                 }
             },
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                val route = routes.lastOrNull()
-                when {
-                    route?.startsWith("album:") == true ->
-                        AlbumScreen(account, index.album(route.removePrefix("album:")), playingRawId, actions)
-                    route?.startsWith("artist:") == true ->
-                        ArtistScreen(account, index, index.artist(route.removePrefix("artist:")), actions)
-                    tab == PhoneTab.Library -> LibraryHome(account, library, libraryState, index, playingRawId, actions)
-                    else -> MobileSearchRoute(account, dependencies) { result ->
-                        playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
-                    }
-                }
+                page()
                 // Inside the content region, so it ends above the now-playing bar and the tabs and
                 // never covers them; the full player shows it itself while it is open.
                 PhoneSkipNotice(playbackState, visible = !playerOpen)
@@ -165,7 +186,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {
-            if (playback != null) NowPlayingScreen(account, playbackState, playback) { playerOpen = false }
+            if (playback != null) NowPlayingScreen(account, playbackState, playback) { setPlayerOpen(false) }
         }
     }
 }

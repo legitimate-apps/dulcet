@@ -10,8 +10,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The lean-back player skips a track that holds no audio (spec §12.12), with the notice along
- * its bottom edge and no failure line, and the next track plays. Opt-in; see [SkipProbeProof].
+ * The lean-back player skips a track that holds no audio (spec §12.12), with the notice in the
+ * lower half of the screen, on the cover, and no failure line, and the next track plays. Opt-in;
+ * see [SkipProbeProof].
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidTvEmulatorAutoSkipProofTest {
@@ -27,7 +28,7 @@ class AndroidTvEmulatorAutoSkipProofTest {
         }) { notice, root ->
             val metrics = context.resources.displayMetrics
             check(notice.top > metrics.heightPixels / 2 && notice.bottom < metrics.heightPixels) {
-                "The notice $notice must sit along the bottom edge of ${metrics.heightPixels}"
+                "The notice $notice must sit in the lower half of ${metrics.heightPixels}"
             }
             val title = SkipProbeProof.boundsOf(root, SkipProbeProof.PLAYABLE)
             check(title.all { !Rect.intersects(it, notice) }) { "The notice $notice covers the title $title" }

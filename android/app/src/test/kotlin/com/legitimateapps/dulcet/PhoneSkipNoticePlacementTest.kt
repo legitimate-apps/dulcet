@@ -1,0 +1,293 @@
+package com.legitimateapps.dulcet
+
+import android.os.SystemClock
+import android.view.View
+import android.view.ViewGroup
+import android.view.accessibility.AccessibilityManager
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.ui.SkipNoticeDrawnSentence
+import com.legitimateapps.dulcet.ui.SkipNoticeRegion
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
+import com.legitimateapps.dulcet.core.AndroidPlaybackState
+import com.legitimateapps.dulcet.core.AndroidSkipNotice
+import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.ui.SKIP_NOTICE_TAG
+import org.junit.After
+import org.junit.Rule
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+/**
+ * Where the full player draws the skip notice (spec §12.12 rules 5 and 8), on the smallest phone
+ * the layout supports. Native graphics, so text is measured as a device measures it.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35], qualifiers = "w360dp-h640dp-port")
+class PhoneSkipNoticePlacementTest {
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    private val context = RuntimeEnvironment.getApplication()
+    private val account = SearchAccount("provider:placement", "http://127.0.0.1:9", "u", "p", true)
+    private val controller = AndroidPlaybackController(context,
+        PlaybackEndpointAccount("provider:placement", "http://127.0.0.1:9", "u", "p", true))
+    private val sentence = "Couldn’t play “Unplayable Probe”. Skipped."
+
+    @After fun close() { controller.close() }
+
+    private fun playing() = AndroidPlaybackState(title = "Playable After Skip", phase = "Preparing",
+        playbackSessionId = "s", artist = "Dulcet Fixtures", album = "Skip Probe", canGoNext = true, canGoPrevious = true,
+        skipNotice = AndroidSkipNotice(1, "Unplayable Probe", SystemClock.elapsedRealtime()))
+
+    private fun showPlayer(fontScale: Float = 1f) {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            val base = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(base.density, fontScale)) {
+                MaterialTheme { NowPlayingScreen(account, playing(), controller) {} }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame(); compose.mainClock.advanceTimeByFrame()
+    }
+
+    @Test fun theFullPlayersNoticeIsItsOwnAccessibilityNode() {
+        val manager = context.getSystemService(AccessibilityManager::class.java)
+        shadowOf(manager).setEnabled(true)
+        shadowOf(manager).setTouchExplorationEnabled(true)
+        showPlayer()
+        // The merged tree is what TalkBack is handed: a notice merged into a clickable ancestor has
+        // no node of its own there, and the ancestor reads it as part of its own label.
+        val merged = compose.onAllNodes(hasTestTag(SKIP_NOTICE_TAG)).fetchSemanticsNodes()
+        assertEquals(1, merged.size, "The notice must be its own node in the merged tree")
+        val notice = merged.single()
+        assertEquals(listOf(sentence), notice.config[SemanticsProperties.ContentDescription])
+        assertEquals(LiveRegionMode.Polite, notice.config[SemanticsProperties.LiveRegion], "TalkBack must announce it")
+        val player = compose.onNodeWithTag("player.full").fetchSemanticsNode()
+        assertEquals(null, player.config.getOrNull(SemanticsProperties.LiveRegion), "The player must not carry the notice's live region")
+        assertFalse(player.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().any { it.contains("Skipped") },
+            "The player's own label must not read the notice")
+        // What Android's accessibility layer hands a screen reader for the notice.
+        val info = composeView(compose.activity.window.decorView).accessibilityNodeProvider
+            .createAccessibilityNodeInfo(notice.id)!!
+        assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, info.liveRegion)
+        assertEquals(sentence, info.contentDescription?.toString())
+        assertTrue(info.isScreenReaderFocusable, "A screen reader must be able to reach the notice as its own element")
+    }
+
+    @Test fun theFullPlayersNoticeCoversNoControlOnASmallPhone() = checkPlacement(fontScale = 1f)
+
+    /** The player's own text grows with the person's font scale; the notice still stays on the cover. */
+    @Test fun theFullPlayersNoticeCoversNoControlOnASmallPhoneAtTwiceTheTextSize() = checkPlacement(fontScale = 2f)
+
+    private fun checkPlacement(fontScale: Float) {
+        showPlayer(fontScale)
+        val density = RuntimeEnvironment.getApplication().resources.displayMetrics.density
+        // The title is one line of headline type, 32 dp tall at the default size. Android scales
+        // text non-linearly above 1.3x, so twice the size is 48 dp, not 64: it grows, not doubles.
+        val title = compose.onNodeWithTag("player.title", useUnmergedTree = true).fetchSemanticsNode().size.height / density
+        assertTrue(if (fontScale > 1f) title >= 40f else title in 28f..36f,
+            "The control requires the text scaled by $fontScale: the title is $title dp tall")
+        val root = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()
+        val notice = compose.onNodeWithTag(SKIP_NOTICE_TAG, useUnmergedTree = true).fetchSemanticsNode()
+        val (checked, covered) = interactiveNodesCoveredBy(root, notice)
+        val tags = checked.mapNotNull { it.config.getOrNull(SemanticsProperties.TestTag) }
+        // A check that finds no controls proves nothing: the transport must be among them.
+        assertTrue(tags.containsAll(listOf("player.close", "player.queue", "player.scrubber", "player.shuffle",
+            "player.previous", "player.playpause", "player.next", "player.repeat")),
+            "The control requires the player's controls to be checked: $tags")
+        assertTrue(notice.boundsInRoot.height > 0f, "The control requires the notice drawn")
+        assertEquals(emptyList(), covered.map { describe(it) },
+            "At font scale $fontScale the notice ${notice.boundsInRoot} covers these controls")
+        // Over the cover, which takes no input, and inside it.
+        val cover = compose.onNodeWithTag("player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue(cover.contains(notice.boundsInRoot), "The notice ${notice.boundsInRoot} must lie on the cover $cover")
+        val nearest = checked.filter { it.boundsInRoot.top >= notice.boundsInRoot.bottom }.minOfOrNull { it.boundsInRoot.top }
+        println("SKIP NOTICE PLACEMENT phone 360x640 font-scale=$fontScale title-height=${title}dp " +
+            "notice=${notice.boundsInRoot} cover=$cover controls-checked=${checked.size} " +
+            "nearest-control-top-below=$nearest drawn=${notice.config[SkipNoticeDrawnSentence]}")
+    }
+
+    @Test fun aTapOnThePlayerDoesNotReachThePagesBeneathIt() {
+        var beneath = 0
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().testTag("beneath").clickable { beneath++ })
+                    NowPlayingScreen(account, playing(), controller) {}
+                }
+            }
+        }
+        compose.onNodeWithTag("player.title", useUnmergedTree = true).performTouchInput { click(center) }
+        compose.onNodeWithTag(SKIP_NOTICE_TAG, useUnmergedTree = true).performTouchInput { click(center) }
+        assertEquals(0, beneath, "The player covers the pages beneath it; a tap on it must not fall through")
+    }
+
+    /**
+     * The frame shows the notice on the page above the now-playing bar and the tabs, and while the
+     * full player is open only the player's own: one notice, announced once, where the person looks.
+     */
+    @Test fun theNoticeIsOnThePageUntilThePlayerOpensAndThenOnlyOnThePlayer() {
+        var open by mutableStateOf(false)
+        compose.setContent {
+            MaterialTheme {
+                PhoneFrame(account, playing(), controller, open, { open = it },
+                    tabs = { Box(Modifier.fillMaxWidth().height(80.dp).testTag("tabs")) }) {
+                    Box(Modifier.fillMaxSize().testTag("page"))
+                }
+            }
+        }
+        compose.waitForIdle()
+        val onPage = compose.onAllNodes(hasTestTag(SKIP_NOTICE_TAG), useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals(1, onPage.size, "The page must show the notice while the player is closed")
+        val notice = onPage.single().boundsInRoot
+        val bar = compose.onNodeWithTag("player.mini", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val tabs = compose.onNodeWithTag("tabs", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue(notice.bottom <= bar.top && notice.bottom <= tabs.top,
+            "The notice $notice must end above the now-playing bar $bar and the tabs $tabs")
+        assertTrue(!inside(onPage.single(), "player.full"), "The control requires the page's notice, not the player's")
+
+        open = true
+        compose.waitForIdle()
+        val shown = compose.onAllNodes(hasTestTag(SKIP_NOTICE_TAG), useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals(1, shown.size, "With the player open exactly one notice may exist, or two live regions announce it")
+        assertTrue(inside(shown.single(), "player.full"), "The notice shown must be the player's own")
+    }
+
+    private fun inside(node: SemanticsNode, tag: String) =
+        generateSequence(node.parent) { it.parent }.any { it.config.getOrNull(SemanticsProperties.TestTag) == tag }
+
+    private fun describe(node: SemanticsNode) =
+        "${node.config.getOrNull(SemanticsProperties.TestTag) ?: node.config.getOrNull(SemanticsProperties.ContentDescription)} ${node.boundsInRoot}"
+
+    private fun composeView(view: View): View {
+        if (view.javaClass.name.endsWith("AndroidComposeView")) return view
+        if (view is ViewGroup) for (i in 0 until view.childCount) runCatching { return composeView(view.getChildAt(i)) }
+        error("No compose view under $view")
+    }
+}
+
+/** The notice's own text, measured as a device measures it (spec §12.12 rules 5 and 8). */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35])
+class SkipNoticeMeasuredTextTest {
+    @get:Rule val compose = createComposeRule()
+    private val now = 50_000L
+
+    /** Four regions at font scales 1, 1.5, 2 and 3 in one composition: the card stops growing at 1.5. */
+    @Test fun theTextStopsGrowingAtOneAndAHalfTimesItsSize() {
+        compose.mainClock.autoAdvance = false
+        val scales = listOf(1f, 1.5f, 2f, 3f)
+        compose.setContent {
+            val base = LocalDensity.current
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                for (scale in scales) CompositionLocalProvider(LocalDensity provides Density(base.density, scale)) {
+                    MaterialTheme {
+                        SkipNoticeRegion(AndroidSkipNotice(1, "Unplayable Probe", now), true,
+                            MaterialTheme.colorScheme.inverseSurface, MaterialTheme.colorScheme.inverseOnSurface,
+                            MaterialTheme.typography.bodyMedium, Modifier.fillMaxWidth().requiredHeight(460.dp)) { now }
+                    }
+                }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame(); compose.mainClock.advanceTimeByFrame()
+        val heights = compose.onAllNodes(hasTestTag(SKIP_NOTICE_TAG)).fetchSemanticsNodes().map { it.size.height }
+        assertEquals(4, heights.size, "The control requires four notices")
+        assertTrue(heights[1] > heights[0], "The control requires the text to grow up to the cap: $heights")
+        assertEquals(heights[1], heights[2], "The text must stop growing at 1.5x, not reach 2x: $heights")
+        assertEquals(heights[1], heights[3], "The text must stop growing at 1.5x, not reach 3x: $heights")
+    }
+
+    /** The sentence naming the track gives way when its card and margin would need more than a third of the region. */
+    @Test fun theNamedSentenceGivesWayAtAThirdOfTheRegion() {
+        compose.mainClock.autoAdvance = false
+        val long = "Unplayable Long Probe -- Concerto for Two Violins in D minor, BWV 1043"
+        var height by mutableStateOf(460)
+        compose.setContent {
+            MaterialTheme {
+                SkipNoticeRegion(AndroidSkipNotice(1, long, now), true, MaterialTheme.colorScheme.inverseSurface,
+                    MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.bodyMedium,
+                    Modifier.fillMaxWidth().height(height.dp)) { now }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame(); compose.mainClock.advanceTimeByFrame()
+        val node = { compose.onNodeWithTag(SKIP_NOTICE_TAG).fetchSemanticsNode() }
+        val named = "Couldn’t play “$long”. Skipped."
+        assertEquals(named, node().config[SkipNoticeDrawnSentence], "The control requires the named sentence in 460 dp")
+        val density = RuntimeEnvironment.getApplication().resources.displayMetrics.density
+        // The card, plus the 16 dp margin below it.
+        val needed = node().size.height / density + 16f
+        var smallest = 460
+        for (h in 460 downTo 40 step 2) {
+            height = h
+            compose.mainClock.advanceTimeByFrame()
+            if (node().config[SkipNoticeDrawnSentence] == named) smallest = h else break
+        }
+        assertTrue(smallest < 460, "The control requires the scan to reach the switch")
+        val ratio = smallest / needed
+        assertTrue(ratio in 2.9f..3.1f, "The named sentence must need a region three times its card: $smallest dp for $needed dp")
+    }
+}
+
+private fun Rect.contains(other: Rect) =
+    other.left >= left - 0.5f && other.top >= top - 0.5f && other.right <= right + 0.5f && other.bottom <= bottom + 0.5f
+
+/**
+ * Every node a person can act on -- tap, long-press, drag, scroll or move focus to -- under [root],
+ * leaving out [notice] and the containers it is drawn inside; and those of them [notice] overlaps.
+ */
+internal fun interactiveNodesCoveredBy(root: SemanticsNode, notice: SemanticsNode): Pair<List<SemanticsNode>, List<SemanticsNode>> {
+    val containers = generateSequence(notice) { it.parent }.map { it.id }.toSet()
+    val interactive = mutableListOf<SemanticsNode>()
+    fun walk(node: SemanticsNode) {
+        val c = node.config
+        if (node.id !in containers && (SemanticsActions.OnClick in c || SemanticsActions.OnLongClick in c ||
+                SemanticsActions.SetProgress in c || SemanticsActions.ScrollBy in c ||
+                SemanticsActions.RequestFocus in c || SemanticsProperties.Focused in c)) interactive += node
+        node.children.forEach(::walk)
+    }
+    walk(root)
+    val area = notice.boundsInRoot
+    return interactive to interactive.filter { it.boundsInRoot.overlaps(area) }
+}

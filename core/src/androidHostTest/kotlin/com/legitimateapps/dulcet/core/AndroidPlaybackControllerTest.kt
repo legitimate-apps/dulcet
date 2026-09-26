@@ -515,6 +515,120 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * `play()`'s branch for an entry that is still being resolved, with a pass that is not empty.
+     * a fails before the engine has it, so the engine holds nothing while the skip resolves b and
+     * Play takes that branch. The person's Play there must begin a new pass, or a later failure of
+     * b stops the queue instead of reaching a again under repeat-all (spec §12.12 rule 3).
+     */
+    @Test fun pauseThenPlayWhileTheEntrySkippedToIsResolvingBeginsANewPass() {
+        for (pressesPlay in listOf(false, true)) {
+            var pending: Continuation<PlaybackResolutionResult>? = null
+            var request: PlaybackResolveRequest? = null
+            val resolvedIds = mutableListOf<String>()
+            Fixture(resolve = { r ->
+                resolvedIds += r.itemId.rawId
+                when {
+                    r.itemId.rawId == "a" -> PlaybackResolutionResult.Failed(DomainError.Server.Known(70))
+                    r.itemId.rawId == "b" && request == null -> { request = r; suspendCoroutine { pending = it } }
+                    else -> resolved(r)
+                }
+            }).use { f ->
+                // Repeat-all is set on an earlier queue, so that setting it does not begin the pass
+                // this test needs to be non-empty.
+                f.controller.playQueue(album("x"), 0, AndroidQueueSource.Album, "Album", "album-x")
+                f.controller.cycleRepeatMode()
+                assertEquals(AndroidRepeatMode.All, f.controller.state.value.repeatMode)
+                f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                val held = assertNotNull(pending, "The control requires the skip to b to be resolving")
+                assertEquals("Title a", f.controller.state.value.skipNotice?.title, "The control requires a skipped")
+                assertEquals(listOf("x"), f.prepared.map { it.itemId.rawId },
+                    "The control requires the engine to hold nothing of this queue, so Play takes the resolving branch")
+                assertEquals(AndroidRepeatMode.All, f.controller.state.value.repeatMode, "The control requires repeat-all")
+                if (pressesPlay) { f.controller.pause(); f.controller.play() }
+                held.resume(resolved(assertNotNull(request)))
+                assertEquals(listOf("x", "b"), f.prepared.map { it.itemId.rawId }, "The control requires b to reach the engine")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                f.probe.position = 1_000
+                shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+                assertEquals("Progressing", f.controller.state.value.phase, "The control requires b to have progressed")
+                f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+                assertEquals(if (pressesPlay) 2 else 1, resolvedIds.count { it == "a" },
+                    "pressesPlay=$pressesPlay: a Play while b resolved begins a new pass, so the skip may reach a again")
+            }
+        }
+    }
+
+    /**
+     * Once the core has moved past the engine's failed attempt, nothing acts on that attempt while
+     * the next entry resolves: restart is not offered, and Previous moves to the entry before
+     * instead of seeking a track that is over.
+     */
+    @Test fun afterASkipNothingActsOnTheFailedAttemptWhileTheNextEntryResolves() {
+        var pending: Continuation<PlaybackResolutionResult>? = null
+        var request: PlaybackResolveRequest? = null
+        Fixture(resolve = { r ->
+            if (r.itemId.rawId == "b" && request == null) { request = r; suspendCoroutine { pending = it } } else resolved(r)
+        }).use { f ->
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 4_000
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+            assertTrue(f.controller.state.value.canRestart, "The control requires a restart offered four seconds into a")
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            val held = assertNotNull(pending, "The control requires the skip to b to be resolving")
+            assertEquals(1, f.controller.state.value.currentIndex, "The control requires the queue on b")
+            assertFalse(f.controller.state.value.canRestart, "a is over, so there is nothing to restart")
+            f.controller.skipToPrevious()
+            assertEquals(emptyList(), f.probe.seekCommands, "Previous must not seek the failed attempt")
+            assertEquals(0, f.controller.state.value.currentIndex, "Previous moves to the entry before")
+            held.resume(resolved(assertNotNull(request)))
+            assertEquals(listOf("a", "a"), f.prepared.map { it.itemId.rawId }, "a starts again, and the abandoned b does not")
+        }
+    }
+
+    /**
+     * Previous on the first entry of a stream that cannot seek restarts it as a new session
+     * (`restartCurrent`, which begins no pass itself). The person pressed Previous, so a new pass
+     * begins there as it does wherever Previous moves (spec §12.12 rule 3).
+     */
+    @Test fun previousRestartingAnUnseekableFirstEntryBeginsANewPass() {
+        for (pressesPrevious in listOf(false, true)) Fixture().use { f ->
+            f.controller.playQueue(album("a", "b", "c"), 2, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.controller.previous()
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            assertEquals(listOf("c", "b", "a"), f.prepared.map { it.itemId.rawId },
+                "The control requires b reached by Previous, then skipped backward to a")
+            f.probe.seekable = false
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 1_000
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+            assertEquals("Progressing", f.controller.state.value.phase, "The control requires a to have progressed")
+            assertFalse(f.controller.state.value.seekable, "The control requires a stream that cannot seek")
+            if (pressesPrevious) {
+                f.controller.skipToPrevious()
+                assertEquals(listOf("c", "b", "a", "a"), f.prepared.map { it.itemId.rawId },
+                    "The control requires Previous to restart a as a new session")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+            }
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            val state = f.controller.state.value
+            if (pressesPrevious) {
+                assertEquals("b", f.prepared.last().itemId.rawId, "Previous began a new pass, so the skip may reach b again")
+                assertNull(state.error)
+            } else {
+                assertEquals("a", f.prepared.last().itemId.rawId, "b was skipped past in this pass, so the queue stops on a")
+                assertEquals(DomainError.Playback.NoPlayableSource, state.error)
+            }
+        }
+    }
+
     @Test fun everySystemSeekVerbGoesThroughTheController() {
         Fixture().use { f ->
             f.controller.playQueue(album("a"), 0, AndroidQueueSource.Album, "Album", "album-id")

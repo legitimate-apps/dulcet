@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.AccessibilityManager
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -68,6 +71,31 @@ class PhoneSkipNoticeTest {
         compose.onNodeWithTag(SKIP_NOTICE_TAG).assertExists("It stays for four seconds")
         now += 200
         compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithTag(SKIP_NOTICE_TAG).assertDoesNotExist()
+    }
+
+    /** A person who asked Android for more time to read content that disappears gets it (spec §12.12 rule 8). */
+    @Test fun theNoticeStaysAsLongAsThePersonAskedAndroidToGiveIt() {
+        val asked = mutableListOf<Long>()
+        val slower = object : AccessibilityManager {
+            override fun calculateRecommendedTimeoutMillis(originalTimeoutMillis: Long, containsIcons: Boolean,
+                containsText: Boolean, containsControls: Boolean): Long {
+                asked += originalTimeoutMillis
+                return 10_000
+            }
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalAccessibilityManager provides slower) {
+                MaterialTheme { region(AndroidSkipNotice(1, "Unplayable Probe", now)) }
+            }
+        }
+        compose.onNodeWithTag(SKIP_NOTICE_TAG).assertExists()
+        assertEquals(listOf(4_000L), asked.distinct(), "The control requires the system to be asked about four seconds")
+        now += 9_000
+        compose.mainClock.advanceTimeBy(9_000)
+        compose.onNodeWithTag(SKIP_NOTICE_TAG).assertExists("Nine seconds in, the ten the person asked for are not over")
+        now += 1_100
+        compose.mainClock.advanceTimeBy(2_000)
         compose.onNodeWithTag(SKIP_NOTICE_TAG).assertDoesNotExist()
     }
 

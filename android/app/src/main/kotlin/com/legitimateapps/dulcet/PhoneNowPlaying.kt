@@ -55,6 +55,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
@@ -132,8 +133,11 @@ internal fun NowPlayingScreen(
     val top by animateColorAsState(accent?.copy(alpha = 0.55f)?.compositeOver(surface) ?: MaterialTheme.colorScheme.primaryContainer,
         label = "now-playing-background")
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(top, surface))).testTag("player.full")
-        // The player covers the tabs beneath it; touches must not fall through to them.
-        .clickable(interactionSource = null, indication = null) {}) {
+        // The player covers the pages beneath it; touches must not fall through to them. A pointer
+        // handler that consumes nothing, not `clickable`: a clickable merges everything inside it
+        // into one node, so a screen reader read the whole player, the skip notice included, as
+        // one label, and could not reach the notice on its own.
+        .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -150,8 +154,14 @@ internal fun NowPlayingScreen(
             Spacer(Modifier.weight(0.5f))
             // The cover settles back when paused, as a physical sleeve would.
             val scale by animateFloatAsState(if (state.playWhenReady) 1f else 0.86f, spring(dampingRatio = 0.6f), label = "cover")
-            Artwork(account, state.artworkKey, state.title, null,
-                Modifier.fillMaxWidth().aspectRatio(1f).scale(scale).shadow(24.dp, RoundedCornerShape(12.dp)))
+            Box(Modifier.fillMaxWidth().aspectRatio(1f).testTag("player.artwork")) {
+                Artwork(account, state.artworkKey, state.title, null,
+                    Modifier.fillMaxSize().scale(scale).shadow(24.dp, RoundedCornerShape(12.dp)))
+                // The notice lies along the bottom of the cover, which takes no input, so it covers
+                // no control on any phone. The player's own bottom edge is its transport row on a
+                // small phone (spec §12.12 rule 8).
+                PhoneSkipNotice(state, visible = true, Modifier.matchParentSize())
+            }
             Spacer(Modifier.weight(0.5f))
             Column(Modifier.fillMaxWidth()) {
                 Text(state.title.ifBlank {
@@ -195,8 +205,6 @@ internal fun NowPlayingScreen(
             }
             Spacer(Modifier.weight(0.4f))
         }
-        // The player has no now-playing bar, so the notice runs along its own bottom edge.
-        PhoneSkipNotice(state, visible = true, Modifier.navigationBarsPadding())
     }
     if (showQueue) UpNextSheet(account, state, playback) { showQueue = false }
 }

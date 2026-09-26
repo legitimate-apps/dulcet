@@ -204,7 +204,12 @@ public class AndroidPlaybackController internal constructor(
             val transition = queue.recordPlaybackEvent(event)
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
-            if (event is PlaybackEngineEvent.EndedNaturally && transition.startDirective == null) activePlan = null
+            // The engine's attempt is over once it ends or the core moves on from it -- a natural
+            // end, or a skip past its failure. Nothing may act on it while the next entry
+            // resolves: Previous would seek a track that is over, restart would be offered, and
+            // Play would take the branch for an engine holding an entry rather than the one for
+            // an entry still resolving, whose report begins the pass (spec §12.12 rule 3).
+            if (event is PlaybackEngineEvent.EndedNaturally || transition.startDirective != null) activePlan = null
             publish()
             if (event is PlaybackEngineEvent.Ready) {
                 pendingResume?.let { position ->
@@ -396,8 +401,13 @@ public class AndroidPlaybackController internal constructor(
     private fun restartCurrentSong() {
         if (activePlan == null) return
         if (engine.seekability == PlaybackSeekability.Seekable) seek(0)
-        // An unseekable stream restarts as a new session of the same entry, which re-requests it.
-        else transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
+        else {
+            // An unseekable stream restarts as a new session of the same entry, which re-requests
+            // it. That reaches the entry anew, so the person's Previous begins a new pass here as
+            // it does wherever Previous moves (spec §12.12 rule 3); `restartCurrent` begins none.
+            recordPlayRequested()
+            transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
+        }
     }
 
     /** Plays the Up Next entry the user picked. Addressed by entry identity, never by row index. */

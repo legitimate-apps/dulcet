@@ -119,7 +119,15 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
             Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 40.dp),
                 horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                 Column(Modifier.width(360.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    TvArtwork(account, state.artworkKey, 360)
+                    Box(Modifier.size(360.dp).testTag("tv.player.artwork")) {
+                        TvArtwork(account, state.artworkKey, 360)
+                        // Along the bottom of the cover, which takes no focus: the player's own
+                        // bottom edge is the Up Next list, whose rows the D-pad moves through, and
+                        // a card over a focused row hides where focus is (spec §12.12 rule 8).
+                        SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
+                            MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
+                            Modifier.matchParentSize())
+                    }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     Text(if (playback == null) "Connect an account before playing." else "Now Playing",
@@ -164,10 +172,6 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
                     }
                 }
             }
-            // Along the player's own bottom edge, clear of the transport row above it.
-            SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
-                MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
-                Modifier.fillMaxSize().padding(bottom = 24.dp), maxCardWidth = 720.dp)
         }
     }
 }
