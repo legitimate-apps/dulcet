@@ -170,6 +170,9 @@ internal fun PhoneFrame(
     // The player covers the page only when it is asked open and there is playback to show; a flag
     // left open with none covers nothing, so Back must not be spent closing it.
     val covered = playerOpen && playback != null
+    // Exactly one of these is enabled at a time, so which one Back reaches does not depend on the
+    // order they are registered in (the later registration wins). The `!covered` guard is that
+    // independence: with it, swapping the two lines changes nothing.
     BackHandler(enabled = !covered && back != null) { back?.invoke() }
     BackHandler(enabled = covered) { setPlayerOpen(false) }
     // The player is in front from the moment it is asked open until its exit slide has finished.

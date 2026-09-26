@@ -197,7 +197,8 @@ private class PlayerPlan(
 /**
  * The full player, laid out for the window it is given (spec §12.12 rule 8). Height goes, in
  * order, to: the header and the controls -- scrubber and transport, which never shrink; the
- * title's line; the skip notice's banner, when the notice is not on the cover; the error card, up
+ * skip notice's banner, when the notice is not on the cover, for the seconds it shows; the
+ * title's line; the error card, up
  * to [ERROR_FIRST]; the cover, up to [COVER_FLOOR], or none at all when less than [COVER_MIN] is
  * left; the rest of the error card; the artist; and then the cover again, up to the width it has. The
  * title and artist, and the error card, each scroll in their own region when cut short. A window
@@ -316,12 +317,13 @@ private fun PlayerLayout(
             if (body - infoGap2 - sc - controlsGap2 - tr < titleLine) { infoGap2 = tight; controlsGap2 = tight }
             val row = (body - infoGap2 - sc - controlsGap2 - tr).coerceAtLeast(0)
             val beside = 16.dp.roundToPx()
-            val cover = minOf(row, (inner - beside) / 2)
-            val infoWidth = inner - cover - beside
+            // As stacked: a cover under COVER_MIN is not drawn, and the title takes the row's width.
+            val cover = minOf(row, (inner - beside) / 2).let { if (it < COVER_MIN.roundToPx()) 0 else it }
+            val infoWidth = if (cover > 0) inner - cover - beside else inner
             val shares = share(row, infoWidth, 0, coverFirst = false)
             val scrubberY = top + row + infoGap2
             return PlayerPlan(PlayerArrangement.BesideAbove, compact, cover, pad, top + (row - cover) / 2,
-                infoWidth, shares.info, pad + cover + beside, top + (row - shares.info - shares.error) / 2, shares.error,
+                infoWidth, shares.info, pad + inner - infoWidth, top + (row - shares.info - shares.error) / 2, shares.error,
                 inner, pad, scrubberY, scrubberY + sc + controlsGap2)
         }
 

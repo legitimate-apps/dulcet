@@ -417,8 +417,8 @@ class AndroidPlaybackControllerTest {
     /**
      * A connection failure stops on the entry; the attempt is over. Nothing seeks it, the app and
      * the system both offer Play, and Play -- the app's, or the system's through Media3's
-     * play-button handling -- begins a new attempt for the same entry instead of leaving the
-     * player failed.
+     * play-button handling -- is Try Again (spec §12.1): a further attempt of the same play, in the
+     * same session, instead of leaving the player failed.
      */
     @Test fun afterAConnectionFailureNothingSeeksItAndPlayRetriesTheEntry() {
         for (path in listOf("app", "system")) {
@@ -446,11 +446,13 @@ class AndroidPlaybackControllerTest {
                 }
                 assertEquals(listOf("t1", "t1"), f.prepared.map { it.itemId.rawId }, "$path: Play begins a new attempt for the entry")
                 assertNotEquals(f.prepared[0].attemptId, f.prepared[1].attemptId, "$path: a new attempt, not the failed one")
+                assertEquals(f.prepared[0].playbackSessionId, f.prepared[1].playbackSessionId,
+                    "$path: Try Again is a further attempt of the same play, in the same session (spec §12.1)")
                 val retried = f.controller.state.value
                 assertNull(retried.error, "$path: the player must not stay failed")
                 assertTrue(retried.playWhenReady, "$path: the retry plays")
                 assertEquals(0, retried.currentIndex, "$path: the same entry")
-                assertEquals(emptyList(), f.probe.seekCommands, "$path: the retry seeks nothing")
+                assertEquals(emptyList(), f.probe.seekCommands, "$path: a failure before any progress saved no position to resume")
             }
         }
     }
@@ -477,6 +479,42 @@ class AndroidPlaybackControllerTest {
             assertEquals(listOf("t1"), f.prepared.map { it.itemId.rawId }, "Play begins a new attempt for the same entry")
             assertNull(f.controller.state.value.error, "The player must not stay failed")
             assertTrue(f.controller.state.value.playWhenReady, "The retry plays")
+            assertTrue(f.probe.requested, "The engine is told to play the retry")
+        }
+    }
+
+    /**
+     * A connection failure part way through, past the scrobble threshold, and then Play: the retry
+     * resumes where the failure saved its position, in the same session, and the listen -- heard
+     * to its end across the failure -- is one play, not two (spec §12.1, §28 item 7).
+     */
+    @Test fun playAfterAFailurePartWayThroughResumesTheSamePlayAndScrobblesItOnce() {
+        val submitted = mutableListOf<RecordedPlaybackEvent.SubmittedPlay>()
+        Fixture(onDelivery = { _, event -> if (event is RecordedPlaybackEvent.SubmittedPlay) submitted += event }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            repeat(25) { f.probe.position += 1_000; shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1_000)) }
+            assertEquals(1, submitted.size, "The control requires 25 s of a 40 s track to have crossed the threshold")
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(DomainError.Transport.Unreachable, f.controller.state.value.error, "The control requires the failure line")
+            f.controller.togglePlayPause()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("t1", "t1"), f.prepared.map { it.itemId.rawId }, "Play begins a further attempt for the entry")
+            assertEquals(f.prepared[0].playbackSessionId, f.prepared[1].playbackSessionId, "The retry is the same play, in the same session")
+            // The engine loads the retried item from its start; the controller moves it to the saved position.
+            f.probe.position = 0
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf(25_000L), f.probe.seekCommands, "The retry resumes at the position the failure saved")
+            assertTrue(f.probe.requested, "The engine is told to play the retry")
+            while (f.probe.position < 40_000) {
+                f.probe.position += 1_000
+                shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1_000))
+            }
+            assertEquals(listOf("t1"), submitted.map { it.itemId.rawId }, "One listen interrupted by a failure is one play: $submitted")
         }
     }
 

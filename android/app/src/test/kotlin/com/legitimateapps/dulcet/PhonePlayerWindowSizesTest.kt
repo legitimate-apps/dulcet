@@ -43,7 +43,7 @@ import kotlin.test.assertEquals
 
 /**
  * The full player across a grid of windows (spec §12.12 rule 8): the [WINDOWS] below, each at text
- * scale 0.85 (Android's smallest), 1 and 2, each with and without the error card, with the skip notice showing and playback
+ * scale -- Android's steps, 0.85, 1, 1.15, 1.3, 1.5, 1.8 and 2 -- each with and without the error card, with the skip notice showing and playback
  * paused, so the cover is drawn at its smaller, settled size. The app locks no orientation and runs
  * in split screen and on large screens, so these span phones in both orientations, foldables,
  * tablets, a desktop-sized window, and the small windows split screen makes.
@@ -51,12 +51,15 @@ import kotlin.test.assertEquals
  * In every cell: every control is whole, inside the window, and at least a 48 dp touch target; no
  * two controls overlap, and no text overlaps a control; the title's line is whole; the error card,
  * when there is one, is shown, whole or scrolling in its own region; the cover overlaps no control,
- * is at least 48 dp, and is absent only when the notice's banner or the error card needs its room; the layout is stacked
+ * is at least 48 dp, and is absent only when the notice's banner, the title's line or the error card
+ * needs its room; the layout is stacked
  * in a window taller than wide and side by side in one wider than tall; and
  * the notice is whole, at least its minimum readable size, over no control and no text, and either
  * on a cover of at least [NOTICE_MIN_COVER], the card and its margin taking at most the lower half of it as drawn, or in the banner
  * beneath the header and above the title, clear of the cover. A cover of 240 dp or more always
- * hosts it.
+ * hosts it. In a window too short for the banner, the title's line and the error card at once, the
+ * banner keeps its height for the seconds the notice shows and the title and error card may be cut;
+ * once the notice has gone the cell is checked again and both must be whole or shown.
  *
  * One composition inside a window larger than any cell, resized per cell, so the grid runs in
  * seconds rather than one Robolectric start per cell. Native graphics, so text is measured as a
@@ -81,6 +84,14 @@ class PhonePlayerWindowSizesTest {
     @Test fun everyWindowAtDefaultTextWithTheErrorCard() = grid(1f, error = true)
     @Test fun everyWindowAtDoubleTextWithoutAnError() = grid(2f, error = false)
     @Test fun everyWindowAtDoubleTextWithTheErrorCard() = grid(2f, error = true)
+    @Test fun everyWindowAtText115WithoutAnError() = grid(1.15f, error = false)
+    @Test fun everyWindowAtText115WithTheErrorCard() = grid(1.15f, error = true)
+    @Test fun everyWindowAtText130WithoutAnError() = grid(1.3f, error = false)
+    @Test fun everyWindowAtText130WithTheErrorCard() = grid(1.3f, error = true)
+    @Test fun everyWindowAtText150WithoutAnError() = grid(1.5f, error = false)
+    @Test fun everyWindowAtText150WithTheErrorCard() = grid(1.5f, error = true)
+    @Test fun everyWindowAtText180WithoutAnError() = grid(1.8f, error = false)
+    @Test fun everyWindowAtText180WithTheErrorCard() = grid(1.8f, error = true)
 
     private class Cell(val width: Int, val height: Int, val fontScale: Float, val error: Boolean, val sequence: Long)
 
@@ -99,6 +110,7 @@ class PhonePlayerWindowSizesTest {
             }
         }
         val problems = mutableListOf<String>()
+        val yielded = mutableListOf<String>()
         var hostedOnCover = 0
         var hostedInBanner = 0
         var sequence = 0L
@@ -112,8 +124,21 @@ class PhonePlayerWindowSizesTest {
             val found = check(width, height, error, where)
             problems += found.problems
             if (found.onCover) hostedOnCover++ else hostedInBanner++
+            if (found.whileTheBannerShows.isNotEmpty()) {
+                // A window too short for the banner, the title's line and the error card at once: the
+                // banner keeps its height for the seconds it shows, and once it has gone the title
+                // and the error card must be whole again, with every other check as before.
+                yielded += "$where: ${found.whileTheBannerShows}"
+                // Measured: only 300 x 300 at 1.5x and above and 330 x 330 at 2x. Bound it there.
+                if (height >= 360 || fontScale < 1.5f) problems += "$where: the banner cut the text in a window it should fit: ${found.whileTheBannerShows}"
+                compose.mainClock.advanceTimeBy(10_000)
+                repeat(40) { compose.mainClock.advanceTimeByFrame() }
+                problems += check(width, height, error, "$where, after the notice", noticeShowing = false).problems
+            }
         }
-        println("PLAYER GRID font=$fontScale error=$error cells=${WINDOWS.size} onCover=$hostedOnCover banner=$hostedInBanner")
+        println("PLAYER GRID font=$fontScale error=$error cells=${WINDOWS.size} onCover=$hostedOnCover banner=$hostedInBanner " +
+            "yieldedWhileTheBannerShows=${yielded.size}")
+        yielded.forEach { println("PLAYER YIELDED $it") }
         assertEquals(emptyList(), problems, "Problems across the grid at ${fontScale}x, error=$error")
     }
 
@@ -123,10 +148,15 @@ class PhonePlayerWindowSizesTest {
         error = if (c.error) DomainError.Transport.Unreachable else null,
         skipNotice = AndroidSkipNotice(c.sequence, "Unplayable Probe", SystemClock.elapsedRealtime()))
 
-    private class Found(val problems: List<String>, val onCover: Boolean)
+    /**
+     * [whileTheBannerShows]: the title or the error card cut while the notice's banner holds its
+     * height -- a problem only if it outlasts the notice, which the caller then checks.
+     */
+    private class Found(val problems: List<String>, val onCover: Boolean, val whileTheBannerShows: List<String> = emptyList())
 
-    private fun check(width: Int, height: Int, error: Boolean, where: String): Found {
+    private fun check(width: Int, height: Int, error: Boolean, where: String, noticeShowing: Boolean = true): Found {
         val problems = mutableListOf<String>()
+        val textCut = mutableListOf<String>()
         val d = context.resources.displayMetrics.density
         fun dp(r: Rect) = "[%.0f,%.0f - %.0f,%.0f]".format(r.left / d, r.top / d, r.right / d, r.bottom / d)
         fun node(tag: String) = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
@@ -157,12 +187,12 @@ class PhonePlayerWindowSizesTest {
         for (tag in listOf("player.title", "player.position")) {
             val n = node(tag)
             if (n == null || !n.whole() || !window.holds(n.boundsInRoot) || n.size.height <= 0)
-                problems += "$where: $tag is not whole: ${n?.let { dp(it.boundsInRoot) }}"
+                (if (tag == "player.title") textCut else problems) += "$where: $tag is not whole: ${n?.let { dp(it.boundsInRoot) }}"
         }
         val errorCard = node("player.error")
         if (error) {
             if (errorCard == null || errorCard.boundsInRoot.height <= 0 || !window.holds(errorCard.boundsInRoot))
-                problems += "$where: the error card is not shown: ${errorCard?.let { dp(it.boundsInRoot) }}"
+                textCut += "$where: the error card is not shown: ${errorCard?.let { dp(it.boundsInRoot) }}"
             else if (!errorCard.whole() && generateSequence(errorCard.parent) { it.parent }
                     .none { SemanticsActions.ScrollBy in it.config })
                 problems += "$where: the error card is cut short ${dp(errorCard.boundsInRoot)} and cannot be scrolled into view"
@@ -175,8 +205,12 @@ class PhonePlayerWindowSizesTest {
         val cover = node("player.artwork")!!.boundsInRoot
         val bannerShown = node(PLAYER_NOTICE_BANNER_TAG)?.let { it.boundsInRoot.height > 0 } ?: false
         if (cover.width <= 0) {
-            if (!bannerShown && (errorCard == null || errorCard.whole()))
-                problems += "$where: the cover is absent though neither the banner nor the error card needed its room"
+            // The title's line comes before the cover: a window too short for both, and the 4 dp gap
+            // above the scrubber at its tightest, leaves no cover.
+            val between = (node("player.scrubber")?.boundsInRoot?.top ?: 0f) - (node("player.close")?.boundsInRoot?.bottom ?: 0f)
+            val titleLine = title?.size?.height?.toFloat() ?: 0f
+            if (!bannerShown && (errorCard == null || errorCard.whole()) && between >= titleLine + (48 + 4) * d)
+                problems += "$where: the cover is absent though neither the banner, the title's line nor the error card needed its room (${between / d} dp between the header and the scrubber, title ${titleLine / d} dp)"
         } else if (!window.holds(cover) || cover.width < 48 * d - 0.5f) problems += "$where: the cover ${dp(cover)} is not inside the window and at least 48 dp"
         all.filter { it.boundsInRoot.overlaps(cover) }.forEach { problems += "$where: the cover ${dp(cover)} overlaps ${it.tag()}" }
         if (title != null && cover.width > 0) {
@@ -186,8 +220,13 @@ class PhonePlayerWindowSizesTest {
             if (width <= height && cover.bottom > t.top + 0.5f)
                 problems += "$where: taller than wide, so the cover ${dp(cover)} must be above the title ${dp(t)}"
         }
+        if (!noticeShowing) {
+            node(SKIP_NOTICE_TAG)?.let { problems += "$where: the notice ${dp(it.boundsInRoot)} is still showing" }
+            if (bannerShown) problems += "$where: the banner still holds its height"
+            return Found(problems + textCut, false)
+        }
         // The notice: whole, readable, over no control and no text, and on a cover large enough or in the banner.
-        val notice = node(SKIP_NOTICE_TAG) ?: return Found(problems + "$where: the notice is missing", false)
+        val notice = node(SKIP_NOTICE_TAG) ?: return Found(problems + textCut + "$where: the notice is missing", false)
         val area = notice.boundsInRoot
         val drawn = notice.config.getOrNull(SkipNoticeDrawnSentence).orEmpty()
         if (!notice.whole() || !window.holds(area) || area.height < NOTICE_MIN_HEIGHT * d || area.width < NOTICE_MIN_WIDTH * d || drawn.isBlank())
@@ -216,7 +255,7 @@ class PhonePlayerWindowSizesTest {
             "on=${if (onCover) "cover" else "banner"} drawn=\"$drawn\" transport=${
                 listOf("player.shuffle", "player.previous", "player.playpause", "player.next", "player.repeat")
                     .joinToString(" ") { t -> node(t)?.let { dp(it.boundsInRoot) } ?: "missing" }}")
-        return Found(problems, onCover)
+        return if (!onCover && bannerShown) Found(problems, onCover, textCut) else Found(problems + textCut, onCover)
     }
 
     companion object {
@@ -233,6 +272,8 @@ class PhonePlayerWindowSizesTest {
             360 to 640, 412 to 915, 480 to 800, 320 to 480, 300 to 560, 280 to 653, 800 to 1280, 673 to 841,
             400 to 420, 411 to 440, 316 to 360,
             640 to 360, 915 to 412, 841 to 673, 960 to 600, 1280 to 800, 1920 to 1080, 360 to 320, 568 to 320, 1024 to 768,
+            390 to 844, 340 to 600, 500 to 500, 330 to 330, 600 to 590, 740 to 360, 720 to 400, 412 to 480, 360 to 400,
+            280 to 400, 820 to 1180, 1180 to 820, 600 to 960, 360 to 780, 432 to 360, 300 to 300,
         )
     }
 }
