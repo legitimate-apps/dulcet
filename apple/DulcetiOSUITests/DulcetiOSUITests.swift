@@ -1103,9 +1103,16 @@ final class DulcetiOSUITests: XCTestCase {
               openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return nil
         }
-        let album = app.buttons.matching(identifier: "dulcet.library.album")
-            .matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
-        guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
+        // The library's rows are realized as they scroll into view, and the probe albums sort
+        // after the default corpus, so on a phone "Skip Probe" is below the fold and does not exist
+        // until the list scrolls to it. Wait for the library to show albums at all, then scroll.
+        let albums = app.buttons.matching(identifier: "dulcet.library.album")
+        let album = albums.matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
+        guard albums.firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The library must list albums: " + app.debugDescription)
+            return nil
+        }
+        guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
             return nil
