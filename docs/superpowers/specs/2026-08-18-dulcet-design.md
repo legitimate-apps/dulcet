@@ -5470,7 +5470,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator downloads the Android-only JUnit artifact, resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase, then passes only when both upstream jobs report `success`. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` for the two legs; `ubuntu-latest` for the aggregator | two parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, and the app-host, download, playback and `core-conformance` legs on macOS, iOS/iPadOS and tvOS. `apple-ci`: resolves every Apple `FEATURES.yml` evidence identity against both legs' JUnit, then passes only when both legs report `success`. Future Apple-only measurements and tests join one of the two legs, never a third macOS job without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
@@ -6366,6 +6366,42 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 112 (2026-09-26)** — `core-ci` can be repaired by a partial re-run (§21.1). This is
+numbered one above the highest revision on `main` when it was written, and may be renumbered at merge.
+
+1. **The defect, OBSERVED in run 36238393531.** Every `core-ci` artifact is named with the run and the
+   attempt, and the required `core-ci` job downloaded each one by **its own** attempt. Attempt 1's
+   phone emulator leg failed; "Re-run failed jobs" re-ran only that leg and `core-ci`, as attempt 2.
+   `core-build`, `conformance-env-linux` and the TV leg were not re-run, so their artifacts carried
+   attempt 1, and `core-ci` failed on `dulcet-core-conformance-android-evidence-36238393531-2`, which
+   nothing had uploaded. A red `core-ci` could only be repaired by re-running every job.
+2. **The fix is §21.5 item 4's mechanism.** Each producing job exports `attempt:
+   ${{ github.run_attempt }}`, and `core-ci` downloads by `needs.<job>.outputs.<attempt>`. The
+   emulator job is a matrix, and a matrix combines its members' outputs into one set, so it exports
+   one output per surface, each set only by that surface's repetition-1 member and empty in the
+   others. That per-member form is ASSUMED to survive a partial re-run in the member that did not
+   re-run. The single-job form is OBSERVED to (§21.5 item 4). If the matrix form did not survive,
+   the download would name an artifact that does not exist and fail loudly. It could not read
+   stale evidence.
+3. **Why it cannot read stale evidence.** An `upload-artifact@v4` artifact is immutable, and a
+   second upload of one name fails. A job runs at most once per attempt and sets its attempt
+   output in that same execution. So the name `core-ci` downloads is the artifact of the job's
+   latest execution. `core-ci` now tests every result for `success` **before** it downloads
+   anything, as `apple-ci` does. It therefore never reads evidence from an execution that did not
+   succeed, and a superseded passing attempt can never stand in for a later failure. The names keep
+   the attempt, rather than dropping it for `overwrite: true`, because overwriting deletes the
+   superseded attempt's artifact. That artifact is the failure evidence a re-run is most often
+   needed to diagnose.
+4. **`tools/verify_ci_policy.py` now enforces this in every workflow**, with controls in
+   `tools/test-verify-ci-policy`, including two applied to the real `core-ci.yml`. Every upload name
+   must carry the attempt. No download may reference its own job's `github.run_attempt`. Every
+   download must name an exact artifact through a needed job's attempt output. That output must be
+   `${{ github.run_attempt }}`, or, in a matrix, that value guarded to one member by
+   `matrix.<key> == <literal>` terms. Evaluating the producer's upload name for that member must
+   give exactly the downloaded name. The last rule is what catches one surface's evidence being
+   named by another surface's attempt, which would read a superseded attempt whenever only one
+   surface was re-run.
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it

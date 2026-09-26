@@ -485,6 +485,305 @@ def method_emission_associations(source: str, cited: dict[str, set[str]]) -> set
     return resolved
 
 
+
+# --- Artifact names across partial re-runs -------------------------------------------------------
+# "Re-run failed jobs" (and "Re-run this job") re-runs only the chosen jobs and their dependents, as a
+# new attempt; the jobs it leaves alone keep what their earlier attempt uploaded. So a job that
+# downloads another job's artifact must name the attempt that PRODUCED it, carried as an output of
+# the producing job -- never its own `github.run_attempt`. The pairing below is checked by evaluating
+# each upload name the way Actions would, for the matrix member the attempt output reports, because
+# a name that is merely similar can pair one surface's evidence with another surface's attempt.
+
+class Opaque:
+    """A value only the runner knows. It may appear in a name, and nothing may compute with it."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class Unresolved(Exception):
+    pass
+
+
+EXPRESSION_TOKEN = re.compile(
+    r"\s*(?:(?P<string>'(?:[^']|'')*')|(?P<number>-?\d+(?:\.\d+)?)|(?P<op>&&|\|\||==|!=|[!(),])"
+    r"|(?P<ident>[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*))",
+)
+
+
+def evaluate_expression(source: str, bindings: dict[str, object]) -> object:
+    """Evaluate the small subset of Actions expressions that artifact names use.
+
+    Literals, context paths, ==, !=, !, &&, || and format(). An unbound context path is Opaque and
+    may only stand alone; any operator applied to it raises Unresolved, so an expression this cannot
+    decide never passes as decided.
+    """
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(source):
+        if not source[position:].strip():
+            break
+        match = EXPRESSION_TOKEN.match(source, position)
+        if not match:
+            raise Unresolved(source)
+        kind = match.lastgroup or ""
+        tokens.append((kind, match.group(kind)))
+        position = match.end()
+    index = 0
+
+    def peek() -> tuple[str, str] | None:
+        return tokens[index] if index < len(tokens) else None
+
+    def take(value: str | None = None) -> tuple[str, str]:
+        nonlocal index
+        token = peek()
+        if token is None or (value is not None and token[1] != value):
+            raise Unresolved(source)
+        index += 1
+        return token
+
+    def known(value: object) -> object:
+        if isinstance(value, Opaque):
+            raise Unresolved(value.text)
+        return value
+
+    def truthy(value: object) -> bool:
+        return known(value) not in (False, 0, "", None)
+
+    def number(value: object) -> float:
+        if value is None:
+            return 0.0
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(str(value).strip() or 0)
+        except ValueError:
+            return float("nan")
+
+    def equal(left: object, right: object) -> bool:
+        left, right = known(left), known(right)
+        if isinstance(left, str) and isinstance(right, str):
+            return left.lower() == right.lower()
+        return number(left) == number(right)
+
+    def text(value: object) -> str:
+        value = known(value)
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    def primary() -> object:
+        kind, value = take()
+        if kind == "string":
+            return value[1:-1].replace("''", "'")
+        if kind == "number":
+            return float(value)
+        if value == "(":
+            result = either()
+            take(")")
+            return result
+        if kind != "ident":
+            raise Unresolved(source)
+        if value in ("true", "false"):
+            return value == "true"
+        if value == "null":
+            return None
+        if peek() == ("op", "("):
+            take("(")
+            arguments = [either()]
+            while peek() == ("op", ","):
+                take(",")
+                arguments.append(either())
+            take(")")
+            if value != "format":
+                raise Unresolved(value)
+            template = text(arguments[0])
+            return re.sub(r"\{(\d+)\}", lambda m: text(arguments[1 + int(m[1])]), template)
+        return bindings.get(value, Opaque(value))
+
+    def unary() -> object:
+        if peek() == ("op", "!"):
+            take("!")
+            return not truthy(unary())
+        return primary()
+
+    def comparison() -> object:
+        left = unary()
+        while peek() in (("op", "=="), ("op", "!=")):
+            operator = take()[1]
+            same = equal(left, unary())
+            left = same if operator == "==" else not same
+        return left
+
+    def conjunction() -> object:
+        left = comparison()
+        while peek() == ("op", "&&"):
+            take("&&")
+            right = comparison()
+            left = right if truthy(left) else left
+        return left
+
+    def either() -> object:
+        left = conjunction()
+        while peek() == ("op", "||"):
+            take("||")
+            right = conjunction()
+            left = left if truthy(left) else right
+        return left
+
+    result = either()
+    if index != len(tokens):
+        raise Unresolved(source)
+    return result
+
+
+def evaluate_template(value: str, bindings: dict[str, object]) -> str:
+    """Substitute every ${{ }} in a workflow string. An Opaque result is written back unevaluated."""
+    def one(match: re.Match[str]) -> str:
+        result = evaluate_expression(match[1], bindings)
+        if isinstance(result, Opaque):
+            return "${{ " + result.text + " }}"
+        if result is None:
+            return ""
+        if isinstance(result, bool):
+            return "true" if result else "false"
+        if isinstance(result, float) and result.is_integer():
+            return str(int(result))
+        return str(result)
+
+    return re.sub(r"\$\{\{\s*(.*?)\s*\}\}", one, value)
+
+
+ATTEMPT_CONTEXT = "github.run_attempt"
+ATTEMPT_OUTPUT = re.compile(r"^\$\{\{ (?:(?P<guard>.+?) && )?github\.run_attempt(?: \|\| '')? \}\}$")
+MATRIX_TERM = re.compile(
+    r"^matrix\.(?P<key>[\w-]+) == (?P<value>'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false)$",
+)
+
+
+def attempt_output_bindings(value: str, matrix: bool) -> dict[str, object] | str:
+    """The matrix bindings under which an attempt output reports, or why it cannot be one.
+
+    A plain job reports `${{ github.run_attempt }}`. A matrix job combines every member's outputs
+    into one set, so it needs one output per member it reports for, each guarded to that member:
+    `${{ matrix.surface == 'tv' && github.run_attempt || '' }}`.
+    """
+    match = ATTEMPT_OUTPUT.match(expression(value))
+    if not match:
+        return "is not an attempt output (${{ github.run_attempt }}, guarded per matrix member)"
+    guard = match["guard"]
+    if not matrix:
+        return {} if guard is None and "||" not in expression(value) else (
+            "guards an attempt output in a job without a matrix")
+    if guard is None:
+        return ("reports ${{ github.run_attempt }} from EVERY matrix member, so it holds whichever "
+                "member finished last; guard it to one member")
+    bindings: dict[str, object] = {}
+    for term in guard.split(" && "):
+        term_match = MATRIX_TERM.match(term.strip())
+        if not term_match:
+            return f"guards on {term.strip()!r}; only matrix.<key> == <literal> terms are understood"
+        bindings["matrix." + term_match["key"]] = evaluate_expression(term_match["value"], {})
+    return bindings
+
+
+def partial_rerun_errors(workflow: Path, lines: list[str]) -> list[str]:
+    found: list[str] = []
+    spans = {name: (start, end) for name, start, end in job_spans(lines)}
+    properties = {name: job_properties(lines, start, end) for name, (start, end) in spans.items()}
+    steps = {name: job_steps(lines, start, end) for name, (start, end) in spans.items()}
+
+    def uses(step: dict[str, object], action: str) -> bool:
+        return str(step.get("uses", "")).startswith(f"actions/{action}@")
+
+    for job, job_steps_list in steps.items():
+        for step in job_steps_list:
+            if not uses(step, "upload-artifact"):
+                continue
+            name = expression(str((step.get("with") or {}).get("name", "")))
+            if ATTEMPT_CONTEXT not in name:
+                found.append(
+                    f"{workflow}: job {job} uploads {name or 'an unnamed artifact'} without "
+                    "${{ github.run_attempt }} in its name; a re-run of the job would collide with "
+                    "the earlier attempt's immutable artifact, and overwriting it would destroy "
+                    "that attempt's evidence",
+                )
+
+    for job, job_steps_list in steps.items():
+        needed = listed(properties[job].get("needs"))
+        for step in job_steps_list:
+            if not uses(step, "download-artifact"):
+                continue
+            inputs = {key: expression(str(value))
+                      for key, value in (step.get("with") or {}).items()}
+            label = step.get("name") or step.get("uses")
+            if any(ATTEMPT_CONTEXT in value for value in inputs.values()):
+                found.append(
+                    f"{workflow}: job {job} step {label!r} downloads by its OWN attempt; "
+                    "\"Re-run failed jobs\" does not re-run the job that passed, so that name was "
+                    "never uploaded -- name the producing job's attempt output instead",
+                )
+                continue
+            name = inputs.get("name", "")
+            references = re.findall(r"needs\.([\w-]+)\.outputs\.([\w-]+)", name)
+            if not name or not references:
+                found.append(
+                    f"{workflow}: job {job} step {label!r} must download by an exact name that "
+                    "carries the producing job's attempt output (needs.<job>.outputs.<attempt>); "
+                    "every upload is attempt-scoped",
+                )
+                continue
+            for producer, output in references:
+                if producer not in spans or producer not in needed:
+                    found.append(
+                        f"{workflow}: job {job} step {label!r} reads needs.{producer}, which it "
+                        "does not need; the output is empty and the name matches nothing",
+                    )
+                    continue
+                outputs = properties[producer].get("outputs")
+                value = outputs.get(output, "") if isinstance(outputs, dict) else ""
+                # job_properties reads a strategy whose matrix has an `include:` list as a list,
+                # so look for the `matrix:` key under `strategy:` directly.
+                producer_start, producer_end = spans[producer]
+                matrix = "strategy" in properties[producer] and any(
+                    (entry := mapping_entry(line)) is not None and entry[1] == "matrix"
+                    for line in lines[producer_start + 1:producer_end])
+                bindings = attempt_output_bindings(value, matrix) if value else (
+                    "is not defined")
+                if isinstance(bindings, str):
+                    found.append(
+                        f"{workflow}: job {producer} output {output} {bindings}, so {job} cannot "
+                        "name the artifact that job's latest execution uploaded",
+                    )
+                    continue
+                bindings = {
+                    **bindings,
+                    "github.job": producer,
+                    ATTEMPT_CONTEXT: Opaque(f"needs.{producer}.outputs.{output}"),
+                }
+                produced = set()
+                for upload in steps[producer]:
+                    if not uses(upload, "upload-artifact"):
+                        continue
+                    try:
+                        produced.add(evaluate_template(
+                            expression(str((upload.get("with") or {}).get("name", ""))), bindings))
+                    except Unresolved:
+                        continue
+                if name not in produced:
+                    found.append(
+                        f"{workflow}: job {job} step {label!r} downloads {name}, which no upload "
+                        f"in {producer} produces for the member its {output} output reports",
+                    )
+    return found
+
+
 errors: list[str] = []
 workflows = sorted(Path(".github/workflows").glob("*.yml"))
 if not workflows:
@@ -552,6 +851,11 @@ for workflow in workflows:
     for action, ref in re.findall(r"uses:\s+([^@\s]+)@([^\s#]+)", text):
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             errors.append(f"{workflow}: {action} is not pinned to an immutable commit")
+    # OBSERVED in core-ci run 36238393531: its required job downloaded every artifact by its own
+    # attempt, so a "Re-run failed jobs" of one emulator leg could never go green -- the jobs it
+    # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
+    # aggregators, so a new aggregator cannot reintroduce it.
+    errors.extend(partial_rerun_errors(workflow, lines))
 
 # Every JUnit directory an Apple step writes must reach verify-parity-evidence, and every
 # directory it reads must be written by a step. PR #65 failed apple-ci with "evidence test did not
