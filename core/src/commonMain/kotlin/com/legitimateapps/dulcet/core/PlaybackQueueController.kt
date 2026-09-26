@@ -139,10 +139,13 @@ internal class PlaybackQueueController(
 
     /**
      * The entries that failed and were skipped past automatically since the person last acted on
-     * playback -- played, skipped, picked an entry, or edited the queue (§12.12 rule 3). An
-     * automatic skip whose target is already here stops instead: a fault that breaks every entry
-     * after it has begun, which progress would otherwise keep forgiving, gets one pass through
-     * the queue and no more, even under repeat-all.
+     * playback -- played, skipped, picked an entry, or edited the queue -- or since an entry last
+     * played to its end (§12.12 rule 3). An automatic skip whose target is already here stops
+     * instead: a fault that breaks every entry after it has begun, which progress would otherwise
+     * keep forgiving, gets one pass through the queue and no more, even under repeat-all. An entry
+     * that plays to its natural end, or hands over to its preloaded successor, shows the queue is
+     * healthy, so it begins a new pass: a repeat-all album with two damaged tracks plays on lap
+     * after lap. Progress alone does not: a track that plays a moment and then fails still counts.
      */
     private val skippedPastFailures = mutableSetOf<QueueEntryId>()
 
@@ -542,6 +545,8 @@ internal class PlaybackQueueController(
         if (event is PlaybackEngineEvent.EndedNaturally && accepted &&
             event.attemptId == playback.currentSession?.currentAttempt?.attemptId
         ) {
+            // A track played to its end: the queue is healthy, and a new pass begins (rule 3).
+            skippedPastFailures.clear()
             if (preloadWillTakeOver()) {
                 // The engine already holds the next entry and reports `AdvancedToPreloaded` when
                 // it takes over. Starting the next entry here as well would issue a stop and a
@@ -675,6 +680,9 @@ internal class PlaybackQueueController(
         endHeldForPreload = false
         travel = QueueTravel.Forward
         pausedStartAttempt = null
+        // The engine handed over to the preloaded entry: the outgoing one played to its end, and
+        // the contract does not promise an `EndedNaturally` first. A new pass begins (rule 3).
+        skippedPastFailures.clear()
         val serverId = queues.activeServerId()
         if (preload != null && serverId != null && preload.start.attemptId == event.newAttemptId) {
             val index = queues.load(serverId).entries.indexOfFirst {

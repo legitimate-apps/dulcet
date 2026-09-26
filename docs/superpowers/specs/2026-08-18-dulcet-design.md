@@ -459,7 +459,10 @@ horizontal size class**, never by the device:
   the one-column or side-by-side player is drawn within the reach; under Reduce Transparency no glow
   is drawn; and at 0.9 the glow reaches no further than 10.8 points past the drawn cover at 120 and
   360 points -- asserted against the reach × the cover's scale, 12 playing and 10.8 paused, with the
-  farthest glow measured printed beside it (11.25 and 9.75 points). Beside a
+  farthest glow measured printed beside it (11.25 and 9.75 points); and paused the glow covers
+  at most 0.85 of the area it covers playing (measured 0.81 at 120 points and 0.80 at 360, about
+  0.9²), where a glow drawn at the full reach around the shrunken cover covers about 0.9 (measured
+  0.89 and 0.90) while still reaching only 10.75 points. Beside a
   regular-width player, the queue column is as tall as the player it sits beside -- cover to
   footer, as measured, not estimated -- and centred with it, rather than the window's height.
 
@@ -1828,15 +1831,21 @@ any owner is part of the chain -- the connection's included, though it stops the
 a withdrawn request (`Transport.Cancelled`) is not. **Why five:**
 each automatic skip costs at least one request against the server, and five unplayable entries in a row say
 more about the server, or whatever answers for it, than about the entries. Five passes a short run
-of damaged files in one album, and stops a fault that fails every entry before it plays after five
+of damaged files in one album -- on every lap under repeat-all, because each track that plays to its
+end begins a new pass (below) -- and stops a fault that fails every entry before it plays after five
 entries. **The pass.** A fault that lets each entry begin and then fails it -- a proxy that breaks
 every stream after its first range -- ends every chain with progress, so the chain alone does not
 bound it: under repeat-all it would loop for as long as the queue played. So an automatic skip is
-also bounded by what already failed: an entry that failed and was skipped past since the person's
-last explicit playback action -- Play, Skip, Previous, a tap or jump, Try Again, a new queue, a
-queue edit, shuffle or repeat -- is never reached again automatically, and the skip that would reach
-it stops, presenting the failure exactly as the guard does. Such a fault therefore stops within one
-pass of the queue: a pass as long as the queue, not a few requests. At either stop, Try Again and
+also bounded by what already failed: an entry that failed and was skipped past in the current pass
+is never reached again automatically, and the skip that would reach it stops, presenting the
+failure exactly as the guard does. A pass begins with the person's explicit playback action -- Play,
+Skip, Previous, a tap or jump, Try Again, a new queue, a queue edit, shuffle or repeat -- and with a
+track that plays to its natural end, or hands over to its preloaded successor without a gap. Either
+end shows the queue is healthy, so a repeat-all album with two damaged tracks skips them on lap
+after lap. Progress alone does not begin one: a track that plays a moment and then fails still
+counts. A fault that lets each entry begin and then fails it therefore stops within one pass of the
+queue: a pass as long as the queue, not a few requests. A queue in which some track still plays to
+its end keeps playing it every lap, which is what repeat-all asks. At either stop, Try Again and
 Skip work as §3.1 and §12.1 say, and the person's own action begins a new pass.
 
 **4. Identity.** An automatic skip is a next-item advance (§12.1): the failed entry's session ends,
@@ -1866,8 +1875,16 @@ does not fit that, it shows "Couldn't play a track. Skipped." instead. VoiceOver
 announced the whole sentence as the notice appeared. **Why a third, ASSUMED from the type sizes,
 not measured:** at the second accessibility size a sentence naming a 70-character title wraps to
 about seven lines on a 402-point-wide phone, some 270 points, which would fit the roughly 600 points
-between the bars and cover half the page for four seconds; a third, about 200, makes it give way,
-and the shorter sentence -- about three lines -- fits on any phone. Its text is the
+between the bars and cover half the page for four seconds; a third, about 200, makes it give way.
+The shorter sentence fits that share on most phones, and on the smallest it may not: on a
+375 × 667-point phone of the iPhone SE class the text is about 32 points (a line about 39) and the
+card is inset 24 + 16 points on each side, plus its symbol, with 8 points above and below the text
+and 12 below the card. "Couldn't play a track. Skipped." then takes two or three lines, about 94 to
+145 points, against a third of about 140. When it overflows its share by that line, the region
+still anchors it at the bottom of a page about 420 points tall, so it stays far below the
+navigation bar; no run on that phone has measured it yet. The same arithmetic keeps the long-title
+premise on every phone: that sentence needs about 250 points or more, and a third is at most about
+215 on the largest. Its text is the
 `primaryTextOnRegularMaterial` pair on the regular material, which holds by construction once the
 text is always on the material. The player and tvOS, which have no now-playing bar, draw it along
 their own bottom edge. A disconnect, a sign-out, or reaching another server withdraws it, since the
@@ -1893,8 +1910,11 @@ connection failure counting toward the guard, a withdrawn request left out of th
 keeping the direction, a transport restart counting as forward, a Play pressed before a restored
 entry is ready with its no-Play control, and the pass: the review's probe -- every entry of a
 repeat-all queue plays a second and then fails, which skipped 50 times of 50 -- now stops within one
-pass, and the person's Skip begins another); 16 of its first 18 tests failed on the code before the
-change, and the other two pin behaviour it already had;
+pass, and the person's Skip begins another; a repeat-all queue with two adjacent damaged tracks
+skips them on every lap, once with natural ends and once with gapless handovers alone; and one
+table row per action that begins a pass, each letting a skip reach an entry the old pass skipped,
+beside a control row that stops); 16 of its first 18 tests failed on the code before the change,
+and the other two pin behaviour it already had;
 `ApplePlaybackFailureRelayTest` and its Swift twin for the round trip, and a malformed engine report
 refused as an input error without an exception crossing into Swift. Apple:
 `DulcetCorePlaybackSystemTests` drives the real Kotlin queue with a fake engine through an automatic
@@ -1910,7 +1930,13 @@ iOS only because macOS does not scale Dynamic Type; it runs in `DulcetKitIOSTest
 on 2026-09-25. **Mutation:** every rule above has a mutant a named test kills, but one: excluding the
 restore-marked attempt's `PlaybackProgressBegan` from ending the chain survives, and is accepted as
 near-equivalent: it differs only when an attempt still carrying the restore mark makes progress, and
-a paused attempt progresses only after the person's Play, which clears the mark as it is pressed. The UI proofs below run against the disposable reference server with the
+a paused attempt progresses only after the person's Play, which clears the mark as it is pressed.
+Three of the pass's resets have equivalent mutants, which no sequence can kill: the restore's, Play
+after a finished queue's, and a new queue's. The first two act only when no session exists, and
+with a session gone the pass is already empty -- a controller begins with none, and a queue ends
+only through Skip, Previous or a natural end, each of which begins a pass first. A new queue's
+entries have new identities, which no earlier pass can hold; its reset keeps the set from outliving
+the queue. The UI proofs below run against the disposable reference server with the
 opt-in Skip Probe album (`tools/seed-skip-probe`, docs/CONFORMANCE-ENVIRONMENT.md).
 **OBSERVED locally on an iPhone 17 Pro simulator, iOS 26.5, 2026-09-24, on the revision before the
 notice moved to the bottom; not run by CI yet** (`testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays`):
@@ -5685,6 +5711,14 @@ wrong:
     title, and the code had silently kept the second; the notice now caps its text and gives way to
     a shorter sentence (rule 5). And the notice now goes when the server changes, as a comment
     already claimed.
+
+    **Corrected a third time (2026-09-25), after a third review.** The one-pass bound was too
+    broad: it held until the person acted, so a repeat-all album with two adjacent damaged tracks
+    stopped at the first of them on its second lap, though the tracks between had played to their
+    end. A track that plays to its natural end, or hands over gaplessly to its preloaded successor,
+    now begins a new pass too; progress alone still does not, so the fault the bound exists for
+    still stops within one pass (rule 3). "The shorter sentence fits on any phone" was borderline
+    on the smallest phones and is restated with its arithmetic (rule 5).
 
 **Revision 105 (2026-09-24)** — written 2026-09-11. §12.2 gains the attempt-phase presentation contract, which did not
 exist. The phase crosses to a platform shell as the enum's own case name, so nothing checked that a

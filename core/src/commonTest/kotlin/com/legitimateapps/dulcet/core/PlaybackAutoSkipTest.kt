@@ -365,6 +365,205 @@ class PlaybackAutoSkipTest {
         assertEquals("b", skip.startDirective?.itemId?.rawId, "the person's Skip began a new pass")
     }
 
+    /**
+     * A healthy repeat-all queue plays on lap after lap (rule 3). Over a, b, c, d with b and c
+     * broken, lap 1 skips both, and a and d play to their end. On every later lap b fails again
+     * and the queue moves on to c and then d, exactly as on lap 1: the natural ends in between
+     * began a new pass. This is the review's second-lap probe, which stopped at b.
+     */
+    @Test
+    fun aRepeatAllQueueWithTwoBrokenEntriesSkipsThemOnEveryLap() = rig(listOf("a", "b", "c", "d")) { rig ->
+        rig.repeat(QueueRepeatMode.All)
+        val a = rig.start()
+        val b = rig.started(rig.playToTheEnd(a))
+        val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
+        var current = assertNotNull(rig.fail(c, DomainError.Playback.NoPlayableSource).startDirective)
+        assertEquals("d", current.itemId.rawId)
+
+        for (lap in 2..3) {
+            val a2 = rig.started(rig.playToTheEnd(current))
+            assertEquals("a", a2.itemId.rawId)
+            val b2 = rig.started(rig.playToTheEnd(a2))
+            assertEquals("b", b2.itemId.rawId)
+            val skipB = rig.fail(b2, DomainError.Playback.NoPlayableSource)
+            assertEquals("c", skipB.startDirective?.itemId?.rawId, "lap $lap: a played to its end, so b's failure skips")
+            assertEquals(b2.queueEntryId, skipB.skippedAfterFailure)
+            val skipC = rig.fail(assertNotNull(skipB.startDirective), DomainError.Playback.NoPlayableSource)
+            current = assertNotNull(skipC.startDirective, "lap $lap: and c's failure skips too")
+            assertEquals("d", current.itemId.rawId)
+        }
+    }
+
+    /**
+     * The same laps with every boundary gapless: the engine hands over to the preloaded entry and
+     * reports `AdvancedToPreloaded` alone, which the contract permits without an `EndedNaturally`
+     * first. The handover is a natural end, so it begins a new pass too.
+     */
+    @Test
+    fun theSameLapsWithGaplessHandoversSkipTheBrokenEntriesOnEveryLap() = rig(listOf("a", "b", "c", "d")) { rig ->
+        rig.repeat(QueueRepeatMode.All)
+        val a = rig.start()
+        val b = rig.handOverGaplessly(a)
+        assertEquals("b", b.itemId.rawId)
+        val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
+        var current = assertNotNull(rig.fail(c, DomainError.Playback.NoPlayableSource).startDirective)
+        assertEquals("d", current.itemId.rawId)
+
+        for (lap in 2..3) {
+            val a2 = rig.handOverGaplessly(current)
+            assertEquals("a", a2.itemId.rawId)
+            val b2 = rig.handOverGaplessly(a2)
+            assertEquals("b", b2.itemId.rawId)
+            val skipB = rig.fail(b2, DomainError.Playback.NoPlayableSource)
+            assertEquals("c", skipB.startDirective?.itemId?.rawId, "lap $lap: a handed over, so b's failure skips")
+            val skipC = rig.fail(assertNotNull(skipB.startDirective), DomainError.Playback.NoPlayableSource)
+            current = assertNotNull(skipC.startDirective, "lap $lap: and c's failure skips too")
+            assertEquals("d", current.itemId.rawId)
+        }
+    }
+
+    /**
+     * Every action that begins a new pass, one row each (rule 3). Each row starts from the same
+     * state -- a and b failed and were skipped past, c is current -- performs its action, then lets
+     * each entry reached play a moment and fail, until a skip either reaches a or stops. Reaching
+     * a is the proof: a was in the pass the action ended. The control row performs nothing and
+     * stops, so the tail can tell the two apart.
+     */
+    @Test
+    fun everyActionThatBeginsANewPassLetsASkipReachAnEntryTheOldPassSkipped() {
+        val outcomes = resetRows.associate { row ->
+            row.name to rigResult(listOf("a", "b", "c", "d")) { rig ->
+                rig.repeat(QueueRepeatMode.All)
+                val a = rig.start()
+                val b = assertNotNull(rig.fail(a, DomainError.Playback.NoPlayableSource).startDirective)
+                rig.play(b, from = 0, to = 5)
+                val c = assertNotNull(
+                    rig.failAfterPartial(b, at = 5, DomainError.Playback.NoPlayableSource).startDirective,
+                )
+                assertEquals("c", c.itemId.rawId, "${row.name}: the setup")
+                rig.failUntilASkipReachesA(row.act(rig, c))
+            }
+        }
+        assertEquals(resetRows.associate { it.name to if (it.resets) REACHED_A else STOPPED }, outcomes)
+    }
+
+    private class ResetRow(
+        val name: String,
+        val resets: Boolean = true,
+        /** Performs the action with c current, not yet played, and returns the directive now current. */
+        val act: (Rig, PlaybackQueueStartDirective) -> PlaybackQueueStartDirective,
+    )
+
+    private val resetRows: List<ResetRow> = listOf(
+        ResetRow("control: no action", resets = false) { _, c -> c },
+        ResetRow("Play") { rig, c ->
+            rig.apply(rig.controller.recordPlayRequested(c.playbackSessionId))
+            c
+        },
+        ResetRow("Skip") { rig, _ -> rig.started(rig.controller.next()) },
+        ResetRow("Previous") { rig, _ -> rig.started(rig.controller.previous()) },
+        ResetRow("Try Again after the stop") { rig, c ->
+            rig.play(c, from = 0, to = 5)
+            val d = assertNotNull(rig.failAfterPartial(c, at = 5, DomainError.Playback.NoPlayableSource).startDirective)
+            rig.play(d, from = 0, to = 5)
+            assertNull(
+                rig.failAfterPartial(d, at = 5, DomainError.Playback.NoPlayableSource).startDirective,
+                "the pass stops before a",
+            )
+            rig.retry()
+        },
+        ResetRow("jump to an entry") { rig, _ -> rig.started(rig.controller.jumpTo(rig.entry("d"))) },
+        ResetRow("enqueue, Append") { rig, c ->
+            rig.apply(rig.controller.enqueue(insertion("e", QueueInsertionMode.Append)))
+            assertEquals(listOf("a", "b", "c", "d", "e"), rig.order())
+            c
+        },
+        ResetRow("enqueue, Play Next") { rig, c ->
+            rig.apply(rig.controller.enqueue(insertion("e", QueueInsertionMode.PlayNext)))
+            assertEquals(listOf("a", "b", "c", "e", "d"), rig.order())
+            c
+        },
+        ResetRow("move") { rig, c ->
+            rig.apply(rig.controller.move(rig.entry("d"), 1))
+            assertEquals(listOf("a", "d", "b", "c"), rig.order())
+            c
+        },
+        ResetRow("remove") { rig, c ->
+            rig.apply(rig.controller.remove(rig.entry("d")))
+            assertEquals(listOf("a", "b", "c"), rig.order())
+            c
+        },
+        ResetRow("clear upcoming") { rig, c ->
+            rig.apply(rig.controller.clearUpcoming())
+            assertEquals(listOf("a", "b", "c"), rig.order())
+            c
+        },
+        // Whatever order shuffle deals, a is reached before any entry comes round a second time.
+        ResetRow("shuffle") { rig, c ->
+            rig.apply(rig.controller.setShuffle(true))
+            c
+        },
+        ResetRow("repeat") { rig, c ->
+            repeat(3) { rig.apply(rig.controller.cycleRepeatMode()) }
+            assertEquals(QueueRepeatMode.All, rig.controller.snapshot().repeatMode)
+            c
+        },
+        ResetRow("natural end") { rig, c -> rig.started(rig.playToTheEnd(c)) },
+        ResetRow("gapless handover") { rig, c -> rig.handOverGaplessly(c) },
+        // Neither can carry an old pass, so these rows pass with or without their clear: a relaunch
+        // builds a new controller, and a new queue's entries have new identities.
+        ResetRow("restore after a relaunch") { rig, _ ->
+            rig.relaunch()
+            rig.started(rig.controller.restoreCurrentPaused())
+        },
+        ResetRow("replace the queue") { rig, _ -> rig.started(rig.controller.replaceAndStart(rig.request(2))) },
+    )
+
+    private fun Rig.started(transition: PlaybackQueueTransition): PlaybackQueueStartDirective =
+        assertNotNull(apply(transition).startDirective, "the action must start an entry")
+
+    private fun Rig.playToTheEnd(directive: PlaybackQueueStartDirective): PlaybackQueueTransition {
+        play(directive, from = 0, to = 180)
+        return apply(controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(directive.attemptId, DURATION)))
+    }
+
+    /** Plays [directive] to its end and hands over to the preloaded next entry, gaplessly. */
+    private fun Rig.handOverGaplessly(directive: PlaybackQueueStartDirective): PlaybackQueueStartDirective {
+        play(directive, from = 0, to = 180)
+        val next = assertNotNull(
+            apply(controller.preloadNext(directive.playbackSessionId)).preloadDirective,
+            "the next entry preloads",
+        )
+        val advanced = apply(
+            controller.recordPlaybackEvent(PlaybackEngineEvent.AdvancedToPreloaded(directive.attemptId, next.attemptId)),
+        )
+        assertEquals(next.playbackSessionId, advanced.snapshot.currentSession?.playbackSessionId)
+        return next
+    }
+
+    private fun Rig.failUntilASkipReachesA(from: PlaybackQueueStartDirective): String {
+        var current = from
+        repeat(8) {
+            play(current, from = 0, to = 5)
+            val next = failAfterPartial(current, at = 5, DomainError.Playback.NoPlayableSource).startDirective
+                ?: return STOPPED
+            if (next.itemId.rawId == "a") return REACHED_A
+            current = next
+        }
+        return "never settled"
+    }
+
+    private fun Rig.entry(rawId: String): QueueEntryId =
+        controller.snapshot().entries.single { it.itemId.rawId == rawId }.queueEntryId
+
+    private fun Rig.order(): List<String> = controller.snapshot().entries.map { it.itemId.rawId }
+
+    private fun insertion(rawId: String, mode: QueueInsertionMode) = PlaybackQueueInsertion(
+        items = listOf(PlaybackQueueItem(ProviderItemId(SERVER.value, rawId), DURATION)),
+        sourceContext = QueueSourceContext(QueueSourceKind.Album, ProviderItemId(SERVER.value, "album"), "Album"),
+        mode = mode,
+    )
+
     // ---- identity ----------------------------------------------------------------------------
 
     @Test
@@ -811,12 +1010,24 @@ class PlaybackAutoSkipTest {
         }
     }
 
+    /** [rig], for a body that returns a value. Kept apart so that no `@Test` returns one. */
+    private inline fun <T> rigResult(rawIds: List<String>, body: (Rig) -> T): T {
+        val rig = Rig(rawIds)
+        try {
+            return body(rig)
+        } finally {
+            rig.driver.close()
+        }
+    }
+
     private fun PlaybackQueueTransition.recordedEventsFor(rawId: String): List<RecordedPlaybackEvent> =
         effects.mapNotNull { (it as? PlaybackCoreEffect.RecordPlaybackEvent)?.event }
             .filter { it.itemId.rawId == rawId }
 
     private companion object {
         val SERVER = ServerId("server:auto-skip")
+        const val REACHED_A = "reached a"
+        const val STOPPED = "stopped"
         val DURATION: Duration = 180.seconds
 
         val TRACK_ERRORS: List<DomainError> = listOf(
