@@ -44,6 +44,72 @@ struct AVPlayerResourceLoaderIntegrationTests {
     }
 }
 
+/// Spec §12.12: a failure that belongs to the item moves the queue past it. AVFoundation failing
+/// to decode an item's own media is that failure, so the engine must name it `.undecodable`
+/// (which the core reads as `Playback.NoPlayableSource`), never `.engine`, which the queue stops on.
+@Suite(.serialized)
+struct AVPlayerDecodeFailureTests {
+    @Test
+    func mediaAVFoundationCannotDecodeFailsAsUndecodable() async throws {
+        let resource = InMemoryPlaybackResource(data: mp3FramesWithUndecodablePayloads())
+        let engine = DulcetAVPlayerEngine()
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
+
+        _ = await execute(engine, .prepare(commandID: .init("undecodable-prepare"), plan: playbackPlan))
+        _ = await execute(engine, .play(commandID: .init("undecodable-play")))
+        let failures: @Sendable () -> [DulcetPlaybackFailure] = {
+            events.snapshot.compactMap { event in
+                switch event {
+                case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error): error
+                default: nil
+                }
+            }
+        }
+        try await waitUntil(
+            "AVFoundation never reported the undecodable item as failed",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            !failures().isEmpty
+        }
+        // The experiment is the one intended: the item was read through the loader, so the
+        // failure is AVFoundation's verdict on these bytes, not a refusal before it saw them.
+        #expect(!resource.requests.isEmpty)
+        #expect(failures() == [.undecodable], "reported \(failures())")
+        #expect(!events.containsProgressBegan)
+        print("DULCET UNDECODABLE ENGINE OBSERVED failures=\(failures()) requests=\(resource.requests.count)")
+        _ = await execute(engine, .release(commandID: .init("undecodable-release")))
+    }
+}
+
+/// An ID3 tag, then MP3 frame headers (MPEG-1 Layer III, 128 kbit/s, 44.1 kHz) each followed by a
+/// payload that is not audio. OBSERVED on macOS: AVFoundation finds the frames, reports the item
+/// ready, then posts `AVPlayerItemFailedToPlayToEndTime` with `decodeFailed` (-11821). Bytes that
+/// hold no frame header at all are not this case -- AVFoundation plays them as a fraction of a
+/// second of nothing and stops without an error.
+private func mp3FramesWithUndecodablePayloads() -> Data {
+    let title = Array("Undecodable".utf8)
+    let body: [UInt8] = [0] + title
+    var frame: [UInt8] = Array("TIT2".utf8)
+    frame += withUnsafeBytes(of: UInt32(body.count).bigEndian, Array.init)
+    frame += [0, 0] + body
+    let size = frame.count
+    var bytes: [UInt8] = Array("ID3".utf8) + [3, 0, 0]
+    bytes += [UInt8((size >> 21) & 0x7F), UInt8((size >> 14) & 0x7F), UInt8((size >> 7) & 0x7F), UInt8(size & 0x7F)]
+    bytes += frame
+    var state: UInt32 = 12_345
+    for _ in 0..<380 {
+        bytes += [0xFF, 0xFB, 0x90, 0x64]
+        for _ in 0..<413 {
+            state = state &* 1_103_515_245 &+ 12_345
+            bytes.append(UInt8(truncatingIfNeeded: (state & 0x7FFF_FFFF) >> 16))
+        }
+    }
+    return Data(bytes)
+}
+
 @Suite(.serialized)
 struct AVPlayerEngineTests {
     #if !os(macOS)
@@ -1073,6 +1139,73 @@ struct AVPlayerEngineTests {
         #expect(!surfaced.contains(usernameCanary))
         #expect(!surfaced.contains(tokenCanary))
         #expect(!surfaced.contains("?"))
+    }
+
+    /// Each of AVFoundation's failures of an item's own media is the item's (spec §12.12). They
+    /// are named here one by one, not read from the set under test, so a code dropped from that
+    /// set fails its own case.
+    @Test(arguments: [
+        AVError.Code.decodeFailed.rawValue,
+        AVError.Code.decoderNotFound.rawValue,
+        AVError.Code.fileFormatNotRecognized.rawValue,
+        AVError.Code.fileFailedToParse.rawValue,
+        AVError.Code.failedToParse.rawValue,
+        AVError.Code.undecodableMediaData.rawValue,
+    ])
+    func anItemsOwnMediaFailureCrossesAsUndecodable(code: Int) {
+        let error = NSError(domain: AVFoundationErrorDomain, code: code)
+        #expect(DulcetApplePlaybackErrorSanitizer.avFoundationFailure(error) == .undecodable)
+    }
+
+    /// The control for the cases above: the system's failures are not the item's.
+    @Test(arguments: [
+        AVError.Code.unknown.rawValue,
+        // Media services were reset, and an operation interrupted: declared only for iOS-family
+        // SDKs, so named here by their raw values, which every platform's error can carry.
+        -11_819,
+        AVError.Code.decoderTemporarilyUnavailable.rawValue,
+        -11_847,
+    ])
+    func theSystemsOwnFailureStaysTheEngines(code: Int) {
+        let error = NSError(domain: AVFoundationErrorDomain, code: code)
+        #expect(DulcetApplePlaybackErrorSanitizer.avFoundationFailure(error) == .engine)
+    }
+
+    /// A wrapped error is read through `NSUnderlyingErrorKey`, outermost first and a bounded
+    /// number of levels deep: an AVFoundation error wrapping a certificate failure is the
+    /// connection's, one wrapping a decode failure is the item's, and a chain deeper than the
+    /// bound is the engine's. Nothing of any of them crosses but the closed name. Unreachable
+    /// today -- the item's bytes arrive only through the resource loader -- and pinned so it
+    /// stays right if that changes.
+    @Test
+    func wrappedFailuresAreReadThroughToABound() {
+        let canary = "wrapped-token-canary"
+        func wrapping(_ inner: NSError) -> NSError {
+            NSError(
+                domain: AVFoundationErrorDomain,
+                code: AVError.Code.unknown.rawValue,
+                userInfo: [NSUnderlyingErrorKey: inner]
+            )
+        }
+        func wrapped(_ inner: NSError, levels: Int) -> NSError {
+            (0..<levels).reduce(inner) { error, _ in wrapping(error) }
+        }
+        let untrusted = NSError(
+            domain: NSURLErrorDomain,
+            code: URLError.serverCertificateUntrusted.rawValue,
+            userInfo: [NSURLErrorFailingURLStringErrorKey: "https://source.invalid/audio?t=\(canary)"]
+        )
+        let timedOut = NSError(domain: NSURLErrorDomain, code: URLError.timedOut.rawValue)
+        let undecodable = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.decodeFailed.rawValue)
+        let sanitize = DulcetApplePlaybackErrorSanitizer.avFoundationFailure
+
+        #expect(sanitize(wrapping(untrusted)) == .tlsUntrusted)
+        #expect(sanitize(wrapping(timedOut)) == .transport)
+        #expect(sanitize(wrapping(undecodable)) == .undecodable)
+        // Eight errors are read, the outermost included: the eighth is, the ninth is not.
+        #expect(sanitize(wrapped(undecodable, levels: 7)) == .undecodable, "the deepest error read")
+        #expect(sanitize(wrapped(undecodable, levels: 8)) == .engine, "one level past the bound")
+        #expect(!String(reflecting: sanitize(wrapping(untrusted))).contains(canary))
     }
 
     #if os(macOS)

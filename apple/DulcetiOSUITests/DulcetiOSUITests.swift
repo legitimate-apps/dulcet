@@ -1,3 +1,5 @@
+import CryptoKit
+import UIKit
 import XCTest
 
 final class DulcetiOSUITests: XCTestCase {
@@ -416,6 +418,176 @@ final class DulcetiOSUITests: XCTestCase {
             + " closed-portrait=\(closedInPortrait) reopened-portrait=\(reopenedInPortrait)")
     }
 
+    /// A swipe across the player's artwork changes track, as the system player's does: left for
+    /// the next track, right for the previous one; a diagonal drag, a short drag and a swipe toward
+    /// a control that is unavailable do nothing. On the deterministic fixture, so the titles are
+    /// known and no server is involved. Each swipe is proved by the marker the swipe handler
+    /// itself records -- exactly one per swipe, naming what it asked for -- so a title that
+    /// changed, or stayed, for some other reason cannot pass for a handled swipe.
+    @MainActor
+    func testSwipingThePlayerArtworkChangesTrack() {
+        guard requireSimulator(.phone, "The artwork swipe proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-account-connect-layout-fixture", "-dulcet-debug-ui-markers"]
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        XCTAssertLessThan(window.frame.width, 700,
+                          "This proof requires a compact-width iPhone window; an iPad is invalid evidence")
+        guard requireProofMarkers(in: app) else { return }
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+            return
+        }
+        let album = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
+        ).firstMatch
+        guard album.waitForExistence(timeout: 10),
+              scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
+            XCTFail("The fixture's Double Lines album must be reachable in the grid")
+            return
+        }
+        album.tap()
+        let firstTrack = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Disc 1 Track 1")
+        ).firstMatch
+        guard firstTrack.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must list its first track")
+            return
+        }
+        firstTrack.tap()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 10) else {
+            XCTFail("Playing must bring up the bar")
+            return
+        }
+        bar.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        guard title.waitForExistence(timeout: 10), waitForLabel("Disc 1 Track 1", of: title, timeout: 5) else {
+            XCTFail("The player must open on the track that was played")
+            return
+        }
+        attachScreenshot(named: "player-sheet-artwork-glow", app: app)
+
+        // The artwork is decorative and hidden from accessibility, so the swipe is placed by the
+        // title under it: the cover ends one spacing step above the title and is at least 120
+        // points tall, so 70 points above the title's top is on the cover.
+        func drag(from startX: CGFloat, to endX: CGFloat, rising: CGFloat = 0) {
+            let y = title.frame.minY - 70
+            let origin = window.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: startX, dy: y))
+            let end = origin.withOffset(CGVector(dx: endX, dy: y - rising))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        /// Performs one drag and returns what the handler recorded for it, and the title after.
+        func swipe(_ name: String, expecting marker: String, then expectedTitle: String,
+                   _ perform: () -> Void) -> Bool {
+            let before = proofMarkers(in: app)
+            perform()
+            let recorded = waitForMarkers(after: before, [marker], in: app, timeout: 5)
+            let titled = waitForLabel(expectedTitle, of: title, timeout: 5)
+            // "Nothing happened" has to have lasted, not merely not happened yet.
+            if marker == "swipe:none" { Thread.sleep(forTimeInterval: 1) }
+            let settled = title.label == expectedTitle
+            print("DULCET ARTWORK SWIPE step=\(name) recorded=\(recorded) title=\(title.label.debugDescription)")
+            XCTAssertEqual(recorded, [marker], "\(name): the swipe handler must record exactly \(marker)")
+            XCTAssertTrue(titled && settled, "\(name): the player must show \(expectedTitle); title=\(title.label)")
+            return recorded == [marker] && titled && settled
+        }
+        let width = window.frame.width
+        // On the first track Previous is unavailable, so a right swipe asks for nothing.
+        let unavailable = swipe("right-on-first", expecting: "swipe:none", then: "Disc 1 Track 1") {
+            drag(from: width * 0.2, to: width * 0.8)
+        }
+        let next = swipe("left", expecting: "swipe:next", then: "Disc 1 Track 2") {
+            drag(from: width * 0.8, to: width * 0.2)
+        }
+        // Up and across by the same distance: neither direction dominates. Upward, so the sheet's
+        // own drag-to-dismiss is not what answers it. Observed on an iPhone 17 Pro simulator: an
+        // upward drag with this much vertical travel ends without the swipe handler running at all
+        // (no marker), at 45 degrees and at 30 alike -- presumably taken by the scroll view the
+        // player sits in, which was not measured. So this step can show only that nothing happens:
+        // the handler, if it runs, must ask for nothing, and the track must not change. Which of the
+        // two occurred is printed; the classification itself is `ArtworkSwipeTests`'.
+        let diagonalBefore = proofMarkers(in: app)
+        drag(from: width * 0.8, to: width * 0.2, rising: width * 0.6)
+        let diagonalRecorded = waitForMarkers(after: diagonalBefore, ["swipe:none"], in: app, timeout: 3)
+        Thread.sleep(forTimeInterval: 1)
+        let diagonal = (diagonalRecorded == ["swipe:none"] || diagonalRecorded.isEmpty)
+            && title.label == "Disc 1 Track 2"
+        print("DULCET ARTWORK SWIPE step=diagonal recorded=\(diagonalRecorded)"
+            + " handler-ran=\(!diagonalRecorded.isEmpty) title=\(title.label.debugDescription)")
+        XCTAssertTrue(diagonal, "A diagonal drag must do nothing; recorded=\(diagonalRecorded) title=\(title.label)")
+        let short = swipe("short", expecting: "swipe:none", then: "Disc 1 Track 2") {
+            drag(from: width * 0.6, to: width * 0.6 - 40)
+        }
+        let previous = swipe("right", expecting: "swipe:previous", then: "Disc 1 Track 1") {
+            drag(from: width * 0.2, to: width * 0.8)
+        }
+        print("DULCET ARTWORK SWIPE OBSERVED unavailable-previous=\(unavailable) next=\(next)"
+            + " diagonal=\(diagonal) short=\(short) previous=\(previous) markers=\(proofMarkers(in: app))")
+    }
+
+    /// The experiment this proof needs, asserted rather than assumed (CLAUDE.md traps 31 and 32):
+    /// a simulator, of the device class the claim is about. It prints what it measured, so each
+    /// run's transcript names its own destination.
+    @MainActor
+    private func requireSimulator(_ idiom: UIUserInterfaceIdiom, _ proof: String) -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        let name = environment["SIMULATOR_DEVICE_NAME"] ?? "<none>"
+        let model = environment["SIMULATOR_MODEL_IDENTIFIER"] ?? "<none>"
+        let observed = UIDevice.current.userInterfaceIdiom
+        print("DULCET UI DESTINATION proof=\(proof.debugDescription) simulator=\(environment["SIMULATOR_UDID"] != nil)"
+            + " name=\(name.debugDescription) model=\(model) idiom=\(observed.rawValue)")
+        guard environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("\(proof) requires a simulator; a physical device is not valid evidence")
+            return false
+        }
+        guard observed == idiom else {
+            XCTFail("\(proof) requires idiom \(idiom.rawValue) but runs on \(name) (idiom \(observed.rawValue))")
+            return false
+        }
+        return true
+    }
+
+    /// The marker log a debug build shows when launched with `-dulcet-debug-ui-markers`. Its
+    /// absence fails the proof: without it no handler can be shown to have run.
+    @MainActor
+    private func requireProofMarkers(in app: XCUIApplication) -> Bool {
+        let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        guard log.waitForExistence(timeout: 10), log.label.hasPrefix("dulcet-ui") else {
+            XCTFail("The debug build must show its proof markers: " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    /// What the app's handlers have recorded, oldest first.
+    @MainActor
+    private func proofMarkers(in app: XCUIApplication) -> [String] {
+        let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        guard log.exists else { return ["<no marker log>"] }
+        let words = log.label.split(separator: " ").map(String.init)
+        return words.first == "dulcet-ui" ? Array(words.dropFirst()) : ["<unreadable marker log>"]
+    }
+
+    /// Waits until exactly `expected` has been recorded after `before`, and returns what was.
+    /// Only what follows `before` counts, so an earlier identical event cannot satisfy it.
+    @MainActor
+    private func waitForMarkers(
+        after before: [String], _ expected: [String], in app: XCUIApplication, timeout: TimeInterval
+    ) -> [String] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var recorded: [String] = []
+        repeat {
+            let now = proofMarkers(in: app)
+            recorded = now.starts(with: before) ? Array(now.dropFirst(before.count)) : ["<log rewritten>"] + now
+            if recorded == expected { return recorded }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        return recorded
+    }
+
     @MainActor
     private func waitForLabelContaining(
         _ text: String, of element: XCUIElement, timeout: TimeInterval
@@ -503,6 +675,91 @@ final class DulcetiOSUITests: XCTestCase {
         let serverURL: String
         let username: String
         let password: String
+    }
+
+    private struct PlayCountReadFailure: Error {
+        let message: String
+    }
+
+    /// One `search3` read of the server, as the disposable server's own account. Its salt is fresh
+    /// per request, and nothing about the request -- which carries a token -- is ever reported.
+    private func readServerPlayCount(
+        title: String,
+        album: String,
+        configuration: LivePlaybackConfiguration
+    ) -> Result<Int, PlayCountReadFailure> {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((configuration.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: configuration.serverURL) else {
+            return .failure(.init(message: "the server URL is malformed (withheld)"))
+        }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/search3"
+        components.queryItems = [
+            URLQueryItem(name: "u", value: configuration.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+            URLQueryItem(name: "f", value: "json"),
+            URLQueryItem(name: "query", value: title),
+            URLQueryItem(name: "songCount", value: "50"),
+            URLQueryItem(name: "albumCount", value: "0"),
+            URLQueryItem(name: "artistCount", value: "0"),
+        ]
+        guard let url = components.url else {
+            return .failure(.init(message: "the request URL could not be built (withheld)"))
+        }
+        /// Written once by the completion handler, read after the semaphore it signals.
+        final class Outcome: @unchecked Sendable {
+            var value: Result<Data, PlayCountReadFailure> = .failure(.init(message: "no response"))
+        }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if let error = error as? URLError {
+                // The code only: a URLError's description can carry the URL, and so the token.
+                outcome.value = .failure(.init(message: "/rest/search3 unreachable: code \(error.code.rawValue)"))
+            } else if error != nil {
+                outcome.value = .failure(.init(message: "/rest/search3 failed"))
+            } else if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+                outcome.value = .failure(.init(message: "/rest/search3 returned HTTP \(status)"))
+            } else if let data {
+                outcome.value = .success(data)
+            }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            return .failure(.init(message: "/rest/search3 did not answer within 15 s"))
+        }
+        let data: Data
+        switch outcome.value {
+        case let .success(body): data = body
+        case let .failure(failure): return .failure(failure)
+        }
+        guard let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let envelope = document["subsonic-response"] as? [String: Any] else {
+            return .failure(.init(message: "/rest/search3 returned no subsonic-response envelope"))
+        }
+        guard envelope["status"] as? String == "ok" else {
+            let error = envelope["error"] as? [String: Any]
+            return .failure(.init(message: "/rest/search3 failed: code=\(String(describing: error?["code"]))"))
+        }
+        let songs = (envelope["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let matches = songs.filter { $0["title"] as? String == title && $0["album"] as? String == album }
+        guard matches.count == 1, let song = matches.first else {
+            return .failure(.init(message: "\(matches.count) songs titled \(title) on \(album); exactly one is required"))
+        }
+        // Subsonic omits playCount when it is zero.
+        guard let raw = song["playCount"] else { return .success(0) }
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue == Double(number.intValue), number.intValue >= 0 else {
+            return .failure(.init(message: "playCount is not a non-negative integer: \(raw)"))
+        }
+        return .success(number.intValue)
     }
 
     private struct PlaybackProgressSample {
@@ -659,6 +916,278 @@ final class DulcetiOSUITests: XCTestCase {
             + " covered-tile=\(targetLabel.debugDescription) covered-opened=\(openedLabel.debugDescription)")
     }
 
+    /// A track that cannot play because of what it is -- here, an MP3 whose frames do not decode --
+    /// is skipped with a notice, and the next track plays (spec §12.12). Live, because only the
+    /// real engine and the core's queue decide this: the layout fixture has neither.
+    ///
+    /// Requires the disposable server to hold the opt-in "Skip Probe" album that
+    /// `tools/seed-skip-probe` adds -- "Unplayable Probe" (undecodable) then "Playable After Skip"
+    /// -- and fails, never skips, when it does not.
+    ///
+    /// The server's play counts are read over `/rest`, read-only: the skipped track's must stay
+    /// zero, and -- the control that shows the read can see a play at all -- the next track's must
+    /// go up by one once it has played past its threshold. Only a count that must NOT move is the
+    /// claim here; the playback canary's proof of a delivered scrobble reads its count outside the
+    /// test, for the reason `tools/read-play-count` gives.
+    @MainActor
+    func testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays() {
+        guard requireSimulator(.phone, "The automatic skip proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        guard let configuration = livePlaybackConfiguration() else { return }
+        guard let unplayableBefore = serverPlayCount(title: "Unplayable Probe", configuration: configuration),
+              let playableBefore = serverPlayCount(title: "Playable After Skip", configuration: configuration) else {
+            return
+        }
+        XCTAssertEqual(unplayableBefore, 0, "The skipped track must start this proof with no plays")
+        guard let run = startSkipProbe(configuration: configuration) else { return }
+        let app = run.app
+        let notice = run.notice
+        let noticeLabel = notice.exists ? notice.label : "<none>"
+        XCTAssertTrue(noticeLabel.contains("Unplayable Probe") && noticeLabel.contains("Skipped"),
+                      "A skipped track must be named in a notice; notice=\(noticeLabel)")
+        let noticeMarkers = waitForMarkers(after: run.markersBefore, ["skip-notice:1"], in: app, timeout: 5)
+        XCTAssertEqual(noticeMarkers, ["skip-notice:1"], "The notice's own handler must run, once")
+        let placement = assertNoticeClearsNavigation(notice, in: app)
+        attachScreenshot(named: "skipped-track-notice", app: app)
+
+        // The next track plays, and no failure line stays for the track that is not playing.
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        let barNamesNext = waitForLabelContaining("Playable After Skip", of: bar, timeout: 20)
+        let playing = playPause.waitForExistence(timeout: 10) && waitForLabel("Pause", of: playPause, timeout: 20)
+        let noFailureLine = !app.buttons["dulcet.mini-player.retry"].exists
+        XCTAssertTrue(barNamesNext, "The bar must move on to the next track; bar=\(bar.label)")
+        XCTAssertTrue(playing, "The next track must play; play/pause=\(playPause.label)")
+        XCTAssertTrue(noFailureLine, "No failure line may stay for a track that is not playing")
+        // Non-blocking and brief: it goes away by itself.
+        let noticeGone = notice.waitForNonExistence(timeout: 10)
+        XCTAssertTrue(noticeGone, "The notice must go away by itself")
+
+        // Previously Played lists the skipped track like any other entry the queue passed, unmarked.
+        bar.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        let titled = title.waitForExistence(timeout: 10) && waitForLabel("Playable After Skip", of: title, timeout: 10)
+        XCTAssertTrue(titled, "The player must show the track that plays; title=\(title.label)")
+        let upNextToggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        var historyRow = "<none>"
+        if upNextToggle.waitForExistence(timeout: 5) {
+            upNextToggle.tap()
+            let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
+            if historyToggle.waitForExistence(timeout: 5) {
+                historyToggle.tap()
+                let row = app.buttons["dulcet.history.row.0"].firstMatch
+                historyRow = row.waitForExistence(timeout: 5) ? row.label : "<none>"
+            }
+        }
+        XCTAssertTrue(historyRow.hasPrefix("Unplayable Probe") && !historyRow.localizedCaseInsensitiveContains("skip"),
+                      "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
+        attachScreenshot(named: "skipped-track-history", app: app)
+
+        // The server: the next track's play is counted once it passes its threshold -- so the read
+        // can see a play -- and the skipped track's never is.
+        let playableAfter = awaitServerPlayCount(
+            title: "Playable After Skip", configuration: configuration,
+            expected: playableBefore + 1, timeout: 60
+        )
+        let unplayableAfter = serverPlayCount(title: "Unplayable Probe", configuration: configuration)
+        XCTAssertEqual(playableAfter, playableBefore + 1,
+                       "Control: the track that played must be counted once, or the read sees no plays")
+        XCTAssertEqual(unplayableAfter, 0, "The skipped track must never be counted as played")
+        print("DULCET AUTO SKIP OBSERVED notice=\(noticeLabel.debugDescription) markers=\(noticeMarkers)"
+            + " placement=\(placement) bar=\(bar.label.debugDescription) playing=\(playing)"
+            + " no-failure-line=\(noFailureLine) notice-gone=\(noticeGone) history-row-0=\(historyRow.debugDescription)"
+            + " unplayable-plays=\(unplayableBefore)->\(String(describing: unplayableAfter))"
+            + " playable-plays=\(playableBefore)->\(String(describing: playableAfter))")
+    }
+
+    /// At the largest accessibility text size the skip notice -- its text capped at the second
+    /// accessibility size -- wraps onto several lines, still names a short title, and sits clear of
+    /// the navigation bar, the tab bar and the now-playing bar, inside the screen's margins (spec
+    /// §12.12 rule 5). The screenshot is the evidence that the card contains its
+    /// text; the frames are the evidence of where it is.
+    @MainActor
+    func testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize() {
+        guard requireSimulator(.phone, "The accessibility-size skip notice proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        guard let configuration = livePlaybackConfiguration() else { return }
+        guard let run = startSkipProbe(
+            configuration: configuration,
+            extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        ) else { return }
+        let notice = run.notice
+        XCTAssertTrue(notice.label.contains("Unplayable Probe"), "notice=\(notice.label)")
+        let placement = assertNoticeClearsNavigation(notice, in: run.app)
+        // The experiment is the one intended: at this size the sentence wraps, so the notice is
+        // several lines tall rather than the one line of the default size.
+        XCTAssertGreaterThan(notice.frame.height, 90, "The notice must be at an accessibility size; \(placement)")
+        attachScreenshot(named: "skipped-track-notice-ax5", app: run.app)
+        print("DULCET AUTO SKIP AX5 OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
+    }
+
+    /// A title long enough that, at the largest text size, the sentence naming it is too tall for
+    /// the notice's share of the page, so the notice must say the same without it (spec §12.12
+    /// rule 5). The album is its own, so this proof's queue never runs on into the other's tracks.
+    @MainActor
+    func testALongTitledSkipNoticeGivesWayToItsShorterSentenceAtTheLargestTextSize() {
+        guard requireSimulator(.phone, "The long-title skip notice proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let probe = SkipProbeAlbum.longTitle
+        // The experiment is the one intended: the fixture title is the 70 characters decided.
+        XCTAssertEqual(probe.unplayableTitle.count, 70, "The long title must be 70 characters")
+        guard let run = startSkipProbe(
+            configuration: configuration,
+            probe: probe,
+            extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        ) else { return }
+        let notice = run.notice
+        let placement = assertNoticeClearsNavigation(notice, in: run.app)
+        XCTAssertEqual(notice.label, "Couldn\u{2019}t play a track. Skipped.",
+                       "The notice must show the sentence without the title; \(placement)")
+        XCTAssertFalse(notice.label.contains("Concerto"), "notice=\(notice.label)")
+        attachScreenshot(named: "skipped-track-notice-ax5-long-title", app: run.app)
+        print("DULCET AUTO SKIP AX5 LONG TITLE OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
+    }
+
+    private struct SkipProbeRun {
+        let app: XCUIApplication
+        let notice: XCUIElement
+        let markersBefore: [String]
+    }
+
+    /// An opt-in album `tools/seed-skip-probe` adds: an undecodable track, then a playable one.
+    private struct SkipProbeAlbum {
+        let album: String
+        let unplayableTitle: String
+        let playableTitle: String
+
+        static let standard = Self(
+            album: "Skip Probe",
+            unplayableTitle: "Unplayable Probe",
+            playableTitle: "Playable After Skip"
+        )
+        static let longTitle = Self(
+            album: "Long Title Skip Probe",
+            unplayableTitle: "Unplayable Long Probe -- Concerto for Two Violins in D minor, BWV 1043",
+            playableTitle: "Playable After Long Title"
+        )
+    }
+
+    /// Connects, opens the probe album, taps its unplayable first track, and waits for the notice.
+    /// Fails, never skips, when the album is not there.
+    @MainActor
+    private func startSkipProbe(
+        configuration: LivePlaybackConfiguration,
+        probe: SkipProbeAlbum = .standard,
+        extraLaunchArguments: [String] = []
+    ) -> SkipProbeRun? {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-ui-markers",
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url",
+            configuration.serverURL,
+            "-dulcet-debug-account-username",
+            configuration.username,
+            "-dulcet-debug-account-password",
+            configuration.password,
+        ] + extraLaunchArguments
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        guard app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The live account connection must succeed first")
+            return nil
+        }
+        guard requireProofMarkers(in: app),
+              openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+            return nil
+        }
+        let album = app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
+        guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
+            XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
+                + "tools/seed-skip-probe: " + app.debugDescription)
+            return nil
+        }
+        album.tap()
+        // The fixture is the one intended: the unplayable track first, a playable one after it.
+        let unplayableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", probe.unplayableTitle)).firstMatch
+        let playableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", probe.playableTitle)).firstMatch
+        guard unplayableRow.waitForExistence(timeout: 15), scrollIntoView(unplayableRow, in: app),
+              playableRow.waitForExistence(timeout: 5),
+              unplayableRow.frame.minY < playableRow.frame.minY else {
+            XCTFail("The \(probe.album) album must list \(probe.unplayableTitle) before \(probe.playableTitle): "
+                + app.debugDescription)
+            return nil
+        }
+        let markersBefore = proofMarkers(in: app)
+        unplayableRow.tap()
+        let notice = app.descendants(matching: .any)["dulcet.playback.skipped-notice"].firstMatch
+        guard notice.waitForExistence(timeout: 30) else {
+            XCTFail("A skipped track must be named in a notice; none appeared: " + app.debugDescription)
+            return nil
+        }
+        return SkipProbeRun(app: app, notice: notice, markersBefore: markersBefore)
+    }
+
+    /// The notice is drawn over no navigation control: not the navigation bar, not the tab bar,
+    /// not the now-playing bar -- it sits above the last two -- and it stays inside the window's
+    /// side margins. Each bar must be on screen, so the comparison is against something real.
+    @MainActor
+    @discardableResult
+    private func assertNoticeClearsNavigation(_ notice: XCUIElement, in app: XCUIApplication) -> String {
+        let frame = notice.frame
+        let window = app.windows.firstMatch.frame
+        let navigationBar = app.navigationBars.firstMatch
+        let tabBar = app.tabBars.firstMatch
+        let nowPlayingBar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let placement = "notice=\(frame) window=\(window) navigation=\(navigationBar.frame)"
+            + " tabs=\(tabBar.frame) now-playing=\(nowPlayingBar.frame)"
+        XCTAssertTrue(navigationBar.exists && tabBar.exists && nowPlayingBar.exists,
+                      "The navigation bar, tab bar and now-playing bar must all be on screen; \(placement)")
+        XCTAssertFalse(frame.intersects(navigationBar.frame), "The notice covers the navigation bar; \(placement)")
+        XCTAssertFalse(frame.intersects(tabBar.frame), "The notice covers the tab bar; \(placement)")
+        XCTAssertLessThanOrEqual(frame.maxY, nowPlayingBar.frame.minY,
+                                 "The notice must sit above the now-playing bar; \(placement)")
+        XCTAssertLessThanOrEqual(frame.maxY, tabBar.frame.minY, "The notice must sit above the tab bar; \(placement)")
+        XCTAssertGreaterThanOrEqual(frame.minX - window.minX, 16, "The notice runs to the left edge; \(placement)")
+        XCTAssertGreaterThanOrEqual(window.maxX - frame.maxX, 16, "The notice runs to the right edge; \(placement)")
+        return placement
+    }
+
+    /// The server's play count for the one "Skip Probe" song with this title, read over `/rest`
+    /// with the disposable server's own account. Read-only: nothing here can record a play.
+    /// Fails -- nil, with a failure recorded -- on no match, several matches, or any error, so a
+    /// read that cannot find its track is never mistaken for a track with no plays. The URL, which
+    /// carries a token, is never printed.
+    @MainActor
+    private func serverPlayCount(title: String, configuration: LivePlaybackConfiguration) -> Int? {
+        switch readServerPlayCount(title: title, album: "Skip Probe", configuration: configuration) {
+        case let .success(count):
+            return count
+        case let .failure(reason):
+            XCTFail("The server's play count for \(title) could not be read: \(reason.message)")
+            return nil
+        }
+    }
+
+    /// Polls until the count reaches `expected` or the timeout passes, and returns the last read.
+    @MainActor
+    private func awaitServerPlayCount(
+        title: String,
+        configuration: LivePlaybackConfiguration,
+        expected: Int?,
+        timeout: TimeInterval
+    ) -> Int? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = serverPlayCount(title: title, configuration: configuration)
+        while observed != nil, observed != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            observed = serverPlayCount(title: title, configuration: configuration)
+        }
+        return observed
+    }
     /// The iPad shell: Now Playing is not a sidebar place, and the now-playing bar opens the
     /// player over the whole window with Up Next beside it.
     ///
@@ -667,13 +1196,11 @@ final class DulcetiOSUITests: XCTestCase {
     /// with the same sequence, so a keyboard assertion here would measure the harness.
     @MainActor
     func testIPadFullScreenPlayerFromTheBar() {
-        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
-            XCTFail("This proof requires an iPad simulator; a physical device is not valid evidence")
-            return
-        }
+        guard requireSimulator(.pad, "The iPad full-screen player proof") else { return }
         guard let configuration = livePlaybackConfiguration() else { return }
         let app = XCUIApplication()
         app.launchArguments += [
+            "-dulcet-debug-ui-markers",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url",
             configuration.serverURL,
@@ -695,6 +1222,7 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The live account connection must succeed first")
             return
         }
+        guard requireProofMarkers(in: app) else { return }
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
             return
         }
@@ -739,6 +1267,27 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertEqual(title.label, "Twenty Nine Seconds")
+        // Paused, so the track in front cannot end on its own while the layout is measured: the
+        // fixture's tracks are about thirty seconds long, and a natural advance would make the
+        // history steps below read a different queue position from the one they set up. OBSERVED
+        // on an iPad Pro 13-inch simulator before this pause: the first Next landed on the third
+        // track, because the second had already started.
+        func playerButton(_ label: String) -> XCUIElement? {
+            app.buttons.matching(NSPredicate(format: "label == %@", label))
+                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+        }
+        let playerPause = playerButton("Pause")
+        XCTAssertNotNil(playerPause, "The full-screen player must offer Pause while the album plays")
+        playerPause?.tap()
+        // Re-queried by label: an element bound to the "Pause" query stops resolving once it
+        // reads Play.
+        let pauseDeadline = Date().addingTimeInterval(10)
+        var paused = false
+        while !paused, Date() < pauseDeadline {
+            paused = playerButton("Play") != nil
+            if !paused { Thread.sleep(forTimeInterval: 0.25) }
+        }
+        XCTAssertTrue(paused, "The player's Pause must pause")
         // Covering the window, not a detail column or a centred form sheet: the close control
         // sits at the window's leading edge, and the player's navigation bar spans the window.
         // A sheet on a regular-width window is inset on both sides, so neither holds for it.
@@ -763,6 +1312,80 @@ final class DulcetiOSUITests: XCTestCase {
             app.buttons["dulcet.now-playing.up-next"].exists,
             "With Up Next already beside the player there is no toggle for it"
         )
+        // Beside a regular-width player the queue column spans the player -- cover to footer --
+        // and is centred with it. Its bottom is measured against the lowest thing drawn in the
+        // player's own column, and its centre against the player's.
+        let upNext = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        let queueFrame = upNext.frame
+        // Only what is in front in the player's column, and never this test's own instrument: the
+        // debug marker log is a text at the window's foot. OBSERVED on an iPad Pro 13-inch
+        // simulator: counted as a player element, it put the "player's bottom" at y=1351 in a
+        // 1376-point window, far below the footer.
+        let playerColumn = (app.staticTexts.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex)
+            .filter {
+                let frame = $0.frame
+                return frame.width > 0 && frame.height > 0 && frame.maxX <= queueFrame.minX
+                    && frame.minY >= title.frame.minY && windowFrame.contains(frame)
+                    && $0.identifier != "dulcet.debug.ui-markers" && $0.isHittable
+            }
+        let lowest = playerColumn.max { $0.frame.maxY < $1.frame.maxY }
+        let playerBottom = lowest?.frame.maxY ?? .nan
+        print("DULCET IPAD QUEUE COLUMN queue=\(queueFrame) title=\(title.frame) player-bottom=\(playerBottom)"
+            + " lowest=\((lowest?.identifier ?? "").debugDescription)/\((lowest?.label ?? "").debugDescription)"
+            + " window=\(windowFrame) player-elements=\(playerColumn.count)")
+        XCTAssertLessThan(queueFrame.height, windowFrame.height - 100,
+                          "The queue column must not span the window; queue=\(queueFrame)")
+        XCTAssertEqual(queueFrame.maxY, playerBottom, accuracy: 12,
+                       "The queue column must end where the player does; queue=\(queueFrame) player-bottom=\(playerBottom)")
+        XCTAssertLessThan(queueFrame.minY, title.frame.minY - 200,
+                          "The queue column must rise beside the cover, above the title; queue=\(queueFrame)")
+
+        // What has played is kept under Up Next, collapsed until asked for, nearest first, and a
+        // row plays that track again. Two tracks forward, so the order is observable.
+        // The player's own Next: the window also carries zero-size keyboard-shortcut buttons
+        // with the same label, which a first match can land on.
+        func playerNext() -> XCUIElement? {
+            app.buttons.matching(NSPredicate(format: "label == %@", "Next Track"))
+                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+        }
+        XCTAssertNotNil(playerNext(), "The full-screen player must offer Next")
+        playerNext()?.tap()
+        let advanced = waitForLabel("Thirty One Seconds", of: title, timeout: 15)
+        XCTAssertTrue(advanced, "Next must advance the player; title=\(title.label)")
+        playerNext()?.tap()
+        let advancedAgain = waitForLabel("UI Playback Canary", of: title, timeout: 15)
+        XCTAssertTrue(advancedAgain, "A second Next must advance again; title=\(title.label)")
+        let historyToggle = app.descendants(matching: .any)["dulcet.history.toggle"].firstMatch
+        let historyShown = historyToggle.waitForExistence(timeout: 5)
+        XCTAssertTrue(historyShown, "Played tracks must be listed under Previously Played")
+        let firstRow = app.buttons["dulcet.history.row.0"].firstMatch
+        let secondRow = app.buttons["dulcet.history.row.1"].firstMatch
+        let collapsed = historyShown && !firstRow.exists && !secondRow.exists
+        XCTAssertTrue(collapsed, "Previously Played must start collapsed")
+        var historyRows: [String] = []
+        var replayed = false
+        var jumpMarkers: [String] = []
+        if historyShown {
+            historyToggle.tap()
+            if firstRow.waitForExistence(timeout: 5), secondRow.waitForExistence(timeout: 5) {
+                historyRows = [firstRow.label, secondRow.label]
+            }
+            XCTAssertTrue(historyRows.count == 2 && historyRows[0].hasPrefix("Thirty One Seconds")
+                          && historyRows[1].hasPrefix("Twenty Nine Seconds"),
+                          "The most recent track leads the history; rows=\(historyRows)")
+            attachScreenshot(named: "ipad-full-screen-player-history", app: app)
+            if secondRow.exists {
+                let before = proofMarkers(in: app)
+                secondRow.tap()
+                jumpMarkers = waitForMarkers(after: before, ["history-jump:1"], in: app, timeout: 5)
+                replayed = waitForLabel("Twenty Nine Seconds", of: title, timeout: 15)
+            }
+            XCTAssertEqual(jumpMarkers, ["history-jump:1"], "The history row's own handler must run")
+            XCTAssertTrue(replayed, "A history row must play that track again; title=\(title.label)")
+        }
+        print("DULCET IPAD HISTORY OBSERVED advanced=\(advanced) advanced-again=\(advancedAgain)"
+            + " history-shown=\(historyShown) collapsed=\(collapsed) rows=\(historyRows)"
+            + " jump-markers=\(jumpMarkers) replayed=\(replayed)")
         close.tap()
         XCTAssertTrue(title.waitForNonExistence(timeout: 10), "Closing must dismiss the player")
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch

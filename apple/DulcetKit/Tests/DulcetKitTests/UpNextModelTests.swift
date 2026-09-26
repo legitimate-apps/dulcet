@@ -55,6 +55,17 @@ struct UpNextModelTests {
         #expect(empty.upcoming.isEmpty && empty.history.isEmpty && empty.current == nil)
     }
 
+    @Test
+    func historyReadsMostRecentFirstAndPlayingARowAgainNamesItsEntry() {
+        // The same track twice, before and after the current one: history is entries, not titles.
+        let model = DulcetUpNextModel(nowPlaying: nowPlaying(["a", "b", "a", "cur", "c"], current: 3))
+        #expect(model.recentHistory.map(\.id.rawValue) == ["entry-2", "entry-1", "entry-0"])
+        #expect(model.jumpIntent(to: model.recentHistory[0]) == .jump(.init("entry-2")))
+        // Nothing has played before the first entry, and nothing is history without a current one.
+        #expect(DulcetUpNextModel(nowPlaying: nowPlaying(["cur", "u0"], current: 0)).recentHistory.isEmpty)
+        #expect(DulcetUpNextModel(nowPlaying: nowPlaying(["a", "b"], current: nil)).recentHistory.isEmpty)
+    }
+
     private func nowPlaying(_ titles: [String], current: Int?) -> DulcetNowPlaying {
         let entries = titles.enumerated().map { offset, title in
             DulcetQueueEntry(id: .init("entry-\(offset)"), track: track(title))
@@ -84,5 +95,41 @@ struct UpNextModelTests {
             mediaSourceID: nil,
             artwork: DulcetArtwork(seed: title, palette: .indigoCoral)
         )
+    }
+}
+
+/// Which swipe on the player's artwork asks for what -- and which ask nothing.
+struct ArtworkSwipeTests {
+    private func action(
+        _ width: CGFloat, _ height: CGFloat,
+        next: Bool = true, previous: Bool = true, dismiss: Bool = true
+    ) -> DulcetArtworkSwipe? {
+        DulcetArtworkSwipe.action(
+            for: CGSize(width: width, height: height),
+            canGoNext: next, canGoPrevious: previous, canDismiss: dismiss
+        )
+    }
+
+    @Test
+    func leftIsNextRightIsPreviousAndDownCloses() {
+        #expect(action(-120, 10) == .next)
+        #expect(action(120, -10) == .previous)
+        #expect(action(8, 160) == .dismiss)
+    }
+
+    @Test
+    func shortDiagonalOrUnavailableSwipesAskForNothing() {
+        // Short of the threshold.
+        #expect(action(-60, 0) == nil)
+        #expect(action(0, 100) == nil)
+        // Diagonal: neither direction dominates, so neither is guessed.
+        #expect(action(-120, 90) == nil)
+        #expect(action(90, 150) == nil)
+        // A control that is not available is not reached by swiping either.
+        #expect(action(-120, 0, next: false) == nil)
+        #expect(action(120, 0, previous: false) == nil)
+        #expect(action(0, 200, dismiss: false) == nil)
+        // Upward is not a gesture here.
+        #expect(action(0, -200) == nil)
     }
 }

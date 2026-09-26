@@ -509,7 +509,7 @@ func nowPlayingMetadataIsWithheldUntilThePlaybackControllerPublishesReady() {
 }
 
 @Test @MainActor
-func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
+func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async throws {
     #expect(DulcetAccountDataSource.defaultSearchDebounce == .milliseconds(250))
     let connector = ControlledAccountConnector()
     let search = ControlledServerSearch()
@@ -537,7 +537,9 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
 
     store.searchQuery = "at"
     await settleSearchTask(until: { search.requests.count == 1 })
-    #expect(search.requests.count == 1)
+    // `#require`, not `#expect`: after an expired settle the subscripts below would trap, which
+    // ends the whole test process with no test named.
+    try #require(search.requests.count == 1)
     #expect(search.requests[0].query == "at")
     #expect(search.requests[0].artistCount == 20)
     #expect(search.requests[0].albumCount == 20)
@@ -545,8 +547,9 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
 
     store.searchQuery = "atlas"
     await settleSearchTask(until: { search.requests.count == 2 })
+    try #require(search.requests.count == 2)
+    try #require(search.operations.count == 2)
     #expect(search.operations[0].cancelCount == 1)
-    #expect(search.requests.count == 2)
     #expect(search.requests[1].query == "atlas")
     #expect(search.requests[1].providerInstanceID == "provider-instance-fixture")
     #expect(search.requests[1].username == "listener")
@@ -567,7 +570,7 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
     #expect(store.snapshot.searchHasMoreKinds == [.track])
 
     store.loadMoreSearchResults(.track)
-    #expect(search.requests.count == 3)
+    try #require(search.requests.count == 3)
     #expect(search.requests[2].trackCount == 20)
     #expect(search.requests[2].trackOffset == 1)
     #expect(search.requests[2].artistCount == 0)
@@ -581,7 +584,8 @@ func serverSearchDebouncesCancelsAndPagesEachResultTypeIndependently() async {
 
     store.searchQuery = "another"
     await settleSearchTask(until: { search.requests.count == 4 })
-    #expect(search.requests.count == 4)
+    try #require(search.requests.count == 4)
+    try #require(search.operations.count == 4)
     store.selectDestination(.nowPlaying)
     #expect(search.operations[3].cancelCount == 1)
     #expect(store.snapshot.state == .nowPlayingUnavailable)
@@ -678,6 +682,10 @@ func searchConsumedRowsReachLaterUniqueResultsForEveryKind(crossPageOverlap: Boo
     await settleSearchTask(until: { search.requests.count == 1 })
 
     func respond(_ index: Int) {
+        guard search.requests.indices.contains(index) else {
+            Issue.record("no search request at index \(index); \(search.requests.count) were issued")
+            return
+        }
         let request = search.requests[index]
         let artists = Array(rows.dropFirst(request.artistOffset).prefix(request.artistCount))
         let albums = Array(rows.dropFirst(request.albumOffset).prefix(request.albumCount))
@@ -1034,10 +1042,7 @@ func accountRemovalTimeoutRecoversFromUncooperativeDownloadCleanup() async throw
     store.removeAccount()
     // This continuation ignores cancellation and does not return during the deadline.
     defer { downloads.removalContinuation?.resume(returning: true) }
-    let deadline = ContinuousClock.now + .seconds(5)
-    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    try await awaitAccountRemovalSettled(store)
     #expect(downloads.removeAccountDataCount == 1)
     #expect(store.snapshot.accountRemoval == .failed)
     #expect(store.snapshot.state == .accountRemovalError)
@@ -1071,10 +1076,7 @@ func accountRemovalCancellationRecoversBeforeUncooperativeCleanupReturns() async
     }
     #expect(downloads.removalContinuation != nil)
     source.cancelAccountRemoval()
-    let deadline = ContinuousClock.now + .seconds(5)
-    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    try await awaitAccountRemovalSettled(store)
     #expect(store.snapshot.accountRemoval == .failed)
     #expect(store.snapshot.state == .accountRemovalError)
     store.dismissAccountRemovalFailure()
@@ -1155,10 +1157,7 @@ func keepingAccountAfterCleanupFailurePreservesPersistedCredential(cleanupTimesO
     let savedCredential = try #require(try credentials.load())
     store.removeAccount()
     defer { downloads.removalContinuation?.resume(returning: true) }
-    let deadline = ContinuousClock.now + .seconds(5)
-    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    try await awaitAccountRemovalSettled(store)
     #expect(store.snapshot.accountRemoval == .failed)
     store.dismissAccountRemovalFailure()
     #expect(store.snapshot.state == .accountConnected)
@@ -1965,6 +1964,23 @@ private func settleSearchTask(
     // Returning silently let the caller go on to act on a request that was never issued.
     if !condition() {
         Issue.record("search condition not met within 5 s", sourceLocation: sourceLocation)
+    }
+}
+
+// Account removal ends in `.failed` or `.idle` through a watchdog or a cancellation, each a task
+// that needs the main actor. Under a loaded parallel run that can take longer than the wait; the
+// expectations after it would then fail on the state alone, so the expiry is named here.
+@MainActor
+private func awaitAccountRemovalSettled(
+    _ store: DulcetPresentationStore,
+    sourceLocation: SourceLocation = #_sourceLocation
+) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while store.snapshot.accountRemoval == .removing && ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    if store.snapshot.accountRemoval == .removing {
+        Issue.record("account removal was still in progress after 5 s", sourceLocation: sourceLocation)
     }
 }
 

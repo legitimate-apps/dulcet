@@ -290,6 +290,15 @@ private struct DulcetNowPlayingBarProgress: View {
 
 /// Places the now-playing bar along the content's bottom edge: a floating card on iPhone and
 /// iPad, a docked full-width bar on the Mac.
+///
+/// It also draws the playback notices handed down by ``View/dulcetPlaybackFeedback(store:isActive:drawsNotices:)``
+/// along the bottom of the page, above the bar -- and so above the tab bar, whose safe area the
+/// page already respects. The notices are laid out in the page's own frame, before the bar's
+/// inset, so they sit clear of the navigation bar at the top and of the bar and tab bar below;
+/// ``DulcetPlaybackNoticeRegion`` offers them a share of that frame's height, and a notice that
+/// would not fit it shows its shorter sentence rather than grow over the navigation bar.
+/// `drawsNotices` false leaves them to another page: only the page showing draws them, so each
+/// notice exists once.
 struct DulcetNowPlayingBarPlacement: ViewModifier {
     enum Placement {
         case floating
@@ -299,11 +308,21 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
     @Bindable var store: DulcetPresentationStore
     var placement: Placement = .floating
     var isSuppressed = false
+    var drawsNotices = true
     let onOpen: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dulcetPlaybackNotices) private var notices
 
     func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 0) {
+        content
+            .overlay(alignment: .bottom) {
+                if drawsNotices {
+                    DulcetPlaybackNoticeRegion {
+                        DulcetPlaybackNoticeStack(notices: notices)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
             if !isSuppressed, store.showsNowPlayingBar {
                 // With Reduce Motion the bar fades in place rather than sliding up the screen.
                 bar.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))

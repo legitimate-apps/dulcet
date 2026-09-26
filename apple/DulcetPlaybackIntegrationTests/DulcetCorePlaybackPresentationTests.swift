@@ -4,6 +4,41 @@ import XCTest
 
 @MainActor
 final class DulcetCorePlaybackPresentationTests: XCTestCase {
+    /// The Swift half of the failure relay (spec §12.12): the core names a failure, the shell
+    /// turns it into a `DulcetPlaybackFailure`, and `coreName` names it back for the core to
+    /// classify. `ApplePlaybackFailureRelayTest` pins the Kotlin half against this same table:
+    /// every name the core classifies on comes back unchanged, and only connection-class names --
+    /// which all stop -- are merged.
+    func testTheShellHandsEveryFailureNameBackAsTheCoreSentIt() {
+        let table: [(sent: String, returned: String)] = [
+            ("authentication", "authentication"),
+            ("forbidden", "forbidden"),
+            ("serverBusy", "serverBusy"),
+            ("protocol", "protocolViolation"),
+            ("security", "protocolViolation"),
+            ("tlsUntrusted", "transport"),
+            ("transport", "transport"),
+            ("cancelled", "transport"),
+            ("unsupportedPlan", "unsupportedPlan"),
+            ("sourceUnavailable", "sourceUnavailable"),
+            ("unexpectedBinary", "unexpectedBinary"),
+            ("unexpectedContentType:AudioMpeg:Flac", "unexpectedContentType:AudioMpeg:Flac"),
+            ("serverKnown:70", "serverKnown:70"),
+            ("serverKnown:0", "serverKnown:0"),
+            ("serverKnown:10", "serverKnown:10"),
+            ("serverUnknown:404", "serverUnknown:404"),
+            ("capabilityUnsupported:PlaybackStream", "capabilityUnsupported:PlaybackStream"),
+        ]
+        for (sent, returned) in table {
+            XCTAssertEqual(DulcetPlaybackFailure(coreKind: sent).coreName, returned, sent)
+        }
+        // The engine's own names, which never come from the core.
+        XCTAssertEqual(DulcetPlaybackFailure.undecodable.coreName, "undecodable")
+        XCTAssertEqual(DulcetPlaybackFailure.engine.coreName, "engine")
+        // A malformed Server name is not a Server failure.
+        XCTAssertEqual(DulcetPlaybackFailure(coreKind: "serverKnown:x"), .transport)
+    }
+
     func testEngineFailureAfterPlayingReachesPresentationStore() async throws {
         let track = DulcetTrack(
             id: DulcetProviderItemID(providerInstanceID: "failure-provider", rawID: "failure-track"),

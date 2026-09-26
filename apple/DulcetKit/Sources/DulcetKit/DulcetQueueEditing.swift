@@ -100,6 +100,10 @@ public struct DulcetUpNextModel: Sendable, Hashable {
         }
     }
 
+    /// The entries before the current one, nearest first: the order a history is read in. It is
+    /// positional -- an entry jumped over or skipped past is here too (spec §3.1).
+    public var recentHistory: [DulcetQueueEntry] { history.reversed() }
+
     private var upcomingBase: Int { history.count + (current == nil ? 0 : 1) }
 
     /// Translates a SwiftUI `onMove` inside the upcoming rows into a whole-queue move. SwiftUI's

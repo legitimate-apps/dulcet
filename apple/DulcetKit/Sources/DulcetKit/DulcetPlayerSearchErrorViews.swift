@@ -140,6 +140,8 @@ struct DulcetNowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrubPosition: Double?
     @State private var showingQueue = false
+    /// The side-by-side player's own height, cover to footer, once laid out.
+    @State private var sideBySidePlayerHeight: CGFloat?
     let player: DulcetNowPlaying
     var presentation: Presentation = .destination
     var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
@@ -157,13 +159,20 @@ struct DulcetNowPlayingView: View {
             let width = geometry.size.width
             let padding = horizontalPadding(for: width)
             if sideBySide(width: width) {
-                HStack(alignment: .top, spacing: DulcetSpacing.xl) {
+                let artworkSize = Self.sideBySideArtworkSize(height: geometry.size.height)
+                // Centred together: the queue sits beside the cover and controls it belongs to,
+                // not pinned to the window's top with the space under it empty.
+                HStack(alignment: .center, spacing: Self.playerToQueueSpacing) {
                     ScrollView {
                         playerPanel(
-                            artworkSize: Self.sideBySideArtworkSize(height: geometry.size.height),
+                            artworkSize: artworkSize,
                             alignment: .center,
                             showsQueueToggle: false
                         )
+                        // Measured, not estimated: the queue column beside it takes this height.
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                            sideBySidePlayerHeight = $0
+                        }
                         .padding(.vertical, DulcetSpacing.xl)
                         // Centred in the window's height when it fits; it scrolls only when it
                         // does not.
@@ -177,6 +186,10 @@ struct DulcetNowPlayingView: View {
                     .frame(maxWidth: 520)
                     queueColumn
                         .frame(maxWidth: 390)
+                        .frame(height: Self.sideBySideQueueHeight(
+                            windowHeight: geometry.size.height,
+                            playerHeight: sideBySidePlayerHeight
+                        ))
                 }
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
@@ -200,7 +213,7 @@ struct DulcetNowPlayingView: View {
                     )
                     .frame(maxWidth: 560)
                     .padding(.horizontal, padding)
-                    .padding(.vertical, presentation == .sheet ? DulcetSpacing.md : DulcetSpacing.xl)
+                    .padding(.vertical, presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
@@ -210,6 +223,15 @@ struct DulcetNowPlayingView: View {
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.nowPlaying)
     }
+
+    /// The gaps between the cover and the nearest text on every side. The cover's glow reaches
+    /// less far than the smallest of them (``DulcetArtworkGlow/reach``), so no text on the player
+    /// ever sits on cover colour: every text colour here is a registered contrast pair measured
+    /// against the window colour (spec §3.1).
+    static let coverToTitleSpacing = DulcetSpacing.lg
+    static let playerToQueueSpacing = DulcetSpacing.xl
+    static let sheetVerticalPadding = DulcetSpacing.md
+    static let minimumHorizontalPadding = DulcetSpacing.lg
 
     /// Side by side only when both panels fit at their natural widths; otherwise one column.
     /// Dynamic Type at accessibility sizes always gets one column, whatever the width.
@@ -222,6 +244,14 @@ struct DulcetNowPlayingView: View {
     /// column, an iPad mini in landscape a smaller cover rather than controls pushed off screen.
     static func sideBySideArtworkSize(height: CGFloat) -> CGFloat {
         min(520, max(280, height - 380))
+    }
+
+    /// The queue column spans the player beside it -- cover, title, scrubber, transport and
+    /// footer, as measured -- rather than the whole window, so the two read as one row; a window
+    /// too short for that gives the queue all of it. Until the player has been measured, the
+    /// whole window.
+    static func sideBySideQueueHeight(windowHeight: CGFloat, playerHeight: CGFloat?) -> CGFloat {
+        min(windowHeight, playerHeight ?? windowHeight)
     }
 
     private func sideBySide(width: CGFloat) -> Bool {
@@ -239,7 +269,7 @@ struct DulcetNowPlayingView: View {
     }
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
-        width < 500 ? DulcetSpacing.lg : DulcetSpacing.xl
+        width < 500 ? Self.minimumHorizontalPadding : DulcetSpacing.xl
     }
 
     /// Up Next, editable, when the queue carries entry identities -- a track can be queued twice,
@@ -269,14 +299,17 @@ struct DulcetNowPlayingView: View {
         alignment: HorizontalAlignment,
         showsQueueToggle: Bool
     ) -> some View {
-        VStack(alignment: alignment, spacing: DulcetSpacing.lg) {
-            DulcetArtworkView(artwork: player.current.artwork, size: artworkSize)
-                .shadow(color: .black.opacity(player.isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
-                .scaleEffect(player.isPlaying || presentation == .destination || reduceMotion ? 1 : 0.9)
+        VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
+            DulcetPlayerCover(
+                artwork: player.current.artwork,
+                size: artworkSize,
+                isPlaying: player.isPlaying,
                 // Reduce Motion keeps the cover still: the play state is carried by the control.
-                .animation(reduceMotion ? nil : .spring(duration: 0.4), value: player.isPlaying)
+                scale: player.isPlaying || presentation == .destination || reduceMotion
+                    ? 1 : DulcetPlayerCover.pausedScale
+            )
+                .modifier(DulcetArtworkSwipes(player: player, onControl: onControl, onDismiss: onDismiss))
                 .frame(maxWidth: .infinity)
-                .modifier(DulcetSwipeDownToDismiss(onDismiss: onDismiss))
 
             trackIdentity(alignment: alignment)
 
@@ -588,27 +621,162 @@ struct DulcetNowPlayingView: View {
     }
 }
 
-/// A downward swipe that closes a presented player. Vertical-dominant only, so a horizontal drag
-/// near the artwork never closes it. Nothing where there is no dismissal or no touch.
-private struct DulcetSwipeDownToDismiss: ViewModifier {
+/// What a swipe across the player's artwork asks for: left for the next track, right for the
+/// previous one, as the system player does, and down to close a presented player. Each
+/// direction must dominate the other, so a diagonal drag does nothing rather than guessing, and
+/// a control that is unavailable is not reached by swiping either.
+enum DulcetArtworkSwipe: Equatable {
+    case next
+    case previous
+    case dismiss
+
+    static let horizontalThreshold: CGFloat = 80
+    static let dismissThreshold: CGFloat = 120
+
+    static func action(
+        for translation: CGSize,
+        canGoNext: Bool,
+        canGoPrevious: Bool,
+        canDismiss: Bool
+    ) -> DulcetArtworkSwipe? {
+        let across = translation.width
+        let down = translation.height
+        if abs(across) > horizontalThreshold, abs(down) < abs(across) / 2 {
+            if across < 0 { return canGoNext ? .next : nil }
+            return canGoPrevious ? .previous : nil
+        }
+        if canDismiss, down > dismissThreshold, abs(across) < down / 2 {
+            return .dismiss
+        }
+        return nil
+    }
+}
+
+/// Swipes on the artwork: next, previous, and -- for a presented player -- close. The cover
+/// follows a horizontal drag a little, so the swipe is seen to be taken; under Reduce Motion it
+/// stays still. Touch or pointer drag: an iPad's pointer drives the same gesture, and on a Mac a
+/// drag on the cover means nothing.
+private struct DulcetArtworkSwipes: ViewModifier {
+    let player: DulcetNowPlaying
+    let onControl: (DulcetPlaybackControlIntent) -> Void
     let onDismiss: (() -> Void)?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GestureState private var followOffset: CGFloat = 0
 
     func body(content: Content) -> some View {
 #if os(iOS)
-        if let onDismiss {
+        content
+            .offset(x: reduceMotion ? 0 : followOffset)
+            .animation(reduceMotion ? nil : .spring(duration: 0.3), value: followOffset)
             // Simultaneous: the player sits in a scroll view, whose own pan would otherwise take
             // the drag before this gesture saw it.
-            content.simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
-                let down = value.translation.height
-                guard down > 120, abs(value.translation.width) < down / 2 else { return }
-                onDismiss()
-            })
-        } else {
-            content
-        }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24)
+                    .updating($followOffset) { value, offset, _ in
+                        let across = value.translation.width
+                        offset = abs(across) > abs(value.translation.height) ? across * 0.35 : 0
+                    }
+                    .onEnded { value in
+                        let action = DulcetArtworkSwipe.action(
+                            for: value.translation,
+                            canGoNext: player.canGoNext,
+                            canGoPrevious: player.canGoPrevious,
+                            canDismiss: onDismiss != nil
+                        )
+                        DulcetUIProofMarkers.record("swipe:\(action.map { "\($0)" } ?? "none")")
+                        switch action {
+                        case .next: onControl(.next)
+                        case .previous: onControl(.previous)
+                        case .dismiss: onDismiss?()
+                        case nil: break
+                        }
+                    }
+            )
 #else
         content
 #endif
+    }
+}
+
+/// The player's cover: the artwork, its shadow, and its glow behind it, shrunk a little while
+/// paused in a presented player.
+///
+/// The glow is attached before the scale, so it shrinks with the cover: paused, it reaches
+/// ``DulcetArtworkGlow/reach`` × ``pausedScale`` past the drawn cover, never further out than
+/// ``DulcetArtworkGlow/reach`` past the cover's layout frame, so every gap that clears the glow
+/// at full size clears it paused too.
+struct DulcetPlayerCover: View {
+    /// How far a presented player's cover shrinks while paused.
+    static let pausedScale: CGFloat = 0.9
+    let artwork: DulcetArtwork
+    let size: CGFloat
+    let isPlaying: Bool
+    let scale: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        DulcetArtworkView(artwork: artwork, size: size)
+            .shadow(color: .black.opacity(isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
+            .background {
+                DulcetArtworkGlow(artwork: artwork, size: size)
+            }
+            .scaleEffect(scale)
+            .animation(reduceMotion ? nil : .spring(duration: 0.4), value: isPlaying)
+    }
+}
+
+/// The artwork's own colours, blurred, glowing out from behind the cover: the player takes on
+/// the album's tint. Deliberately a glow around the cover rather than a blurred background under
+/// the whole player: every text colour on the player is a registered contrast pair measured
+/// against the window colour, and an arbitrary cover under that text would void the
+/// measurement. So the glow is clipped to ``reach`` points past the cover's edge, which is less
+/// than every gap between the cover and text (``DulcetNowPlayingView/coverToTitleSpacing`` and
+/// its siblings), and fades to nothing before the clip. Reduce Transparency removes it. Not on
+/// tvOS, whose player is unchanged.
+struct DulcetArtworkGlow: View {
+    /// How far past the cover's edge the glow reaches, and not a point further.
+    static let reach: CGFloat = DulcetSpacing.sm
+    let artwork: DulcetArtwork
+    let size: CGFloat
+    @Environment(\.accessibilityReduceTransparency) private var systemReduceTransparency
+    @Environment(\.dulcetReduceTransparencyOverride) private var reduceTransparencyOverride
+
+    var body: some View {
+#if !os(tvOS)
+        if !(reduceTransparencyOverride ?? systemReduceTransparency) {
+            let outer = size + 2 * Self.reach
+            DulcetArtworkView(artwork: artwork, size: size)
+                .scaleEffect(outer / max(size, 1))
+                // A layout frame of the glow's full extent, so the mask and the clip below are
+                // measured from it rather than from the cover's own frame.
+                .frame(width: outer, height: outer)
+                .blur(radius: Self.reach / 2)
+                .opacity(0.55)
+                // Fades out inside the clip, so the clip never shows as an edge.
+                .mask {
+                    RoundedRectangle(cornerRadius: Self.reach * 2, style: .continuous)
+                        .padding(Self.reach / 2)
+                        .blur(radius: Self.reach / 4)
+                }
+                .clipped()
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+#endif
+    }
+}
+
+private struct DulcetReduceTransparencyOverrideKey: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
+extension EnvironmentValues {
+    /// Stands in for the system's Reduce Transparency where a test renders the player: SwiftUI
+    /// does not let an environment set `accessibilityReduceTransparency` itself. Nil, the
+    /// default, reads the system setting.
+    var dulcetReduceTransparencyOverride: Bool? {
+        get { self[DulcetReduceTransparencyOverrideKey.self] }
+        set { self[DulcetReduceTransparencyOverrideKey.self] = newValue }
     }
 }
 
@@ -660,7 +828,10 @@ struct DulcetNowPlayingSheet: View {
                 }
             }
         }
-        .dulcetQueueEditFeedback(store: store)
+        // The player has no now-playing bar to draw them above, so it draws its own, along its
+        // bottom edge -- clear of the close button in its navigation bar.
+        .dulcetPlaybackFeedback(store: store, drawsNotices: true)
+        .dulcetUIProofMarkers()
         .presentationDragIndicator(.visible)
         .presentationBackground(Color.dulcetWindow)
     }

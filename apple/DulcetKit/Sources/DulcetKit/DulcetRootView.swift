@@ -41,13 +41,14 @@ public struct DulcetRootView: View {
                         isSuppressed: store.selectedDestination == .nowPlaying,
                         onOpen: { store.selectDestination(.nowPlaying) }
                     ))
-                    .dulcetQueueEditFeedback(store: store)
+                    .dulcetPlaybackFeedback(store: store)
                 }
             }
         }
         .environment(store)
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
+        .dulcetUIProofMarkers()
 #elseif os(iOS)
         Group {
             if variant == .deliberatelyBadControl {
@@ -58,6 +59,7 @@ public struct DulcetRootView: View {
         }
         .environment(store)
         .tint(.dulcetAccent)
+        .dulcetUIProofMarkers()
 #elseif os(tvOS)
         Group {
             if variant == .deliberatelyBadControl {
@@ -69,7 +71,9 @@ public struct DulcetRootView: View {
                         .dulcetForeground(.primaryTextOnWindow)
                 }
                 // Up Next on tvOS edits the queue too; a refusal there is said, as on the others.
-                .dulcetQueueEditFeedback(store: store)
+                // There is no now-playing bar on tvOS, so the root draws the notices itself,
+                // along the bottom edge, clear of the section bar at the top.
+                .dulcetPlaybackFeedback(store: store, drawsNotices: true)
             }
         }
         .environment(store)
@@ -284,7 +288,7 @@ private struct DulcetIOSShell: View {
                 .onAppear { playerOnScreen = true }
         }
         // The player carries its own while it is up; this one speaks for the shell under it.
-        .dulcetQueueEditFeedback(store: store, isActive: !playerPresented)
+        .dulcetPlaybackFeedback(store: store, isActive: !playerPresented)
         .onChange(of: horizontalSizeClass) { _, _ in sizeClassChanged() }
         .onAppear(perform: absorbNowPlayingDestination)
         .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
@@ -510,10 +514,10 @@ struct DulcetDestinationStack: View {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
             }
-            .modifier(bar)
+            .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.isEmpty))
             .navigationDestination(for: DulcetLibraryRoute.self) { route in
                 DulcetLibraryRouteView(store: store, route: route)
-                    .modifier(bar)
+                    .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
             }
         }
         // A different destination is a different stack: switching from an open album to Search
@@ -534,11 +538,16 @@ struct DulcetDestinationStack: View {
         retainedLibrary = store.snapshot
     }
 
-    private var bar: DulcetOptionalNowPlayingBar {
+    /// `drawsNotices`: only the page on top of the stack that is showing draws the playback
+    /// notices, so a hidden tab or a page underneath does not hold a second copy. Pages are
+    /// matched by route, so a path holding the same page twice draws on both, the lower one
+    /// covered by the top.
+    private func bar(drawsNotices: Bool) -> DulcetOptionalNowPlayingBar {
         DulcetOptionalNowPlayingBar(
             store: store,
             placement: barPlacement,
             isSuppressed: store.selectedDestination == .nowPlaying,
+            drawsNotices: drawsNotices,
             onOpen: onOpenPlayer
         )
     }
@@ -568,6 +577,7 @@ private struct DulcetOptionalNowPlayingBar: ViewModifier {
     @Bindable var store: DulcetPresentationStore
     let placement: DulcetNowPlayingBarPlacement.Placement?
     let isSuppressed: Bool
+    let drawsNotices: Bool
     let onOpen: () -> Void
 
     func body(content: Content) -> some View {
@@ -579,6 +589,7 @@ private struct DulcetOptionalNowPlayingBar: ViewModifier {
                 store: store,
                 placement: placement,
                 isSuppressed: isSuppressed,
+                drawsNotices: drawsNotices,
                 onOpen: onOpen
             ))
         } else {

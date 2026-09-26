@@ -122,6 +122,10 @@ public enum DulcetPlaybackCommand: Sendable {
 }
 
 /// Closed, content-free adapter failures. Raw AVFoundation errors and URLs never cross this type.
+///
+/// Spec §12.12 decides from the failure alone whether it belongs to the track -- the queue then
+/// moves past it -- or to the connection or the account, which stop it. So each case says which
+/// one it is, and nothing the core classifies on is merged into a neighbour.
 public enum DulcetPlaybackFailure: Error, Equatable, Sendable {
     case authentication
     case forbidden
@@ -131,7 +135,21 @@ public enum DulcetPlaybackFailure: Error, Equatable, Sendable {
     case tlsUntrusted
     case sourceUnavailable
     case unsupportedPlan
+    /// The engine itself failed -- its audio session would not activate -- not this item.
     case engine
+    /// The engine could not decode or parse THIS item's media: the item's own failure.
+    case undecodable
+    /// The server served this item with a content type its container does not allow. The two
+    /// values are the core's closed names for what was seen and what was expected.
+    case unexpectedContentType(observed: String, expected: String)
+    /// The bytes served for this item are not the audio its container promises.
+    case unexpectedBinary
+    /// A Subsonic error code the core recognises, such as 70 (not found).
+    case server(code: Int)
+    /// An error code the core does not recognise, or a bare HTTP status.
+    case unrecognizedServerError(code: Int)
+    /// A capability the request needed is not advertised; the core's closed feature name.
+    case capabilityUnsupported(feature: String)
 }
 
 public enum DulcetPlaybackCommandRejectionReason: Equatable, Sendable {

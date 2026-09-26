@@ -82,6 +82,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
+    /// The latest track the core skipped past (spec §12.12). Every presentation carries it, so a
+    /// surface sees a new one exactly once, by its sequence, whatever is published after it.
+    private var skipNotice: DulcetSkippedTrackNotice?
+    private var skipNoticeSequence = 0
 
     convenience init(
         databaseName: String = "dulcet.db",
@@ -156,6 +160,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         restoredPausedSessions = []
         pendingStarts = [:]
         activeDirectiveIdentity = nil
+        // A notice names a track of the account's queue, so reaching another server withdraws it
+        // (§12.12 rule 5). Configuring the same server again keeps it.
+        if self.presentationAccount?.providerInstanceID != presentationAccount.providerInstanceID {
+            skipNotice = nil
+        }
         let coreAccount = PlaybackEndpointAccount(
             providerInstanceId: presentationAccount.providerInstanceID,
             normalizedBaseUrl: presentationAccount.normalizedServerURL,
@@ -285,6 +294,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 playbackSessionId: sessionID,
                 requiresSeekable: false
             ) else { return }
+            // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
+            // is ready the engine reports nothing, and a failure can come before Ready.
+            _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
             execute(.play(commandID: commandID("play")))
         case .pause:
             guard queueClient.acceptsCommand(
@@ -323,16 +335,6 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         guard snapshot.entries.indices.contains(index) else { return false }
         return index + 1 < snapshot.entries.count
             || DulcetRepeatMode(rawValue: snapshot.repeatMode) == .all
-    }
-
-    /// Whether Skip past a failed entry reaches a DIFFERENT one: an entry follows it, or
-    /// repeat-all wraps to the first -- unless the failed entry is the only one, where Next would
-    /// start the failed track again. Stricter than `hasEntryAfterCurrent`, which decides Next.
-    private static func hasOtherEntryAfterCurrent(_ snapshot: ApplePlaybackQueueSnapshotDto) -> Bool {
-        let index = Int(snapshot.currentIndex)
-        guard snapshot.entries.indices.contains(index) else { return false }
-        return index + 1 < snapshot.entries.count
-            || (DulcetRepeatMode(rawValue: snapshot.repeatMode) == .all && snapshot.entries.count > 1)
     }
 
     /// Try Again. The core decides what that is (spec §12.1): after a failure before start, a new
@@ -469,8 +471,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         activeDirectiveIdentity = nil
         pendingStarts = [:]
         execute(.stop(commandID: commandID("disconnect")))
+        // A notice names a track of the queue just left, so it goes with it: signing out must not
+        // show the previous account's track. Reaching another server withdraws it in `configure`.
+        skipNotice = nil
         currentPresentation = .unavailable
-        presentationHandler?(currentPresentation)
+        emitPresentation()
     }
 
     private func start(_ directive: ApplePlaybackStartDirectiveDto?) {
@@ -488,13 +493,20 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         guard let track = catalog[DulcetProviderItemID(
                 providerInstanceID: directive.providerInstanceId,
                 rawID: directive.rawId
-              )],
-              let sourceContainer = track.sourceContainer?.coreContainer else {
-            _ = queueClient.recordFailedBeforeStart(
-                attemptId: directive.attemptId,
-                errorKind: "sourceUnavailable"
-            )
-            publishFailure()
+              )] else {
+            // The library cannot name this entry yet -- track lists are read one album at a
+            // time, so an entry from an album nobody has opened since launch is simply unread.
+            // That says nothing about the item, so it must not read as the item's own failure
+            // and send the queue skipping past tracks that play (spec §12.12). It stops and is
+            // presented, as every failure was before the rule, and Try Again starts it once the
+            // library can name it.
+            recordStartFailure(attemptId: directive.attemptId, errorKind: "transport")
+            return
+        }
+        guard let sourceContainer = track.sourceContainer?.coreContainer else {
+            // The server gave this item no container this client can play: nothing to resolve,
+            // and nothing about the connection -- the item's own failure.
+            recordStartFailure(attemptId: directive.attemptId, errorKind: "sourceUnavailable")
             return
         }
         if let offline = downloadController?.offlinePlaybackAsset(for: track) {
@@ -528,11 +540,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             return
         }
         guard let wireClient else {
-            _ = queueClient.recordFailedBeforeStart(
-                attemptId: directive.attemptId,
-                errorKind: "sourceUnavailable"
-            )
-            publishFailure()
+            // No connection to the server at all: that is never the item's own failure, so it
+            // must not read as one and send the queue skipping (spec §12.12).
+            recordStartFailure(attemptId: directive.attemptId, errorKind: "transport")
             return
         }
         resolveOperation?.cancel()
@@ -564,11 +574,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                       self.activeDirectiveIdentity == directive.attemptId else { return }
                 self.resolveOperation = nil
                 guard let corePlan = outcome.plan else {
-                    _ = self.queueClient.recordFailedBeforeStart(
+                    // A withdrawn request is not a failure: it is neither presented nor skipped
+                    // past (spec §12.12). Every withdrawal here also retires this directive, so
+                    // the identity check above already drops it; this keeps that true should a
+                    // withdrawal ever arrive for a directive that is still current.
+                    guard outcome.errorKind != "cancelled" else { return }
+                    self.recordStartFailure(
                         attemptId: directive.attemptId,
                         errorKind: Self.closedFailureKind(outcome.errorKind)
                     )
-                    self.publishFailure()
                     return
                 }
                 self.currentPlanIsTranscoded = corePlan.isTranscoded
@@ -629,6 +643,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
         }
         let transition = record(event)
+        noteSkippedAfterFailure(transition)
         if case let .advancedToPreloaded(_, newAttemptID) = event,
            preload?.attemptID == newAttemptID.rawValue {
             preloadLog.append("advanced")
@@ -1121,7 +1136,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 currentEntryIndex: currentEntryIndex
             )
         )
-        presentationHandler?(currentPresentation)
+        emitPresentation()
         engine.updateRemoteCommandCapabilities(
             DulcetRemoteCommandCapabilities(
                 allowsNext: currentPresentation.nowPlaying?.canGoNext == true,
@@ -1193,17 +1208,46 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 currentEntryIndex: currentEntryIndex
             )
         )
+        emitPresentation()
+    }
+
+    private func emitPresentation() {
+        currentPresentation = currentPresentation.carrying(skipNotice: skipNotice)
         presentationHandler?(currentPresentation)
+    }
+
+    /// The core moved past a track whose failure was its own (spec §12.12): say which, once.
+    private func noteSkippedAfterFailure(_ transition: ApplePlaybackQueueTransitionDto) {
+        guard let entryID = transition.skippedAfterFailureQueueEntryId else { return }
+        let entry = transition.snapshot?.entries.first { $0.queueEntryId == entryID }
+        let title = entry.flatMap {
+            catalog[DulcetProviderItemID(providerInstanceID: $0.providerInstanceId, rawID: $0.rawId)]?.title
+        }
+        skipNoticeSequence += 1
+        skipNotice = DulcetSkippedTrackNotice(sequence: skipNoticeSequence, title: title)
+    }
+
+    /// A start that failed before the engine had it. Its transition can already be a skip past
+    /// that entry (spec §12.12), which starts the next one; otherwise the failure is presented.
+    /// The recursion through `start` is bounded by the core's chain guard.
+    private func recordStartFailure(attemptId: String, errorKind: String) {
+        let transition = queueClient.recordFailedBeforeStart(attemptId: attemptId, errorKind: errorKind)
+        noteSkippedAfterFailure(transition)
+        if transition.errorKind == nil, let directive = transition.startDirective {
+            start(directive)
+        } else {
+            publishFailure()
+        }
     }
 
     private func publishUnavailable() {
         currentPresentation = .unavailable
-        presentationHandler?(currentPresentation)
+        emitPresentation()
     }
 
     private func publishPreparing() {
         currentPresentation = DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil)
-        presentationHandler?(currentPresentation)
+        emitPresentation()
     }
 
     private func publishFailure() {
@@ -1212,7 +1256,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             nowPlaying: nil,
             failure: failedEntry()
         )
-        presentationHandler?(currentPresentation)
+        emitPresentation()
     }
 
     /// The entry a failure belongs to: the queue's current session, when that session is the
@@ -1230,7 +1274,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 providerInstanceID: entry.providerInstanceId,
                 rawID: entry.rawId
             )],
-            canSkip: Self.hasOtherEntryAfterCurrent(snapshot),
+            // The core's answer (spec §12.12), published with the queue, so the shell never
+            // computes a second one. Skip asks it forward; an automatic skip asks the same core
+            // function in its direction of travel.
+            canSkip: snapshot.canSkipPastCurrent,
             canRetry: true,
             stoppedPartway: snapshot.currentSession?.failure == "afterPartial",
             queueEntryID: entry.queueEntryId,
@@ -1273,15 +1320,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private static let minimumBusyBackoff: TimeInterval = 1
 
     private static func closedFailureKind(_ value: String?) -> String {
-        switch value {
-        case "authentication": "authentication"
-        case "forbidden": "forbidden"
-        case "serverBusy": "serverBusy"
-        case "sourceUnavailable": "sourceUnavailable"
-        case "unsupportedPlan": "unsupportedPlan"
-        case "protocol", "security": "protocolViolation"
-        default: "transport"
-        }
+        DulcetPlaybackFailure(coreKind: value).coreName
     }
 
     private static let deviceProfile = PlaybackDeviceProfile(
@@ -1408,21 +1447,6 @@ private extension DulcetPlaybackSkipReason {
         case .user: "user"
         case .autoAdvance: "autoAdvance"
         case .queueReplacement: "queueReplacement"
-        }
-    }
-}
-
-private extension DulcetPlaybackFailure {
-    var coreName: String {
-        switch self {
-        case .authentication: "authentication"
-        case .forbidden: "forbidden"
-        case .serverBusy: "serverBusy"
-        case .protocolViolation: "protocolViolation"
-        case .sourceUnavailable: "sourceUnavailable"
-        case .unsupportedPlan: "unsupportedPlan"
-        case .transport, .tlsUntrusted: "transport"
-        case .engine: "engine"
         }
     }
 }

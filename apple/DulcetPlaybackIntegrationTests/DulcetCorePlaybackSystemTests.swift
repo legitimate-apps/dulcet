@@ -253,12 +253,16 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     /// A track that fails is not a dead end: the failure names it and says whether Skip and
     /// Retry can act, Skip starts the next entry, and Retry after a failure before start is a new
     /// attempt inside the same session (spec §12.1), never a resumption of the failed attempt.
+    /// The failure is the CONNECTION's, so nothing moves on its own (spec §12.12).
     func testAFailedTrackIsNamedAndSkipAndRetryStartTheRightEntries() async throws {
         let fixture = makeFixture(tracks: ["a", "b"])
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
         let first = try await fixture.waitForPrepare(rawID: "a")
-        fixture.emit(.failedBeforeStart(attemptID: first, error: .sourceUnavailable))
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        XCTAssertFalse(fixture.engine.commands.contains { $0.kind == "prepare" && $0.title == "Track b" },
+                       "a connection failure must not move the queue on its own")
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice)
 
         let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
         XCTAssertEqual(failure.track?.id.rawID, "a")
@@ -281,14 +285,15 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(retriedSession.attemptId, retried.rawValue)
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
 
-        fixture.emit(.failedBeforeStart(attemptID: retried, error: .sourceUnavailable))
+        fixture.emit(.failedBeforeStart(attemptID: retried, error: .transport))
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
         let preparesBeforeSkip = fixture.engine.count("prepare")
         fixture.controller.send(.next)
         let lastAttempt = try await fixture.waitForPrepare(rawID: "b", after: preparesBeforeSkip)
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 1)
 
-        // The last entry failing has nowhere to skip to, and says so.
+        // The last entry failing has nowhere to skip to, and says so -- even as the track's own
+        // failure, which would otherwise move the queue on (spec §12.12).
         fixture.emit(.failedBeforeStart(attemptID: lastAttempt, error: .sourceUnavailable))
         await fixture.waitFor { fixture.controller.currentPresentation.failure?.track?.id.rawID == "b" }
         XCTAssertEqual(fixture.controller.currentPresentation.failure?.canSkip, false)
@@ -307,7 +312,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
         XCTAssertEqual(fixture.engine.count("seek"), 0, "a fresh start does not seek")
 
-        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .sourceUnavailable))
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .transport))
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
         let failure = try XCTUnwrap(fixture.controller.currentPresentation.failure)
         XCTAssertEqual(failure.track?.id.rawID, "a")
@@ -347,7 +352,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
-        fixture.emit(.failedAfterPartial(attemptID: first, position: 120, error: .sourceUnavailable))
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 120, error: .transport))
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
         XCTAssertTrue(try XCTUnwrap(fixture.controller.currentPresentation.failure).canRetry)
 
@@ -379,7 +384,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.engine.artwork.filter { $0.session == session }.count, 1,
                        "the case needs the artwork delivered once before the failure")
 
-        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .sourceUnavailable))
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .transport))
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
         let preparesBefore = fixture.engine.count("prepare")
         fixture.controller.send(.retry)
@@ -414,6 +419,148 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(failure.track?.id.rawID, "only")
         XCTAssertFalse(failure.canSkip, "Skip would start the failed track again")
         XCTAssertTrue(failure.canRetry)
+    }
+
+    /// Spec §12.12: the engine advances on its own into an entry it cannot decode. That failure is
+    /// the track's own, so the queue moves past it as a next-item advance: the next entry starts
+    /// in a session of its own, the failure line never appears for a track that is not playing,
+    /// and the person is told which track was skipped.
+    func testAnAutomaticAdvanceIntoAnUndecodableEntrySkipsItAndStartsTheNext() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        fixture.emit(.advancedToPreloaded(oldAttemptID: first, newAttemptID: preload.attempt))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentIndex == 1 }
+        // The experiment is an AUTOMATIC advance: b became current through the engine's own
+        // boundary, not through anything this test asked the controller for.
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId, preload.session,
+                       "the case needs b current through the gapless boundary")
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice, "nothing skipped yet")
+        let preparesBefore = fixture.engine.count("prepare")
+
+        fixture.emit(.failedBeforeStart(attemptID: preload.attempt, error: .undecodable))
+
+        let third = try await fixture.waitForPrepare(rawID: "c", after: preparesBefore)
+        let snapshot = try XCTUnwrap(fixture.queue.snapshot().snapshot)
+        XCTAssertEqual(snapshot.currentIndex, 2, "the queue moved past b")
+        let thirdSession = try XCTUnwrap(fixture.session(ofPrepare: third))
+        XCTAssertNotEqual(thirdSession, preload.session, "a next-item advance: c has its own session")
+        XCTAssertEqual(snapshot.currentSession?.playbackSessionId, thirdSession)
+        XCTAssertFalse(fixture.queue.acceptsCommand(playbackSessionId: preload.session, requiresSeekable: false),
+                       "b's session ended")
+        XCTAssertNotEqual(fixture.controller.currentPresentation.status, .failed,
+                          "the failure line is never left up for a track that is not playing")
+        XCTAssertNil(fixture.controller.currentPresentation.failure)
+        let notice = try XCTUnwrap(fixture.controller.currentPresentation.skipNotice, "the person is told")
+        XCTAssertEqual(notice.title, "Track b")
+        XCTAssertEqual(notice.message, "Couldn\u{2019}t play \u{201C}Track b\u{201D}. Skipped.")
+        XCTAssertEqual(try XCTUnwrap(fixture.store).snapshot.playbackSkipNotice, notice)
+
+        // c plays: the chain ended, and b is behind it in the queue like any entry passed.
+        fixture.emit(.ready(attemptID: third, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: third, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        let nowPlaying = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(nowPlaying.current.id.rawID, "c")
+        XCTAssertEqual(nowPlaying.queueEntries.prefix(2).map(\.track.id.rawID), ["a", "b"])
+    }
+
+    /// A notice belongs to the session that produced it: disconnecting -- which signing out does
+    /// too, through account removal -- takes it away with everything else, so a later presentation
+    /// never carries a skip from an account that is gone.
+    func testDisconnectingClearsTheSkipNotice() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .undecodable))
+        _ = try await fixture.waitForPrepare(rawID: "b")
+        XCTAssertNotNil(fixture.controller.currentPresentation.skipNotice, "the case needs a notice up")
+
+        fixture.controller.disconnect()
+
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice)
+        await fixture.waitFor { fixture.store?.snapshot.playbackSkipNotice == nil }
+        XCTAssertNil(try XCTUnwrap(fixture.store).snapshot.playbackSkipNotice)
+    }
+
+    /// Reaching another server withdraws the notice too: it names a track of the queue left
+    /// behind. Configuring the same server again -- a reconnect -- keeps it.
+    func testConfiguringAnotherAccountClearsTheSkipNoticeAndTheSameOneKeepsIt() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .undecodable))
+        _ = try await fixture.waitForPrepare(rawID: "b")
+        let notice = try XCTUnwrap(fixture.controller.currentPresentation.skipNotice, "the case needs a notice up")
+
+        fixture.controller.configure(account: account(provider))
+        XCTAssertEqual(fixture.controller.currentPresentation.skipNotice, notice, "the same server keeps it")
+
+        fixture.controller.configure(account: account("another-\(provider)"))
+
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice)
+        await fixture.waitFor { fixture.store?.snapshot.playbackSkipNotice == nil }
+        XCTAssertNil(try XCTUnwrap(fixture.store).snapshot.playbackSkipNotice)
+    }
+
+    /// The person's Play reaches the core as they press it (spec §12.12 rule 4). A queue restored
+    /// paused, Play pressed while its entry is still preparing -- the engine reports no `Resumed`
+    /// before Ready -- then Ready and a decode failure: the next entry starts playing. The control
+    /// is the same sequence with no Play, where the next entry is prepared and left paused.
+    func testAPlayPressedBeforeARestoredEntryIsReadyLetsTheSkipPlayOn() async throws {
+        for pressesPlay in [true, false] {
+            let launched = makeFixture(tracks: ["a", "b", "c"])
+            launched.controller.replaceQueueAndPlay(launched.intent(startIndex: 0))
+            _ = try await launched.waitForPrepare(rawID: "a")
+
+            // A relaunch: a new queue client and controller over the same database.
+            let relaunched = makeFixture(tracks: ["a", "b", "c"])
+            relaunched.controller.restorePersistedQueue(with: relaunched.tracks, catalogCoverage: .wholeLibrary)
+            let restored = try await relaunched.waitForPrepare(rawID: "a")
+            XCTAssertEqual(relaunched.engine.count("play"), 0, "the restore itself starts no sound")
+            relaunched.emit(.preparing(attemptID: restored))
+            if pressesPlay { relaunched.controller.send(.play) }
+            relaunched.emit(.ready(attemptID: restored, duration: 120, seekability: .seekable))
+            let playsBefore = relaunched.engine.count("play")
+
+            relaunched.emit(.failedBeforeStart(attemptID: restored, error: .undecodable))
+            let next = try await relaunched.waitForPrepare(rawID: "b")
+            relaunched.emit(.ready(attemptID: next, duration: 120, seekability: .seekable))
+            await relaunched.waitFor { relaunched.engine.count("play") > playsBefore }
+
+            XCTAssertEqual(relaunched.controller.currentPresentation.skipNotice?.title, "Track a",
+                           "pressesPlay=\(pressesPlay): the skip happened")
+            XCTAssertEqual(relaunched.engine.count("play") - playsBefore, pressesPlay ? 1 : 0,
+                           pressesPlay ? "the person pressed Play, so b starts playing"
+                               : "nobody pressed Play, so b is prepared and left paused")
+        }
+    }
+
+    /// A connection-class failure of the entry the engine advanced into stops there and is
+    /// presented -- the same boundary as above, with the other side of the §12.12 rule.
+    func testAnAutomaticAdvanceIntoAConnectionFailureStopsAndPresentsIt() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        fixture.emit(.advancedToPreloaded(oldAttemptID: first, newAttemptID: preload.attempt))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentIndex == 1 }
+
+        fixture.emit(.failedBeforeStart(attemptID: preload.attempt, error: .engine))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+
+        XCTAssertEqual(fixture.controller.currentPresentation.failure?.track?.id.rawID, "b")
+        XCTAssertEqual(fixture.controller.currentPresentation.failure?.canSkip, true)
+        XCTAssertFalse(fixture.engine.commands.contains { $0.kind == "prepare" && $0.title == "Track c" },
+                       "the engine's own failure is not the track's: nothing skips")
+        XCTAssertNil(fixture.controller.currentPresentation.skipNotice)
     }
 
     /// A queue edit the core refuses reports that it changed nothing, so the surface can say so.
@@ -471,6 +618,16 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
     // MARK: Fixture
 
+    private func account(_ providerInstanceID: String) -> DulcetPlaybackAccount {
+        DulcetPlaybackAccount(
+            providerInstanceID: providerInstanceID,
+            normalizedServerURL: "http://127.0.0.1:9",
+            username: "fixture",
+            password: "fixture-password",
+            allowLocalHTTP: true
+        )
+    }
+
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
@@ -500,13 +657,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             catalog: tracks,
             artworkFetcher: artwork == nil ? nil : fetcher
         )
-        controller.configure(account: DulcetPlaybackAccount(
-            providerInstanceID: provider,
-            normalizedServerURL: "http://127.0.0.1:9",
-            username: "fixture",
-            password: "fixture-password",
-            allowLocalHTTP: true
-        ))
+        controller.configure(account: account(provider))
         // The store's data source installs the controller's single presentation handler. Tests
         // that read the published status SEQUENCE install a recorder instead and do without the
         // store; the two are never mixed, so neither observes a handler the other replaced.
@@ -695,6 +846,9 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
             outcome = .accepted(commandID: commandID)
         case let .discardPreloaded(commandID, attemptID):
             entry = .init(kind: "discard", attempt: attemptID.rawValue, session: nil, title: nil)
+            outcome = .completed(commandID: commandID, result: .withoutData)
+        case let .play(commandID):
+            entry = .init(kind: "play", attempt: nil, session: nil, title: nil)
             outcome = .completed(commandID: commandID, result: .withoutData)
         case let .stop(commandID):
             entry = .init(kind: "stop", attempt: nil, session: nil, title: nil)
