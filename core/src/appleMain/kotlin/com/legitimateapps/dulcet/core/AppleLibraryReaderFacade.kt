@@ -56,8 +56,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * the reader stays offline and no screen is revalidated or relabelled, though the outbox flush
  * before it may already have sent changes. A reconnect in which the reader itself fails completes
  * with `internalFailure`; if that happened after the reader came back online, it is offline again,
- * every screen saying so. A reader left offline either way runs the whole sequence again at the next
- * report or reconnect.
+ * every screen saying so. A reader left offline either way runs the whole sequence again, every step
+ * included, at the next report or reconnect — and after an internal failure while the platform still
+ * reports the server reachable, by itself after a bounded backoff. A reader that was already online
+ * stays online, and its next epoch reading runs what the failed reconnect still owed.
  */
 @OptIn(ExperimentalAtomicApi::class, DelicateCoroutinesApi::class)
 public class AppleLibraryReaderClient internal constructor(
