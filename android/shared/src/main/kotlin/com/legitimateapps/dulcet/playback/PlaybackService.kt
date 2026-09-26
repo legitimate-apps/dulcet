@@ -27,14 +27,29 @@ class PlaybackService : MediaSessionService() {
         ensurePlayback()
     }
 
+    /** The account [playback] was built for; its credentials are the controller's for its life. */
+    private var playbackAccountId: String? = null
+
     /**
-     * Creates the controller once an account exists. The service may have been created before the
-     * first connection (a media button, a bind from the connect screen), so absence is re-checked
-     * on every local bind instead of being fixed at creation.
+     * The controller for the account saved NOW, created once one exists. The service may have been
+     * created before the first connection (a media button, a bind from the connect screen), so
+     * absence is re-checked on every local bind instead of being fixed at creation.
+     *
+     * A controller built for another account is released first, whatever replaced that account: a
+     * sign-out releases it itself (spec §14.7), but an account can also be saved without one — on
+     * the connect form shown when the saved record cannot be read, which is the only way to change
+     * account on TV — and the new account must never be handed the old one's controller, which
+     * carries its credentials, queue and server. The saved account's id is read without decrypting
+     * its record, so this costs nothing on the usual path.
      */
     fun ensurePlayback(): AndroidPlaybackController? {
-        playback?.let { return it }
-        val account = try { AndroidAccountCredentialStore(this).load() }
+        val store = AndroidAccountCredentialStore(this)
+        val activeId = store.activeAccountId()
+        playback?.let { existing ->
+            if (activeId != null && activeId == playbackAccountId) return existing
+            releasePlayback()
+        }
+        val account = try { store.load() }
         catch (_: CredentialStoreException) {
             unavailableReason = "Saved credentials are unavailable. Reconnect your account."
             return null
@@ -42,6 +57,7 @@ class PlaybackService : MediaSessionService() {
         val controller = AndroidPlaybackController(this, PlaybackEndpointAccount(
             account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp))
         playback = controller
+        playbackAccountId = account.id
         val builder = MediaSession.Builder(this, controller.sessionPlayer)
             .setCallback(object : MediaSession.Callback {
                 override fun onConnectAsync(session: MediaSession, controller: MediaSession.ControllerInfo):
@@ -58,6 +74,22 @@ class PlaybackService : MediaSessionService() {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         session = builder.build().also { addSession(it) }
         return controller
+    }
+
+    /**
+     * Ends playback for an account that is signing out (spec §14.7): stops the session, removes
+     * and releases the media session, and closes the controller, which held that account's
+     * credentials. The next [ensurePlayback] builds a controller from whatever account is then
+     * saved, so a later account never inherits this one's controller. A no-op without one.
+     */
+    fun releasePlayback() {
+        val controller = playback ?: return
+        controller.stop()
+        session?.let { removeSession(it); it.release() }
+        controller.close()
+        session = null
+        playback = null
+        playbackAccountId = null
     }
 
     override fun onBind(intent: Intent?): IBinder? =

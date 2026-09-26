@@ -36,6 +36,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Card
 import androidx.tv.material3.MaterialTheme
@@ -65,18 +66,25 @@ class TvSearchActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before the account is read below: a sign-out the previous process began deletes its
+        // credential when this model is created (spec §14.7).
+        val accountModel = ViewModelProvider(this)[TvAccountModel::class.java]
         setContent {
             MaterialTheme {
                 var account by remember { mutableStateOf(loadAccount()) }
-                val current = account
-                if (current == null) {
-                    val context = LocalContext.current
-                    val connector = remember { AccountConnector() }
-                    TvConnectScreen(connector::connect, remember { AndroidAccountCredentialStore(context) }) {
-                        account = loadAccount()
+                val signedOut by accountModel.signedOut.collectAsStateWithLifecycle()
+                LaunchedEffect(signedOut) { if (signedOut > 0) account = loadAccount() }
+                TvAccountHost(accountModel.signOut, account) {
+                    val current = account
+                    if (current == null) {
+                        val context = LocalContext.current
+                        val connector = remember { AccountConnector() }
+                        TvConnectScreen(connector::connect, remember { AndroidAccountCredentialStore(context) }) {
+                            account = loadAccount()
+                        }
+                    } else {
+                        com.legitimateapps.dulcet.library.LibraryEntry(current) { TvSearchRoute(current, searchDependencies) }
                     }
-                } else {
-                    com.legitimateapps.dulcet.library.LibraryEntry(current) { TvSearchRoute(current, searchDependencies) }
                 }
             }
         }

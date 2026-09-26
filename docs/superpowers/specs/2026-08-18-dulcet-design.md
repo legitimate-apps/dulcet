@@ -2441,9 +2441,8 @@ chosen, and it never waits silently for a connection.
 **Step 6 waits for the account's reader to stop (R2a).** A reader closed on the main thread still
 runs the calls already queued on its own thread, and those can write seen-cache rows. Step 6 therefore
 starts only once the reader's thread has stopped — on Apple, when `close(completion:)` calls back —
-never merely once `close()` has returned (§28 revision 104 item 30). Android has no sign-out or
-account-removal path yet; when it gets one, its step 6 waits for the completion of
-`AndroidLibraryReader.closeCurrent`, which is bounded rather than exact. The close task first waits
+never merely once `close()` has returned (§28 revision 104 item 30). On Android, step 6 waits for
+the completion of `AndroidLibraryReader.closeCurrent`, which is bounded rather than exact. The close task first waits
 up to 10 s for cancelled work to unwind and then releases the store. After it ends, the completion
 waits until the thread's executor has terminated or 30 s have passed, and then until any reader
 still closing when this one was created has terminated or 45 s more have passed: about 85 s at
@@ -2451,6 +2450,36 @@ worst. The bounds cover cooperative work only: a task queued before the close, o
 never finishes holds the completion indefinitely. And once a bound passes, step 6 may run while the
 old reader still writes seen-cache rows; how rarely that happens is **ASSUMED** (§28 revision 104
 item 32).
+
+**The order on Android (revision 112).** Android marks the account `removing` only once the person
+has chosen to sign out, not at step 1, and runs the steps in this order:
+
+1. the offer of step 2, with nothing marked — **Stay signed in** leaves nothing to undo;
+2. on a choice to sign out, playback is released: the service's controller for the account is
+   closed and its media session removed, so no later account inherits them;
+3. what the account owes is counted again, plays by identity (a server id, a track and the wall
+   clock its session started) rather than by total, and a count holding anything not offered is
+   offered again instead of being discarded unseen;
+4. the account is marked `removing`, in a persisted set of ids rather than one slot, so a second
+   sign-out while a first is unfinished never forgets the first;
+5. the credential is deleted (step 3). The deletion counts as done once the record's removal is
+   committed to disk; a Keystore key that cannot be deleted then is recorded and retried at a later
+   launch, since the key alone decrypts nothing;
+6. the account's library reader is closed and its termination awaited (step 6's rule above);
+7. the account's artwork cache and downloaded files are deleted, then its database rows (steps 5
+   and 6). Android downloads nothing through a platform task, so step 4 has none to cancel;
+8. the `removing` mark is cleared.
+
+At every launch, a removal the previous process left marked resumes: its credential, if still
+saved, is deleted before any account is read, and its data removal runs behind a signing-out screen.
+Then a sweep deletes the database rows, the artwork cache and the recorded downloaded files of every
+server id that is not the saved account's. A downloaded file with no row is not found by it. The sweep lists what exists before it reads the saved account, so an account saved while
+it runs cannot lose anything it wrote. It is what cleans up a write that lands after a removal: a
+reader still running past its bound, an artwork load that checked the account just before it was
+removed, or any writer this section does not know about. A saved account whose record cannot be
+decrypted can still be signed out, because the removal needs only its id; the offer then states the
+count as unknown. Removal leaves the last-selected tab (a preference holding no account data).
+Why the mark moved is §28 revision 112.
 
 ---
 
@@ -6135,6 +6164,41 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**Revision 112 (2026-09-26)** — Android gains sign-out and account removal (§14.7), on the phone and
+on TV. This is numbered one above the highest revision on `main` when it was written; another branch
+may take the same number first, so it may be renumbered at merge.
+
+1. **Android marks `removing` after the choice, not first.** §14.7's step 1 marks the account before
+   the offer, and a mark written then is persisted before the person has decided anything. If the
+   process dies while the offer is open, the next launch resumes a removal the person never chose,
+   and discards whatever they were about to send. Android writes the mark once they choose to sign
+   out, immediately before the credential is deleted. Nothing is lost by the move: until that point
+   the account is still whole, so Stay signed in has nothing to undo, and a process that dies during
+   the offer simply relaunches signed in. Apple's order is unchanged; §14.7 states Android's.
+2. **The count is taken again after the choice, by identity.** Playback keeps running while the
+   offer is open, so a play can cross the scrobble threshold in that time. A second count by total
+   misses a play that was sent while another was recorded, so plays are compared by identity, and
+   anything not offered is offered again rather than discarded unseen.
+3. **The mark is a set.** A single slot let a second account's sign-out overwrite the first's
+   unfinished mark, which then never resumed.
+4. **Step 6 waits for the library reader, and a launch sweep covers what the wait cannot.** The
+   reader's close is bounded (§14.7), and an artwork load can check the account just before it is
+   removed, so a write can still land after a removal. The removal therefore does not claim that
+   nothing writes afterwards: every launch deletes the rows, artwork and recorded downloads of every
+   server id that is not the saved account's. Server ids are random and never reused, so the
+   process also refuses artwork writes for an id it has removed.
+5. **Playback compares account ids.** An account can be saved without a sign-out (the connect form
+   shown for an unreadable record), so the playback service releases a controller built for any id
+   other than the saved one instead of handing it to the new account.
+6. **An unreadable record can be signed out.** The removal needs only the account's id, so a record
+   that cannot be decrypted no longer strands its data. The offer states its count as unknown.
+7. **Evidence and limits.** Robolectric host tests only; no emulator or device run. A test holds a
+   library-reader write queued behind the removal and shows it cannot recreate the account's rows,
+   and a canary test plants a value in the credential store, the database, the artwork cache and the
+   download directory, finds each before signing out, and finds none after. How rarely a reader
+   outlives its bound is still **ASSUMED** (§28 revision 104 item 32). A downloaded file with no row
+   is not found by the sweep.
+
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it
 was written. Another branch may take the same number first, so it may be renumbered at merge.
@@ -7671,15 +7735,15 @@ fresh disposable server before landing; items 11–14 are what that review chang
       after the close task starts, at worst. These waits bound cooperative work only. Nothing is
       interrupted: a task queued before the close that never finishes, or a release that never
       returns, holds the close and its completion indefinitely, and a read that ignores cancellation
-      for longer than 10 s is released under. A future Android sign-out's §14.7 step 6 waits for
-      that completion (§14.7 is corrected in place); Android has no sign-out yet. Past a bound, step
+      for longer than 10 s is released under. Android's sign-out waits for that completion at
+      §14.7 step 6 (§14.7 is corrected in place; the sign-out is revision 112). Past a bound, step
       6 may run while the old reader still writes; how rarely is ASSUMED. The first R3 version
       released first and completed at shutdown; its review found that. OBSERVED 2026-09-24 by a host
       test: work cancelled by the close ran its cleanup before the release, and the executor had
       terminated by the time `close` completed.
     - **An account change, and `closeCurrent`.** A new reader opens the database only once the
       reader still closing has terminated, whether it replaced that reader or `closeCurrent` (the
-      call a future sign-out makes) closed it, waiting at most 45 s. A reader closed while it waits
+      call the sign-out makes) closed it, waiting at most 45 s. A reader closed while it waits
       stops waiting and never opens the database, but it counts as terminated only once its
       predecessor has, again waiting at most 45 s. So within those bounds a chain of account changes
       never puts two readers on the database. The third review found that the first form of this let
@@ -7887,8 +7951,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
       tests are cited. R3 left `FEATURES.yml` to the maintainer; item 36 updates it.
     - **The Apple facade drops `itemsUnavailableReason`.** R3 leaves Apple code alone, so an Apple
       shell cannot yet say why a track list is unavailable while its header shows.
-    - **Android has no sign-out or account-removal path.** `AndroidLibraryReader.closeCurrent` is
-      the gate its §14.7 step 6 must wait on, and today only tests call it.
+    - **Android had no sign-out or account-removal path.** `AndroidLibraryReader.closeCurrent` is
+      the gate its §14.7 step 6 must wait on. Revision 112 adds the sign-out that calls it.
     - **One unexplained failure.** In one mutation run the TV's CONF-76 test failed under a mutant
       that, run again, left it green; its failure detail was not kept. It passed in that rerun and
       in every unmutated baseline. It is recorded, not explained. (It may be the race item 37
@@ -8238,8 +8302,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
       ("your account isn't allowed to see this"). Withdrawing a held change is not offered: neither facade exposes the core's `withdraw` yet.
     - **The sign-out count includes playlist edits (the core's eighth round).** The facade's
       `pendingChangeCount` reads the session's count, favourites and ratings plus playlist edits,
-      and is null when either outbox cannot be read, as on Apple (§14.7). No Android screen offers
-      sign-out yet. A host test queues a favourite and a playlist create offline, checks that the
+      and is null when either outbox cannot be read, as on Apple (§14.7). Android's sign-out
+      (revision 112) offers it. A host test queues a favourite and a playlist create offline, checks that the
       favourites' own count is 1, and expects 2; the favourites-only count it replaced fails it.
     - **Evidence, OBSERVED 2026-09-26 on the eighth round, counts read from the JUnit XML, 0
       failures and 0 skipped in each.** With `--rerun-tasks`: `:core:jvmTest` 764,

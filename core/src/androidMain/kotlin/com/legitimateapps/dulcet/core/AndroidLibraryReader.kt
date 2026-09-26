@@ -744,7 +744,7 @@ public class AndroidLibraryReader internal constructor(
         /**
          * Closes the process's reader, if any, and calls [completion] on the main thread once it has
          * terminated (see [close]). A sign-out or account removal waits for it before deleting the
-         * account's rows (§14.7 step 6); Android has neither yet, so only the tests call this.
+         * account's rows (§14.7 step 6): [AndroidAccountData.removeAccountData] waits for it.
          */
         @JvmStatic
         public fun closeCurrent(completion: () -> Unit = {}) {

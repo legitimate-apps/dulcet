@@ -36,6 +36,19 @@ public interface AccountCredentialStore {
         allowLocalHttp: Boolean,
     ): StoredAccount
     fun delete()
+
+    /**
+     * The id of the saved account, read without decrypting its record, so it is known even when
+     * [load] cannot read the record (spec §14.7: such an account can still be signed out). Null when
+     * no account is saved.
+     */
+    fun activeAccountId(): String? = load()?.id
+
+    /**
+     * Deletes the secure-storage key of an account whose record is already gone: a key whose
+     * deletion failed during a sign-out is retried at a later launch. Never the saved account's.
+     */
+    fun deleteKey(id: String) {}
 }
 
 public class CredentialStoreException(
@@ -145,6 +158,24 @@ public class AndroidAccountCredentialStore public constructor(
         }
     }
 
+    override fun activeAccountId(): String? = preferences.getString(ACTIVE_ACCOUNT_KEY, null)
+
+    override fun deleteKey(id: String) {
+        require(id != activeAccountId()) { "the saved account's key is deleted only with its record" }
+        try {
+            cipher.delete(id)
+        } catch (failure: Exception) {
+            throw CredentialStoreException(CredentialStoreException.Reason.SecureStorageUnavailable, failure)
+        }
+    }
+
+    /**
+     * Deletes the saved record, then its key. The record's deletion is judged by `commit()`, which
+     * reports whether it reached disk — never by the in-memory map, which is updated either way — and
+     * fails with [CredentialStoreException.Reason.PersistenceFailed] when it did not. A key that could
+     * not be deleted after that fails with [CredentialStoreException.Reason.SecureStorageUnavailable]:
+     * the record is gone from disk by then, and the key alone decrypts nothing.
+     */
     override fun delete() {
         val id = preferences.getString(ACTIVE_ACCOUNT_KEY, null) ?: return
         if (!preferences.edit().remove(payloadKey(id)).remove(ACTIVE_ACCOUNT_KEY).commit()) {

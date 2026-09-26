@@ -150,6 +150,8 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
                             label = { Text(stringResource(R.string.tab_search)) },
                             modifier = Modifier.testTag("search.open"),
                         )
+                        // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
+                        AccountNavigationItem()
                     }
                 }
             },

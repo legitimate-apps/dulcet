@@ -33,6 +33,42 @@ SELECT sum(row_count) FROM (
   UNION ALL SELECT count(*) FROM cache_pin WHERE server_id = :server_id
 );
 
+-- Every account id that owns a row in a table countRowsForServer counts, for the launch sweep of
+-- accounts that are no longer saved (spec §14.7). The same tables, in the same order; a core test
+-- compares the two lists.
+selectServerIdsWithRows:
+SELECT server_id FROM mutation_outbox
+UNION SELECT server_id FROM download
+UNION SELECT server_id FROM download_policy_state
+UNION SELECT server_id FROM resume_position
+UNION SELECT server_id FROM scrobble_outbox
+UNION SELECT server_id FROM queue_state
+UNION SELECT server_id FROM active_queue
+UNION SELECT server_id FROM queue_entry
+UNION SELECT server_id FROM music_folder
+UNION SELECT server_id FROM artist
+UNION SELECT server_id FROM album
+UNION SELECT server_id FROM track
+UNION SELECT server_id FROM credit
+UNION SELECT server_id FROM playlist
+UNION SELECT server_id FROM playlist_entry
+UNION SELECT server_id FROM library_starred
+UNION SELECT server_id FROM genre
+UNION SELECT server_id FROM sync_checkpoint
+UNION SELECT server_id FROM sync_seen
+UNION SELECT server_id FROM sync_generation
+UNION SELECT server_id FROM deletion_reconciliation
+UNION SELECT server_id FROM cache_binding
+UNION SELECT server_id FROM cache_epoch
+UNION SELECT server_id FROM cache_artist
+UNION SELECT server_id FROM cache_album
+UNION SELECT server_id FROM cache_track
+UNION SELECT server_id FROM cache_playlist
+UNION SELECT server_id FROM cache_credit
+UNION SELECT server_id FROM cache_list
+UNION SELECT server_id FROM cache_list_member
+UNION SELECT server_id FROM cache_pin;
+
 deleteMutationOutboxForServer:
 DELETE FROM mutation_outbox WHERE server_id = ?;
 

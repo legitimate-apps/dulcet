@@ -72,6 +72,9 @@ public class AndroidArtworkRepository internal constructor(
     }
 
     private fun store(file: File, bytes: ByteArray) {
+        // A load that finishes after its account was signed out must not recreate the account's
+        // directory (spec §14.7). The bytes are still returned; they are only not kept.
+        if (AndroidAccountData.isRemoved(account.providerInstanceId)) return
         try {
             root.mkdirs()
             sweepOrphans()
