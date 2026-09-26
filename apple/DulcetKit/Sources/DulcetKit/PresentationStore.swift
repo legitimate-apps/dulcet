@@ -438,6 +438,39 @@ public final class DulcetPresentationStore {
         readerPath = path
     }
 
+    /// Whether Back has a library page to leave: the Library is showing and a page is pushed.
+    public var canGoBackInLibrary: Bool {
+        selectedDestination == .library && readerOwnsLibrary && !readerPath.isEmpty
+    }
+
+    /// Back from the keyboard or the menu bar: the same one step the back button takes.
+    public func goBackInLibrary() {
+        guard canGoBackInLibrary else { return }
+        popReader(to: Array(readerPath.dropLast()))
+    }
+
+    /// The playing track as a favourite: offered only while the reader holds the account the
+    /// track came from, with what the person currently sees on its heart.
+    public var playingTrackFavourite: (target: DulcetFavouriteTarget, isFavourite: Bool)? {
+        guard let session = librarySession, session.reader != nil,
+              let track = snapshot.nowPlaying?.current,
+              track.id.providerInstanceID == session.account?.providerInstanceID else { return nil }
+        let published = session.knownFavourites[track.id] ?? track.isFavorite
+        return (
+            DulcetFavouriteTarget(kind: .track, id: track.id),
+            session.isFavourite(track.id, published: published)
+        )
+    }
+
+    /// Flips the playing track's heart, from the lock screen, the menu bar or a shortcut.
+    @discardableResult
+    public func togglePlayingTrackFavourite() -> Bool {
+        guard let session = librarySession, let (target, isFavourite) = playingTrackFavourite else {
+            return false
+        }
+        return session.setFavourite(target, favourite: !isFavourite)
+    }
+
     /// A sidebar or TV-bar section: Library, at that section's root.
     public func selectLibrarySection(_ section: DulcetLibrarySection) {
         librarySection = section

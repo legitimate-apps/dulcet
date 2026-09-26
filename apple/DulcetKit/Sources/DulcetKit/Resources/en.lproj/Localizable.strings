@@ -239,6 +239,9 @@
 "menu.search" = "Search Library";
 "menu.showNowPlaying" = "Show Now Playing";
 "menu.go" = "Go";
+"menu.back" = "Back";
+"menu.favoritePlaying" = "Add Playing Song to Favorites";
+"menu.unfavoritePlaying" = "Remove Playing Song from Favorites";
 "player.remainingValue" = "−%@";
 "player.mini.accessibility" = "Now Playing, %1$@, %2$@";
 "player.failed.short.partway" = "Stopped partway through";

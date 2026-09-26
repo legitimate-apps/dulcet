@@ -438,30 +438,15 @@ public final class DulcetLikeCommandDriver {
         }
     }
 
-    /// The current track and the session's word on it, or nil when the heart is not offered.
-    private var current: (session: DulcetLibrarySession, track: DulcetTrack)? {
-        guard let store, let session = store.librarySession, session.reader != nil,
-              let track = store.snapshot.nowPlaying?.current,
-              track.id.providerInstanceID == session.account?.providerInstanceID else { return nil }
-        return (session, track)
-    }
-
     private func refresh() {
-        guard let (session, track) = current else {
+        guard let favourite = store?.playingTrackFavourite else {
             command.update(available: false, isFavourite: false)
             return
         }
-        command.update(
-            available: true,
-            isFavourite: session.isFavourite(track.id, published: session.knownFavourites[track.id] ?? track.isFavorite)
-        )
+        command.update(available: true, isFavourite: favourite.isFavourite)
     }
 
     private func toggle() -> Bool {
-        guard let (session, track) = current else { return false }
-        return session.toggleFavourite(
-            DulcetFavouriteTarget(kind: .track, id: track.id),
-            published: session.knownFavourites[track.id] ?? track.isFavorite
-        )
+        store?.togglePlayingTrackFavourite() ?? false
     }
 }

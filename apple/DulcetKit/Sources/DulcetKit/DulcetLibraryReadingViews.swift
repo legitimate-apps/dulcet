@@ -1474,6 +1474,8 @@ private struct DulcetLibraryNoticeOverlay: ViewModifier {
                     .padding(.horizontal, DulcetSpacing.md)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .onTapGesture { store.librarySession?.dismissNotice(notice.id) }
+                    // A tap dismisses it, so VoiceOver must hear it as something to press.
+                    .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("dulcet.reader.notice")
                     .task(id: notice.id) {
 #if !os(tvOS)

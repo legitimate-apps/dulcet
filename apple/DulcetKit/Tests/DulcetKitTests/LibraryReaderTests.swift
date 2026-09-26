@@ -595,6 +595,36 @@ func theAppOpensStraightIntoTheLibraryItHasSeenAndSendsNothing() throws {
 }
 
 @Test @MainActor
+func backFromTheMenuBarLeavesOnePageAndOnlyOnTheLibrary() throws {
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let (store, _, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    #expect(!store.canGoBackInLibrary, "nothing is pushed yet")
+    let album = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-1")
+    let artist = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
+    store.showReaderPage(.artist(artist))
+    store.showReaderPage(.album(album))
+    #expect(store.readerPath == [.artist(artist), .album(album)])
+
+    store.navigate(to: .search)
+    #expect(!store.canGoBackInLibrary, "Back belongs to the Library while it is showing")
+    store.goBackInLibrary()
+    store.navigate(to: .library)
+    #expect(store.readerPath == [.artist(artist), .album(album)], "a hidden stack is not popped")
+
+    store.goBackInLibrary()
+    #expect(store.readerPath == [.artist(artist)], "one step, as the back button takes")
+    store.goBackInLibrary()
+    #expect(store.readerPath.isEmpty)
+    #expect(!store.canGoBackInLibrary)
+}
+
+@Test @MainActor
 func theLegacySearchAndAlbumReadsStaySilentWhileTheReaderHoldsTheAccount() async throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()

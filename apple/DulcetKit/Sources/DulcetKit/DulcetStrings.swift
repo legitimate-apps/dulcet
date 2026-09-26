@@ -210,6 +210,9 @@ enum DulcetStrings {
     static let menuSearch = text("menu.search", "Search Library")
     static let menuShowNowPlaying = text("menu.showNowPlaying", "Show Now Playing")
     static let menuGo = text("menu.go", "Go")
+    static let menuBack = text("menu.back", "Back")
+    static let menuFavoritePlaying = text("menu.favoritePlaying", "Add Playing Song to Favorites")
+    static let menuUnfavoritePlaying = text("menu.unfavoritePlaying", "Remove Playing Song from Favorites")
 
     static func remaining(_ value: String) -> String {
         formatted("player.remainingValue", "\u{2212}%@", value)
