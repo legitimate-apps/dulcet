@@ -313,14 +313,49 @@ VALIDATIONS = [
      {"Dulcet": b"bin", "DulcetKit_DulcetKit.bundle/x.strings": "\ufeffHTTPS://Srv.Home.Arpa/".encode("utf-16-be")}, 1,
      "hosts ['srv.home.arpa']"),
     ("iOS PROD with credentials before the host", "ios", "prod", IOS_PROD,
-     {"Dulcet": b"https://user:secret@music.home.arpa/"}, 1, "hosts ['user']"),
+     {"Dulcet": b"https://user:secret@music.home.arpa/"}, 1, "hosts ['music.home.arpa']"),
     ("iOS PROD with only the allowlisted addresses a Release build carries", "ios", "prod", IOS_PROD,
      {"Dulcet": b"Enter the full http:// or https:// address.\0https://music.example.com\0https://support.apple.com/x\0"
-                + "http://127\\.0\\.0\\.1:[1-9]".encode("utf-16-le") + "https://ktor.io/docs/faq.html".encode("utf-16-le"),
+                + "http://127\\.0\\.0\\.1:[1-9][0-9]{0,4}\0".encode("utf-16-le") + "https://ktor.io/docs/faq.html".encode("utf-16-le"),
       "PrivacyInfo.xcprivacy": b'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'},
      0, ""),
     ("iOS DEV with a server address, which DEV may carry", "ios", "dev", IOS_PROD,
      {"Dulcet": b"https://music.home.arpa:4533"}, 0, ""),
+    # Round 4 (SF-1): the authority is parsed, so nothing hides behind an allowlisted name or outside the
+    # old character class. The reviewer's strings, each accepted before, then the controls.
+    ("iOS PROD with loopback userinfo before a LAN address", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\0http://localhost@192.168.1.10:4533\0"}, 1, "hosts ['192.168.1.10']"),
+    ("iOS PROD with loopback userinfo before a LAN address, UTF-16", "ios", "prod", IOS_PROD,
+     {"Dulcet": "\0http://localhost@192.168.1.10:4533\0".encode("utf-16-le")}, 1, "hosts ['192.168.1.10']"),
+    ("iOS PROD with an allowlisted host as userinfo", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\0https://www.apple.com@music.mydomain.net\0"}, 1, "hosts ['music.mydomain.net']"),
+    ("iOS PROD with an IPv6 literal", "ios", "prod", IOS_PROD, {"Dulcet": b"\0http://[fd00::10]:4533\0"}, 1,
+     "hosts ['[fd00::10]']"),
+    ("iOS PROD with a percent-encoded host", "ios", "prod", IOS_PROD, {"Dulcet": b"\0http://%31%39%32.168.1.10:4533\0"}, 1,
+     "hosts ['192.168.1.10']"),
+    ("iOS PROD with an underscore-first host", "ios", "prod", IOS_PROD, {"Dulcet": b"\0https://_x.mydomain.net\0"}, 1,
+     "<unclassifiable authority '_x.mydomain.net'>"),
+    ("iOS PROD with a host beginning outside ASCII", "ios", "prod", IOS_PROD, {"Dulcet": "\0https://ü.lan\0".encode()}, 1,
+     "<unclassifiable authority"),
+    ("iOS PROD with a percent-escaped @", "ios", "prod", IOS_PROD, {"Dulcet": b"\0http://srv%40localhost\0"}, 1,
+     "<unclassifiable authority 'srv%40localhost'>"),
+    ("iOS PROD with an empty host after userinfo", "ios", "prod", IOS_PROD, {"Dulcet": b"\0http://user@:80\0"}, 1,
+     "<unclassifiable authority 'user@:80'>"),
+    ("iOS PROD with a bare scheme and a path", "ios", "prod", IOS_PROD, {"Dulcet": b"\0http:///srv\0"}, 1,
+     "<unclassifiable authority '/'>"),
+    ("iOS PROD with a plain LAN address (the control)", "ios", "prod", IOS_PROD, {"Dulcet": b"\0http://192.168.1.10:4533\0"}, 1,
+     "hosts ['192.168.1.10']"),
+    ("iOS PROD with an allowlisted host, port and path", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\0http://127.0.0.1:4533/rest\0https://ktor.io.\0"}, 0, ""),
+    # A Kotlin/Native literal is length-prefixed, not terminated: a bare "http://" is followed by the next
+    # object's type pointer, and only the count in front of it says the literal ended (OBSERVED in both
+    # PROD Release builds). The same bytes without that count are refused.
+    ("iOS PROD with a whole Kotlin/Native literal \"http://\"", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\xcf\xfa\xed\xfe" + b"\xb1\xbd\x9b\x00\x00\x00@\x00" + (8).to_bytes(4, "little") + b"\x12\xaa\x10J\x00\x00"
+                + "http://".encode("utf-16-le") + b"\xd1\xa1\x9b\x00\x00\x00@\x00"}, 0, ""),
+    ("iOS PROD with \"http://\" then a letter outside ASCII, in UTF-16 with no literal header", "ios", "prod", IOS_PROD,
+     {"Dulcet": b"\xcf\xfa\xed\xfe" + b"\xb1\xbd\x9b\x00\x00\x00@\x00" + (9).to_bytes(4, "little") + b"\x12\xaa\x10J\x00\x00"
+                + "http://ü.lan".encode("utf-16-le")}, 1, "<unclassifiable authority"),
 ]
 for label, platform, channel, info, files, code_expected, reason in VALIDATIONS:
     result = run_validator(platform, channel, info, files)
@@ -332,17 +367,17 @@ for label, platform, channel, info, files, code_expected, reason in VALIDATIONS:
 POLICY = TOOLS / "verify_release_policy.py"
 
 
-# Every file the policy reads: the workflows, the project source and the committed project Xcode
-# builds, both channels' plists and entitlements, and the archive script with its validator.
+# Every file the policy reads: the workflows, the Apple tree (the project source and the committed
+# project Xcode builds, both channels' plists and entitlements, and every source PROD compiles), the
+# Kotlin sources and Gradle build scripts, and the archive script with its validator. Images and audio
+# are left out for speed; the policy scans them, and a mutation that needs one writes it.
 POLICY_INPUTS = [
-    ".github/workflows", "apple/project.yml", "apple/Dulcet.xcodeproj/project.pbxproj",
-    "apple/DulcetMacRelease", "apple/DulcetiOSRelease", "apple/DulcetMacDev",
-    "apple/DulcetiOS/BackgroundAudio.plist", "apple/DulcetTV/BackgroundAudio.plist",
-    "apple/DulcetMac/DulcetMac.entitlements", "apple/DulcetMac/DulcetMacRelease.entitlements",
-    "tools/release/archive-and-export", "tools/release/validate-app-bundle",
-    "apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetMacRelease.xcscheme",
-    "apple/Dulcet.xcodeproj/xcshareddata/xcschemes/DulcetiOSRelease.xcscheme",
+    ".github/workflows", "apple", "core/src/commonMain", "core/src/appleMain", "core/src/androidMain",
+    "core/src/jvmMain", "build.gradle.kts", "settings.gradle.kts", "core/build.gradle.kts",
+    "core-conformance/build.gradle.kts", "android/app/build.gradle.kts", "android/shared/build.gradle.kts",
+    "android/tv/build.gradle.kts", "tools/release/archive-and-export", "tools/release/validate-app-bundle",
 ]
+COPY_IGNORES = shutil.ignore_patterns("*.png", "*.mp3", "build", ".build", "DerivedData", ".swiftpm", "xcuserdata")
 
 
 def run_policy(mutate) -> subprocess.CompletedProcess:
@@ -350,7 +385,10 @@ def run_policy(mutate) -> subprocess.CompletedProcess:
         for relative in POLICY_INPUTS:
             source, target = REPO / relative, Path(root, relative)
             target.parent.mkdir(parents=True, exist_ok=True)
-            (shutil.copytree if source.is_dir() else shutil.copy)(source, target)
+            if source.is_dir():
+                shutil.copytree(source, target, ignore=COPY_IGNORES)
+            else:
+                shutil.copy(source, target)
         mutate(Path(root))
         return subprocess.run([sys.executable, str(POLICY)], cwd=root, capture_output=True, text=True)
 
@@ -672,7 +710,7 @@ MUTATIONS = [
                                                        "<dict>\n    <key>com.apple.security.network.server</key>\n    <true/>\n"),
      "entitlements of DulcetMac and DulcetMacRelease must match"),
     # The server key lives in a DEV-only plist and nowhere else.
-    ("the server key in shared code", lambda root: Path(root, "apple/DulcetAppleShared").mkdir(parents=True) or
+    ("the server key in shared code", lambda root: Path(root, "apple/DulcetAppleShared").mkdir(parents=True, exist_ok=True) or
      Path(root, "apple/DulcetAppleShared/Server.swift").write_text('let key = "DulcetPreconfiguredServer"\n'),
      "apple/DulcetAppleShared/Server.swift: contains DulcetPreconfiguredServer"),
     ("the server key as a DEV build setting", both(
@@ -776,6 +814,53 @@ MUTATIONS = [
      "Info.plist UIApplicationSceneManifest: DulcetiOS and DulcetiOSRelease must declare it identically (apple/DulcetiOSRelease/Info.plist "
      "lacks it; INFOPLIST_KEY_UIApplicationSceneManifest_Generation makes Xcode generate UIApplicationSceneManifest, whose content a "
      "hand-written PROD plist cannot be compared with, so declare UIApplicationSceneManifest explicitly in both plists instead)"),
+    # Round 4 (SF-1): the sources PROD compiles. The bundle scan cannot see a Swift literal of 15 bytes
+    # or fewer, so an address written in source names an allowlisted host or is refused there.
+    ("a short Swift literal naming a LAN server in shared code",
+     lambda root: (root / "apple/DulcetAppleShared/Endpoint.swift").write_text('let endpoint = "http://10.0.0.5"\n'),
+     "apple/DulcetAppleShared/Endpoint.swift:1: an address on hosts ['10.0.0.5']"),
+    ("a Kotlin literal hiding a LAN server behind loopback userinfo",
+     lambda root: (root / "core/src/commonMain/Endpoint.kt").write_text('val endpoint = "http://localhost@192.168.1.10:4533"\n'),
+     "core/src/commonMain/Endpoint.kt:1: an address on hosts ['192.168.1.10']"),
+    ("a Swift interpolation as the host",
+     lambda root: (root / "apple/DulcetKit/Sources/DulcetKit/Endpoint.swift").write_text('let e = "http://\\(host):4533"\n'),
+     "Endpoint.swift:1: an address on hosts [\"<unclassifiable authority '\\\\\\\\(host):4533'>\"]"),
+    ("a new directory named like a test, which is not on the documented list",
+     lambda root: (root / "apple/EndpointTests").mkdir() or (root / "apple/EndpointTests/E.swift").write_text('let e = "https://nas.lan"\n'),
+     "apple/EndpointTests/E.swift:1: an address on hosts ['nas.lan']"),
+    ("a UTF-16 address in a binary resource shared code ships",
+     lambda root: (root / "apple/DulcetKit/Sources/DulcetKit/Resources/e.dat").write_bytes("\0https://nas.lan\0".encode("utf-16-le")),
+     "e.dat: contains addresses on hosts ['nas.lan']"),
+    ("an exempted line edited to name a server",
+     edit("core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
+          'if (suppliedScheme) trimmed else "https://$trimmed"', 'if (suppliedScheme) trimmed else "https://nas.lan"'),
+     "AccountConnection.kt: no line reads 'val withScheme = if (suppliedScheme) trimmed else \"https://$trimmed\"'"),
+    # Round 4 (SF-2): Gradle runs with Xcode's per-target environment. The reviewer's probe first.
+    ("a Gradle build script reading the bundle identifier from the environment",
+     lambda root: (root / "core/build.gradle.kts").write_text((root / "core/build.gradle.kts").read_text()
+                                                            + '\nval p = System.getenv("PRODUCT_BUNDLE_IDENTIFIER")\n'),
+     'reads the environment (getenv("PRODUCT_BUNDLE_IDENTIFIER"))'),
+    ("a Gradle provider reading a variable",
+     lambda root: (root / "build.gradle.kts").write_text((root / "build.gradle.kts").read_text()
+                                                       + '\nval home = providers.environmentVariable("DULCET_HOME")\n'),
+     'reads the environment (environmentVariable("DULCET_HOME"))'),
+    ("buildSrc code reading the whole environment",
+     lambda root: (root / "buildSrc/src/main/kotlin").mkdir(parents=True) or (root / "buildSrc/src/main/kotlin/E.kt").write_text(
+         "val all = System.getenv()\n"),
+     "buildSrc/src/main/kotlin/E.kt:1: reads the environment (getenv)"),
+    ("a Gradle script handing the environment to a process",
+     lambda root: (root / "core/build.gradle.kts").write_text((root / "core/build.gradle.kts").read_text()
+                                                            + '\nval out = ProcessBuilder("printenv").start()\n'),
+     "ProcessBuilder reads the environment whole, passes it to another process"),
+    ("a Gradle script applying another script",
+     lambda root: (root / "core/build.gradle.kts").write_text((root / "core/build.gradle.kts").read_text()
+                                                            + '\napply(from = "endpoint.gradle")\n'),
+     "runs build logic this policy cannot read"),
+    # Round 4 (NIT): Xcode reads per-user schemes, which nothing else checks.
+    ("a committed per-user scheme under xcuserdata",
+     lambda root: (root / "apple/Dulcet.xcodeproj/xcuserdata/u.xcuserdatad/xcschemes").mkdir(parents=True) or
+     (root / "apple/Dulcet.xcodeproj/xcuserdata/u.xcuserdatad/xcschemes/DulcetiOSRelease.xcscheme").write_text("<Scheme/>\n"),
+     "DulcetiOSRelease.xcscheme: is under xcuserdata/, which Xcode reads per user"),
 ]
 FOOTER = "violation(s) of spec §22.3/§22.6 (PROD must be unable to carry a server). The rules and every allowlist live in tools/verify_release_policy.py"
 for label, mutate, reason in MUTATIONS:

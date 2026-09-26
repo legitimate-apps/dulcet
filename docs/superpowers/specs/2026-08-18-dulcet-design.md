@@ -6039,8 +6039,17 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
   environment. A script shared identically by both twins passes the twins rule, so it could otherwise
   write something into PROD alone by testing the bundle identifier, configuration, product or target
   name, or a value from the build machine. The shell must be `/bin/sh`. What a script's *invoked*
-  file reads is not followed: `tools/run-gradle-exclusive` runs the Kotlin framework task, which reads
-  `CONFIGURATION`, and DEV and PROD are both archived in Release.
+  file reads is not followed by this rule, and one invoked file is a real PROD-only route:
+  `tools/run-gradle-exclusive` runs Gradle with Xcode's whole environment, which carries
+  `PRODUCT_BUNDLE_IDENTIFIER` and product-named paths that differ between PROD and its DEV twin. A
+  build script keyed on one could compile a value into the PROD framework alone (the policy accepted
+  such a read before revision 112's round 4; that it would compile is ASSUMED, not built). The
+  environment cannot be scrubbed, because `embedAndSignAppleFrameworkForXcode` reads the per-target
+  product paths from it. So the policy polices the reader instead: Gradle build logic (`*.gradle.kts`,
+  `*.gradle`, `buildSrc`, `build-logic`) may read environment variables only by a literal name in
+  `GRADLE_ENVIRONMENT`, which is empty, and may not read the environment whole, start a process,
+  apply another script or include another build. The Kotlin Gradle plugin's own reads of the
+  product paths are the one remaining use, and they only locate the framework it writes.
 - **The artifact.** `release.yml` may set only the environment names in `RELEASE_ENV`, by `env:` or
   `export`, and may not use `$GITHUB_ENV`, `$GITHUB_PATH` or a repository variable (`vars.`), since
   the environment reaches the archive and every script phase. It may pass no URL, `-xcconfig` or
@@ -6053,17 +6062,38 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
   (OBSERVED 2026-09-26): the bare scheme prefixes in UI copy, `www.apple.com` (plist DTDs),
   `support.apple.com`, `music.example.com` (a placeholder), `music.example.invalid` and
   `query.invalid` (reserved names in shared code), `localhost` and `127.0.0.1` (Ktor's default and a
-  loopback pattern), and `ktor.io` and `youtrack.jetbrains.com` (library diagnostics). The scan
-  catches a server that arrived under any name and by any route, as long as it is written out as an
-  address.
+  loopback pattern), and `ktor.io` and `youtrack.jetbrains.com` (library diagnostics). The authority
+  is parsed rather than matched against a character class: userinfo up to the last `@` is dropped, a
+  bracketed IPv6 literal is a host of its own, percent-escapes are decoded, and an authority that
+  parses to neither a hostname nor an IP literal is refused. A bare scheme passes only where the
+  string ends after `//`; a Kotlin/Native literal is length-prefixed rather than terminated, so there
+  the count in its header says so (OBSERVED in both PROD Release builds).
+  The scan catches an address the build stores contiguously, in UTF-8 or UTF-16 — **not every
+  address.** On arm64 a Swift string of 15 UTF-8 bytes or fewer is built from instruction
+  immediates: OBSERVED 2026-09-26, `"http://10.0.0.5"` compiled with `swiftc -O` left no contiguous
+  copy in the binary, while the 16-byte `"http://nas.lan:1"` was found. The source scan below covers
+  that case.
+- **The sources PROD compiles.** Every `http://` or `https://` address in a file under `apple/` or
+  `core/src/` must name a host the bundle scan allows, or one of `SOURCE_HOSTS` (documentation links in
+  comments), parsed exactly as the bundle scan parses. Only the test directories in
+  `SOURCE_TEST_DIRECTORIES` and the DEV-only plists are skipped, so a directory added later is scanned
+  until review lists it. An address built at run time from the user's own server, such as
+  `"https://$trimmed"`, is unclassifiable and is exempted only by its exact source line in
+  `SOURCE_ADDRESS_LINES`. Editing that line re-opens review, and an entry whose line is gone is itself
+  refused.
+- **No per-user Xcode state is tracked.** Xcode reads schemes from `xcuserdata/`, which neither this
+  policy nor the regeneration check inspects, so any tracked file under it is refused. `verify_ci_policy`
+  pins the regeneration step itself: exactly `python3 tools/verify_xcodegen_regeneration --self-test`,
+  unconditional, in a macOS leg the required `apple-ci` job needs, on pull requests.
 - **Remedies.** Every refusal ends by naming where the rules live and spec §22.3, and every allowlist
   refusal names its constant and says that extending it is a §22.3 decision made in review. A
   refusal with no path forward invites a workaround, so none is silent about how to proceed.
   Anything the policy cannot read — a key it cannot parse, a file that is not text — fails closed
   with a message rather than being skipped.
-- **Not covered:** a server address compiled into Swift or Kotlin shared by both channels under a name
-  other than the key, and assembled at run time rather than written out as an address. No build
-  configuration can exclude that, so it remains a review obligation.
+- **Not covered:** a server address compiled into Swift or Kotlin shared by both channels and
+  assembled at run time from pieces rather than written out as an address, in source or in the
+  bundle. No build configuration can exclude that, so it remains a review obligation. A value added
+  to shared code ships in DEV too, so it is a hardcoded server rather than a DEV/PROD divergence.
 - **No CI job builds either PROD target (OBSERVED 2026-09-26: neither `DulcetMacRelease` nor
   `DulcetiOSRelease` appears in any workflow).** The first build of a PROD target is the archive step
   of a `release.yml` dispatch, so a change that compiles for DEV and breaks PROD is found only then,
@@ -6588,6 +6618,30 @@ another branch may take the number first, so it may be renumbered at merge.
      rejection is checked for the remedy line. `tools/verify_xcodegen_regeneration --self-test`
      proves that the regeneration check fails on a scheme pre-action, a hand-added scheme and an
      edited generated plist.
+
+10. **Corrections from the third adversarial review of this revision.** Each route below was accepted by
+   the second round's guard, and each is replayed from the reviewer's probes and now refused.
+   - **The artifact scan's host capture was bypassable** (§22.6). It stopped at the first character
+     outside `[A-Za-z0-9.\-\\]`, and an empty host was allowlisted. So `http://localhost@192.168.1.10:4533`
+     (also in UTF-16), `https://www.apple.com@music.mydomain.net`, `http://[fd00::10]:4533`,
+     `http://%31%39%32.168.1.10:4533` and `https://_x.mydomain.net` all passed. The authority is now
+     parsed, and each of them fails. The parser was checked against Release builds of both PROD
+     targets: its first version refused both, because a Kotlin/Native literal is length-prefixed, so a
+     bare `http://` there is followed by the next object's type pointer. The literal's own count is now
+     what marks its end.
+   - **"By any route" was false.** A Swift literal of 15 bytes or fewer never reaches the binary whole
+     on arm64. §22.6 now says what the byte scan sees, and a source scan of `apple/` and `core/src/`
+     backs it up.
+   - **Gradle could read the channel from the environment.** `tools/run-gradle-exclusive` hands Gradle
+     Xcode's environment, and `System.getenv("PRODUCT_BUNDLE_IDENTIFIER")` in `core/build.gradle.kts`
+     was accepted. §22.6 had called this route harmless. Build logic may now read no variable outside
+     `GRADLE_ENVIRONMENT`, which is empty, and may not read the environment whole or run a process.
+   - **Nits:** a tracked file under `xcuserdata/` is refused. The regeneration step is pinned in
+     `verify_ci_policy`, so `|| true`, `continue-on-error`, `if:` or deleting it is refused;
+     `tools/test-verify-ci-policy` carries 12 such mutations and the accepted baseline.
+   - **Counts:** 107 policy mutations (12 added) and 37 bundle-validation controls (14 added: the
+     reviewer's six strings, five more malformed authorities, two accepted forms and a Kotlin/Native
+     header control).
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it

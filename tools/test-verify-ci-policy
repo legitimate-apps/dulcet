@@ -1140,6 +1140,65 @@ print(f'Diagnostic wiring controls passed: '
       f'{len(diagnostic_cases_run)}/{EXPECTED_DIAGNOSTIC_CASES} cases')
 
 
+
+# ---------------------------------------------------------------------------------------------
+# The regeneration step (round 4 of the ship-readiness review). It is what makes every committed Xcode
+# file the pinned XcodeGen's output, so each way of neutralising it while leaving the job green must be
+# refused, and the unmutated wiring accepted -- otherwise the refusals could pass vacuously.
+REGENERATION_STEP = 'python3 tools/verify_xcodegen_regeneration --self-test'
+REGENERATION_MUTATIONS = {
+    'or-true': lambda a: a.replace(REGENERATION_STEP, REGENERATION_STEP + ' || true'),
+    'no-self-test': lambda a: a.replace(REGENERATION_STEP, 'python3 tools/verify_xcodegen_regeneration'),
+    'continue-on-error': lambda a: a.replace('      - name: regenerate\n', '      - name: regenerate\n        continue-on-error: true\n'),
+    'disabled': lambda a: a.replace('      - name: regenerate\n', '      - name: regenerate\n        if: false\n'),
+    'other-shell': lambda a: a.replace('      - name: regenerate\n', '      - name: regenerate\n        shell: python {0}\n'),
+    'deleted': lambda a: a.replace('      - name: regenerate\n        run: ' + REGENERATION_STEP + '\n', ''),
+    'commented': lambda a: a.replace('        run: ' + REGENERATION_STEP, '        # run: ' + REGENERATION_STEP + '\n        run: true'),
+    'job-allowed-failure': lambda a: a.replace('    name: apple-platform', '    continue-on-error: true\n    name: apple-platform'),
+    'linux-only': lambda a: a.replace('macos-26', 'ubuntu-latest'),
+    'not-needed': lambda a: a.replace('    needs: [apple-platform]\n', ''),
+    'manual-only': lambda a: a.replace('pull_request:', 'workflow_dispatch:'),
+    'missing-tool': None,
+}
+REGENERATION_WORKFLOW = DIAGNOSTIC_WORKFLOW.replace('apple-conformance', 'apple-platform') + (
+    '      - name: regenerate\n        run: ' + REGENERATION_STEP + '\n') + DIAGNOSTIC_AGGREGATOR.replace(
+    'apple-conformance', 'apple-platform').replace('APPLE_CONFORMANCE', 'APPLE_PLATFORM')
+regeneration_cases_run: list[str] = []
+
+
+def regeneration_case(mutation=None) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / 'apple').mkdir()
+        (root / 'apple/project.yml').write_text('name: Dulcet\n')
+        (root / 'tools').mkdir()
+        if mutation != 'missing-tool':
+            (root / 'tools/verify_xcodegen_regeneration').write_text('# synthetic\n')
+        workflows = root / '.github/workflows'
+        workflows.mkdir(parents=True)
+        apple = REGENERATION_WORKFLOW
+        if REGENERATION_MUTATIONS.get(mutation):
+            mutated = REGENERATION_MUTATIONS[mutation](apple)
+            assert mutated != apple, f'regeneration mutation {mutation} changed nothing'
+            apple = mutated
+        (workflows / 'apple-ci.yml').write_text(apple)
+        (workflows / 'core-ci.yml').write_text(workflow_for(CASES[0]))
+        result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root, capture_output=True, text=True)
+    if mutation is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0, f'regeneration step {mutation} was accepted'
+        assert 'must run exactly `' + REGENERATION_STEP + '`' in result.stderr, result.stderr
+    regeneration_cases_run.append(mutation or 'present')
+    print(f'PASS: regeneration step {mutation or "present"}')
+
+
+regeneration_case()
+for mutation in REGENERATION_MUTATIONS:
+    regeneration_case(mutation)
+assert len(regeneration_cases_run) == 1 + 12, regeneration_cases_run
+print(f'Regeneration step controls passed: {len(regeneration_cases_run)}/13 cases')
+
 # ---------------------------------------------------------------------------------------------
 # The release.yml cancellation exemption. Each condition of the exemption must be necessary: the
 # file name, dispatch-only triggers, and an explicit `cancel-in-progress: false`. The positive case

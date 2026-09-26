@@ -1006,6 +1006,36 @@ if Path("core-conformance").is_dir():
                           "must exist and run unconditionally in a macOS leg that the required "
                           "apple-ci job needs, on pull requests")
 
+# The regeneration step is the keystone of the PROD guard (spec §22.3, §22.6): it is what makes every
+# committed Xcode file the pinned XcodeGen's output, so a hand edit cannot put a server into PROD alone.
+# A `|| true`, a `continue-on-error`, an `if:` or its deletion would each leave every other check
+# green, so the step is pinned here exactly: this command, alone, unconditional, in a macOS leg the
+# required apple-ci job needs, on pull requests. Applies wherever an Apple project exists.
+REGENERATION_STEP = "python3 tools/verify_xcodegen_regeneration --self-test"
+if Path("apple/project.yml").is_file():
+    apple_lines = apple_ci.splitlines() if apple_ci else []
+    spans = {name: (start, end) for name, start, end in job_spans(apple_lines)}
+    runners = dict(job_runner_values(apple_lines))
+    aggregator_needs = listed(job_properties(apple_lines, *spans["apple-ci"]).get("needs")) if "apple-ci" in spans else []
+    gating_legs = [
+        name for name, (start, end) in spans.items()
+        if name in aggregator_needs
+        and re.match(r"macos-", runners.get(name, "").strip())
+        and not {"if", "continue-on-error"} & set(job_properties(apple_lines, start, end))
+    ]
+    regenerates = any(
+        not {"if", "continue-on-error", "shell", "working-directory"} & set(step)
+        and str(step.get("run", "")).strip() == REGENERATION_STEP
+        for name in gating_legs
+        for step in job_steps(apple_lines, *spans[name])
+    )
+    if not Path("tools/verify_xcodegen_regeneration").is_file() or not regenerates \
+            or "pull_request" not in workflow_triggers(apple_lines):
+        errors.append(f".github/workflows/apple-ci.yml: must run exactly `{REGENERATION_STEP}` as its own "
+                      "unconditional step (no if:, continue-on-error, shell or working-directory) in a macOS leg "
+                      "the required apple-ci job needs, on pull requests; it is what keeps a hand edit to a "
+                      "generated Xcode file out of PROD (spec §22.3)")
+
 # A control that no workflow names never runs. There is no glob runner here -- every control is
 # wired by an explicit `run: python3 tools/test-<name>` line -- so an unwired control is INERT while
 # looking exactly like a gate: executable, carrying its own positive and negative controls, printing

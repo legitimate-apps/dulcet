@@ -20,8 +20,15 @@ PROD only:
 - No file in the bundle contains the server key's bytes (UTF-8 or UTF-16), whichever route put it
   there: plist, resource, or code.
 - Every http:// or https:// address in any file (UTF-8 or UTF-16, either byte order) names a host in
-  URL_HOSTS. That catches a server that arrived under any name, by any route, as long as it is written
-  out as an address; one assembled at run time from pieces is a review obligation (spec §22.6).
+  URL_HOSTS. The authority is parsed, not matched against a character class: userinfo up to the last
+  `@` is dropped, a bracketed IPv6 literal is a host of its own, percent-escapes are decoded, and an
+  authority that does not parse to a hostname or an IP literal is refused as unclassifiable. An empty
+  authority passes only when the byte after `//` ends the string.
+  What a byte scan cannot see is an address the compiler never stores contiguously: on arm64 a Swift
+  string of 15 UTF-8 bytes or fewer is built from instruction immediates (OBSERVED 2026-09-26,
+  `"http://10.0.0.5"`), and an address assembled at run time from pieces is never whole anywhere.
+  tools/verify_release_policy.py scans the Swift and Kotlin sources PROD compiles for the first; the
+  second is a review obligation (spec §22.6).
 """
 
 from __future__ import annotations
@@ -48,13 +55,60 @@ URL_HOSTS = {
     "ktor.io",                 # Ktor's diagnostic messages
     "youtrack.jetbrains.com",  # Kotlin/Native and Ktor diagnostic messages
 }
-# Host characters, plus the backslash a regular expression escapes dots with ("127\.0\.0\.1").
-_HOST = rb"[A-Za-z0-9.\-\\]"
+# An exact authority that names an allowlisted host in a form the parser does not read: the Kotlin
+# core's loopback pattern, which a Release binary carries as the regular expression
+# "http://127\.0\.0\.1:[1-9][0-9]{0,4}" (the capture stops at "{").
+AUTHORITY_FORMS = {r"127\.0\.0\.1:[1-9][0-9]": "127.0.0.1"}
+# RFC 3986 authority characters (unreserved, percent-escape, sub-delims, ":", "@", "[", "]"), plus the
+# backslash that escapes a dot in a regular expression and begins a Swift interpolation, so "\(" is
+# captured and refused rather than ending the address early. The capture therefore runs to the first
+# RFC 3986 terminator ("/", "?", "#") or to a character no authority can hold.
+_AUTHORITY = rb"[A-Za-z0-9\-._~%!$&'()*+,;=:@\[\]\\]"
 URL_PATTERNS = (
-    ("utf-8", re.compile(rb"(?i)https?://(" + _HOST + rb"*)")),
-    ("utf-16-le", re.compile(rb"(?i)h\x00t\x00t\x00p\x00(?:s\x00)?:\x00/\x00/\x00((?:" + _HOST + rb"\x00)*)")),
-    ("utf-16-be", re.compile(rb"(?i)\x00h\x00t\x00t\x00p(?:\x00s)?\x00:\x00/\x00/((?:\x00" + _HOST + rb")*)")),
+    ("utf-8", re.compile(rb"(?i)https?://(" + _AUTHORITY + rb"*)(.?)", re.S)),
+    ("utf-16-le", re.compile(rb"(?i)h\x00t\x00t\x00p\x00(?:s\x00)?:\x00/\x00/\x00((?:" + _AUTHORITY + rb"\x00)*)((?:..)?)", re.S)),
+    ("utf-16-be", re.compile(rb"(?i)\x00h\x00t\x00t\x00p(?:\x00s)?\x00:\x00/\x00/((?:\x00" + _AUTHORITY + rb")*)((?:..)?)", re.S)),
 )
+# What may follow a bare "http://" for it to be a bare scheme -- UI copy, a prefix check -- rather than
+# the start of an authority the capture could not read (a non-ASCII host, "/", "?", "#").
+BARE_SCHEME_ENDS = set("\x00\t\n\r\x0b\x0c \"`<>")
+_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+HOSTNAME = re.compile(rf"{_LABEL}(?:\.{_LABEL})*")
+HOST_PORT = re.compile(r"(\[[0-9a-f:.]+\]|[^:\[\]]*)(?::([0-9]*))?")
+
+
+def unclassifiable(authority: str) -> str:
+    """A marker no allowlist entry can equal, naming what failed to parse."""
+    return f"<unclassifiable authority {authority!r}>"
+
+
+def classify(authority: str, following: str | None) -> str:
+    """The host an address's authority names, "" for a bare scheme, or an unclassifiable marker.
+
+    `following` is the character after the captured authority, or None at the end of the data."""
+    if not authority:
+        return "" if following is None or following in BARE_SCHEME_ENDS else unclassifiable(following)
+    if authority in AUTHORITY_FORMS:
+        return AUTHORITY_FORMS[authority]
+    host_port = authority.rpartition("@")[2].replace("\\.", ".")
+    decoded = re.sub(r"%([0-9A-Fa-f]{2})", lambda escape: chr(int(escape.group(1), 16)), host_port)
+    match = HOST_PORT.fullmatch(decoded.lower())
+    if "%" in decoded or match is None:
+        return unclassifiable(authority)
+    host = match.group(1)
+    if host.startswith("["):
+        return host
+    host = host[:-1] if host.endswith(".") else host
+    return host if HOSTNAME.fullmatch(host) else unclassifiable(authority)
+
+
+def text_hosts(text: str) -> set[str]:
+    """url_hosts for decoded text: every host named after http:// or https://, classified."""
+    found = set()
+    for match in re.finditer(r"(?i)https?://(" + _AUTHORITY.decode() + r"*)(.?)", text, re.S):
+        found.add(classify(match.group(1), match.group(2) or None))
+    return found
+
 
 COMMON = {
     "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIdentifier",
@@ -112,12 +166,31 @@ def holds_url(value) -> bool:
     return "://" in json.dumps(value, default=str)
 
 
+def kotlin_native_string(data: bytes, start: int, end: int) -> bool:
+    """Whether data[start:end] is the whole of a Kotlin/Native string literal.
+
+    Kotlin/Native stores a literal as an object, not a terminated string: 8 bytes of type pointer, a
+    little-endian uint32 count of UTF-16 units that is one more than the characters, a 4-byte hash
+    and 2 bytes of flags, then the characters -- and the next object follows directly. OBSERVED
+    2026-09-26 in Release builds of DulcetiOSRelease and DulcetMacRelease (Xcode 26.6): each carries a
+    bare "http://" this way, followed by a type pointer. So the byte after a bare scheme proves nothing
+    there, and the length in front of it is what says the literal ends."""
+    return start >= 10 and int.from_bytes(data[start - 10:start - 6], "little") == (end - start) // 2 + 1
+
+
 def url_hosts(data: bytes) -> set[str]:
     """Every host named after http:// or https:// in `data`, in any of the encodings a bundle uses."""
     found = set()
     for encoding, pattern in URL_PATTERNS:
         for match in pattern.finditer(data):
-            found.add(match.group(1).decode(encoding).replace("\\", "").rstrip(".").lower())
+            following = match.group(2).decode(encoding, errors="replace") if match.group(2) else None
+            # A little-endian literal also reads as big-endian one byte earlier, so the big-endian
+            # pattern sees the same Kotlin/Native literal shifted by one (OBSERVED in the same builds).
+            shift = {"utf-16-le": 0, "utf-16-be": 1}.get(encoding)
+            if (not match.group(1) and shift is not None
+                    and kotlin_native_string(data, match.start() + shift, match.end(1) + shift)):
+                following = None
+            found.add(classify(match.group(1).decode(encoding), following))
     return found
 
 
@@ -145,7 +218,8 @@ def prod_problems(platform: str, info: dict, app: Path) -> list[str]:
                 problems.append(f"{path.relative_to(app.parent)} contains addresses on hosts {unknown}, which are not "
                                 f"allowlisted: PROD ships no preconfigured server (spec §22.3). If the host is not a "
                                 f"server -- a library's documentation link, say -- add it to URL_HOSTS in "
-                                f"tools/release/validate-app-bundle, in review, saying where it comes from")
+                                f"tools/release/validate-app-bundle, in review, saying where it comes from; an "
+                                f"unclassifiable authority is refused whatever it names")
     return problems
 
 

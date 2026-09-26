@@ -32,8 +32,13 @@
    Every generated file is also required to be byte-for-byte what the pinned XcodeGen produces from
    project.yml (tools/verify_xcodegen_regeneration, run in apple-ci), which closes the class of hand
    edits to generated files as a whole; the direct checks here say which rule a route broke.
-   What this cannot see is a server address compiled into code shared by both channels under another
-   name -- that is review's job, not this gate's.
+   Because the bundle scan cannot see a Swift literal of 15 bytes or fewer, every http(s) address in the
+   sources PROD compiles (apple/, core/src/, minus SOURCE_TEST_DIRECTORIES) must name an allowlisted
+   host or sit on an exact line in SOURCE_ADDRESS_LINES. Gradle build logic, which runs with Xcode's
+   per-target environment, may read no environment variable outside GRADLE_ENVIRONMENT, and no file
+   under xcuserdata/ may be tracked.
+   What this cannot see is a server address shared by both channels and assembled at run time from
+   pieces -- that is review's job, not this gate's.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed. Anything it cannot read fails closed.
@@ -45,8 +50,12 @@ is a reviewed change to this file, never a workaround elsewhere.
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.machinery
+import importlib.util
+import os
 import plistlib
 import re
+import subprocess
 import sys
 
 
@@ -230,6 +239,59 @@ RELEASE_ENV = {
 } | RELEASE_SECRETS
 POLICY_FILE = "tools/verify_release_policy.py"
 
+# --- Sources PROD compiles (spec §22.6) -------------------------------------------------------------
+# tools/release/validate-app-bundle scans the built bundle, but on arm64 a Swift string of 15 UTF-8
+# bytes or fewer never reaches it whole ("http://10.0.0.5" is built from instruction immediates), so
+# every http(s) address written in these sources must name a host the bundle scan allows too.
+SOURCE_ROOTS = (Path("apple"), Path("core/src"))
+# Test code no PROD target compiles. Only these are skipped: a directory added later is scanned until
+# review lists it here.
+SOURCE_TEST_DIRECTORIES = {
+    Path("apple/DulcetAppleAppHostTests"), Path("apple/DulcetMacTests"), Path("apple/DulcetPlaybackIntegrationTests"),
+    Path("apple/DulcetiOSUITests"), Path("apple/DulcetTVUITests"), Path("apple/DulcetKit/Tests"),
+    Path("core/src/commonTest"), Path("core/src/appleTest"), Path("core/src/jvmTest"), Path("core/src/androidHostTest"),
+}
+BUILD_OUTPUTS = {".build", "build", "DerivedData", ".swiftpm", ".gradle", ".kotlin", ".git", "xcuserdata"}
+# Hosts that appear only in source comments, as references: none is a music server.
+SOURCE_HOSTS = {
+    "www.w3.org",                  # the XML encoding-detection appendix, BinaryDocumentEncoding.kt
+    "www.loc.gov",                 # the ISO 639-2 table, LyricsLanguage.kt
+    "iso639-3.sil.org",            # the ISO 639-3 macrolanguage table, LyricsLanguage.kt
+    "developers.cloudflare.com",   # Cloudflare's 5xx status reference, LibraryReader.kt
+}
+# Exact source lines whose addresses are built at run time from the user's own server, or are not an
+# address at all. The line is the key, so any edit to it is re-reviewed; an entry no line matches is
+# itself refused, so the list cannot outlive its reasons.
+SOURCE_ADDRESS_LINES = {
+    ("core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
+     'val withScheme = if (suppliedScheme) trimmed else "https://$trimmed"'): "the address the user typed",
+    ("core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
+     'listOf(secureBaseUrl, "http://$authority$path")'): "the address the user typed, over local HTTP",
+    ("core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/HostResolution.kt",
+     'val pinnedUrl = "http://$addressAuthority:${parsed.port}${parsed.encodedPath}"'):
+        "the user's server, pinned to the address it resolved to",
+    ("core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/LibrarySync.kt",
+     'require(Regex("http://127\\\\.0\\\\.0\\\\.1:[1-9][0-9]{0,4}").matches(request.normalizedBaseUrl)) {'):
+        "a pattern accepting only loopback",
+    ("core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AccountHttpClient.android.kt",
+     'Url("http://${transport.proxy.host}:${transport.proxy.port}/"),'): "the system proxy's address",
+    ("apple/DulcetKit/Sources/DulcetKit/DulcetAccountConnectionView.swift",
+     "/// capitalization rewrites `https://…` as `HTTPS://…` and a lowercase username"): "a comment with an ellipsis",
+}
+
+# --- Gradle build logic (spec §22.3) -----------------------------------------------------------------
+# Every Apple target's Compile Kotlin Framework phase runs Gradle with Xcode's environment, which carries
+# PRODUCT_BUNDLE_IDENTIFIER and differs between a PROD target and its DEV twin. The phase cannot run with
+# a scrubbed environment -- embedAndSignAppleFrameworkForXcode reads the product paths from it -- so
+# build logic may read only the variables named here (none today), by literal name.
+GRADLE_ENVIRONMENT = set()
+GRADLE_ENVIRONMENT_READ = re.compile(r"\b(getenv|environmentVariable|environmentVariablesPrefixedBy)\b(\s*\(\s*\"([A-Za-z_][A-Za-z0-9_]*)\"\s*\))?")
+# Routes that read the environment whole, hand it to another process, or run build logic this scan
+# cannot see.
+GRADLE_ENVIRONMENT_ROUTES = re.compile(
+    r"\b(?:environment|printenv|ProcessBuilder|ProcessHandle|Runtime|exec|commandLine|includeBuild)\b|/proc/"
+    r"|\bapply\s*\(\s*from\b|\bapply\s+from\b")
+
 
 def extend(constant: str) -> str:
     """The remedy every allowlist refusal carries: where the list lives and whose decision it is."""
@@ -353,6 +415,8 @@ def check(errors: list[str]) -> None:
             errors.append(f"{workflow}: contains an upload mechanism; only release.yml may upload")
 
     check_prod_configuration(errors)
+    check_gradle_environment(errors)
+    check_user_state(errors)
 
 
 def release_env_names(lines: list[str]) -> list[str]:
@@ -705,6 +769,7 @@ def check_pbxproj(errors: list[str], lines: list[str]) -> None:
             root = None
         dev_only_plists = check_project_objects(errors, lines, root) if root else set()
     check_server_marker(errors, dev_only_plists)
+    check_source_addresses(errors, dev_only_plists)
 
 
 def check_project_objects(errors: list[str], lines: list[str], root: dict) -> set[Path]:
@@ -960,6 +1025,106 @@ def check_server_marker(errors: list[str], dev_only_plists: set[Path]) -> None:
         if SERVER_KEY.encode() in path.read_bytes():
             errors.append(f"{path}: contains {SERVER_KEY}, which may appear only in a DEV-only plist "
                           f"({', '.join(sorted(map(str, dev_only_plists))) or 'none found'}); spec §22.3, §22.6")
+
+
+def validator():
+    """tools/release/validate-app-bundle beside this file, so the source scan parses addresses exactly as
+    the bundle scan does."""
+    path = str(Path(__file__).resolve().parent / "release" / "validate-app-bundle")
+    loader = importlib.machinery.SourceFileLoader("validate_app_bundle", path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    writes, sys.dont_write_bytecode = sys.dont_write_bytecode, True  # no cache beside a tracked script
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = writes
+    return module
+
+
+def repository_files(roots: tuple[Path, ...], skip: set[Path] = frozenset()):
+    for root in roots:
+        for directory, subdirectories, files in os.walk(root):
+            subdirectories[:] = sorted(name for name in subdirectories
+                                       if name not in BUILD_OUTPUTS and Path(directory, name) not in skip)
+            for name in sorted(files):
+                path = Path(directory, name)
+                if path.is_file() and not path.is_symlink():
+                    yield path
+
+
+def check_source_addresses(errors: list[str], dev_only_plists: set[Path]) -> None:
+    """Every http(s) address in a source PROD compiles names a host the bundle scan allows (or one of
+    SOURCE_HOSTS), or sits on a line in SOURCE_ADDRESS_LINES. DEV-only plists are DEV's to fill."""
+    bundle = validator()
+    allowed = bundle.URL_HOSTS | SOURCE_HOSTS
+    used = set()
+    for path in repository_files(SOURCE_ROOTS, SOURCE_TEST_DIRECTORIES):
+        if path in dev_only_plists:
+            continue
+        data = path.read_bytes()
+        if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            data_lines = data.decode("utf-16").splitlines()
+        elif b"\0" in data:
+            unknown = sorted(bundle.url_hosts(data) - allowed)
+            if unknown:
+                errors.append(f"{path}: contains addresses on hosts {unknown}, which are not allowlisted; PROD "
+                              "compiles this file (spec §22.3)" + extend("SOURCE_HOSTS"))
+            continue
+        else:
+            data_lines = data.decode("utf-8", errors="replace").splitlines()
+        if not bundle.text_hosts("\n".join(data_lines)) - allowed:
+            continue
+        for number, line in enumerate(data_lines, 1):
+            unknown = sorted(bundle.text_hosts(line) - allowed)
+            if not unknown:
+                continue
+            key = (path.as_posix(), line.strip())
+            if key in SOURCE_ADDRESS_LINES:
+                used.add(key)
+                continue
+            errors.append(f"{path}:{number}: an address on hosts {unknown}, which are not allowlisted; PROD compiles "
+                          "this file, and the bundle scan cannot see a Swift literal of 15 bytes or fewer (spec §22.3, "
+                          "§22.6). An unclassifiable authority is refused whatever it names" + extend("SOURCE_HOSTS"))
+    for path, line in sorted(set(SOURCE_ADDRESS_LINES) - used):
+        errors.append(f"{path}: no line reads {line!r} with an address on it any more; remove the entry"
+                      + extend("SOURCE_ADDRESS_LINES"))
+
+
+def check_gradle_environment(errors: list[str]) -> None:
+    """Gradle build logic reads the environment only by a GRADLE_ENVIRONMENT name, and never whole."""
+    for path in repository_files((Path("."),)):
+        build_logic = {"buildSrc", "build-logic"} & set(path.parts)
+        if not (path.name.endswith((".gradle.kts", ".gradle")) or build_logic and path.suffix in (".kt", ".kts", ".java", ".groovy")):
+            continue
+        for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            for match in GRADLE_ENVIRONMENT_READ.finditer(line):
+                if match.group(3) is None or match.group(3) not in GRADLE_ENVIRONMENT:
+                    errors.append(f"{path}:{number}: reads the environment ({match.group(0).strip()}); every Apple "
+                                  "target runs Gradle with Xcode's environment, which differs between PROD and its "
+                                  "DEV twin, so build logic keyed on it could compile a value into PROD alone "
+                                  "(spec §22.3)" + extend("GRADLE_ENVIRONMENT"))
+            route = GRADLE_ENVIRONMENT_ROUTES.search(line)
+            if route:
+                errors.append(f"{path}:{number}: {route.group(0).strip()} reads the environment whole, passes it to "
+                              "another process, or runs build logic this policy cannot read; Gradle runs with "
+                              "Xcode's per-target environment (spec §22.3)")
+
+
+def check_user_state(errors: list[str]) -> None:
+    """No tracked file under xcuserdata/: Xcode reads per-user schemes and settings from it, and neither
+    this policy nor tools/verify_xcodegen_regeneration inspects it. Outside a git checkout (the
+    mutated copies tools/test-release-channel runs in) every file counts as tracked."""
+    try:
+        listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout.decode()
+        tracked = [Path(name) for name in listed.split("\0") if name]
+    except (OSError, subprocess.CalledProcessError):
+        tracked = []
+        for directory, subdirectories, files in os.walk("."):
+            subdirectories[:] = [name for name in subdirectories if name != ".git"]
+            tracked += [Path(directory, name) for name in files]
+    for path in sorted(path for path in tracked if "xcuserdata" in path.parts):
+        errors.append(f"{path}: is under xcuserdata/, which Xcode reads per user (a scheme there can carry a "
+                      "pre-action) and nothing here checks; never commit it (spec §22.3)")
 
 
 def main() -> int:
