@@ -990,14 +990,28 @@ internal sealed interface ReaderStandstill {
 
 /**
  * The floor under an automatic reconnect retry's wait, in milliseconds, for a TRANSIENT failure of
- * the epoch read; null for a failure no timer retries (§16.14). Transient: a timeout, `unreachable`
- * (the caller retries only while the platform reports the server reachable), a busy server — its
- * `Retry-After` is the floor (CLAUDE.md trap 24) — and an unknown server error. Everything else —
- * authentication, security, not a Subsonic server, an incompatible protocol — needs a person.
+ * the epoch read; null for a failure no timer retries (§16.14). The epoch read goes through the
+ * library's checked request path ([checkedRequest]), which names what the server or a proxy in
+ * front of it answered. Transient are exactly:
+ * - a timeout, and `unreachable` (the caller retries only while the platform reports the server
+ *   reachable);
+ * - `Server.Busy`: an HTTP 429, named from its STATUS whatever the body says — the reference
+ *   server's limiter answers with an envelope carrying only the generic code 0 (CLAUDE.md trap 24).
+ *   Its `Retry-After` is the floor, read as at most [LIBRARY_BUSY_CAP], as an outbox reads it;
+ * - `Server.HttpStatus` from a gateway that could not reach the server
+ *   ([gatewayCannotReachServer]: 502, 503, 504, and a CDN's origin errors), typically a reverse
+ *   proxy's page while the server restarts;
+ * - `Server.Unknown`: an error code the protocol does not define.
+ *
+ * Everything else needs a person: authentication (a bare 401 included), security, a protocol
+ * failure, every other status with no envelope (403 and 407 refuse access, 413 and 414 say the
+ * request is too large, a bare 500), and an error envelope with a defined code — the generic code 0
+ * at HTTP 200 included, which is the server's answer, not a capacity signal.
  */
 internal fun DomainError.automaticRetryFloorMillis(): Long? = when (this) {
     DomainError.Transport.Timeout, DomainError.Transport.Unreachable -> 0L
-    is DomainError.Server.Busy -> retryAfter?.inWholeMilliseconds ?: 0L
+    is DomainError.Server.Busy -> (retryAfter ?: Duration.ZERO).coerceAtMost(LIBRARY_BUSY_CAP).inWholeMilliseconds
+    is DomainError.Server.HttpStatus -> if (gatewayCannotReachServer) 0L else null
     is DomainError.Server.Unknown -> 0L
     else -> null
 }
