@@ -2430,7 +2430,7 @@ sequence at launch.
 
 **The offer of step 2, stated for the reader (R1d).** The count offered is the outbox's pending
 changes — including a queued change this build cannot decode, which is never sent and is lost just
-the same (§28 revision 104 item 29). Online, "submit" is a flush, and a change the server refuses is told like any refusal.
+the same (§28 revision 104 item 30). Online, "submit" is a flush, and a change the server refuses is told like any refusal.
 **Offline, nothing can be submitted**, so the choice is stated as it is: "N favourite and rating
 changes haven't reached your server. Signing out now discards them." — with **Stay signed in** as
 the default and **Sign out and discard** as the other; the removal does not proceed until one is
@@ -2439,7 +2439,7 @@ chosen, and it never waits silently for a connection.
 **Step 6 waits for the account's reader to stop (R2a).** A reader closed on the main thread still
 runs the calls already queued on its own thread, and those can write seen-cache rows. Step 6 therefore
 starts only once the reader's thread has stopped — on Apple, when `close(completion:)` calls back —
-never merely once `close()` has returned (§28 revision 104 item 29).
+never merely once `close()` has returned (§28 revision 104 item 30).
 
 ---
 
@@ -3353,7 +3353,7 @@ item no longer exists in the re-read pages, the anchor is the nearest item that 
 order and survives in the new one; if none survives, the viewport keeps its numeric offset, clamped to
 the new list.
 
-**A rebase past the new end** (R2a review, §28 revision 104 item 28). When the list has shrunk so that
+**A rebase past the new end** (R2a review, §28 revision 104 item 29). When the list has shrunk so that
 the viewport's pages lie at or past the total the server now reports, the rebase re-anchors on the
 last page that exists and reads that page instead; with no total to go by, and an empty page at the
 anchor, it re-anchors on the top. A stored row at or beyond the total the server just reported is
@@ -3364,7 +3364,7 @@ the same transaction. That rule trusts `X-Total-Count` absolutely. **OBSERVED** 
 end (offset 20 of 8 answered `X-Total-Count: 8` and an empty list). So the no-total path is reached
 only on other servers, where the header's accuracy is **ASSUMED**; it stays covered by synthetic
 tests. A viewport the person sets while the rebase reads **wins**: the re-anchor moves the viewport
-only if no newer one has arrived, and otherwise rebases around the person's (item 28, corrected in
+only if no newer one has arrived, and otherwise rebases around the person's (item 29, corrected in
 place). Offline, the re-anchor sends nothing and the window stays as stored (§16.14).
 
 **While the server is scanning** — at window open, or on any page's *after* reading — refusing to
@@ -3624,7 +3624,7 @@ passes every test that only checks the end.
 4. if the epoch changed, re-read the albums that contain downloads, at concurrency 1 (§16.11 rule 4);
 5. nothing else. There is no catch-up walk, no bulk refetch, and nothing re-read because it is old.
 
-**As implemented — one reachability model (R2a review, §28 revision 104 item 26).** A reconnect is the
+**As implemented — one reachability model (R2a review, §28 revision 104 item 27).** A reconnect is the
 **only** way back online. For a reader that was offline, steps 1 and 2 run while it is still offline —
 every screen keeps saying so and nothing reads the server — and only a successful epoch reading marks
 it online and goes on to step 3. A platform report that the server is unreachable takes the reader
@@ -3633,7 +3633,7 @@ offline at once and cancels a reconnect in flight; a report that it is reachable
 so two never run the steps at once. So a shell reports reachability on every change and reconnects on
 foreground, in either order or only one of them, and for a reader coming back from offline nothing is
 read before the flush. **That holds for the offline-to-online transition only** (corrected in place,
-item 26): a foreground reconnect of a reader that is already online leaves it online throughout, its
+item 27): a foreground reconnect of a reader that is already online leaves it online throughout, its
 screens and searches keep reading, and a read can go out before the flush's send — a change made while
 connected can be overtaken (§18.3).
 
@@ -3642,7 +3642,7 @@ changes, but a reader that was offline stays offline and nothing is revalidated 
 failure. What tries again is below.
 
 **An epoch is adopted only once it is stored, and a sequence that fails part-way leaves its steps
-owed** (item 26, corrected in place after the round-4 review). If storing a reading throws, the reader
+owed** (item 27, corrected in place after the round-4 review). If storing a reading throws, the reader
 keeps the epoch it had, so the next reading still sees the change and re-reads the screen. And "the
 epoch changed" — which decides step 4, and for the foreground cadence (§16.11 policy 3) step 3 as well
 — is judged against the epoch at which a sequence last ran **every** step, never against the latest
@@ -3653,7 +3653,7 @@ sequence runs every step again, the step-4 recheck included. A reader that was a
 the reconnect began has no transition to undo: it stays online — its screens were revalidated, or say
 what failed — and the next epoch-cadence reading or reconnect runs the steps it still owes.
 
-**What runs a failed reconnect again, by the kind of failure** (item 26, corrected in place after
+**What runs a failed reconnect again, by the kind of failure** (item 27, corrected in place after
 the round-5 review). A stable network sends no further report, so a reader left offline while the
 platform reports the server reachable must not wait for one — but only a failure that can pass by
 itself is retried by itself:
@@ -3665,7 +3665,10 @@ itself is retried by itself:
   The wait is measured by the monotonic clock and never persisted (CLAUDE.md trap 20). The retry runs
   only while the app is in the foreground and the platform reports the server reachable: a move to
   the background, an unreachable report or closing the reader stops it, and a reconnect that reads
-  the epoch resets the wait. Until then every screen says `offline`.
+  the epoch resets the wait. Until then every screen says `offline`. The shell states whether the app
+  is in the foreground when it constructs the reader — a required argument with no default, because
+  either default fails silently: `false` disables the retry for a shell that forgot, `true` reads
+  in the background — and reports every change after that (item 27, round 7).
 - **Anything else: never retried on a timer.** Authentication, security, not a Subsonic server, an
   incompatible protocol, and the reader's own failure — its database, a hook, such as the downloaded-
   album recheck throwing. A timer would repeat a failing login, or a defect, for ever. These wait for
@@ -3676,13 +3679,21 @@ itself is retried by itself:
 A return to the foreground while the reader is offline and the platform reports the server reachable
 starts a fresh reconnect at once, the wait reset, whatever ended the last one.
 
+**"Try again" calls reconnect, never a screen's refresh.** A screen's `refresh()` does nothing while
+the reader is offline, because there is nothing it may send. A "Try again" offered for a screen that
+says `offline`, or that names the failure keeping the reader offline (`failed(<kind>)`,
+`internalFailure`), must call `reconnect`. That runs the whole sequence and then re-reads every screen.
+
 **A screen says `live` only once a reconnect has run every step.** From the transition until the last
 step a screen whose read is coming says `revalidating` (or `loading` with nothing cached), a screen
 with nothing coming publishes nothing — it goes on saying `offline` rather than claim a read that is
 not coming — and each is published once more at the end: `live` if the sequence completed, what failed
 if it did not. A reconnect that fails
 after the transition therefore never shows a screen `live` and then takes it back, and no retry makes
-a screen flicker.
+a screen flicker. **The label follows the read** (round 7): a screen that starts a read of its own
+while the reconnect completes, because the person scrolls or pages, says `revalidating` from then on,
+never `offline`. And a screen does not say `live` while a read it owes is still to be made — an owed
+"load more" included (below).
 
 A screen's listener that throws is the listener's failure and never stops a step. At step 3 a screen
 says `revalidating` only when a read is coming: it decides whether it will read before it publishes
@@ -3701,8 +3712,10 @@ unsent — an outbox send included, once the outbox may no longer send — and a
 unreachable report sends neither its *after* reading nor a rebase's re-anchor read, and is not used.
 **A read refused this way is not a failed read.** It was never sent, so it proves nothing about the
 server: the screen records no failure and keeps saying `offline`, and the read is OWED — the next
-reconnect's step 3 makes it, whatever the screen's age, as a refresh would. A refused outbox send keeps
-its change for the reconnect's flush. An epoch
+reconnect's step 3 makes it, whatever the screen's age, as a refresh would. The same holds for a
+"load more" (or "load before") beyond the screen's own pages, whether it was refused this way or
+asked for while offline: nothing is sent, and step 3 makes it after the screen's revalidation. A
+refused outbox send keeps its change for the reconnect's flush. An epoch
 change seen by the foreground cadence (§16.11 policy 3) revalidates the open searches as well as the
 windows, and one cadence reading that throws is recorded and never ends the cadence.
 
@@ -3736,7 +3749,7 @@ keystroke the list is ranked again over everything the device now holds — incl
 previous answer wrote through — with a total order (match tier, type, normalized title, id), so rows
 never reorder by arrival.
 
-**Revalidated like a window (R2a review, §28 revision 104 item 27).** Open searches are part of the
+**Revalidated like a window (R2a review, §28 revision 104 item 28).** Open searches are part of the
 visible screen of §16.14 step 3, revalidated after the windows, and by the windows' rule: a server
 answer read within the re-read interval under the current epoch is left alone — no request, no
 publication — and an older one is re-read quietly, with no intermediate publication, so neither the
@@ -3879,8 +3892,13 @@ retires `DulcetKit`'s `browse` completion, which is invoked twice for one open (
   finished"; a window ends only when it is closed.
 - tvOS reads the same way; it has no downloads (§14.5), so its playability is `streamable` or
   `unavailable offline`.
+- The client is constructed with the app's foreground state:
+  `AppleLibraryReaderClient(databaseName:account:foreground:)` (Objective-C
+  `initWithDatabaseName:account:foreground:`). It is required, with no default (§16.14), and
+  `setForeground` reports every change after construction.
 
-**Android.** The same `LibraryReader` is consumed directly in Kotlin (no ObjC rule applies), exposed
+**Android.** The same `LibraryReader` is consumed directly in Kotlin (no ObjC rule applies), through
+the `LibraryReaderSession` assembly, whose `foreground` argument is required as on Apple. It is exposed
 to Compose as `StateFlow<LibraryPublication>` inside the Android shell — never inside the core's
 public API, where CORPUS line 8 keeps raw `Flow` off the Apple boundary. `LibrarySession`'s 15-minute
 full-import cadence is removed; the epoch policy of §16.11 replaces it.
@@ -4122,7 +4140,7 @@ retry loop.
   since it may be this device's own; a send that provably never arrived (unreachable, or answered
   with an error envelope) is not recorded. ASSUMED, and stated: a value first seen after the change
   was set after it.
-  **Which changes a later read can reach (R2a review, §28 revision 104 item 26, corrected in place).**
+  **Which changes a later read can reach (R2a review, §28 revision 104 item 27, corrected in place).**
   A change made while the reader is connected: one whose send failed, or one waiting behind another
   send. And a change made offline whose send fails. A reconnect flushes before it reads (§16.14
   step 1), so an offline change whose send **succeeds** is sent first and replaces a value another
@@ -6950,7 +6968,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     candidate the person is asked about. The seventh round's test that guarded the union now expects
     that question. (be) **Rebased onto `main`.** Rebased onto `main` at 7277d34b (#145): one textual conflict, in `docs/CONFORMANCE.md`, where `main` had added the CONF-09b evidence-boundary sections after CONF-87; resolved by keeping them whole and placing the CONF-88..91 rows after CONF-87 in the table. This record merged without conflict, `main`'s revisions above and this item inside Revision 104. `main`'s schema is still 6, so this branch's `6.sqm` and schema 7 stand. (bf) **Failing first.** The 7 new tests in `PlaylistEditingEighthReviewTest` and the flipped union guard, run against the seventh round's code (b6f40423): 4 of 24 fail on the JVM and the same 4 on `macosArm64` — p6 and p7 (the tombstone's own lookup failing out, and refused: not counted, not told), p4 (sent a third time, 3 creates for 2), and the flipped guard (the person not asked). p2, p3 and p5 pin behaviour both rounds share, and p8 is the control that a kept create's refused lookup is told. (bg)
     **Mutation run.** 18 compiling mutants against a baseline of 296 tests that all pass: 17 killed. The reviewer's M1 and M10 made the last-failure arm tell and count a tombstone's failure — which is now the code — so their inverses were run instead: that arm silencing a tombstone (killed by p6) and not counting it (p6's refused count); M2, silence taken only from the proven-unsent set (p2); the seventh round's clause restored (p7); the refused arm silencing a tombstone (p7); the set ignored; the union restored and the re-send's listing alone (p4 and the flipped guard, each); the restore arm unreachable, the re-send's name kept, its songs kept; R8; the removed tombstone not remembered, every refused create treated as deleted, a deleted create's refusal still counted; and two carried from the sixth round. The seventh round's survivor, dropping the first send's own listing, no longer exists: that listing is now all the restore keeps, and both of its alternatives are killed. 1 survives: the seventh round's check put back on the last-failure arm, equivalent by the argument in (bc) — a row still current there is never a deleted create's non-tombstone, and the tombstone's own failure no longer satisfies the check. A control that does not compile is counted as nothing. (bh) **Live.** CONF-88..91 once on the JVM against one fresh disposable Navidrome 0.63.2, 6 of 6, the server holding no playlist before and after; it was then stopped and its data deleted. Every suite run again from nothing: 639 `macosArm64` and 736 Android host tests, none failing, and the Android app (dev and prod) and TV unit tests. The first JVM run failed 3 of 637, all wall-clock deadline tests in host resolution and library browsing, which this change does not touch, with the host's load average near 157; run again at a load near 30, those two classes passed 3 times of 3 and the whole JVM suite passed 637 of 637. Every target compiles: iOS, macOS, the iOS simulator tests, the conformance JVM tests, and the Android app (dev and prod) and TV. The migration gate and `--check` pass.
-21. **Found while implementing R2a-core (the Apple facade over the reader,
+22. **Found while implementing R2a-core (the Apple facade over the reader,
     `AppleLibraryReaderFacade.kt`).** The reader records the thread that constructs it and checks it at
     every entry point, so the facade cannot build the session on the caller's thread and then hop: it
     builds the session ON the reader's thread (`newLibraryReaderDispatcher`), from its constructor,
@@ -6970,18 +6988,18 @@ fresh disposable server before landing; items 11–14 are what that review chang
     prepended page moves every index by a page — so the facade carries the range over by item identity
     (kind and opaque id) to the reader's latest publication before the reader rebases or looks ahead
     around it.
-22. **Two core gaps found through the facade, since fixed in the core (items 24–25; the first only
-    when the epoch read succeeds — item 26 completes it).**
+23. **Two core gaps found through the facade, since fixed in the core (items 25–26; the first only
+    when the epoch read succeeds — item 27 completes it).**
     `LibraryReader.reconnect()` set `online` itself, and open searches re-ran only when
     `LibraryReaderSession.setOnline` saw reachability CHANGE — so a caller that reconnected without
     first reporting reachability, or reported it afterwards, left an offline search `deviceOffline`
     until the next keystroke. And `LibraryFavourites.pendingCount()` answered a failed read with 0
     (`guarded(0L)`), which is the one wrong answer for the sign-out offer (§14.7) — it tells the person
     nothing will be lost. The facade's first cut worked around both, by reporting reachability to the
-    session before `reconnect()` and by reading the outbox's own count; items 24–25 fix both in the
+    session before `reconnect()` and by reading the outbox's own count; items 25–26 fix both in the
     core, so R3 inherits the fixes, and remove the workarounds. **Also recorded:** playability is
     computed per track only — album, artist and playlist rows carry none, so `playability` is null for
-    them rather than a guess. Search rows carried none either; since item 27 a search's track rows
+    them rather than a guess. Search rows carried none either; since item 28 a search's track rows
     carry it, as §16.14 requires. The production composition wires no download source (downloads
     join the reader in R4), so nothing crosses this facade as `downloaded` yet. That, not a rule in the
     facade, is what keeps tvOS to `streamable` and `unavailableOffline`: R4 must give tvOS no download
@@ -6991,16 +7009,16 @@ fresh disposable server before landing; items 11–14 are what that review chang
     a `DomainError` is mapped by the core's `mapAccountConnectionFailure` to `unreachable`, so a defect
     in the transport reads to the person as a network failure — correct for the boundary (nothing
     crosses, no text leaks), imprecise as copy. **Recorded here as ASSUMED; OBSERVED by the review
-    (its probe P4) and fixed by item 26:** a list opened offline and never read, then told
+    (its probe P4) and fixed by item 27:** a list opened offline and never read, then told
     `setOnline(true)` without a `reconnect()`, republished `loading` and issued no request — a spinner
     with nothing in flight.
-23. **Evidence for R2a-core, and what it does not reach.** OBSERVED 2026-09-24 on macOS arm64:
+24. **Evidence for R2a-core, and what it does not reach.** OBSERVED 2026-09-24 on macOS arm64:
     `AppleLibraryReaderFacadeTest` (24 tests) drives the production `LibraryReaderSession` over the
     core's `SessionTestServer` and `FakeReaderServer`, on the reader's real thread, with every delivery
     made through the real main dispatcher: the tests run on the main thread and pump its run loop. The
     one other facade test in `appleTest`, the playback queue's, delivers through an inline dispatcher,
     which cannot tell a main-thread delivery from an inline one. Twenty-one mutants — of the facade's
-    rules and of the two core fixes in items 24–25 — were each compiled and run against a green
+    rules and of the two core fixes in items 25–26 — were each compiled and run against a green
     unmutated baseline of 57 tests (the facade, search-session and outbox-review classes); twenty were
     killed. The survivor removes the client-level close guard, and survives because every step of the
     close tolerates being repeated — the guard is not what makes `close()` idempotent; two tests call
@@ -7012,7 +7030,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     compiled but run by no test, which inject the composition over a private in-memory database; the
     Swift half is the first code that runs it. No Swift copy test exists yet (§7.1); that is the
     DulcetKit brief's.
-24. **Core fix: open searches follow reachability and reconnect (item 22's first gap).**
+25. **Core fix: open searches follow reachability and reconnect (item 23's first gap).**
     `LibraryReader.reconnect()` set `online` itself, and `LibraryReaderSession` re-ran its open
     searches only when its own `setOnline` saw reachability change. So a reconnect through the reader —
     the path a shell takes when reachability returns — left every open search on `deviceOffline` until
@@ -7021,19 +7039,19 @@ fresh disposable server before landing; items 11–14 are what that review chang
     shows server data besides the windows, which is the session's searches. Those surfaces were
     revalidated on every reachability change reported to either class, and at reconnect's
     revalidation step (§16.14 step 3), after the windows. `reconnect()` marked the reader online
-    without telling the surfaces. **Corrected in place (item 26): this fix claimed that no search could
+    without telling the surfaces. **Corrected in place (item 27): this fix claimed that no search could
     overtake the flush, and that was false.** Marked online before its flush, the reader let a
     keystroke during the flush send `search3`, and a reachability report sent before `reconnect()`
     re-ran the search at once — the review observed `[star, search3]` sent while the flush's `star`
     was held. And when the epoch read failed, the reader was left online with the searches saying
-    offline, a later reachability report changed nothing, and the facade reported success. Item 25
+    offline, a later reachability report changed nothing, and the facade reported success. Item 26
     replaces the model. The Apple facade's workaround, which reported reachability to the session
     before calling reconnect, is removed. OBSERVED 2026-09-24: two core tests drive the
     production session, and both fail against the previous reader and session.
     `reconnectAloneRerunsAnOfflineSearchAfterTheFlushAndTheEpochRead` holds the flush's `star` for four
     search debounces and asserts that no `search3` goes out while it is held. It then asserts the order
     `star`, `getScanStatus`, `search3` and the server's scope — for `reconnect()` alone, the one order
-    it drove; item 26's tests drive all three.
+    it drove; item 27's tests drive all three.
     `reachabilityReportedToTheReaderReachesOpenSearches` covers going offline and back through the
     reader alone. Three mutants are killed: one where reconnect does not revalidate the searches (the
     original defect), one where the searches are told at reconnect's transition, before the flush (the
@@ -7041,7 +7059,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     the ordering test passed with the ordering reverted: the fixture answers the flush at once, so a
     search told too early still went out after it. That is why the test now holds the flush, and it is
     OBSERVED, run against that first version.
-25. **Core fix: an unreadable pending-change count is unknown, not zero (item 22's second gap).**
+26. **Core fix: an unreadable pending-change count is unknown, not zero (item 23's second gap).**
     `LibraryFavourites.pendingCount()` now returns `Long?`, which is null when the outbox cannot be
     read. An existing test already closed the database under the call and asserted `0`, so it certified
     the defect it was driving; it now asserts null. OBSERVED 2026-09-24:
@@ -7053,7 +7071,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     map the failure back to zero, one in the core and one in the facade, are both killed. R3 inherits
     both fixes from the core. With them, `testAndroidHostTest` ran 458 tests with 0 failures, including
     `LibrarySearchSessionTest` (15) and `MutationOutboxReviewTest` (18).
-26. **One reachability model, after independent review of R2a-core (corrects item 24).** The first
+27. **One reachability model, after independent review of R2a-core (corrects item 25).** The first
     reader API had no calling order that worked. Reporting reachability then reconnecting sent a
     search during the outbox flush; reconnecting alone left the reader online after a failed epoch
     read, with every search saying offline, while the facade reported success and the reader's own
@@ -7108,7 +7126,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     tapped during a reconnect is sent, and that a list whose read failed says `loading` while the
     reconnect retries it. A third reports the server unreachable while a reconnect reads the epoch:
     the caller hears `unreachable`, the reader stays offline, and nothing more is sent. Without the
-    cancel, the reading that answered late marked the reader online (item 30). After the third review,
+    cancel, the reading that answered late marked the reader online (item 31). After the third review,
     `ReaderReconnectStepsTest` pins the rest of the model: a report and two reconnects together read the
     epoch once and the list once; a reachable report while online sends and publishes nothing; a
     throwing window listener, a throwing downloaded-album hook and a window whose own check cannot be
@@ -7117,7 +7135,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     found one republishing a redundant `live`: the code was changed to match this sentence, so a fresh
     screen does not flicker); a whole list says `revalidating` until its read lands; a
     failed reconnect leaves an unreachable report standing; and `connect` while offline sends nothing.
-    Three more came from the mutation re-run (item 30): an unreachable report forgets the reconnect it
+    Three more came from the mutation re-run (item 31): an unreachable report forgets the reconnect it
     cancels, so a reachable report straight after it starts a fresh one; a second reachable report
     after a failed reconnect runs the sequence again; and a cancelled caller of `reconnect()` is
     cancelled, never handed an outcome, while the reconnect runs on for a caller still waiting.
@@ -7165,9 +7183,48 @@ fresh disposable server before landing; items 11–14 are what that review chang
       "A failed read is the server answering", which this item said, was wrong for a timeout: a
       timeout is not an answer.
 
+    **Corrected in place after the round-6 review (round 7).** Three sentences above held only on the
+    paths the tests took.
+    - *"One with no read coming goes on saying what it said until then"* was also applied to a screen
+      that then started a read. A fresh grid, quiet during a held reconnect, read a page live because
+      the person scrolled, and published the 200 rows it had just read as `offline`. The label now
+      follows the read: a read in flight says `revalidating`, and the screen's own read ends its
+      quiet.
+    - *"The next reconnect makes the read"* held for the screen's own pages only. A "load more"
+      refused unsent at the queue was dropped. So was one asked for while offline, which returned
+      without effect. The grid then said `live` at 100 of 250 rows and loaded no more until the
+      person scrolled away and back. Every owed extend is now made by the reconnect after the
+      screen's revalidation, and the screen is not `live` until it has been.
+    - The retry "only in the foreground" started out told the app was in the background, and
+      nothing required a shell to say otherwise, so a shell that reported only changes never retried.
+      The foreground state is now a required argument of `LibraryReaderSession` and of the Apple
+      client's public constructor (§16.14).
+
     `ReaderCurrentOrOfflineTest`, `ReaderReconnectRetryTest` and `ReaderReconnectStepsTest` pin every
-    one of these; see item 30.
-27. **Searches are revalidated like windows, released when closed, and carry playability.** Every
+    one of these; see item 31.
+
+    **Integrated with the playlist outbox (round 7, rebased onto item 21).** Item 21 landed first,
+    with its own reading of reachability: `setOnline(true)` marked the reader online, and a flush
+    came separately. Under this item's model the playlist outbox is the reconnect's second outbox.
+    - A reachable report requests a reconnect, and its step 1 flushes both outboxes. The item-21
+      tests that flushed straight after `setOnline(true)` now take the reconnect's flush as that
+      flush, and set their failures and hooks before the report, where the flush meets them.
+    - Every request an outbox flush makes is an outbox request, sent while `canSend` holds. That
+      covers the flush's own changes, the read it makes to decide a create in doubt, and its `ping`
+      after a refusal. The flush marks its coroutine rather than each call, so no helper can forget
+      to pass the mark on.
+    - The favourites' pending count no longer counts playlist changes, which share its table.
+    - The playlist tests' fake server now keeps a song's star. The reconnect re-reads the open
+      screen after its flush, and a server that answered `star` without keeping it showed the song
+      unstarred where a real one shows it starred.
+    - Two tests reached a conflict through a change made offline, then a read. Under this model a
+      change made offline is sent by the reconnect before anything is read (§16.14 step 1), so it is
+      newer than any read (§18.3) and the conflict cannot arise that way. Both now reach it through a
+      change made while connected whose send timed out, which is how it arises.
+    - The Apple client publishes item 21's `Held` favourite outcome as `held`, with the reason as its
+      error kind. The client composes its session with `formPost = false`: nothing on it edits
+      playlists yet, and its account carries no extension list to decide that from.
+28. **Searches are revalidated like windows, released when closed, and carry playability.** Every
     reconnect re-ran every open search — a request each, the label flipping to "On this device" and
     back, every row's source flipping with it — even for an answer read seconds earlier. A search now
     keeps the time and epoch of its server answer and is revalidated by the windows' 60-second rule
@@ -7182,13 +7239,13 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `search3` with every publication `serverAndDevice` and server rows still `server`; it failed
     against the previous session (two `search3`). A macOS test closes 40 search subscriptions and finds
     none registered. It finds at most one still reachable after collection, and none once the reader's
-    thread has stopped, after `close()` returns; item 30 says why one is allowed. A closed window
+    thread has stopped, after `close()` returns; item 31 says why one is allowed. A closed window
     subscription, collected, is its control. A core test counts 20 listeners registered while open and
     none left after close. After the third review, an epoch change seen by the foreground cadence
     revalidates the open searches as well as the windows (it re-read only the windows), and three
     parts of the rule have tests of their own: a search still waiting for its answer is left to it, an
     answer read under an older epoch is not current, and a quiet re-read keeps the rows in place.
-28. **A viewport is a hint, and never a failure.** An index past the end of the reader's latest
+29. **A viewport is a hint, and never a failure.** An index past the end of the reader's latest
     publication threw inside the reader (an empty `coerceIn` range), and the facade turned the throw
     into `cached(internalFailure)` with no age over a `live` screen. The realistic trigger: the person
     sits near the end, and a revalidation shortens the list before the shell's next viewport arrives.
@@ -7219,7 +7276,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
       boundary the review's K2 left unpinned.
     - §16.12 now records that Navidrome 0.63.2 always sent an accurate total (OBSERVED by that review),
       so the no-total path is reached only on other servers and stays tested synthetically.
-29. **Close, cancellation and the review's other findings.** `close()` returns at once, and the
+30. **Close, cancellation and the review's other findings.** `close()` returns at once, and the
     teardown runs on the reader's thread behind every call already queued, so the reader can still
     write to the database after `close()` returns; under the review's four-thread hammer its thread
     stopped 23.4 s later, after 336 more requests. `close(completion:)` now calls back on the main thread once the
@@ -7244,7 +7301,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     check is load-bearing, not defence in depth. A viewport queued for a window before its close takes
     the detail look-ahead over from whichever window held it, and the close then cancels that
     look-ahead. With the check, another window's look-ahead made 20 reads; without it, 0. A macOS test
-    now pins it (item 30). **After the round-5 review:** nothing of a closed reader stays scheduled —
+    now pins it (item 31). **After the round-5 review:** nothing of a closed reader stays scheduled —
     with a reconnect retry pending, closing the reader's scope leaves the scheduler idle without
     advancing it (the review's C1). Seven of the review's surviving mutants (A–G) now have killing tests. They pin
     cancel-before-release in `close()`, §7.2's cancel of a queued operation (the completion handler and
@@ -7252,8 +7309,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
     read, no outcome delivered after a client close, and the facade's failure publication keeping its
     content. The test for F holds the reader's thread across the close. Without that hold, the
     teardown — which also clears the listener — usually ran first, and the test's first version passed
-    with the main-thread check removed (item 30).
-30. **Evidence for items 26–29, and what it does not reach.** OBSERVED 2026-09-26 on macOS arm64,
+    with the main-thread check removed (item 31).
+31. **Evidence for items 27–30, and what it does not reach.** OBSERVED 2026-09-26 on macOS arm64,
     after the round-5 review, counted from the JUnit XML with every task forced to execute
     (`--rerun-tasks`): `macosArm64Test` ran 505 tests, `jvmTest` 458 and `testAndroidHostTest`
     562, each with 0 failures. The iOS and macOS main sources, the iOS simulator test sources, the
@@ -7265,12 +7322,12 @@ fresh disposable server before landing; items 11–14 are what that review chang
 
     **Red first.** After the third review, its 24 tests were run against the reviewed commit first:
     14 failed, each on its stated assertion. The other ten pin behaviour that was already right; each
-    is shown to matter by a mutant it kills, or, for the busy and timed-out supersessions of item 26
-    and the fuzz of item 28, by its own positive control. After the round-4 review,
+    is shown to matter by a mutant it kills, or, for the busy and timed-out supersessions of item 27
+    and the fuzz of item 29, by its own positive control. After the round-4 review,
     `ReaderCurrentOrOfflineTest`'s 17 tests were run against that review's commit: 13 failed, each on
     its stated assertion. Of the other four, three pin behaviour that was already right and each kills
     one of that review's surviving mutants (K2, K4 with the send gate removed, K7); the fourth pins
-    that close stops the retry, which did not exist there. The new macOS test of item 29 pins a check
+    that close stops the retry, which did not exist there. The new macOS test of item 30 pins a check
     that commit already had; it is shown to matter by killing R4l, the mutant that removes it.
     After the round-5 review, the round's 19 new or changed tests were run against that review's
     commit: 11 in `ReaderReconnectRetryTest`, six in `ReaderCurrentOrOfflineTest` (five new, one with
@@ -7303,9 +7360,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
       The launched send stops at the send loop's own check before it sends anything. That is a run
       argument: the same suite kills the mutant that removes both checks, on two tests.
     - **S4c** lets a throwing viewport publish a failure. The reader clamps every range, so nothing
-      reaches that guard: the 400-step fuzz of item 28 records no throw. Removing all three viewport
+      reaches that guard: the 400-step fuzz of item 29 records no throw. Removing all three viewport
       layers at once is killed.
-    - **M15** removes the client's close guard, and is equivalent, as in item 23: every step of the
+    - **M15** removes the client's close guard, and is equivalent, as in item 24: every step of the
       close tolerates repetition, and the two tests that close twice pass without it.
     - **F1** empties the rows of the facade's own search-failure publication. **ASSUMED**
       unreachable, from reading only: the path needs a throw from the core search, whose entry
@@ -7314,7 +7371,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     **After the round-4 review**, 28 mutants of this round's rules: 27 core mutants against the JVM
     suite and R4l against the facade class.
     - **Killed, 24:**
-      - R4l, by the new test of item 29;
+      - R4l, by the new test of item 30;
       - the swap back to adopt-then-store;
       - three ways of comparing against the adopted epoch;
       - removing the send gate, the page read's check before its *after* reading, the page read's
@@ -7353,20 +7410,27 @@ fresh disposable server before landing; items 11–14 are what that review chang
         `noTimerOutlivesAClosedReader`: with a retry pending, closing leaves nothing scheduled);
       - the review's M2, M21, M22 and M23;
       - the album screen republishing when fresh.
-    - **Five survive, each named with its argument.** Four remove one of two layers that stop a
-      retry; the retry checks `foreground && reachable && !online` again when it fires, so a retry
-      that outlives the layer does nothing, and each is killed with the fire-time check removed too.
-      - **R53a1** schedules a retry in the background. Removing the fire-time check as well is killed.
-      - **R53b1** keeps a pending retry when the app goes to the background. Likewise killed with
-        the fire-time check.
-      - **N7f** keeps it when the platform reports the server unreachable. Likewise.
-      - **N7g** schedules one while the platform reports the server unreachable. Likewise (N7h).
-      - **S3d** removes only the re-anchor's own offline check. The page read it starts checks
-        `online` before its request, so nothing is sent and the window shown is identical. What
-        differs is that offline the re-anchor still moves the viewport, to the list's new last row,
-        before its page read returns nothing; so the next reconnect reads one page fewer, where
-        production first re-reads the stale offset. Removing every offline layer at once was killed
-        after the round-4 review, on three tests.
+    - **Five survived, each named with an argument.** Four removed one of two layers that stop a
+      retry. The argument was that the retry checks `foreground && reachable && !online` again when
+      it fires, so a retry that outlives its layer does nothing. Each was killed with the fire-time
+      check removed too. **Corrected after the round-6 review:** none of the four is equivalent, and
+      round 7's tests kill all four (below).
+      - **R53a1** schedules a retry in the background. A timer is then left pending.
+      - **R53b1** keeps a pending retry when the app goes to the background. The timer outlives the
+        move.
+      - **N7f** keeps it when the platform reports the server unreachable. The coroutine outlives the
+        report.
+      - **N7g** schedules one while the platform reports the server unreachable. **Its argument was
+        false.** Scheduling doubles the wait, so under the mutant the first retry after the next
+        reachable report waits 4 s where it should wait 2 s. That is observable without any timer
+        firing.
+      - **S3d** removes only the re-anchor's own offline check. It is **not equivalent, and both
+        behaviours are acceptable**. The page read it starts checks `online` before its request, so
+        nothing is sent and the window shown is identical. What differs is that offline the
+        re-anchor still moves the viewport to the list's new last row before its page read returns
+        nothing. So the next reconnect reads one page fewer, where production first re-reads the
+        stale offset. Removing every offline layer at once was killed after the round-4 review, on
+        three tests.
 
     **A retention that is not the reviewed leak.** The release test first required all forty closed
     search subscriptions to be collected, and it failed intermittently. A diagnostic ran its steps 200
@@ -7400,18 +7464,18 @@ fresh disposable server before landing; items 11–14 are what that review chang
     **Not reached.**
     - No Swift compiles against the header yet.
     - iOS is compiled but not run.
-    - No test yet runs the public constructor's own composition (item 23).
-    - How often a real app hits the close race of item 29 is still ASSUMED.
+    - No test yet runs the public constructor's own composition (item 24).
+    - How often a real app hits the close race of item 30 is still ASSUMED.
     - The retry's figures (2 s doubling to 60 s) are ASSUMED; no measurement chose them.
     - The reader retries only when told the app is in the foreground, and starts out told it is not.
       A shell that never calls `setForeground` gets no automatic retry; each shell must report every
       change, the first included. No shell does yet.
     - How long every screen says `revalidating` while a reconnect rechecks many downloaded albums
       is unmeasured: `live` waits for the whole sequence.
-    - The viewport-wins re-rebase of item 28 does not advance the tear-retry count. Each one needs a
+    - The viewport-wins re-rebase of item 29 does not advance the tear-retry count. Each one needs a
       new viewport from the person during a rebase, so it is bounded by input, not by the limit.
 
-    R3 continues this record at item 31.
+    R3 continues this record at item 32.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

@@ -90,7 +90,8 @@ class PlaylistEditingSeventhReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         assertEquals(1, creates, "fixture: the first send's answer proves nothing")
         session.playlists.rename(localId!!, "Trip")
@@ -141,7 +142,8 @@ class PlaylistEditingSeventhReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1", "song-2")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         assertEquals(PlaylistEditRecord.Pending, session.playlists.move(localId!!, 0, 1, listOf("song-1", "song-2")), "fixture: the move")
         session.playlists.flush()
@@ -194,7 +196,8 @@ class PlaylistEditingSeventhReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         other = env.server.add("Other", listOf("song-9"))
         session.playlists.flush()

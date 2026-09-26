@@ -164,12 +164,15 @@ public class AppleLibrarySearchPublication internal constructor(
  * How one favourite or rating change ended (§16.20, §18.3).
  *
  * - [kind]: `saved` (the server acknowledged it), `notSaved` (refused, or failed too often — the
- *   server's value shows again and the person is told), `superseded` (changed elsewhere after this
- *   device last saw it; the server's value wins) or `notRecorded` (the device could not record it).
+ *   server's value shows again and the person is told), `held` (kept unsent, with every change after
+ *   it: the account was refused access, or the server asked to wait; a later flush sends it, and the
+ *   person can withdraw it), `superseded` (changed elsewhere after this device last saw it; the
+ *   server's value wins) or `notRecorded` (the device could not record it).
  * - [targetKind]: `artist`, `album` or `track`. [field]: `favourite` or `rating`.
  * - [value]: for `saved`, the value now on the server — `1`/`0` for a favourite, `0...5` for a
  *   rating (`0` removes it). [serverValue]: for `superseded`, the server's value.
- * - [errorKind]: for `notSaved`.
+ * - [errorKind]: for `notSaved`, and for `held` why it is held — `invalidCredentials` or
+ *   `authentication`, `server` (a proxy refusing access), or `serverBusy`.
  */
 public class AppleLibraryFavouriteOutcome internal constructor(
     public val kind: String,
@@ -435,6 +438,7 @@ internal fun MutationOutcome.toApple(): AppleLibraryFavouriteOutcome {
     val (kind, value, serverValue, error) = when (this) {
         is MutationOutcome.Saved -> OutcomeFields("saved", value, null, null)
         is MutationOutcome.NotSaved -> OutcomeFields("notSaved", null, null, error.readerErrorKind())
+        is MutationOutcome.Held -> OutcomeFields("held", null, null, error.readerErrorKind())
         is MutationOutcome.Superseded -> OutcomeFields("superseded", null, serverValue, null)
         is MutationOutcome.NotRecorded -> OutcomeFields("notRecorded", null, null, null)
     }

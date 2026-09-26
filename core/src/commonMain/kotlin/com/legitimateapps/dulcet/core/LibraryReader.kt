@@ -19,6 +19,8 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -657,10 +659,7 @@ internal class LibraryReader(
         parameters: Map<String, String> = emptyMap(),
         whileOffline: Boolean = false,
     ): SentResponse =
-        permits.withPermit {
-            if (!online && (!whileOffline || !canSend)) throw ReaderSendRefused()
-            issue { transport.request(endpoint, parameters) }
-        }
+        permits.withPermit { issue(whileOffline) { transport.request(endpoint, parameters) } }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(
@@ -675,7 +674,7 @@ internal class LibraryReader(
         parameters: List<Pair<String, String>>,
         formPost: Boolean,
     ): SentResponse = permits.withPermit {
-        issue { transport.requestRepeated(endpoint, parameters, formPost) }
+        issue(whileOffline = false) { transport.requestRepeated(endpoint, parameters, formPost) }
     }.requireOk(endpoint, emptyMap())
 
     /**
@@ -690,18 +689,26 @@ internal class LibraryReader(
     /** Requests sent on a slot already held by [withOneSlot]. Valid only inside that block. */
     internal inner class HeldSlot internal constructor() {
         suspend fun send(endpoint: String, parameters: Map<String, String>): SentResponse =
-            issue { transport.request(endpoint, parameters) }
+            issue(whileOffline = false) { transport.request(endpoint, parameters) }
 
         suspend fun sendRepeatedChecked(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean): SentResponse =
-            issue { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
+            issue(whileOffline = false) { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
     }
 
     /**
      * Takes the issue sequence and the *before* reading as the request goes out, on a held slot. A
      * failure of the request itself is thrown as a [LibraryRequestFailure]; anything else thrown here
      * — the device's own database failing — is not, so a caller never reports it as the server's.
+     *
+     * Every request passes here, so this is where the offline rule of [send] is enforced — for a
+     * request on a held slot and a repeated-parameter request as much as a plain one. An outbox's
+     * flush runs in [OutboxRequests], so every request it makes — its writes, the reads it makes to
+     * decide them, and the `ping` after a refusal — is an outbox request, as [whileOffline] marks
+     * one sent any other way.
      */
-    private suspend fun issue(request: suspend () -> LibraryEndpointResponse): SentResponse {
+    private suspend fun issue(whileOffline: Boolean, request: suspend () -> LibraryEndpointResponse): SentResponse {
+        val outbox = whileOffline || currentCoroutineContext()[OutboxRequestsKey] != null
+        if (!online && (!outbox || !canSend)) throw ReaderSendRefused()
         val seq = cache.issue()
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
         val response = try {
@@ -749,7 +756,7 @@ internal class LibraryReader(
             busyRetry?.cancel()
             busyRetry = scope.launch {
                 delay(wait)
-                if (online) flushOutboxes()
+                if (canSend) flushOutboxes()
             }
         }
         return count && streak == 1
@@ -949,6 +956,16 @@ internal sealed interface DetailReadResult {
     /** Not sent: the reader went offline while the read waited ([ReaderSendRefused]). Owed, not failed. */
     data object Refused : DetailReadResult
 }
+
+/**
+ * Marks a coroutine as an outbox's flush (§16.14 step 1, §16.20): every request made in it is one
+ * of the kinds an offline reader sends, while [LibraryReader.canSend] holds when the request goes
+ * out. Carried by the context rather than a flag on each call, so a read an outbox makes to decide
+ * a change, or its `ping` after a refusal, is covered without every helper passing it on.
+ */
+internal object OutboxRequests : AbstractCoroutineContextElement(OutboxRequestsKey)
+
+internal object OutboxRequestsKey : CoroutineContext.Key<OutboxRequests>
 
 /**
  * [LibraryReader.send]'s refusal of a request that reached the front of the queue after the reader

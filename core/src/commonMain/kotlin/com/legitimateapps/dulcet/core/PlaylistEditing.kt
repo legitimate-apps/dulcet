@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.database.DulcetDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -1103,7 +1104,7 @@ internal class PlaylistEditor(
         // Nothing left to send ends a run of 429s, however the queue emptied — a change withdrawn or
         // undone here, as much as a flush that sent the last one (§18.6 "Failures").
         if (guarded(false) { outbox.all().isEmpty() }) busyRun.end()
-        if (reader.online && !flushing) launchFlush(reader.scope)
+        if (reader.canSend && !flushing) launchFlush(reader.scope)
     }
 
     private var flushing = false
@@ -1228,7 +1229,7 @@ internal class PlaylistEditor(
             flushing = true
             val tally = Tally()
             try {
-                flushLocked(tally)
+                withContext(OutboxRequests) { flushLocked(tally) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -1243,7 +1244,7 @@ internal class PlaylistEditor(
     }
 
     private suspend fun flushLocked(tally: Tally): PlaylistFlushReport {
-        while (reader.online) {
+        while (reader.canSend) {
             // The server asked for quiet (a 429): no change begins until the wait has passed. Checked
             // before each row, not once, so a wait the favourites flush's 429 sets meanwhile stops
             // this flush too; a change already under way is not recalled and may finish its requests.
