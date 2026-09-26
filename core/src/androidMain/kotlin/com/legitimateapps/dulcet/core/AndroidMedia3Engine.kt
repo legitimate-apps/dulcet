@@ -273,6 +273,12 @@ internal fun sanitizeAndroidPlaybackFailure(error: PlaybackException): DomainErr
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> DomainError.Transport.Timeout
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> DomainError.Protocol.UnexpectedBinary
+        // The bytes arrived and validated, and the item itself could not be decoded: the track's
+        // own failure, as AVFoundation's decode failures are on Apple (spec §12.2, §12.12).
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES -> DomainError.Playback.NoPlayableSource
         else -> DomainError.Transport.Unreachable
     }
 }

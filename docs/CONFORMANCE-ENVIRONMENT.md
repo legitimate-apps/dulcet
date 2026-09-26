@@ -232,15 +232,18 @@ job.
 
 ### Opt-in fixture: the Skip Probe albums
 
-`tools/seed-skip-probe` adds two more albums for the automatic-skip UI proofs (spec §12.12). Each
-holds an undecodable MP3 whose bytes are fixed and pinned by SHA-256, then a 40-second playable tone.
+`tools/seed-skip-probe` adds three more albums for the automatic-skip UI proofs (spec §12.12). Each
+holds an unplayable MP3 whose bytes are fixed and pinned by SHA-256, then a 40-second playable tone.
 "Skip Probe" names its undecodable track "Unplayable Probe"; "Long Title Skip Probe" gives its
 undecodable track a 70-character title, for the proof that the notice shows its shorter sentence at
-the largest text size. They are separate albums so that neither proof's queue plays on into the
-other's tracks. Neither is ever part of the default corpus above, because that corpus is counted
+the largest text size. "No Audio Skip Probe" is for Android: its first track is a tag followed by
+text, with no MP3 frame at all, because Android's software MP3 decoder plays the undecodable track's
+frames as sound and reports no error (spec §12.12 rule 8), while a file in which Media3's extractors
+recognise no format fails before any decoder sees it. They are separate albums so that no proof's queue plays on into
+another's tracks. None is ever part of the default corpus above, because that corpus is counted
 exactly — the health check requires its 314 files and the conformance suites count its albums. The
 UI harness runs the tool against a server that has already passed the health check, with
-`--base-url`, and the tool rescans and waits until all four tracks are listed. No conformance class
+`--base-url`, and the tool rescans and waits until all six tracks are listed. No conformance class
 runs against a server they have been added to: in `apple-ci` the conformance composite adds them in
 its last phase, after every class and every UI proof that counts or searches the library.
 

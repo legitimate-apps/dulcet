@@ -198,6 +198,22 @@ class AndroidMedia3EngineTest {
         engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
     }
 
+    @Test fun aDecodeFailureIsTheTracksOwnAndANetworkFailureIsNot() {
+        // The item's bytes arrived and could not be decoded: the track's, as on Apple (spec §12.12).
+        for (code in listOf(PlaybackException.ERROR_CODE_DECODING_FAILED, PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES)) {
+            val error = sanitizeAndroidPlaybackFailure(PlaybackException("decode", null, code))
+            assertEquals(DomainError.Playback.NoPlayableSource, error, "Media3 code $code")
+            assertEquals(PlaybackFailureOwner.Track, playbackFailureOwner(error))
+        }
+        for (code in listOf(PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+            PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED)) {
+            val error = sanitizeAndroidPlaybackFailure(PlaybackException("elsewhere", null, code))
+            assertEquals(PlaybackFailureOwner.Connection, playbackFailureOwner(error), "Media3 code $code")
+        }
+    }
+
     @Test fun aTranscodedStreamIsNeverSeekableWhateverTheExtractorReports() {
         for (transcoded in listOf(false, true)) {
             val fake = PlayerProbe()
@@ -329,4 +345,9 @@ internal class PlayerProbe {
         listener!!.onPositionDiscontinuity(info(from), info(target), reason)
     }
     fun events() { listener!!.onEvents(player, Player.Events(FlagSet.Builder().add(Player.EVENT_PLAYBACK_STATE_CHANGED).build())) }
+    /** The player fails the current item with Media3's [code], as ExoPlayer reports it. */
+    fun fail(code: Int) {
+        state = Player.STATE_IDLE
+        listener!!.onPlayerError(PlaybackException("probe failure", null, code))
+    }
 }
