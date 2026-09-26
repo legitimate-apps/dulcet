@@ -5470,7 +5470,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 
 | workflow | runner | contents |
 |---|---|---|
-| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator downloads the Android-only JUnit artifact, resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase, then passes only when both upstream jobs report `success`. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
+| `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` for the two legs; `ubuntu-latest` for the aggregator | two parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, and the app-host, download, playback and `core-conformance` legs on macOS, iOS/iPadOS and tvOS. `apple-ci`: resolves every Apple `FEATURES.yml` evidence identity against both legs' JUnit, then passes only when both legs report `success`. Future Apple-only measurements and tests join one of the two legs, never a third macOS job without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
@@ -6366,6 +6366,68 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 112 (2026-09-26)** — `core-ci` can be repaired by a partial re-run (§21.1). This is
+numbered one above the highest revision on `main` when it was written, and may be renumbered at merge.
+
+1. **The defect, OBSERVED in run 36238393531.** Every `core-ci` artifact is named with the run and the
+   attempt, and the required `core-ci` job downloaded each one by **its own** attempt. Attempt 1's
+   phone emulator leg failed; "Re-run failed jobs" re-ran only that leg and `core-ci`, as attempt 2.
+   `core-build`, `conformance-env-linux` and the TV leg were not re-run, so their artifacts carried
+   attempt 1, and `core-ci` failed on `dulcet-core-conformance-android-evidence-36238393531-2`, which
+   nothing had uploaded. A red `core-ci` could only be repaired by re-running every job.
+2. **The fix is §21.5 item 4's mechanism.** Each producing job exports `attempt:
+   ${{ github.run_attempt }}`, and `core-ci` downloads by `needs.<job>.outputs.<attempt>`. The
+   emulator job is a matrix, and a matrix combines its members' outputs into one set, so it exports
+   one output per surface, each set only by that surface's repetition-1 member and empty in the
+   others. Both properties the matrix form relies on are **OBSERVED**. First, an empty output
+   cannot overwrite the other member's value. In run 36240038191 each member logged `Set output`
+   only for its own surface, and `actions/runner`'s `JobExtension.cs` skips an empty output rather
+   than sending it. Second, a member that is not re-run keeps its output. Run 36240038191 attempt 2
+   re-ran only `android-emulator (phone)`. Its `core-ci` downloaded
+   `dulcet-android-emulator-phone-36240038191-2` beside the `-1` artifacts of the TV leg,
+   `core-build` and `conformance-env-linux`, and verified `tests=42 reports=32`, the same as
+   attempt 1.
+3. **Why it cannot read stale evidence.** An `upload-artifact@v4` artifact is immutable, and the
+   action documents that an upload fails when the name already exists. A job runs at most once per
+   attempt and sets its attempt output in that same execution. So the name `core-ci` downloads is
+   the artifact of the job's latest execution. `core-ci` tests every result for `success`
+   **before** it downloads anything, as `apple-ci` does. It therefore never reads evidence from an
+   execution that did not succeed, and a superseded passing attempt can never stand in for a later
+   failure. The names keep the attempt, rather than dropping it for `overwrite: true`, because
+   overwriting deletes the superseded attempt's artifact. After a **partial** re-run, that artifact
+   stays in the run. It is the failure evidence a re-run is most often needed to diagnose. That
+   survival holds for partial re-runs only. "Re-run all jobs" makes every earlier attempt's
+   artifacts inaccessible: OBSERVED in run 36238393531, whose full attempt 3 left only the `-3`
+   names, and described as intended in actions/upload-artifact#585. Partial re-runs are the common
+   case, so the decision stands.
+4. **`tools/verify_ci_policy.py` now enforces this in every workflow**, with controls in
+   `tools/test-verify-ci-policy`, many of them applied to the real `core-ci.yml`.
+   - **Artifact names.** Every upload name must carry the attempt. No download may select an
+     artifact by its own job's `github.run_attempt`, or read another run's artifacts (`run-id`,
+     `github-token`, `repository`). Every download must name an exact artifact through a needed
+     job's attempt output. That output must be `${{ github.run_attempt }}`, or, in a matrix, that
+     value guarded to one member by `matrix.<key> == <literal>` terms. Evaluating the producer's
+     upload name for that member must give exactly the downloaded name. This last rule catches one
+     surface's evidence being named by another surface's attempt.
+   - **The aggregator's gate.** These rules were enforced only for `apple-ci` until review found
+     twelve edits to the real `core-ci.yml` that defeated the result check and were all accepted.
+     They now apply to every evidence aggregator: any job that runs `tools/verify-parity-evidence`,
+     and any required check (`core-ci`, `apple-ci`, `parity-gate`, by job id or name) that needs
+     other jobs or downloads artifacts. A job that only downloads, such as a summary or one half of
+     a split release, keeps only the artifact-name rules above and the shell-read ban below. An
+     aggregator must run `if: always()`. It must test every needed job's result for `success` in
+     an unconditional, blocking shell step before its first download. It must download unconditionally into the paths its
+     single direct verify call reads, after every download. It must read every attempt output its
+     producers export. Neither the aggregator itself nor any job it needs may set
+     `continue-on-error`.
+   - **Shell reads.** `gh run download` and the artifacts REST API (a `repos/…/actions/…artifacts`
+     path) are rejected in any job, because the rules cannot reason about them. A local path that
+     merely contains `artifacts` is not a read and is allowed. The checker's docstring names what a text check cannot
+     see.
+   - **Mutation coverage.** `tools/test-verify-ci-policy` records mutants of these rules. Each one
+     names the case that must fail against the mutated verifier, and one equivalent mutant is kept
+     with its reason. They are re-run with the suite.
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it
