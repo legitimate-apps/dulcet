@@ -393,6 +393,10 @@ public struct DulcetSearchPage: Sendable, Hashable {
     public let artistResultCount: Int
     public let albumResultCount: Int
     public let trackResultCount: Int
+    /// Raw server rows, before deduplication. Advance each cursor in the same units as hasMore.
+    public let artistConsumedRowCount: Int
+    public let albumConsumedRowCount: Int
+    public let trackConsumedRowCount: Int
     public let artistHasMore: Bool
     public let albumHasMore: Bool
     public let trackHasMore: Bool
@@ -402,6 +406,9 @@ public struct DulcetSearchPage: Sendable, Hashable {
         artistResultCount: Int,
         albumResultCount: Int,
         trackResultCount: Int,
+        artistConsumedRowCount: Int,
+        albumConsumedRowCount: Int,
+        trackConsumedRowCount: Int,
         artistHasMore: Bool,
         albumHasMore: Bool,
         trackHasMore: Bool
@@ -410,9 +417,48 @@ public struct DulcetSearchPage: Sendable, Hashable {
         self.artistResultCount = artistResultCount
         self.albumResultCount = albumResultCount
         self.trackResultCount = trackResultCount
+        self.artistConsumedRowCount = artistConsumedRowCount
+        self.albumConsumedRowCount = albumConsumedRowCount
+        self.trackConsumedRowCount = trackConsumedRowCount
         self.artistHasMore = artistHasMore
         self.albumHasMore = albumHasMore
         self.trackHasMore = trackHasMore
+    }
+}
+
+/// One core search page's per-kind counts, named and typed exactly as the exported core page DTO
+/// declares them.
+///
+/// The app target conforms that DTO with an empty extension, so no hand-written line there can
+/// cross one kind's count into another's; the only mapping is `DulcetSearchPage.init(results:counts:)`,
+/// which the package tests drive directly. The DTO itself has no initializer visible to Swift, so a
+/// mapping written against it could not be tested at all.
+public protocol DulcetSearchPageCounts {
+    var artistResultCount: Int32 { get }
+    var albumResultCount: Int32 { get }
+    var trackResultCount: Int32 { get }
+    var artistConsumedRowCount: Int32 { get }
+    var albumConsumedRowCount: Int32 { get }
+    var trackConsumedRowCount: Int32 { get }
+    var artistHasMore: Bool { get }
+    var albumHasMore: Bool { get }
+    var trackHasMore: Bool { get }
+}
+
+extension DulcetSearchPage {
+    public init(results: [DulcetSearchResult], counts: some DulcetSearchPageCounts) {
+        self.init(
+            results: results,
+            artistResultCount: Int(counts.artistResultCount),
+            albumResultCount: Int(counts.albumResultCount),
+            trackResultCount: Int(counts.trackResultCount),
+            artistConsumedRowCount: Int(counts.artistConsumedRowCount),
+            albumConsumedRowCount: Int(counts.albumConsumedRowCount),
+            trackConsumedRowCount: Int(counts.trackConsumedRowCount),
+            artistHasMore: counts.artistHasMore,
+            albumHasMore: counts.albumHasMore,
+            trackHasMore: counts.trackHasMore
+        )
     }
 }
 
@@ -483,6 +529,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var savedServerName: String?
     private var searchQuery = ""
     private var searchResults: [DulcetSearchResult] = []
+    private var searchConsumedRows: [DulcetSearchResultKind: Int] = [:]
     private var searchHasMoreKinds: Set<DulcetSearchResultKind> = []
     private var searchLoadingMoreKind: DulcetSearchResultKind?
     private var searchFailure: DulcetSearchFailure?
@@ -1633,6 +1680,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func updateSearchQuery(_ query: String) {
         searchQuery = query
         searchResults = []
+        searchConsumedRows = [:]
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
         searchFailure = nil
@@ -1663,6 +1711,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
               case .connected = currentSnapshot.accountConnection,
               searchQuery.trimmedForSearch.count >= 2 else { return }
         searchResults = []
+        searchConsumedRows = [:]
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
         searchFailure = nil
@@ -1726,11 +1775,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             allowLocalHTTP: form.allowLocalHTTP,
             query: searchQuery.trimmedForSearch,
             artistCount: kind == nil || kind == .artist ? Self.searchPageSize : 0,
-            artistOffset: kind == .artist ? resultCount(for: .artist) : 0,
+            artistOffset: kind == .artist ? searchConsumedRows[.artist, default: 0] : 0,
             albumCount: kind == nil || kind == .album ? Self.searchPageSize : 0,
-            albumOffset: kind == .album ? resultCount(for: .album) : 0,
+            albumOffset: kind == .album ? searchConsumedRows[.album, default: 0] : 0,
             trackCount: kind == nil || kind == .track ? Self.searchPageSize : 0,
-            trackOffset: kind == .track ? resultCount(for: .track) : 0
+            trackOffset: kind == .track ? searchConsumedRows[.track, default: 0] : 0
         )
         let operation = serverSearch.search(request) { [weak self] outcome in
             guard let self,
@@ -1742,9 +1791,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             case let .loaded(page):
                 searchFailure = nil
                 if let kind {
+                    searchConsumedRows[kind, default: 0] += page.consumedRowCount(for: kind)
                     appendOrReplace(page.results)
                     setHasMore(page.hasMore(for: kind), for: kind)
                 } else {
+                    for resultKind in DulcetSearchResultKind.allCases {
+                        searchConsumedRows[resultKind] = page.consumedRowCount(for: resultKind)
+                    }
                     searchResults = page.results
                     searchHasMoreKinds = Set(DulcetSearchResultKind.allCases.filter(page.hasMore))
                 }
@@ -1779,10 +1832,6 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         activeSearchOperation?.cancel()
         activeSearchOperation = nil
         searchLoadingMoreKind = nil
-    }
-
-    private func resultCount(for kind: DulcetSearchResultKind) -> Int {
-        searchResults.lazy.filter { $0.kind == kind }.count
     }
 
     private func appendOrReplace(_ incoming: [DulcetSearchResult]) {
@@ -1941,6 +1990,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         libraryReadCompleted = false
         searchQuery = ""
         searchResults = []
+        searchConsumedRows = [:]
         searchHasMoreKinds = []
         searchLoadingMoreKind = nil
         searchFailure = nil
@@ -2238,6 +2288,14 @@ private extension DulcetSearchResultKind {
 }
 
 private extension DulcetSearchPage {
+    func consumedRowCount(for kind: DulcetSearchResultKind) -> Int {
+        switch kind {
+        case .track: trackConsumedRowCount
+        case .album: albumConsumedRowCount
+        case .artist: artistConsumedRowCount
+        }
+    }
+
     func hasMore(for kind: DulcetSearchResultKind) -> Bool {
         switch kind {
         case .track: trackHasMore

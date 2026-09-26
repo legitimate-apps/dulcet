@@ -71,6 +71,10 @@ public data class SearchPage(
     val artistResultCount: Int,
     val albumResultCount: Int,
     val trackResultCount: Int,
+    /** Raw rows consumed before display deduplication; offsets and fullness use these units. */
+    val artistConsumedRowCount: Int,
+    val albumConsumedRowCount: Int,
+    val trackConsumedRowCount: Int,
     val artistHasMore: Boolean,
     val albumHasMore: Boolean,
     val trackHasMore: Boolean,
@@ -131,12 +135,15 @@ public class ServerSearch private constructor(
                     artistResultCount = parsed.artists.size,
                     albumResultCount = parsed.albums.size,
                     trackResultCount = parsed.tracks.size,
+                    artistConsumedRowCount = parsed.rawArtistCount,
+                    albumConsumedRowCount = parsed.rawAlbumCount,
+                    trackConsumedRowCount = parsed.rawTrackCount,
                     artistHasMore = request.artistCount > 0 &&
-                        parsed.artists.size == request.artistCount,
+                        parsed.rawArtistCount == request.artistCount,
                     albumHasMore = request.albumCount > 0 &&
-                        parsed.albums.size == request.albumCount,
+                        parsed.rawAlbumCount == request.albumCount,
                     trackHasMore = request.trackCount > 0 &&
-                        parsed.tracks.size == request.trackCount,
+                        parsed.rawTrackCount == request.trackCount,
                 ),
             )
         } catch (_: CancellationException) {
@@ -501,6 +508,16 @@ private data class ParsedSearchResults(
     val artists: List<SearchResultItem>,
     val albums: List<SearchResultItem>,
     val tracks: List<SearchResultItem>,
+    // Sizes BEFORE de-duplication (every row is parsed or the page fails, so these are the array
+    // sizes). `hasMore` asks whether the server filled the page we requested, which is a question
+    // about what the server sent -- not about what survives de-duplication -- and a caller's offset
+    // advances by the same count. Answering from the de-duplicated size makes a full page holding a
+    // repeated row read as short, and a short page means "last page", so every later page is
+    // silently dropped. Spec 18.1: a server repeating a row inside one response is ASSUMED, not
+    // observed; the `distinctBy` below exists for it.
+    val rawArtistCount: Int,
+    val rawAlbumCount: Int,
+    val rawTrackCount: Int,
 ) {
     val all: List<SearchResultItem> get() = artists + albums + tracks
 }
@@ -575,6 +592,9 @@ private fun parseResults(
         artists = artists.distinctBy { it.id.rawId },
         albums = albums.distinctBy { it.id.rawId },
         tracks = tracks.distinctBy { it.id.rawId },
+        rawArtistCount = artists.size,
+        rawAlbumCount = albums.size,
+        rawTrackCount = tracks.size,
     )
 }
 

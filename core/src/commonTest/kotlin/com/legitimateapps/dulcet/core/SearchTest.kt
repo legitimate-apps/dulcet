@@ -87,6 +87,109 @@ class SearchTest {
     }
 
     @Test
+    fun aFullPageContainingADuplicateStillReportsMorePages() = runTest {
+        // `hasMore` asks whether the server FILLED the page we requested. De-duplication answers a
+        // different question -- what is worth displaying -- and deriving one from the other made a
+        // full page containing a repeat look short, and a short page means "last page".
+        //
+        // Synthetic: a server repeating a row inside one response is ASSUMED (spec 18.1), which is
+        // why the parser de-duplicates at all. When it happens it must not silently truncate the
+        // results; the person would just stop being offered pages that exist.
+        val duplicatedArtist = """{"id":"artist:opaque/7","name":"Atlas Artist"}"""
+        val result = ServerSearch(
+            SearchEndpointTransport {
+                success(
+                    """{"subsonic-response":{"status":"ok","searchResult3":{
+                        "artist":[$duplicatedArtist,$duplicatedArtist],
+                        "album":[],
+                        "song":[]
+                    }}}""".trimIndent(),
+                )
+            },
+        ).search(request(artistCount = 2, albumCount = 0, trackCount = 0))
+
+        val page = assertIs<SearchPageResult.Loaded>(result).page
+        assertEquals(
+            1,
+            page.artistResultCount,
+            "the duplicate must still be collapsed for display",
+        )
+        assertTrue(
+            page.artistHasMore,
+            "the server returned the 2 rows it was asked for, so a further page must be offered " +
+                "even though the two collapse to one displayable result",
+        )
+    }
+
+    @Test
+    fun consumedRowsReachLaterUniqueResultsForAllKinds() = runTest {
+        // Defensive synthetic intra-page duplication, not evidence of real server behavior.
+        // Cross-page overlap alone does not reduce this parser's per-response distinct count.
+        //
+        // The three kinds are deliberately unlike one another: a different page size, and for every
+        // pair of kinds at least one page where their raw row count, their de-duplicated count and
+        // their hasMore each differ. A mapping that crossed two kinds' values would otherwise read
+        // back the same numbers and pass. hasMore runs artist T,F,F / album T,T,F / song F,F,F.
+        val rows = mapOf(
+            // 20 a page: raw 20, 3, 0 -- distinct 1, 1, 0. The first page is full of one artist.
+            "artist" to List(20) { "A" } + List(3) { "B" },
+            // 15 a page: raw 15, 15, 2 -- distinct 2, 3, 1.
+            "album" to List(8) { "A" } + List(7) { "B" } +
+                List(5) { "C" } + List(5) { "D" } + List(5) { "E" } + List(2) { "F" },
+            // 10 a page: raw 7, 0, 0 -- distinct 4, 0, 0. The first page is already short.
+            "song" to List(4) { "A" } + listOf("B", "C", "D"),
+        )
+        val offsets = mutableListOf<List<Int>>()
+        val search = ServerSearch(SearchEndpointTransport { parameters ->
+            offsets += listOf("artistOffset", "albumOffset", "songOffset").map {
+                parameters.getValue(it).toInt()
+            }
+            fun page(kind: String, titleKey: String): String = rows.getValue(kind)
+                .drop(parameters.getValue("${kind}Offset").toInt())
+                .take(parameters.getValue("${kind}Count").toInt())
+                .joinToString(",") { """{"id":"$kind-$it","$titleKey":"$it"}""" }
+            success(envelope("""{
+                "artist":[${page("artist", "name")}],
+                "album":[${page("album", "name")}],
+                "song":[${page("song", "title")}]
+            }"""))
+        })
+        val consumed = listOf(listOf(20, 15, 7), listOf(3, 15, 0), listOf(0, 2, 0))
+        val distinct = listOf(listOf(1, 2, 4), listOf(1, 3, 0), listOf(0, 1, 0))
+        val hasMore = listOf(listOf(true, true, false), listOf(false, true, false), listOf(false, false, false))
+        var next = request(artistCount = 20, albumCount = 15, trackCount = 10)
+        var visible = emptyList<SearchResultItem>()
+        repeat(3) { index ->
+            val page = assertIs<SearchPageResult.Loaded>(search.search(next)).page
+            visible = mergeSearchResults(visible, page.results)
+            assertEquals(consumed[index], listOf(
+                page.artistConsumedRowCount, page.albumConsumedRowCount, page.trackConsumedRowCount,
+            ), "consumed rows, page ${index + 1}")
+            assertEquals(distinct[index], listOf(
+                page.artistResultCount, page.albumResultCount, page.trackResultCount,
+            ), "displayable results, page ${index + 1}")
+            assertEquals(hasMore[index], listOf(
+                page.artistHasMore, page.albumHasMore, page.trackHasMore,
+            ), "hasMore, page ${index + 1}")
+            next = next.copy(
+                artistOffset = next.artistOffset + page.artistConsumedRowCount,
+                albumOffset = next.albumOffset + page.albumConsumedRowCount,
+                trackOffset = next.trackOffset + page.trackConsumedRowCount,
+            )
+        }
+        assertEquals(listOf(listOf(0, 0, 0), listOf(20, 15, 7), listOf(23, 30, 7)), offsets)
+        val expected = mapOf(
+            SearchResultType.Artist to listOf("A", "B"),
+            SearchResultType.Album to listOf("A", "B", "C", "D", "E", "F"),
+            SearchResultType.Track to listOf("A", "B", "C", "D"),
+        )
+        assertEquals(SearchResultType.entries.toSet(), expected.keys, "every kind is checked")
+        for ((kind, titles) in expected) {
+            assertEquals(titles, visible.filter { it.type == kind }.map { it.title }, "visible $kind")
+        }
+    }
+
+    @Test
     fun ranksExactPrefixWordStartSubstringThenTypeWithCompatibilityNormalization() = runTest {
         val body = """{"subsonic-response":{"status":"ok","searchResult3":{
             "artist":[

@@ -1350,8 +1350,14 @@ Three rules, each because the alternative fails silently:
 3. **A source gate enforces rule 1**, because nothing else can: `tools/verify-playback-phase-parity`
    fails when either side names a phase the other does not, and asserts that the wire value is still
    derived from the enum's own name — a list comparison that has quietly stopped comparing anything
-   is worse than no gate. It is Apple-only today because Android has no phase-to-presentation mapping
-   on `main` at all; the Media3 work must extend it rather than repeat this.
+   is worse than no gate. It is Apple-only because Android has no phase-to-presentation mapping to
+   compare. **OBSERVED 2026-09-25 by source reading, after the Media3 work landed:** the Android
+   shells never branch on `AndroidPlaybackState.phase`. The phone and TV now-playing surfaces show the
+   track title, and fall back to their loading copy only when the title is blank *and* a session
+   exists (`PhoneNowPlaying.kt`, `TvPlaybackActivity.kt`), so a `Stopped` or `TornDown` session whose
+   track is known presents that track with a Play control rather than a spinner. The blank-title
+   fallback is the analogue of the Apple shell's missing-catalog `preparing`, which rule 1 does not
+   cover either. The first Android shell that branches on `phase` extends this gate to Android.
 
 ### 12.3 Position cadence
 
@@ -2633,7 +2639,11 @@ disposable copy seeded to 1,208 albums): `size=499` returns 499, `size=500` retu
 truncation. Measured through the production client, a walk that believed a short page reported
 `Loaded` with **500 of 1,208 albums** — a truncated library presented as a complete one. So the
 walk advances by what the server **returned**, never by what was asked for, and ends only on an
-empty page or one shorter than the largest page that server has returned. The look-ahead window
+empty page or one shorter than the largest page that server has returned. "Returned" is the raw row
+count, taken before anything is dropped or de-duplicated: the offset is a position in the server's
+rows, so a walk that advances by the rows it *kept* re-reads the tail of every page it thinned —
+extra requests, and a page count that can reach the walk's termination bound on a library the
+server was serving correctly (`LibrarySyncTransportTest.theArtistsWalkAdvancesByTheRowsTheServerReturnedNotTheArtistsItKept`). The look-ahead window
 opens only after a page has come back at exactly the requested size. `size` is additionally capped
 at the documented protocol maximum of 500.
 
@@ -3643,7 +3653,21 @@ every result carries a scope — `serverAndDevice`, `deviceWhileServerPending`, 
 - **Merging:** identity is the opaque id, so a server result **replaces** the local row of the same id
   (refreshing the cached object) rather than appearing twice. Late results never reorder items above the
   user's current scroll position; they append or replace in place.
-- Each result type pages independently.
+- Each result type pages independently. Offsets advance by raw rows consumed, before display
+  deduplication; `hasMore` is true when a positive requested count equals the raw response count.
+  The core page carries these consumed-row counts through the Apple boundary. The caller preserves
+  cursors on failure and resets them for a new search.
+- **OBSERVED (synthetic core and Apple presentation tests):** with raw rows `[A × 20, B × 20, C]`,
+  each kind reaches C at offsets 0, 20 and 40. These fixtures establish defensive handling, not
+  duplicate arrays from a real server. **ASSUMED:** an actual server may return intra-page duplicates;
+  §16.1's cross-request row shifting does not establish that behavior.
+- Apple continuation makes one request per explicit Load more activation, with no automatic paging
+  on completion. A server returning full pages forever therefore cannot start an automatic request
+  loop. There is no total cap on deliberate activations; a full page alone cannot establish exhaustion.
+- **As implemented (R1c):** `LibrarySearchSession` requests one page per kind at offset 0 and offers no
+  continuation, and the Android `SearchPresenter` does the same, so neither has a cursor to advance.
+  Whichever of them gains continuation advances it by the consumed-row counts on `SearchPage`, never
+  by the size of the de-duplicated result list.
 
 ### 18.2 Artwork
 
@@ -3839,6 +3863,13 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   CrossOriginRedirectRejected`
 - `Capability.Unsupported(featureId)` — carries a closed feature-id enum so the UI can say which
   capability is missing.
+  **OBSERVED 2026-09-25 from source:** the account-connect path never constructs it. The only
+  production constructions are library sync's, for a server that cannot enumerate the whole library
+  or a walk that will not terminate; every other production use is a type match in a mapping. In
+  account setup it is reserved vocabulary, not a missing mapping for absent extension discovery
+  (§10.3 requires baseline login to proceed), and §10.4's circuit breaker has no production
+  implementation to supply one. Presentation tests that inject it do not make it a reachable
+  account-connect state; `docs/CONFORMANCE.md` records the audit.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
 
@@ -5113,6 +5144,49 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
+count is raw, before anything is dropped or de-duplicated. The songs walk already counted that way; the
+artists walk did not, because its page parser removed repeated artists before the walk saw the page,
+so a page holding a repeat advanced the offset by less than it consumed. The cost is re-read rows and
+extra pages; a test that sets the walk's page bound to exactly the pages the library needs shows the
+under-counting walk failing the import. The parser now returns every row and the artists stage
+removes repeats itself, recording the raw count. The albums and songs walks, the first-paint album
+pager and the reader's paged lists were checked for the same shape; none de-duplicates before its
+row count is taken. (Numbered
+after the highest revision on `main` when written; renumbers at merge.)
+
+**Revision 109 (2026-09-25)** — §18.12 records that `Capability.Unsupported` has no production origin on
+the account-connect path. CONF-09b ("every declared distinct account-connect render state is
+reachable") was cited on all four Apple cells by tests that reach no state through the production
+transitions: macOS cited a test that renders every state from deterministic fixtures, and iOS,
+iPadOS and tvOS cited tests that load the root view or check its layout in its initial state. The
+capability state cannot be reached at all without injecting it. The citations are withdrawn: each
+Apple cell now names CONF-09b as an explicit gap (`unevidenced_conformance`, which the parity gate
+forbids on a shipped cell, and which must partition the declared ids with the evidence whenever the
+cell cites a conformance row or is shipped). Each keeps the injected-outcome presentation test —
+checked outcome by outcome against a table written out in the test — and the test it cited before,
+as bounded `observes` rows stating what each shows. The Android and Android TV cells cited a test of
+the same shape, reaching their render states through injected gateway results and an injected
+failing credential store; CONF-09b is a named gap there too, and that test is kept as an `observes`
+row. (Numbered after the highest revision on `main` when written; renumbers at merge.)
+
+**Revision 108 (2026-09-25)** — §12.2 rule 3 said the phase gate is Apple-only "because Android has no
+phase-to-presentation mapping on `main` at all" and that the Media3 work must extend it. The Media3
+work has landed without adding one: the Android shells key their loading copy on a blank title with a
+live session, never on the phase, so a stopped session with a known track shows that track. The rule
+now says so, names where that was read, and moves the obligation to the first Android shell that
+branches on `phase`. (Numbered after the highest revision on `main` when written; renumbers at merge.)
+
+**Revision 107 (2026-09-25)** — §18.1 defines search continuation in raw consumed rows. It said only
+that each result type pages independently, and the code filled the gap in the units that go wrong:
+`ServerSearch` derived each kind's `hasMore` from the de-duplicated count, so a full page containing a
+repeated row read as short and every later page was silently dropped; and the Apple caller advanced
+each cursor by the number of distinct rows it was displaying, which re-requests rows it has already
+consumed. `SearchPage` now carries the consumed-row count per kind through the Apple boundary, `hasMore`
+reads the raw count, and the Apple cursors advance by it. Synthetic multi-page tests cover both
+within-page duplicates and cross-page overlap; neither establishes duplicate arrays from a real server.
+(Numbered after the highest revision on `main` when written; renumbers at merge.)
 
 **Revision 106 (2026-09-24)** — written 2026-09-22. The Apple playback system. Contracts that did not exist or were
 wrong:

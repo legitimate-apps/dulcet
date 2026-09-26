@@ -58,6 +58,9 @@ public class AppleSearchPageDto internal constructor(
     public val artistResultCount: Int,
     public val albumResultCount: Int,
     public val trackResultCount: Int,
+    public val artistConsumedRowCount: Int,
+    public val albumConsumedRowCount: Int,
+    public val trackConsumedRowCount: Int,
     public val artistHasMore: Boolean,
     public val albumHasMore: Boolean,
     public val trackHasMore: Boolean,
@@ -146,7 +149,8 @@ private fun AppleSearchPageRequest.toCoreRequest(): SearchPageRequest = SearchPa
     trackOffset = trackOffset,
 )
 
-private fun SearchPageResult.toAppleOutcome(): AppleSearchOutcome = when (this) {
+// Internal, not private, so `AppleSearchFacadeTest` can pin the per-kind counts crossing to Swift.
+internal fun SearchPageResult.toAppleOutcome(): AppleSearchOutcome = when (this) {
     is SearchPageResult.Loaded -> AppleSearchOutcome(page.toAppleDto(), null)
     is SearchPageResult.Failed -> AppleSearchOutcome(null, AppleSearchErrorDto(error.appleSearchKind()))
 }
@@ -179,6 +183,9 @@ private fun SearchPage.toAppleDto(): AppleSearchPageDto = AppleSearchPageDto(
     artistResultCount = artistResultCount,
     albumResultCount = albumResultCount,
     trackResultCount = trackResultCount,
+    artistConsumedRowCount = artistConsumedRowCount,
+    albumConsumedRowCount = albumConsumedRowCount,
+    trackConsumedRowCount = trackConsumedRowCount,
     artistHasMore = artistHasMore,
     albumHasMore = albumHasMore,
     trackHasMore = trackHasMore,

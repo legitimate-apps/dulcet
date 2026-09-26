@@ -46,6 +46,111 @@ func credentialBearingPresentationValuesCannotPrintCredentials() {
     #expect(rendered.allSatisfy { $0.contains("<redacted>") })
 }
 
+// Conditional presentation coverage: connector outcomes are injected, not production-derived.
+// The connector controls completion timing/outcomes; credential stores control load/save results.
+@Test @MainActor
+func accountPresentationTransitionsGivenConnectorOutcomes() {
+    let request = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid", username: "listener",
+        password: "fixture-password", allowLocalHTTP: false
+    )
+    let success = DulcetAccountConnectOutcome.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: request.serverURL
+    ))
+    // Not reached here, deliberately: accountConnectEmpty and the tlsUntrusted* states are fixture
+    // variants rather than distinct live states, and accountRemoving/accountRemovalError belong to
+    // account removal.
+
+    func makeStore(
+        _ connector: ControlledAccountConnector,
+        credentials: any DulcetCredentialStoring = MemoryCredentialStore(persisted: nil)
+    ) -> DulcetPresentationStore {
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+            connector: connector, credentialStore: credentials
+        ))
+        store.accountServerURL = request.serverURL
+        store.accountUsername = request.username
+        store.accountPassword = request.password
+        return store
+    }
+
+    // Each step is checked against the one state it must produce. A set of observed states would
+    // accept two outcomes swapping their states, because the set is the same either way.
+    let connector = ControlledAccountConnector()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let store = makeStore(connector, credentials: credentials)
+    #expect(store.snapshot.state == .accountConnectIdle)
+    store.submitAccountConnection()
+    #expect(connector.requests == [request])
+    #expect(store.snapshot.state == .accountConnecting)
+    connector.complete(success)
+    #expect(store.snapshot.state == .accountConnected)
+    #expect(credentials.saved == [request])
+
+    // Reconstruct from credentials actually saved by the successful production submission.
+    let restoredConnector = ControlledAccountConnector()
+    let restored = makeStore(restoredConnector, credentials: credentials)
+    #expect(restored.snapshot.state == .accountSavedDisconnected)
+    #expect(restoredConnector.requests.isEmpty)
+
+    // The oracle is written out per failure kind, deliberately not derived from `kind.family`:
+    // derived from production, it would move with a broken production mapping and still agree.
+    // transportCancelled is not an error presentation, and credentialPersistenceFailed is reached
+    // below through a failing credential save rather than injected.
+    let expectedState: [DulcetAccountFailureKind: DulcetPresentationState] = [
+        .invalidServerURL: .accountErrorInput,
+        .transportUnreachable: .accountErrorTransport,
+        .transportTimeout: .accountErrorTransport,
+        .localNetworkAccessDenied: .accountErrorTransport,
+        .tlsUntrusted: .accountErrorSecurity,
+        .localNetworkPolicyRejected: .accountErrorSecurity,
+        .redirectRejected: .accountErrorSecurity,
+        .malformedEnvelope: .accountErrorProtocol,
+        .incompatibleProtocol: .accountErrorProtocol,
+        .notASubsonicServer: .accountErrorProtocol,
+        .knownServerError: .accountErrorServer,
+        .unknownServerError: .accountErrorServer,
+        .invalidCredentials: .accountErrorAuthentication,
+        .tokenAuthenticationUnsupported: .accountErrorAuthentication,
+        .forbidden: .accountErrorAuthentication,
+        .unsupportedAuthenticationChallenge: .accountErrorAuthentication,
+        .crossOriginRedirectRejected: .accountErrorAuthentication,
+        .capabilityUnsupported: .accountErrorCapability,
+    ]
+    let injected = DulcetAccountFailureKind.allCases.filter {
+        $0 != .transportCancelled && $0 != .credentialPersistenceFailed
+    }
+    #expect(Set(injected) == Set(expectedState.keys), "every injected failure kind has an expected state")
+    for kind in injected {
+        let failingConnector = ControlledAccountConnector()
+        let failed = makeStore(failingConnector)
+        failed.submitAccountConnection()
+        #expect(failingConnector.requests == [request])
+        failingConnector.complete(.failed(DulcetAccountErrorPresenter.presentation(
+            for: DulcetAccountErrorContext(kind: kind, serverName: "Music")
+        )))
+        #expect(failed.snapshot.state == expectedState[kind], "\(kind)")
+    }
+
+    let persistenceConnector = ControlledAccountConnector()
+    let persistenceFailed = makeStore(
+        persistenceConnector, credentials: Conf09bFailingSaveCredentialStore()
+    )
+    persistenceFailed.submitAccountConnection()
+    #expect(persistenceConnector.requests == [request])
+    persistenceConnector.complete(success)
+    #expect(persistenceFailed.snapshot.state == .accountErrorPersistence)
+}
+
+@MainActor
+private final class Conf09bFailingSaveCredentialStore: DulcetCredentialStoring {
+    func load() throws -> DulcetAccountConnectRequest? { nil }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement
+    }
+    func delete() throws {}
+}
+
 @Test @MainActor
 func accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation() {
     let connector = ControlledAccountConnector()
@@ -545,6 +650,187 @@ func searchPublicationNeverCarriesAQueryOlderThanTheTypedText() async {
     #expect(store.searchQuery.isEmpty)
     #expect(store.snapshot.searchQuery.isEmpty)
     #expect(store.snapshot.state == .searchIdle)
+}
+
+// Synthetic offset-respecting server rows, not an observed reference-server response.
+@Test(arguments: [false, true]) @MainActor
+func searchConsumedRowsReachLaterUniqueResultsForEveryKind(crossPageOverlap: Bool) async throws {
+    // Internally unique pages with five cross-page overlaps exercise the caller's merge too.
+    let firstPage: [String] = crossPageOverlap ? (0..<20).map { String($0) } : Array(repeating: "A", count: 20)
+    let secondPage: [String] = crossPageOverlap ? (15..<35).map { String($0) } : Array(repeating: "B", count: 20)
+    let rows = firstPage + secondPage + ["C"]
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector, serverSearch: search, searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+    store.searchQuery = "atlas"
+    await settleSearchTask(until: { search.requests.count == 1 })
+
+    func respond(_ index: Int) {
+        let request = search.requests[index]
+        let artists = Array(rows.dropFirst(request.artistOffset).prefix(request.artistCount))
+        let albums = Array(rows.dropFirst(request.albumOffset).prefix(request.albumCount))
+        let tracks = Array(rows.dropFirst(request.trackOffset).prefix(request.trackCount))
+        search.complete(at: index, .loaded(rawSearchPage(artists: artists, albums: albums, tracks: tracks)))
+    }
+    respond(0)
+    for kind in [DulcetSearchResultKind.artist, .album, .track] {
+        var offsets: [Int] = [0]
+        // Bounded driver: with intra-page duplicates, the old caller stalls at 2 before C.
+        for _ in 0..<5 where store.snapshot.searchHasMoreKinds.contains(kind) {
+            let index = search.requests.count
+            store.loadMoreSearchResults(kind)
+            let request = try #require(search.requests.last)
+            offsets.append(kind == .artist ? request.artistOffset : kind == .album ? request.albumOffset : request.trackOffset)
+            respond(index)
+        }
+        #expect(offsets == [0, 20, 40])
+        var seen: Set<String> = []
+        let expectedIDs = rows.filter { seen.insert($0).inserted }.map { "\(kind)-\($0)" }
+        #expect(store.snapshot.searchResults.filter { $0.kind == kind }.map(\.id.rawID) == expectedIDs)
+        #expect(!store.snapshot.searchHasMoreKinds.contains(kind))
+    }
+}
+
+@Test @MainActor
+func searchRepeatedFullPagesAreOneRequestPerActivationAndFailuresPreserveCursors() async throws {
+    let connector = ControlledAccountConnector()
+    let search = ControlledServerSearch()
+    let source = DulcetAccountDataSource(
+        connector: connector, serverSearch: search, searchDebounce: .zero,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
+    store.selectDestination(.search)
+    store.searchQuery = "atlas"
+    await settleSearchTask(until: { search.requests.count == 1 })
+    let repeated = Array(repeating: "A", count: 20)
+    search.complete(at: 0, .loaded(rawSearchPage(artists: repeated, albums: repeated, tracks: repeated)))
+    for kind in [DulcetSearchResultKind.artist, .album, .track] {
+        func offset(_ request: DulcetSearchPageRequest) -> Int {
+            kind == .artist ? request.artistOffset : kind == .album ? request.albumOffset : request.trackOffset
+        }
+        for pageIndex in 1...5 {
+            let index = search.requests.count
+            store.loadMoreSearchResults(kind)
+            #expect(search.requests.count == index + 1)
+            #expect(offset(try #require(search.requests.last)) == pageIndex * 20)
+            store.loadMoreSearchResults(kind)
+            #expect(search.requests.count == index + 1, "in-flight activation must not start another request")
+            search.complete(at: index, .loaded(rawSearchPage(
+                artists: kind == .artist ? repeated : [],
+                albums: kind == .album ? repeated : [],
+                tracks: kind == .track ? repeated : []
+            )))
+            await settleSearchTask()
+            #expect(search.requests.count == index + 1, "completion must not automatically page again")
+            #expect(store.snapshot.searchHasMoreKinds.contains(kind))
+        }
+        let failedIndex = search.requests.count
+        store.loadMoreSearchResults(kind)
+        #expect(offset(try #require(search.requests.last)) == 120)
+        search.complete(at: failedIndex, .failed(DulcetSearchFailure(kind: .timeout)))
+        store.loadMoreSearchResults(kind)
+        #expect(offset(try #require(search.requests.last)) == 120)
+        search.complete(at: failedIndex + 1, .loaded(rawSearchPage(artists: [], albums: [], tracks: [])))
+        #expect(!store.snapshot.searchHasMoreKinds.contains(kind))
+    }
+    // New query resets all cursors. A stale completion cannot advance the new generation.
+    let initialIndex = search.requests.count
+    store.searchQuery = "new query"
+    await settleSearchTask(until: { search.requests.count == initialIndex + 1 })
+    let request = try #require(search.requests.last)
+    let resetOffsets: [Int] = [request.artistOffset, request.albumOffset, request.trackOffset]
+    #expect(resetOffsets == [0, 0, 0])
+    search.complete(at: 0, .loaded(rawSearchPage(artists: repeated, albums: repeated, tracks: repeated)))
+    search.complete(at: initialIndex, .loaded(rawSearchPage(artists: ["Z"], albums: repeated, tracks: repeated)))
+    for kind in [DulcetSearchResultKind.album, .track] {
+        let index = search.requests.count
+        store.loadMoreSearchResults(kind)
+        let next = try #require(search.requests.last)
+        #expect((kind == .album ? next.albumOffset : next.trackOffset) == 20)
+        search.complete(at: index, .loaded(rawSearchPage(artists: [], albums: [], tracks: [])))
+    }
+}
+
+/// Stands in for the core page DTO, which the app target conforms with an empty extension.
+private struct SearchPageCountsFixture: DulcetSearchPageCounts {
+    var artistResultCount: Int32 = 1
+    var albumResultCount: Int32 = 2
+    var trackResultCount: Int32 = 3
+    var artistConsumedRowCount: Int32 = 20
+    var albumConsumedRowCount: Int32 = 15
+    var trackConsumedRowCount: Int32 = 7
+    var artistHasMore = true
+    var albumHasMore = false
+    var trackHasMore = true
+}
+
+// Every count differs, so crossing any two kinds -- or a result count with a consumed-row count --
+// reads back a different number. The data source advances each kind's cursor by the consumed-row
+// count, so a crossed count here sends one kind's offset to another kind. Three booleans cannot all
+// differ, so the has-more flags are checked once per kind with only that kind set: any two crossed
+// kinds then move the one `true` in at least one of the three pages.
+@Test
+func searchPageCountsCrossTheCoreBoundaryUnderTheirOwnKinds() {
+    let page = DulcetSearchPage(results: [], counts: SearchPageCountsFixture())
+    let resultCounts: [Int] = [page.artistResultCount, page.albumResultCount, page.trackResultCount]
+    let consumedRows: [Int] = [page.artistConsumedRowCount, page.albumConsumedRowCount, page.trackConsumedRowCount]
+    #expect(resultCounts == [1, 2, 3])
+    #expect(consumedRows == [20, 15, 7])
+
+    for kind in 0..<3 {
+        var fixture = SearchPageCountsFixture()
+        fixture.artistHasMore = kind == 0
+        fixture.albumHasMore = kind == 1
+        fixture.trackHasMore = kind == 2
+        let flagged = DulcetSearchPage(results: [], counts: fixture)
+        let hasMore: [Bool] = [flagged.artistHasMore, flagged.albumHasMore, flagged.trackHasMore]
+        #expect(hasMore == (0..<3).map { $0 == kind }, "has-more with only kind \(kind) set")
+    }
+}
+
+@MainActor
+private func rawSearchPage(artists: [String], albums: [String], tracks: [String]) -> DulcetSearchPage {
+    func unique(_ rows: [String], _ kind: DulcetSearchResultKind) -> [DulcetSearchResult] {
+        var seen: Set<String> = []
+        return rows.filter { seen.insert($0).inserted }.map {
+            searchResult(id: "\(kind)-\($0)", title: $0, kind: kind)
+        }
+    }
+    let artistResults = unique(artists, .artist)
+    let albumResults = unique(albums, .album)
+    let trackResults = unique(tracks, .track)
+    return DulcetSearchPage(
+        results: artistResults + albumResults + trackResults,
+        artistResultCount: artistResults.count,
+        albumResultCount: albumResults.count,
+        trackResultCount: trackResults.count,
+        artistConsumedRowCount: artists.count,
+        albumConsumedRowCount: albums.count,
+        trackConsumedRowCount: tracks.count,
+        artistHasMore: artists.count == 20,
+        albumHasMore: albums.count == 20,
+        trackHasMore: tracks.count == 20
+    )
 }
 
 @Test @MainActor
@@ -1435,7 +1721,21 @@ private final class ControlledServerSearch: DulcetServerSearching {
         return operation
     }
 
-    func complete(at index: Int, _ outcome: DulcetSearchPageOutcome) {
+    // An index with no request behind it is recorded as a failure rather than subscripted: a trap
+    // here ends the whole test process, so every other test in the run reports nothing, and the
+    // one line that names the cause is an `Index out of range` with no test attached.
+    func complete(
+        at index: Int,
+        _ outcome: DulcetSearchPageOutcome,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        guard completions.indices.contains(index) else {
+            Issue.record(
+                "no search request at index \(index); \(completions.count) were issued",
+                sourceLocation: sourceLocation
+            )
+            return
+        }
         completions[index](outcome)
     }
 }
@@ -1653,11 +1953,18 @@ private func fixtureLibraryAlbum() -> DulcetAlbum {
 // debounced-search assertions below fail, and the failure read as "search issued no request"
 // rather than "the settle expired". Wait for the effect, with a deadline, so a genuine regression
 // still fails and mere contention does not.
-private func settleSearchTask(until condition: () -> Bool) async {
+private func settleSearchTask(
+    until condition: () -> Bool,
+    sourceLocation: SourceLocation = #_sourceLocation
+) async {
     let deadline = ContinuousClock.now + .seconds(5)
     while ContinuousClock.now < deadline {
         if condition() { return }
         try? await Task.sleep(for: .milliseconds(5))
+    }
+    // Returning silently let the caller go on to act on a request that was never issued.
+    if !condition() {
+        Issue.record("search condition not met within 5 s", sourceLocation: sourceLocation)
     }
 }
 
@@ -1704,6 +2011,9 @@ private func searchPage(
         artistResultCount: results.count { $0.kind == .artist },
         albumResultCount: results.count { $0.kind == .album },
         trackResultCount: results.count { $0.kind == .track },
+        artistConsumedRowCount: results.count { $0.kind == .artist },
+        albumConsumedRowCount: results.count { $0.kind == .album },
+        trackConsumedRowCount: results.count { $0.kind == .track },
         artistHasMore: false,
         albumHasMore: false,
         trackHasMore: trackHasMore

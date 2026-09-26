@@ -83,3 +83,73 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-85 | download enqueue pins metadata atomically; downloaded albums rechecked after an epoch change |
 | CONF-86 | multi-list screen rows publish independently |
 | CONF-87 | bounded detail look-ahead |
+
+## Account-connect evidence boundary (CONF-09b)
+
+CONF-09b is an explicit gap on all four Apple `account.connect` cells and on both Android cells.
+
+**Apple.** The shared `accountPresentationTransitionsGivenConnectorOutcomes` test submits through the
+production `DulcetPresentationStore` into `DulcetAccountDataSource` and reads real snapshots, but it
+injects the connector's completed outcomes and controls the credential store's load and save. It
+checks each step against the one state that step must produce — idle, connecting, connected, a saved
+account reconstructed from the credentials the successful submission actually saved, the state for
+each injected failure kind from a table written out in the test, and the save-failure path — so two
+outcomes exchanging their states fail it. It does not prove that production can originate each
+outcome or forward it through the Apple adapter. It runs in the macOS package run
+(`DulcetKitTests`), on the iPhone and the iPad (`DulcetKitIOSTests`) and on Apple TV
+(`DulcetKitTVOSTests`), and each cell cites it as a bounded `observes` row, never as CONF-09b.
+
+The tests these cells cited for CONF-09b before are kept, each as an `observes` row stating the one
+thing it shows: `fixtureRendersEveryDeclaredDistinctState` (macOS) that the deterministic fixture
+covers every declared state; `accountConnectRootLoadsForIOS` and `accountConnectRootLoadsForTVOS` that
+the root loads in one fixture state at the platform's window size; and
+`testAccountConnectUsesRegularWidthSplitLayout` (iPadOS) the regular-width split layout. Un-citing
+them would leave each cell's reason describing a test that nothing checks still runs.
+
+**Android.** `conf09bEveryDeclaredDistinctRenderStateIsReachable` reaches the view model's six render
+states through injected gateway results (`ImmediateGateway`, `CancellableGateway`) and an injected
+failing credential store — the same boundary as the Apple test. It is cited as a bounded `observes`
+row on the `android` and `androidtv` cells, and CONF-09b is named as a gap there for the same reason:
+the production gateway originating each outcome, and a production credential save failing, are not
+observed. The capability point below does not arise on Android, which declares one failure render
+state for every error.
+
+`unevidenced_conformance` maps a declared CONF id to a nonblank reason, and the parity gate refuses a
+`shipped` cell that carries one. When a cell cites at least one conformance row, or is `shipped`, the
+gate also requires the evidence and the named gaps to partition the cell's declared ids with no
+overlap; a cell citing only `observes` rows may name any subset of its declared ids as gaps. This
+keeps the universal CONF-09b requirement visible instead of satisfying it with a narrower test.
+
+### `Capability.Unsupported` has no account-connect origin
+
+OBSERVED from source on 2026-09-25. `DomainError.CapabilityUnsupported` and `CapabilityFeature` are
+declared in `core/.../AccountConnection.kt`. Production constructs it only in `LibrarySync.kt`, for a
+server that cannot enumerate the whole library and for a walk that will not terminate; every other
+production occurrence is a type match in a diagnostic or facade mapping. On the account-connect path,
+`AccountConnector.connectNormalized` treats an extension-list 404 or non-envelope as
+`legacySubsonic = true` and proceeds after an authenticated `ping`; malformed metadata is
+`Protocol.MalformedEnvelope`, an incompatible version is `Protocol.Incompatible`, and parsed server
+errors go through `AccountConnectionContract.mapSubsonicError`. None of them yields a capability
+error, which agrees with spec §10.3: absent discovery must not fail a baseline login. §10.4's
+three-failure circuit breaker has no production implementation in `commonMain`, so it supplies no
+origin either. The Apple and Android capability error presentations are therefore reserved
+vocabulary for account setup: the Swift conditional test injects it, and the Android CONF-09c
+presentation control constructs it directly.
+
+## CONF-51 citations on the Apple download cells are incomplete
+
+CONF-51 requires live exact **and** cold-estimated bodies to validate before atomic promotion, an
+exact mismatch never to reach the destination, and duplicate delivery to be idempotent. The macOS,
+iOS and iPadOS `downloads.offline` cells cite
+`DulcetAppleDownloadIntegrationTest/downloadTriggerPromotesValidatedResponseAtomically[OnIOS|OnIPadOS]`,
+which observes one successful promotion through the platform executor: the downloaded state, exactly
+one promoted file, no remaining `.partial`, and a stored size equal to the asset's exact length. It
+exercises no cold estimate, no exact mismatch and no duplicate delivery. The core conformance control
+`conf51LiveDownloadsValidateBeforeAtomicPromotion` covers those three against the reference server,
+but through `DownloadPolicyContract`, not the Apple executor. This finding is open: nothing here
+changes a citation or a status.
+
+A naming rule — the CONF id must appear in the cited test's name — was considered as a gate for this
+class of defect and rejected. In the citation audit that found these two defects it flagged 26
+legitimate descriptive citations against 7 weak ones (four CONF-09b, three CONF-51), and a renamed
+test that still injects its outcome would pass it; naming does not establish semantic coverage.

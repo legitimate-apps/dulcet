@@ -474,6 +474,11 @@ private fun String.enumeratedRows(kind: LibraryEnumerationKind): List<JsonObject
  * The fields are the two `getArtists` supplies through [parseArtists] — a stable opaque id and a
  * name. `search3` pages artists; `getArtists` cannot page at all, and returns every artist in one
  * indivisible response.
+ *
+ * Every row is returned, repeats included. The walk's offset is a position in the server's rows,
+ * so the page's row count is what it consumed; de-duplicating here would hide that count from the
+ * walk, which then re-reads the tail of every page holding a repeat. The artists stage removes
+ * repeats itself, and [LibrarySyncRepository.putArtists] again on write.
  */
 internal fun parseEnumeratedArtists(
     providerInstanceId: String,
@@ -484,7 +489,7 @@ internal fun parseEnumeratedArtists(
         name = artist.syncRequiredString("name"),
         mediaSourceId = null,
     )
-}.distinctBy { it.id.rawId }
+}
 
 /**
  * Albums from one page of the albums walk.
@@ -1292,7 +1297,12 @@ internal class LibrarySyncEngine(
                     LibrarySyncStage.Artists -> checkpoint = runPagedStage(
                         serverId, checkpoint, { artist: LibraryArtist -> artist.id.rawId },
                         repository::putArtists,
-                    ) { offset, size -> SourcePage(source.artistPage(offset, size)) }
+                    ) { offset, size ->
+                        // Advance by the rows the server returned, not the artists kept: the
+                        // offset is a server row position (see `parseEnumeratedArtists`).
+                        val page = source.artistPage(offset, size)
+                        SourcePage(page.distinctBy { it.id.rawId }, rowCount = page.size)
+                    }
                     LibrarySyncStage.Albums -> checkpoint = runPagedStage(
                         serverId, checkpoint, { album: AlbumSummary -> album.id.rawId },
                         repository::putAlbums,
