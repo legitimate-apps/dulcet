@@ -51,6 +51,9 @@ class PlaylistEditingEighthReviewTest {
         "http://fixture.invalid/rest",
     )
 
+    /** The name a new create was sent with: the scenarios below hinge on WHICH name went out. */
+    private fun createName(parameters: List<Pair<String, String>>) = parameters.firstOrNull { it.first == "name" }?.second
+
     /** A `createPlaylist` that makes a playlist — not the whole-list write, which names `playlistId`. */
     private fun isNewCreate(endpoint: String, parameters: List<Pair<String, String>>) =
         endpoint == "createPlaylist" && parameters.none { it.first == "playlistId" }
@@ -80,6 +83,10 @@ class PlaylistEditingEighthReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that flush makes the send, and the
+        // tombstone's lookups are the flushes counted below.
+        runCurrent()
+        assertEquals(1, creates, "fixture: the reconnect's flush made the send")
         var refused = 0
         repeat(4) {
             refused += session.playlists.flush().refused
@@ -126,13 +133,13 @@ class PlaylistEditingEighthReviewTest {
     @Test
     fun p2_aRefusedResendOfADeletedCreateIsUntoldAndItsTombstoneNamesTheLatePlaylist() = hooked { env ->
         val session = timed(env)
-        var creates = 0
+        val names = mutableListOf<String?>()
         var localId: String? = null
         var late: FakePlaylistServer.Playlist? = null
         env.hooked.before = { endpoint, parameters ->
             if (isNewCreate(endpoint, parameters)) {
-                creates++
-                when (creates) {
+                names += createName(parameters)
+                when (names.size) {
                     1 -> status(500)
                     2 -> {
                         late = env.server.add("Road", listOf("song-1"))
@@ -147,15 +154,17 @@ class PlaylistEditingEighthReviewTest {
         }
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
+        // The reconnect's flush (§16.14 step 1) is the first send; see the seventh round's twin.
         session.setOnline(true)
-        session.playlists.flush(); runCurrent()
+        runCurrent()
+        assertEquals(listOf<String?>("Road"), names, "fixture: the reconnect's flush sent the create once")
         session.playlists.rename(localId!!, "Trip")
         session.playlists.flush(); runCurrent()
-        assertEquals(2, creates, "fixture: sent again as Trip, deleted while out, refused")
+        assertEquals(listOf<String?>("Road", "Trip"), names, "fixture: sent again as Trip, deleted while out, refused")
         assertEquals(emptyList(), env.outcomes.filterIsInstance<PlaylistEditOutcome.NotSaved>(), "the refused re-send of a deleted create was told: ${env.outcomes}")
         advanceTimeBy(10_000); runCurrent()
         session.playlists.flush(); runCurrent(); advanceUntilIdle()
-        assertEquals(2, creates, "the deleted create was sent again")
+        assertEquals(2, names.size, "the deleted create was sent again: $names")
         assertTrue(
             PlaylistEditOutcome.PossiblyCreated(localId!!, "Road", listOf(assertNotNull(late).id)) in env.outcomes,
             "the playlist the first send made was never named: ${env.outcomes}",
@@ -225,13 +234,13 @@ class PlaylistEditingEighthReviewTest {
     @Test
     fun p4_aFirstSendPlaylistRenamedAwayAndBackIsAdoptedNotDuplicated() = hooked { env ->
         val session = timed(env)
-        var creates = 0
+        val names = mutableListOf<String?>()
         var localId: String? = null
         var first: FakePlaylistServer.Playlist? = null
         env.hooked.before = { endpoint, parameters ->
             if (isNewCreate(endpoint, parameters)) {
-                creates++
-                when (creates) {
+                names += createName(parameters)
+                when (names.size) {
                     1 -> {
                         first = env.server.add("Road", listOf("song-1"))
                         first!!.name = "Elsewhere" // another client renames it at once
@@ -250,14 +259,16 @@ class PlaylistEditingEighthReviewTest {
         }
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
+        // The reconnect's flush (§16.14 step 1) is the first send; see p2.
         session.setOnline(true)
-        session.playlists.flush(); runCurrent()
+        runCurrent()
+        assertEquals(listOf<String?>("Road"), names, "fixture: the reconnect's flush sent the create once")
         session.playlists.rename(localId!!, "Trip")
         session.playlists.flush(); runCurrent()
-        assertEquals(2, creates, "fixture: the lookup listed Elsewhere, found no Road, sent again as Trip")
+        assertEquals(listOf<String?>("Road", "Trip"), names, "fixture: the lookup listed Elsewhere, found no Road, sent again as Trip")
         advanceTimeBy(10_000); runCurrent()
         session.playlists.flush(); runCurrent(); advanceUntilIdle()
-        assertEquals(2, creates, "sent a third time although the first send's playlist is listed as Road: ${env.outcomes}")
+        assertEquals(2, names.size, "sent a third time although the first send's playlist is listed as Road: $names ${env.outcomes}")
         assertEquals(1, env.server.playlists.size, "${env.server.playlists.map { it.id to it.name }}")
         assertEquals(assertNotNull(first).id, session.reader.playlistOverlay.resolve(localId!!), "${env.outcomes}")
     }
@@ -292,7 +303,8 @@ class PlaylistEditingEighthReviewTest {
         session.setOnline(false)
         val localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush(); runCurrent()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         other = env.server.add("Other", listOf("song-9"))
         session.playlists.flush(); runCurrent()
         assertEquals(2, creates)

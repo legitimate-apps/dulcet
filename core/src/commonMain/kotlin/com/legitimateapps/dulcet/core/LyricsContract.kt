@@ -65,9 +65,10 @@ public class LyricsControlSession private constructor(
     public val requestsEnhanced: Boolean get() = lyrics.endpoint == LyricsEndpoint.SongLyricsEnhanced
 
     /**
-     * Requests this session sent WITHOUT a response size limit. Every lyrics request carries one
-     * (§18.4), through the transport that stops reading at it; a nonzero count means a layer
-     * between the reader and that transport dropped the limit.
+     * Lyrics requests this session sent WITHOUT a response size limit. Every lyrics request carries
+     * one (§18.4), through the transport that stops reading at it; a nonzero count means a layer
+     * between the reader and that transport dropped the limit. The reader's own requests — a
+     * reconnect's epoch read — carry no lyrics limit and are not counted.
      */
     public val requestsWithoutSizeLimit: Int get() = transport.unlimited
 
@@ -83,8 +84,16 @@ public class LyricsControlSession private constructor(
         lyrics.cached(LyricsTrack(trackRawId, null, null)).toControl(transport.sent.drop(before))
     }
 
+    /**
+     * The reachability report (§16.14). Unreachable takes the reader offline at once. Reachable
+     * while offline requests a reconnect, and this returns once that reconnect has finished: the
+     * reader is online if its epoch read succeeded, and otherwise still offline, which the next read
+     * publishes. Its requests are all made before this returns, so none is ever in a lyrics call's
+     * [LyricsControlPublication.endpoints].
+     */
     public suspend fun setOnline(reachable: Boolean): Unit = withContext(dispatcher) {
         session.setOnline(reachable)
+        if (reachable && !session.reader.online) session.reader.reconnect()
     }
 
     public fun close() {
@@ -128,7 +137,12 @@ public class LyricsControlSession private constructor(
                     )
                     // This session reads lyrics and edits no playlist, so whether the server takes
                     // `formPost` is never consulted; false is the value that sends nothing new.
-                    val session = LibraryReaderSession(database.primary.database, cache, transport, scope, formPost = false)
+                    // It is not in the foreground, as the playlist contract's session is not: nothing
+                    // here is shown to a person, and in the background nothing reads on a timer
+                    // (§16.14), so every endpoint a call records is one that call caused.
+                    val session = LibraryReaderSession(
+                        database.primary.database, cache, transport, scope, formPost = false, foreground = false,
+                    )
                     val lyrics = session.lyrics(request.capabilities, request.preferredLanguages)
                     LyricsControlSession(database, dispatcher, scope, transport, session, lyrics)
                 }
@@ -153,7 +167,7 @@ internal class RecordingLyricsTransport(
 
     override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
         sent += endpoint
-        unlimited += 1
+        if (LyricsEndpoint.entries.any { it.endpointName == endpoint }) unlimited += 1
         return delegate.request(endpoint, parameters)
     }
 

@@ -4,16 +4,23 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.ComparableTimeMark
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -51,8 +58,9 @@ internal class LibraryReader(
     internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
     /**
      * Observed endpoint health for this account (§10.4). The reader holds it because the reader
-     * owns [online], and the breaker is reset on the one offline-to-online transition, whichever
-     * entry point takes it ([setOnline] or [reconnect]).
+     * owns [online], and the breaker is reset on the one offline-to-online transition: a
+     * reconnect's, once its epoch read succeeds — whether the platform's [setOnline] requested it
+     * or [reconnect] was called.
      */
     internal val breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
 ) {
@@ -90,20 +98,111 @@ internal class LibraryReader(
 
     internal fun listLock(listKey: String): Mutex = listLocks.getOrPut(listKey) { Mutex() }
 
-    /** Whether the server is reachable, as the platform reports it. Offline issues no request. */
-    val online: Boolean get() = serverReachable
+    /**
+     * Whether the reader is CONNECTED (§16.14): every window, search and look-ahead reads the server
+     * only while this is true, so offline none of them issues a request. Offline, the only requests
+     * are a running reconnect's own (its flush and its epoch read) and the outbox's sends, and those
+     * only while [canSend]. [send] enforces it for every request, whenever that request was started:
+     * one that reaches the front of the queue after the reader went offline is refused unsent
+     * ([ReaderSendRefused]) — the outbox's too, once [canSend] is false — and a page answered after
+     * the report sends neither its *after* reading nor a re-anchor's read. A refused read is not a
+     * failed one: the screen records no failure, and the read is owed to the next reconnect.
+     * It becomes true in exactly one place
+     * — [reconnect], after the outbox flush and a successful epoch read — and false at once when the
+     * platform reports the server unreachable, or when a step after that reconnect's transition
+     * throws. A new reader starts connected.
+     */
+    val online: Boolean get() = connected
 
-    private var serverReachable = true
+    private var connected = true
 
     /**
-     * The only way [online] changes, for [setOnline] and [reconnect] alike. Coming back online
-     * resets [breaker]: failures observed before the network went away say nothing about an
-     * endpoint after it came back.
+     * The only way [online] changes. Coming back online resets [breaker]: failures observed before
+     * the network went away say nothing about an endpoint after it came back (§10.4). The one
+     * offline-to-online transition is a reconnect's, whichever entry point requested it; a
+     * reconnect that fails leaves the reader offline and the breaker as it was.
      */
     private fun changeOnline(value: Boolean) {
-        if (value && !serverReachable) breaker.reset()
-        serverReachable = value
+        if (value && !connected) breaker.reset()
+        connected = value
     }
+
+    /**
+     * The platform's latest reachability report, and only that: nothing else writes it — a
+     * [reconnect] does not — so after a failed reconnect the reader acts on the platform's last
+     * report. See [canSend].
+     */
+    var reachable: Boolean = true
+        private set
+
+    /**
+     * Whether the outbox may send now: the platform last reported the server [reachable], or the
+     * reader is [online] (a successful reconnect made it so), or a reconnect is running — its flush
+     * is its first step (§16.14 step 1), so user-authored data leaves before the epoch read and
+     * before anything else is read. False only while the platform's last report says unreachable,
+     * the reader is offline and no reconnect runs — after a failed reconnect, for instance — so a
+     * tap is then kept, not sent.
+     */
+    internal val canSend: Boolean get() = reachable || online || inFlightReconnect != null
+
+    /** The reconnect running now; every reconnect requested meanwhile joins it. */
+    private var inFlightReconnect: Deferred<ReaderConnectionOutcome>? = null
+
+    /**
+     * The retry a TRANSIENT failure of a reconnect's epoch read scheduled while the app is in the
+     * foreground and the platform reports the server reachable ([scheduleReconnectRetry]); null when
+     * none is pending.
+     */
+    private var reconnectRetry: Job? = null
+
+    /**
+     * The wait before the next such retry: [LibraryReaderConfig.reconnectRetryInitialMillis],
+     * doubled by each retry scheduled, capped at [LibraryReaderConfig.reconnectRetryMaxMillis], and
+     * reset by a reconnect that reads the epoch and by a return to the foreground. A server's
+     * `Retry-After` is a floor under it. A duration measured by the coroutine clock (the monotonic
+     * one, as the epoch cadence's); it lives in memory only and is never persisted.
+     */
+    private var reconnectRetryDelayMillis: Long = config.reconnectRetryInitialMillis
+
+    /**
+     * Whether the platform last reported the app in the foreground ([setForeground]). A new reader
+     * is not: nothing reads on a timer — the epoch cadence or a reconnect retry — until the platform
+     * says the app is in the foreground (§16.11: nothing reads the epoch in the background).
+     */
+    var foreground: Boolean = false
+        private set
+
+    /**
+     * Why an offline reader that the platform reports reachable is not coming back by itself: its
+     * last reconnect failed in a way no timer retries — the server refused it (authentication,
+     * security, not a Subsonic server, an incompatible protocol) or the reader itself failed. Every
+     * screen says so instead of `offline`, until the next reachability report, return to the
+     * foreground or reconnect settles it. Null otherwise; always null while [online].
+     */
+    internal var standstill: ReaderStandstill? = null
+        private set
+
+    /**
+     * True from a reconnect's offline-to-online transition until its sequence has run every step:
+     * no screen says `live` meanwhile — one whose read is coming says `revalidating` (or `loading`),
+     * and one with nothing coming publishes nothing — and at the end of the sequence every screen is
+     * published once more: `live` if the sequence completed, what failed if it did not. A failed
+     * sequence therefore never shows a screen `live` and then takes it back.
+     */
+    internal var completingReconnect: Boolean = false
+        private set
+
+    /**
+     * The epoch key under which the §16.14 / §16.11 sequence last ran EVERY step — the visible
+     * screen revalidated and the downloaded albums rechecked — or null before any sequence started.
+     * [reconnect] and [refreshEpoch] decide "the epoch changed" against this, never against
+     * [sessionEpoch]: a sequence that adopted a reading and then failed has not completed, so the
+     * next one still sees the change and runs every step again, the recheck included.
+     */
+    private var completedSequence: CompletedSequence? = null
+
+    /** [completedSequence]'s value: [epochKey] is null when no epoch was known when it was pinned. */
+    private data class CompletedSequence(val epochKey: String?)
 
     /** Low Data Mode or a metered connection: no speculative reads (§16.13). */
     var networkConstrained: Boolean = false
@@ -145,43 +244,248 @@ internal class LibraryReader(
 
     // ---- Lifecycle ----------------------------------------------------------------------------------
 
-    /** The connect-time epoch reading (two requests). Returns null when it could not be read. */
+    /**
+     * The connect-time epoch reading (two requests). Returns null when it could not be read. While
+     * the reader is offline it issues no request and returns null: offline reads the device only,
+     * and the epoch is read by the [reconnect] that brings the reader back.
+     */
     suspend fun connect(): CatalogEpoch? {
         checkConfined()
+        if (!online) return null
         return readEpoch()
     }
 
     /**
-     * Reconnect or return to the foreground online (§16.14), in this order and nothing else:
-     * flush the outboxes (user-authored data first); read the catalog epoch; revalidate the visible
-     * screen — every open handle; and, only if the epoch changed, re-read the albums that contain
-     * downloads, one at a time. No catch-up walk, no bulk refetch, nothing re-read because it is old.
+     * [connect], saying how it ended: the epoch THIS call read, or why it read none. While the
+     * reader is offline: no request, and [ReaderConnectionOutcome.Failed] with `Unreachable`.
      */
-    suspend fun reconnect() {
+    internal suspend fun connectReporting(): ReaderConnectionOutcome {
         checkConfined()
-        changeOnline(true)
-        // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
-        flushOutboxes()
-        val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
-        val epoch = readEpoch() ?: return
-        visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
-        if (before == null || before != epoch.key) recheckDownloadedAlbums()
+        if (!online) return ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)
+        return try {
+            readEpochReporting()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            uncaughtFailures += failure
+            ReaderConnectionOutcome.InternalFailure
+        }
+    }
+
+    /**
+     * Reconnect or return to the foreground online (§16.14), and the ONLY way back [online]. In this
+     * order and nothing else: flush the outboxes (user-authored data first); read the catalog epoch;
+     * then — only if that reading succeeded — mark the reader online and revalidate the visible
+     * screen: every open handle, then every other visible surface ([addVisibleSurface]: open
+     * searches); and, only if the epoch changed, re-read the albums that contain downloads, one at
+     * a time. No catch-up walk, no bulk refetch, nothing re-read because it is old.
+     *
+     * **The offline-to-online transition.** For a reader that was offline, nothing reads the
+     * server until the epoch reading has succeeded: it stays offline — every window and search
+     * keeps saying so, and a keystroke searches only the device — so no search, page or look-ahead
+     * can go out ahead of the flush. A reader that is already online (a foreground reconnect) stays
+     * online throughout, and its screens and searches keep reading as usual, so one of their reads
+     * can go out before the flush's send: a change made while connected can be overtaken (§18.3).
+     *
+     * From the transition until the last step, no screen says `live` ([completingReconnect]): the
+     * reader is back online only when the whole sequence has run.
+     *
+     * A reading that fails is returned as [ReaderConnectionOutcome.Failed], and nothing after it
+     * runs: no screen is revalidated. If a step after the transition throws, the reconnect returns
+     * [ReaderConnectionOutcome.InternalFailure] and takes the reader offline again — exactly as an
+     * unreachable report does — so it is never left online with a screen that was not revalidated.
+     * A reading is adopted only once it is stored, and "the epoch changed" is judged against the
+     * epoch at which the sequence last COMPLETED ([completedSequence]), so the next sequence after
+     * any failure runs every step again, the downloaded-album recheck included.
+     *
+     * **What runs it again, for a reader left offline while the platform reports the server
+     * reachable.** A TRANSIENT failure of the epoch read — a timeout, `unreachable`, a busy server
+     * (its `Retry-After` a floor under the wait) or an unknown server error — is retried by itself
+     * after a bounded backoff, but only while the app is in the foreground ([scheduleReconnectRetry]).
+     * Any other failure — authentication, security, not a Subsonic server, an incompatible protocol,
+     * or the reader's own — is never retried on a timer: it waits for the next reachability report,
+     * the next return to the foreground or a reconnect the person asks for, and every screen says
+     * what it is ([standstill]). A reader that was already online stays online; its screens were
+     * revalidated or keep saying what failed, and the next epoch-cadence reading or reconnect runs
+     * the steps it still owes.
+     *
+     * For its own run a reconnect lets the outbox send ([canSend]), but it never overwrites the
+     * platform's [reachable] report. One reconnect runs at a time: a call made while one is
+     * running joins it and returns its outcome. Cancelling a caller stops only its wait; the
+     * platform reporting the server unreachable cancels the reconnect itself, and its callers
+     * return [ReaderConnectionOutcome.Failed] with `unreachable`.
+     */
+    suspend fun reconnect(): ReaderConnectionOutcome {
+        checkConfined()
+        val run = startReconnect()
+        return try {
+            run.await()
+        } catch (cancelled: CancellationException) {
+            // Either this caller was cancelled — rethrown here — or the platform reported the server
+            // unreachable, which cancelled the reconnect itself.
+            currentCoroutineContext().ensureActive()
+            ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)
+        }
+    }
+
+    private fun startReconnect(): Deferred<ReaderConnectionOutcome> {
+        inFlightReconnect?.let { return it }
+        // A reconnect starting now makes a pending retry redundant.
+        reconnectRetry?.cancel()
+        reconnectRetry = null
+        val run = scope.async(start = CoroutineStart.LAZY) { performReconnect() }
+        inFlightReconnect = run
+        run.invokeOnCompletion { if (inFlightReconnect === run) inFlightReconnect = null }
+        run.start()
+        return run
+    }
+
+    private suspend fun performReconnect(): ReaderConnectionOutcome {
+        var transitioned = false
+        return try {
+            // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
+            flushOutboxes()
+            // Pinned BEFORE the reading is adopted: if a later step throws, the next sequence still
+            // compares against the epoch at which one last completed, and runs every step again.
+            val baseline = completedSequence
+                ?: CompletedSequence((sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key)
+            completedSequence = baseline
+            // The reconnect's own epoch read is the one read an offline reader sends (§16.14).
+            when (val reading = readEpochReporting(reconnectEpochReader)) {
+                is ReaderConnectionOutcome.Read -> {
+                    if (!online) {
+                        changeOnline(true)
+                        transitioned = true
+                        completingReconnect = true
+                        // Every screen says at once that it is coming back, rather than "offline"
+                        // until its turn below — `revalidating` or `loading` — and none says `live`
+                        // until the sequence has run every step.
+                        visibleHandles().forEach(ReaderHandle::prepareForReconnect)
+                    }
+                    visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
+                    revalidateSurfaces()
+                    if (baseline.epochKey == null || baseline.epochKey != reading.epoch.key) recheckDownloadedAlbums()
+                    completedSequence = CompletedSequence(reading.epoch.key)
+                    reconnectRetryDelayMillis = config.reconnectRetryInitialMillis
+                    standstill = null
+                    if (transitioned) {
+                        completingReconnect = false
+                        visibleHandles().forEach(ReaderHandle::republish)
+                    }
+                    reading
+                }
+                is ReaderConnectionOutcome.Failed -> {
+                    afterFailedRead(reading.error)
+                    reading
+                }
+                else -> reading
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // The reader's own failure (its database, a hook). Before the transition nothing was
+            // marked online; after it, the reader goes offline again, so the next report or
+            // reconnect runs the whole sequence rather than finding the reader online. It is never
+            // retried on a timer: a reader that failed once will usually fail the same way again.
+            uncaughtFailures += failure
+            completingReconnect = false
+            try {
+                if (transitioned) {
+                    if (reachable) standstill = ReaderStandstill.InternalFailure
+                    goOffline() // marks the reader offline before anything in it can throw, and republishes
+                } else if (!online && reachable) {
+                    settle(ReaderStandstill.InternalFailure)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (again: Throwable) {
+                uncaughtFailures += again
+            }
+            ReaderConnectionOutcome.InternalFailure
+        }
+    }
+
+    /**
+     * A reconnect's epoch read failed, and the reader is offline while the platform reports the
+     * server reachable. A transient failure is retried by itself, in the foreground; any other is
+     * shown for what it is and waits for a report, the foreground or the person.
+     */
+    private fun afterFailedRead(error: DomainError) {
+        if (online || !reachable) return
+        val floor = error.automaticRetryFloorMillis()
+        if (floor == null) {
+            settle(ReaderStandstill.Failed(error))
+            return
+        }
+        settle(null)
+        if (foreground) scheduleReconnectRetry(floor)
+    }
+
+    /** Sets [standstill], republishing every screen of an offline reader when it changes. */
+    private fun settle(next: ReaderStandstill?) {
+        if (standstill == next) return
+        standstill = next
+        if (!online) visibleHandles().forEach(ReaderHandle::republish)
+    }
+
+    /**
+     * After a transient failure of a reconnect's epoch read left the reader offline, in the
+     * foreground, while the platform reports the server reachable: one reconnect after
+     * [reconnectRetryDelayMillis] — or [floorMillis], a busy server's `Retry-After`, if longer — the
+     * wait then doubled up to its cap (§16.14; the figures are ASSUMED). It runs only if, when it
+     * fires, the app is still in the foreground, the server still reported reachable and the reader
+     * still offline. Cancelled by a move to the background, an unreachable report, any reconnect
+     * starting first, and with the reader's scope when the reader is closed.
+     */
+    private fun scheduleReconnectRetry(floorMillis: Long) {
+        reconnectRetry?.cancel()
+        val base = reconnectRetryDelayMillis
+        reconnectRetryDelayMillis = minOf(base * 2, config.reconnectRetryMaxMillis)
+        val wait = maxOf(base, floorMillis)
+        reconnectRetry = scope.launch {
+            delay(wait)
+            reconnectRetry = null
+            if (foreground && reachable && !online) startReconnect()
+        }
     }
 
     /**
      * The in-foreground epoch cadence (§16.11 policy 1): every [LibraryReaderConfig.epochIntervalMillis]
      * while the app is in the foreground and a library screen is open. Nothing reads the epoch in
      * the background. The platform reports foreground transitions; the cadence itself is core policy.
+     * One reading that throws (the epoch cannot be stored, a hook fails) is recorded in
+     * [uncaughtFailures] and never ends the cadence: the next reading comes at its usual time.
+     *
+     * The background also stops a pending reconnect retry; a return to the foreground while the
+     * reader is offline and the platform reports the server reachable starts a fresh reconnect,
+     * with the retry's backoff reset — whatever ended the last one.
      */
     fun setForeground(foreground: Boolean) {
         checkConfined()
+        this.foreground = foreground
         periodicEpoch?.cancel()
         periodicEpoch = null
-        if (!foreground) return
+        if (!foreground) {
+            reconnectRetry?.cancel()
+            reconnectRetry = null
+            return
+        }
+        if (!online && reachable) {
+            reconnectRetryDelayMillis = config.reconnectRetryInitialMillis
+            startReconnect()
+        }
         periodicEpoch = scope.launch {
             while (true) {
                 delay(config.epochIntervalMillis)
-                if (online && handles.isNotEmpty()) refreshEpoch()
+                if (online && handles.isNotEmpty()) {
+                    try {
+                        refreshEpoch()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        uncaughtFailures += failure
+                    }
+                }
             }
         }
     }
@@ -190,29 +494,94 @@ internal class LibraryReader(
 
     /**
      * Reads the epoch and, if the catalog or the scanning state changed, revalidates the visible
-     * screen (§16.11 policy 3) and re-reads the albums that contain downloads (policy 4).
+     * screen (§16.11 policy 3) and re-reads the albums that contain downloads (policy 4). "Changed"
+     * is judged against the epoch at which a sequence last completed ([completedSequence]), so a
+     * reconnect or a reading that failed part-way is completed by this one.
      */
     suspend fun refreshEpoch() {
         checkConfined()
         val previous = sessionEpoch
+        val baseline = completedSequence ?: CompletedSequence(previous?.key)
+        completedSequence = baseline
         val epoch = readEpoch() ?: return
-        val changed = previous == null || previous.key != epoch.key
+        val changed = baseline.epochKey == null || baseline.epochKey != epoch.key
         if (changed || previous?.scanning != epoch.scanning) {
             visibleHandles().forEach { it.revalidate(RevalidateCause.EpochChanged) }
+            // Open searches are part of the visible screen (§16.15); each applies its own rule, so
+            // an answer read under the older epoch is re-read quietly.
+            revalidateSurfaces()
         } else {
             // A window whose stamp kept moving is re-read at the next quiet reading, or its
             // `unverified(changing)` label would outlive the change that caused it.
             visibleHandles().filter { it.awaitsQuietEpoch() }.forEach { it.revalidate(RevalidateCause.EpochChanged) }
         }
         if (changed) recheckDownloadedAlbums()
+        completedSequence = CompletedSequence(epoch.key)
     }
 
+    /**
+     * Reachability, as the platform reports it; call it on every change.
+     *
+     * - **Unreachable:** the reader is offline at once. Every window republishes — no request —
+     *   every other visible surface revalidates (an open search says `deviceOffline`), look-ahead
+     *   stops, a reconnect in flight or a retry pending is cancelled, and a [standstill] is cleared:
+     *   every screen says `offline`.
+     * - **Reachable, while offline:** REQUESTS a [reconnect]; it does not mark the reader online
+     *   itself. The reconnect's flush, epoch read and revalidation run in §16.14's order, and a
+     *   reconnect already running is joined — so a shell may report reachability and call
+     *   [reconnect] in either order, or do only one of them, and nothing is read before the flush.
+     * - **Reachable, while online:** no effect.
+     */
     fun setOnline(reachable: Boolean) {
         checkConfined()
-        if (online == reachable) return
-        changeOnline(reachable)
-        if (!reachable) lookAhead.cancelAll()
+        this.reachable = reachable
+        if (reachable) {
+            if (!online) startReconnect()
+            return
+        }
+        inFlightReconnect?.cancel()
+        inFlightReconnect = null
+        reconnectRetry?.cancel()
+        reconnectRetry = null
+        // Unreachable is now the whole truth: a screen that said why the reader was not coming back
+        // says `offline` again.
+        settle(null)
+        goOffline()
+    }
+
+    /** Offline at once: look-ahead stops, every window republishes and every search re-runs on the device. */
+    private fun goOffline() {
+        completingReconnect = false
+        if (!online) return
+        changeOnline(false)
+        lookAhead.cancelAll()
         visibleHandles().forEach { it.republish() }
+        revalidateSurfaces()
+    }
+
+    /**
+     * Registers a visible surface that is not a window — the session's open searches (§16.15).
+     * It is revalidated when the reader goes offline, and at a successful reconnect's revalidation
+     * step, after the windows — the only way back online — so it is never left saying offline once
+     * the reader is connected, and never re-run before the reconnect's flush and epoch read.
+     */
+    internal fun addVisibleSurface(surface: ReaderVisibleSurface) {
+        checkConfined()
+        surfaces += surface
+    }
+
+    private val surfaces = mutableListOf<ReaderVisibleSurface>()
+
+    private fun revalidateSurfaces() {
+        surfaces.toList().forEach { surface ->
+            try {
+                surface.revalidate()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                uncaughtFailures += failure
+            }
+        }
     }
 
     fun setNetworkConstrained(constrained: Boolean) {
@@ -311,15 +680,22 @@ internal class LibraryReader(
      * [maxBodyBytes], when given, limits the response body (see [LibraryEndpointTransport.request]).
      * [issued] learns the sequence as the request goes out, so a caller can order an answer the
      * transport refused, which returns no [SentResponse].
+     *
+     * **Offline, nothing is sent (§16.14).** Checked at the same moment, so it holds for a request
+     * started before the reader went offline, too: while [online] is false the request is refused
+     * unsent with [ReaderSendRefused], unless [whileOffline] says it is one of the two kinds an
+     * offline reader sends — the outbox's and a running reconnect's epoch read — AND [canSend] still
+     * holds. So an outbox send that waited for a slot across an unreachable report is refused too.
      */
     internal suspend fun send(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
         maxBodyBytes: Int? = null,
+        whileOffline: Boolean = false,
         issued: (Long) -> Unit = {},
     ): SentResponse =
         permits.withPermit {
-            issue(issued) {
+            issue(whileOffline, issued) {
                 if (maxBodyBytes == null) {
                     transport.request(endpoint, parameters)
                 } else {
@@ -329,8 +705,10 @@ internal class LibraryReader(
         }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
-    internal suspend fun sendChecked(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
-        send(endpoint, parameters).requireOk(endpoint, parameters)
+    internal suspend fun sendChecked(
+        endpoint: String,
+        parameters: Map<String, String> = emptyMap(),
+    ): SentResponse = send(endpoint, parameters).requireOk(endpoint, parameters)
 
     /** [sendChecked] for parameters that repeat a name, in order (playlist edits, §18.6). */
     internal suspend fun sendRepeatedChecked(
@@ -338,7 +716,7 @@ internal class LibraryReader(
         parameters: List<Pair<String, String>>,
         formPost: Boolean,
     ): SentResponse = permits.withPermit {
-        issue { transport.requestRepeated(endpoint, parameters, formPost) }
+        issue(whileOffline = false) { transport.requestRepeated(endpoint, parameters, formPost) }
     }.requireOk(endpoint, emptyMap())
 
     /**
@@ -353,21 +731,30 @@ internal class LibraryReader(
     /** Requests sent on a slot already held by [withOneSlot]. Valid only inside that block. */
     internal inner class HeldSlot internal constructor() {
         suspend fun send(endpoint: String, parameters: Map<String, String>): SentResponse =
-            issue { transport.request(endpoint, parameters) }
+            issue(whileOffline = false) { transport.request(endpoint, parameters) }
 
         suspend fun sendRepeatedChecked(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean): SentResponse =
-            issue { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
+            issue(whileOffline = false) { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
     }
 
     /**
      * Takes the issue sequence and the *before* reading as the request goes out, on a held slot. A
      * failure of the request itself is thrown as a [LibraryRequestFailure]; anything else thrown here
      * — the device's own database failing — is not, so a caller never reports it as the server's.
+     *
+     * Every request passes here, so this is where the offline rule of [send] is enforced — for a
+     * request on a held slot and a repeated-parameter request as much as a plain one. An outbox's
+     * flush runs in [OutboxRequests], so every request it makes — its writes, the reads it makes to
+     * decide them, and the `ping` after a refusal — is an outbox request, as [whileOffline] marks
+     * one sent any other way.
      */
     private suspend fun issue(
+        whileOffline: Boolean,
         issued: (Long) -> Unit = {},
         request: suspend () -> LibraryEndpointResponse,
     ): SentResponse {
+        val outbox = whileOffline || currentCoroutineContext()[OutboxRequestsKey] != null
+        if (!online && (!outbox || !canSend)) throw ReaderSendRefused()
         val seq = cache.issue()
         issued(seq)
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
@@ -416,7 +803,7 @@ internal class LibraryReader(
             busyRetry?.cancel()
             busyRetry = scope.launch {
                 delay(wait)
-                if (online) flushOutboxes()
+                if (canSend) flushOutboxes()
             }
         }
         return count && streak == 1
@@ -464,17 +851,29 @@ internal class LibraryReader(
 
     internal val epochReader = CatalogEpochReader(bounded)
 
+    /** The reconnect's own epoch reader: the one read an offline reader sends besides the outbox's. */
+    private val reconnectEpochReader = CatalogEpochReader(
+        LibraryEndpointTransport { endpoint, parameters -> send(endpoint, parameters, whileOffline = true).response },
+    )
+
     /** Reads the full epoch, stores it, and returns it; null when it could not be read. */
-    internal suspend fun readEpoch(): CatalogEpoch? {
+    internal suspend fun readEpoch(): CatalogEpoch? = (readEpochReporting() as? ReaderConnectionOutcome.Read)?.epoch
+
+    /**
+     * Reads the full epoch and stores it, saying why when it could not be read. Only the READ is
+     * reported as [ReaderConnectionOutcome.Failed]; a failure to store it throws, as it always has,
+     * and then the reading is not adopted ([adoptEpoch]).
+     */
+    internal suspend fun readEpochReporting(epochs: CatalogEpochReader = epochReader): ReaderConnectionOutcome {
         val epoch = try {
-            epochReader.readFull()
+            epochs.readFull()
         } catch (failure: CancellationException) {
             throw failure
-        } catch (_: Throwable) {
-            return null
+        } catch (failure: Throwable) {
+            return ReaderConnectionOutcome.Failed(failure.asReaderError())
         }
         adoptEpoch(epoch)
-        return epoch
+        return ReaderConnectionOutcome.Read(epoch)
     }
 
     /** The session reading, read now if this session has none (a window cannot open without one). */
@@ -490,10 +889,15 @@ internal class LibraryReader(
         return CatalogEpoch(after.lastScan, folders, after.scanning).also(::adoptEpoch)
     }
 
+    /**
+     * Stores a reading, THEN makes it the session's. If storing throws, the session keeps the reading
+     * it had, so the next reading still sees the change and revalidates: a reading the reader could
+     * not store never makes a screen that was not re-read look current.
+     */
     private fun adoptEpoch(epoch: CatalogEpoch) {
         if (sessionEpoch == epoch) return
-        sessionEpoch = epoch
         cache.saveEpoch(StoredCatalogEpoch(epoch.lastScan, epoch.folderIds, epoch.scanning, cache.now()))
+        sessionEpoch = epoch
     }
 
     /** §16.11 rule 4 and §16.14 step 4: the albums that contain downloads, at concurrency 1. */
@@ -536,6 +940,8 @@ internal class LibraryReader(
             if (write.albumGone) DetailReadResult.Gone else DetailReadResult.Read
         } catch (failure: CancellationException) {
             throw failure
+        } catch (refused: ReaderSendRefused) {
+            DetailReadResult.Refused
         } catch (failure: Throwable) {
             val error = failure.asReaderError()
             if (error.isNotFound() && seq > 0) {
@@ -593,6 +999,68 @@ internal sealed interface DetailReadResult {
     data object Read : DetailReadResult
     data object Gone : DetailReadResult
     data class Failed(val error: DomainError) : DetailReadResult
+
+    /** Not sent: the reader went offline while the read waited ([ReaderSendRefused]). Owed, not failed. */
+    data object Refused : DetailReadResult
+}
+
+/**
+ * Marks a coroutine as an outbox's flush (§16.14 step 1, §16.20): every request made in it is one
+ * of the kinds an offline reader sends, while [LibraryReader.canSend] holds when the request goes
+ * out. Carried by the context rather than a flag on each call, so a read an outbox makes to decide
+ * a change, or its `ping` after a refusal, is covered without every helper passing it on.
+ */
+internal object OutboxRequests : AbstractCoroutineContextElement(OutboxRequestsKey)
+
+internal object OutboxRequestsKey : CoroutineContext.Key<OutboxRequests>
+
+/**
+ * [LibraryReader.send]'s refusal of a request that reached the front of the queue after the reader
+ * went offline (§16.14). The request was never sent, so it proves nothing about the server: a read
+ * refused this way is NOT a failed read — the screen records no failure and keeps saying what it
+ * said (offline) — and the read is owed to the next reconnect. Its [error] is `unreachable`, for any
+ * caller that does not tell the two apart (the outbox keeps the change, as for any unreachable).
+ */
+internal class ReaderSendRefused : LibraryRequestFailure(DomainError.Transport.Unreachable)
+
+/**
+ * Why an offline reader the platform reports reachable is not coming back by itself
+ * ([LibraryReader.standstill]); every screen shows it in place of `offline`.
+ */
+internal sealed interface ReaderStandstill {
+    /** The server refused the reconnect's epoch read in a way no timer retries. */
+    data class Failed(val error: DomainError) : ReaderStandstill
+
+    /** The reader itself failed during the reconnect (its database, a hook). */
+    data object InternalFailure : ReaderStandstill
+}
+
+/**
+ * The floor under an automatic reconnect retry's wait, in milliseconds, for a TRANSIENT failure of
+ * the epoch read; null for a failure no timer retries (§16.14). The epoch read goes through the
+ * library's checked request path ([checkedRequest]), which names what the server or a proxy in
+ * front of it answered. Transient are exactly:
+ * - a timeout, and `unreachable` (the caller retries only while the platform reports the server
+ *   reachable);
+ * - `Server.Busy`: an HTTP 429, named from its STATUS whatever the body says — the reference
+ *   server's limiter answers with an envelope carrying only the generic code 0 (CLAUDE.md trap 24).
+ *   Its `Retry-After` is the floor, read as at most [LIBRARY_BUSY_CAP], as an outbox reads it;
+ * - `Server.HttpStatus` from a gateway that could not reach the server
+ *   ([gatewayCannotReachServer]: 502, 503, 504, and a CDN's origin errors), typically a reverse
+ *   proxy's page while the server restarts;
+ * - `Server.Unknown`: an error code the protocol does not define.
+ *
+ * Everything else needs a person: authentication (a bare 401 included), security, a protocol
+ * failure, every other status with no envelope (403 and 407 refuse access, 413 and 414 say the
+ * request is too large, a bare 500), and an error envelope with a defined code — the generic code 0
+ * at HTTP 200 included, which is the server's answer, not a capacity signal.
+ */
+internal fun DomainError.automaticRetryFloorMillis(): Long? = when (this) {
+    DomainError.Transport.Timeout, DomainError.Transport.Unreachable -> 0L
+    is DomainError.Server.Busy -> (retryAfter ?: Duration.ZERO).coerceAtMost(LIBRARY_BUSY_CAP).inWholeMilliseconds
+    is DomainError.Server.HttpStatus -> if (gatewayCannotReachServer) 0L else null
+    is DomainError.Server.Unknown -> 0L
+    else -> null
 }
 
 internal data class LibraryReaderConfig(
@@ -616,6 +1084,12 @@ internal data class LibraryReaderConfig(
     val touchIntervalMillis: Long = 60_000,
     /** The monotonic clock a `Retry-After` is measured on; a test passes its scheduler's. */
     val monotonic: TimeSource.WithComparableMarks = TimeSource.Monotonic,
+    /**
+     * The first wait before a reconnect that failed internally is retried while the server is
+     * reported reachable, doubled by each retry up to [reconnectRetryMaxMillis] (ASSUMED, §16.14).
+     */
+    val reconnectRetryInitialMillis: Long = 2_000,
+    val reconnectRetryMaxMillis: Long = 60_000,
 ) {
     init {
         require(pageSize in 1..500)
@@ -623,6 +1097,7 @@ internal data class LibraryReaderConfig(
         require(serverConcurrency > 0 && lookAheadInFlight in 1..serverConcurrency)
         require(lookAheadMaxPerViewport >= 0 && lookAheadSettleMillis >= 0 && maxTearRetries > 0)
         require(epochIntervalMillis > 0)
+        require(reconnectRetryInitialMillis > 0 && reconnectRetryMaxMillis >= reconnectRetryInitialMillis)
     }
 }
 
@@ -736,6 +1211,13 @@ internal sealed interface LibraryCachedReason {
     data class Failed(val error: DomainError) : LibraryCachedReason
     data object Stale : LibraryCachedReason
 
+    /**
+     * Read live, but a read this screen owes beyond its own pages — a "load more" or "load before"
+     * not yet made, with no failure recorded for it — is still to be made; the next revalidation
+     * makes it (§16.14). Never `live` while one is owed.
+     */
+    data object Owed : LibraryCachedReason
+
     /** The reader itself failed while building or refreshing this screen (a defect, not the server). */
     data object InternalFailure : LibraryCachedReason
 }
@@ -848,12 +1330,17 @@ internal sealed interface LibraryItem {
 internal interface LibraryWindowHandle {
     val query: LibraryQuery
 
-    /** Reads the next page of a paged list, at most one page beyond the viewport. */
+    /**
+     * Reads the next page of a paged list, at most one page beyond the viewport. One not made —
+     * offline, failed, or discarded by a rebase — is owed: the screen says `failed` or `owed`,
+     * never `live`, and the next revalidation ([refresh], or a reconnect) makes it (§16.14).
+     */
     fun loadMore()
 
     /**
      * Reads the page before a window that does not start at the top (after a rebase), at most one
-     * page before the viewport — the other half of "open on both sides" (§16.12).
+     * page before the viewport — the other half of "open on both sides" (§16.12). Owed when not
+     * made, as [loadMore] is.
      */
     fun loadBefore()
 
@@ -863,7 +1350,11 @@ internal interface LibraryWindowHandle {
      */
     fun setViewport(firstIndex: Int, lastIndex: Int)
 
-    /** An explicit refresh: re-reads the visible pages whatever their age. */
+    /**
+     * An explicit refresh: re-reads the visible pages whatever their age, then makes any
+     * [loadMore] or [loadBefore] still owed. It does nothing while the reader is offline; a
+     * "Try again" for an offline screen must call reconnect instead (§16.14).
+     */
     fun refresh()
 
     /** Idempotent; cancels this handle's in-flight reads. Nothing is published after it. */
@@ -880,6 +1371,29 @@ internal class LibraryHomeHandle(private val rows: List<LibraryWindowHandle>) {
 }
 
 internal enum class RevalidateCause { Open, Reconnect, Refresh, EpochChanged }
+
+/**
+ * How a connect-time epoch reading or a [LibraryReader.reconnect] ended. After [Failed] or
+ * [InternalFailure] a reconnect's flush may already have sent changes. After [Failed] nothing after
+ * the reading ran: a reader that was offline is still offline. After [InternalFailure] a reader
+ * that was offline is offline again — if the failure came after the transition, every screen was
+ * republished and every search re-run on the device, as for an unreachable report — and, while
+ * the platform reports the server reachable, retries after a bounded backoff. A reader that was
+ * already online stays online, with whatever its screens' own revalidations published. Either way
+ * a reading the reader could not store was not adopted, and the next sequence — the retry, a
+ * report, a reconnect or an epoch-cadence reading — still sees the epoch change the failed one saw,
+ * so it revalidates the visible screen and rechecks the downloaded albums again.
+ */
+internal sealed interface ReaderConnectionOutcome {
+    /** THIS call read the epoch. After a reconnect, the reader is online and the screen revalidated. */
+    data class Read(val epoch: CatalogEpoch) : ReaderConnectionOutcome
+
+    /** The server could not be read, with [error]. */
+    data class Failed(val error: DomainError) : ReaderConnectionOutcome
+
+    /** The reader itself failed (its database, a hook); recorded in `uncaughtFailures`. */
+    data object InternalFailure : ReaderConnectionOutcome
+}
 
 // ---- Hooks --------------------------------------------------------------------------------------------
 
@@ -940,6 +1454,15 @@ internal fun interface DownloadedTrackSource {
     companion object {
         val None = DownloadedTrackSource { emptySet() }
     }
+}
+
+/**
+ * A visible surface that is not a window: the session's open searches. [revalidate] runs on the
+ * reader's thread, when the reader goes offline and at a successful reconnect's revalidation step
+ * (§16.14 step 3), after the windows.
+ */
+internal fun interface ReaderVisibleSurface {
+    fun revalidate()
 }
 
 /** The scrobble and mutation outboxes, flushed first on reconnect (§16.14 step 1). */

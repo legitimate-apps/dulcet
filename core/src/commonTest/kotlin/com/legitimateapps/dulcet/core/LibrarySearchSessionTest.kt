@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -138,6 +139,67 @@ class LibrarySearchSessionTest {
         session.setOnline(false)
         assertIs<SearchScope.DeviceOffline>(pubs.last.scope)
         assertEquals((20..29).map(::albumId), pubs.last.rows.ids())
+    }
+
+    /**
+     * Reconnect through the reader alone — the way a shell reports "reachability returned" — re-runs
+     * an offline search with the server's scope, as part of revalidating the visible screen: after
+     * the outbox flush and the epoch read (§16.14's order), never before them. A reachability report
+     * that arrives after the reconnect changes nothing and asks the server nothing more.
+     */
+    @Test
+    fun reconnectAloneRerunsAnOfflineSearchAfterTheFlushAndTheEpochRead() = sessionTest { env ->
+        val session = primed(env)
+        session.setOnline(false)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        session.openSearch(listener = pubs).updateQuery("Album 002")
+        advanceUntilIdle()
+        assertIs<SearchScope.DeviceOffline>(pubs.last.scope, "fixture: the search opened offline")
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Album, albumId(3)), true)
+        env.server.holdBeforeApply += "star"
+        val mark = env.server.log.size
+
+        // The flush is held well past the search debounce: a search re-run too early is sent here.
+        val reconnect = env.scope.launch { session.reader.reconnect() }
+        advanceTimeBy(LibrarySearchConfig().debounceMillis * 4)
+        runCurrent()
+        assertEquals(1, env.server.heldCount, "fixture: the flush's star is in flight")
+        assertEquals(0, env.server.endpoints().drop(mark).count { it == "search3" }, "a search was sent during the outbox flush")
+        env.server.holdBeforeApply.clear()
+        env.server.release()
+        advanceUntilIdle()
+        assertTrue(reconnect.isCompleted, "fixture: reconnect finished")
+
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope, "the search still says offline after reconnect")
+        assertEquals((20..29).map(::albumId), pubs.last.rows.ids())
+        val sent = env.server.endpoints().drop(mark)
+        assertEquals(1, sent.count { it == "search3" })
+        assertTrue(sent.indexOf("star") in 0 until sent.indexOf("getScanStatus"), "the flush comes first: $sent")
+        assertTrue(sent.lastIndexOf("getScanStatus") < sent.indexOf("search3"), "the search re-runs after the epoch read: $sent")
+
+        val published = pubs.all.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.endpoints().drop(mark).count { it == "search3" }, "a late reachability report re-ran the search")
+        assertEquals(published, pubs.all.size)
+    }
+
+    /** Reachability reported to the reader directly reaches the session's searches, both ways. */
+    @Test
+    fun reachabilityReportedToTheReaderReachesOpenSearches() = sessionTest { env ->
+        val session = primed(env)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        session.openSearch(listener = pubs).updateQuery("Album 002")
+        advanceUntilIdle()
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope)
+
+        session.reader.setOnline(false)
+        assertIs<SearchScope.DeviceOffline>(pubs.last.scope, "going offline through the reader left the server's scope")
+        val searches = env.server.count("search3")
+        session.reader.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope, "coming back through the reader left the offline scope")
+        assertEquals(searches + 1, env.server.count("search3"))
     }
 
     // ---- §18.1 timing and merge ----------------------------------------------------------------

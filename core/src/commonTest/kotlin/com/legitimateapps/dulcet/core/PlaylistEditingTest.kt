@@ -318,10 +318,13 @@ class PlaylistEditingTest {
         val session = env.session()
         val detail = env.open(session, LibraryQuery.Playlist(p.id))
         advanceUntilIdle()
-        session.setOnline(false)
+        // Made while connected, its send timing out: a change made OFFLINE is sent by the reconnect
+        // before anything is read (§16.14 step 1), so it would be newer than any read here (§18.3).
+        env.server.failWithError["updatePlaylist"] = DomainError.Transport.Timeout
         session.playlists.rename(p.id, "Mine")
+        advanceUntilIdle()
+        env.server.failWithError.clear()
         p.name = "Theirs"
-        session.setOnline(true)
         detail.handle.refresh() // a live read issued after the change shows a third value
         advanceUntilIdle()
         env.server.log.clear()
@@ -547,7 +550,7 @@ internal class PlaylistEnv(
         transport = server,
         scope = scope,
         config = config,
-        formPost = formPost,
+        formPost = formPost, foreground = false,
     ).also { it.playlists.addOutcomeListener(outcomes::add) }
 
     class Opened(val handle: LibraryWindowHandle, val all: MutableList<Seen>) {

@@ -729,7 +729,7 @@ public object PlaylistConformanceContract {
                         recording,
                         scope,
                         LibraryReaderConfig(lookAheadMaxPerViewport = 0),
-                        formPost = formPost,
+                        formPost = formPost, foreground = false,
                     )
                     val outcomes = mutableListOf<PlaylistEditOutcome>()
                     session.playlists.addOutcomeListener(outcomes::add)

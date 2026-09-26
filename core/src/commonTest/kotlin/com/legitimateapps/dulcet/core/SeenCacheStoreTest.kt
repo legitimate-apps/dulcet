@@ -241,6 +241,53 @@ class SeenCacheStoreTest {
         assertEquals(0, store.database.serverDataQueries.countRowsForServer(SERVER).executeAsOne().sum)
     }
 
+    /**
+     * A window write that carries the server's total keeps no stored row at or beyond it — here an
+     * empty page at its own start, which replaces nothing by itself. The control writes the same
+     * page with no total: the rows stay, so it is the total that drops them.
+     */
+    @Test
+    fun aWindowWriteKeepsNoRowAtOrBeyondTheTotalItCarries() = withSeenCache { store, _ ->
+        val cache = store.bind(BINDING)
+        val albums = (0 until 10).map { "album:$it" }
+        fun emptyPageAt8(total: Int?) {
+            writeWindow(cache, LIST, albums)
+            val seq = cache.issue()
+            cache.writeWindowPage(
+                stamp = stamp(seq),
+                source = CacheEntitySource.ListPage,
+                state = CachedListState(LIST, "epoch", setOf("f1"), 0, 8, total, CacheCoverage.Open, cache.now(), cache.now(), seq),
+                pageStart = 8,
+                replacedEnd = 8,
+                members = emptyList(),
+                entities = CacheEntities(),
+            )
+        }
+        emptyPageAt8(total = null)
+        assertEquals((0 until 10).toList(), cache.listMembers(LIST).map { it.position }, "control: with no total, the rows stay")
+        emptyPageAt8(total = 5)
+        assertEquals((0 until 5).toList(), cache.listMembers(LIST).map { it.position }, "a row at or beyond the total was kept")
+    }
+
+    /** An empty keep range keeps nothing: a rebase that read no rows leaves no stored row behind. */
+    @Test
+    fun anEmptyKeepRangeKeepsNothing() = withSeenCache { store, _ ->
+        val cache = store.bind(BINDING)
+        writeWindow(cache, LIST, (0 until 10).map { "album:$it" })
+        val seq = cache.issue()
+        cache.writeWindowPage(
+            stamp = stamp(seq),
+            source = CacheEntitySource.ListPage,
+            state = CachedListState(LIST, "epoch", setOf("f1"), 0, 0, null, CacheCoverage.Open, cache.now(), cache.now(), seq),
+            pageStart = 0,
+            replacedEnd = 0,
+            members = emptyList(),
+            entities = CacheEntities(),
+            keepRange = 0 until 0,
+        )
+        assertEquals(emptyList(), cache.listMembers(LIST))
+    }
+
     @Test
     fun listKeysAreCanonicalAndCannotCollide() {
         assertEquals(
