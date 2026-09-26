@@ -241,7 +241,8 @@ other's tracks. Neither is ever part of the default corpus above, because that c
 exactly — the health check requires its 314 files and the conformance suites count its albums. The
 UI harness runs the tool against a server that has already passed the health check, with
 `--base-url`, and the tool rescans and waits until all four tracks are listed. No conformance class
-runs against a server they have been added to.
+runs against a server they have been added to: in `apple-ci` the conformance composite adds them in
+its last phase, after every class and every UI proof that counts or searches the library.
 
 ## Fail-loud precondition gate
 

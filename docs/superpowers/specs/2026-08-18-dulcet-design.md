@@ -1970,10 +1970,14 @@ run them on 2026-09-25. Until they run, the notice's position, its containment a
 the third that makes the fallback engage there are ASSUMED from `ShellLayoutTests` on macOS and the
 arithmetic in rule 5.
 
+**Where they run in CI.** All three run in `apple-conformance`, as the last phase of its conformance
+composite, the one step where the disposable server lives. `tools/seed-skip-probe` adds the albums
+there, after every phase that counts or searches the default corpus. Each proof then runs
+`test-without-building` on that leg's iPhone build, with its own result bundle, and its JUnit joins
+the parity evidence. No `FEATURES.yml` cell cites them yet.
+
 **Follow-ups, not done here.**
 
-- Run the Skip Probe UI proofs in CI. They need the album added after the health check and an iPhone
-  destination in `apple-ci`, which is being restructured; until then they are local evidence only.
 - The FLAC gap above: measure whether the engine's stall handling ever reports a FLAC that neither
   progresses nor fails, and skip it if it does.
 - Measure the requests an automatic skip costs (the resolve step plus the resource loader's ranges),
