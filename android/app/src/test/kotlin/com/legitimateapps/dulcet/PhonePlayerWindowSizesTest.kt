@@ -129,8 +129,11 @@ class PhonePlayerWindowSizesTest {
                 // banner keeps its height for the seconds it shows, and once it has gone the title
                 // and the error card must be whole again, with every other check as before.
                 yielded += "$where: ${found.whileTheBannerShows}"
-                // Measured: only 300 x 300 at 1.5x and above and 330 x 330 at 2x. Bound it there.
-                if (height >= 360 || fontScale < 1.5f) problems += "$where: the banner cut the text in a window it should fit: ${found.whileTheBannerShows}"
+                // Measured: exactly these eight cells yield, each with and without the error card --
+                // 300 x 300 at 1.5x, 1.8x and 2x, and 330 x 330 at 2x. Any other cell that yields
+                // is a problem.
+                if (Triple(width, height, fontScale) !in BANNER_YIELDS)
+                    problems += "$where: the banner cut the text in a window it should fit: ${found.whileTheBannerShows}"
                 compose.mainClock.advanceTimeBy(10_000)
                 repeat(40) { compose.mainClock.advanceTimeByFrame() }
                 problems += check(width, height, error, "$where, after the notice", noticeShowing = false).problems
@@ -274,6 +277,11 @@ class PhonePlayerWindowSizesTest {
             640 to 360, 915 to 412, 841 to 673, 960 to 600, 1280 to 800, 1920 to 1080, 360 to 320, 568 to 320, 1024 to 768,
             390 to 844, 340 to 600, 500 to 500, 330 to 330, 600 to 590, 740 to 360, 720 to 400, 412 to 480, 360 to 400,
             280 to 400, 820 to 1180, 1180 to 820, 600 to 960, 360 to 780, 432 to 360, 300 to 300,
+        )
+        /** The exact cells, each with and without the error card, where the banner may cut the text while it shows. */
+        val BANNER_YIELDS = setOf(
+            Triple(300, 300, 1.5f), Triple(300, 300, 1.8f), Triple(300, 300, 2.0f),
+            Triple(330, 330, 2.0f),
         )
     }
 }

@@ -1962,10 +1962,16 @@ It now keeps the whole contract, as the Apple shell does:
   title's line or the error card has taken its room. **The one exception to a whole title line and
   a shown error card:** a window too short to hold the controls, the banner, the title's line and
   the error card at once -- measured, 300 × 300 at 1.5× text and above and 330 × 330 at 2× -- gives
-  the banner its height for the seconds the notice shows, and the title and error card get what is
-  left, down to nothing; both return whole once the notice has gone. The banner comes first because
-  the notice must be whole and readable, while the title and the error card may be cut (they
-  scroll), and it is the only place the notice can go when the cover is too small to carry it. Taller than wide, the player is
+  the banner its height for the notice's lifetime, and the title and error card get what is
+  left, down to nothing; both return whole once the notice has gone. That lifetime is
+  `calculateRecommendedTimeoutMillis(4 000, …)` (`SKIP_NOTICE_MILLIS`): 4 s by default, and up to
+  2 minutes when the person has set Android's "Time to take action" accessibility preference to
+  10 s, 30 s, 1 min or 2 min. The banner comes first because
+  the notice must be whole and readable, and it is the only place the notice can go when the cover
+  is too small to carry it. The cost of the exception is real: in the measured cells the error
+  card gets 0 dp, so it is not shown and cannot be scrolled into view, and it is the only text
+  that says to press Play to try again. The coincidence that triggers it can arise naturally: a
+  skip notice followed by a connection failure on the next track. Taller than wide, the player is
   stacked; wider than tall, the cover is beside the title, scrubber and transport, or, when the side
   beside the cover is narrower than the transport's compact 256 dp or too short for the controls,
   beside the title with the scrubber and transport across the window beneath both. The transport is

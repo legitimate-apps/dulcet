@@ -17,6 +17,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlin.test.*
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 @RunWith(RobolectricTestRunner::class)
@@ -516,6 +517,68 @@ class AndroidPlaybackControllerTest {
             }
             assertEquals(listOf("t1"), submitted.map { it.itemId.rawId }, "One listen interrupted by a failure is one play: $submitted")
         }
+    }
+
+    /**
+     * The test above cannot tell "the accumulator carried across a retry" from "the accumulator
+     * reset on retry": after its resume, the media left is enough for a play on its own. This one
+     * can. Two connection failures, each after less than the scrobble threshold of progress; each
+     * retried with Play. The total heard crosses the threshold only when the pieces are summed, so
+     * exactly one play is submitted, in one session; a reset accumulator would submit none.
+     */
+    @Test fun retryCarriesTheAccumulatorAcrossAFailureSoTwoPiecesBelowTheThresholdCountOnce() {
+        val submitted = mutableListOf<RecordedPlaybackEvent.SubmittedPlay>()
+        Fixture(onDelivery = { _, event -> if (event is RecordedPlaybackEvent.SubmittedPlay) submitted += event }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            val duration = f.controller.state.value.durationMilliseconds
+                ?: error("control: the fixture must publish the track's known duration")
+            val threshold = (ScrobbleAccumulator.thresholdFor(duration.milliseconds)
+                ?: error("control: the fixture track must be long enough to be eligible")).inWholeMilliseconds
+            val first = threshold * 3 / 4
+            val second = threshold / 2
+            assertTrue(first < threshold && second < threshold, "control: each piece must be below the threshold alone")
+            assertEquals(0, submitted.size, "control: nothing has played yet")
+            ready(f)
+            progress(f, 0, first)
+            failConnection(f)
+            play(f)
+            ready(f)
+            progress(f, first, first + second)
+            failConnection(f)
+            play(f)
+            ready(f)
+            assertEquals(3, f.prepared.size, "two failures, each retried: one attempt plus two retries")
+            assertEquals(1, f.prepared.map { it.playbackSessionId }.toSet().size,
+                "both retries stay inside the one session (spec §12.1)")
+            assertEquals(1, submitted.size,
+                "the pieces sum past the threshold only together: one play, not two and not none")
+            assertEquals("t1", submitted.single().itemId.rawId)
+        }
+    }
+
+    private fun ready(f: Fixture) {
+        f.probe.position = 0
+        f.probe.state = androidx.media3.common.Player.STATE_READY
+        f.probe.events()
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    private fun progress(f: Fixture, from: Long, to: Long) {
+        f.probe.position = from
+        while (f.probe.position < to) {
+            f.probe.position += 1_000
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1_000))
+        }
+    }
+
+    private fun failConnection(f: Fixture) {
+        f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    private fun play(f: Fixture) {
+        f.controller.togglePlayPause()
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     @Test fun aResolutionFailureThatIsTheTracksOwnIsSkippedToo() {

@@ -345,7 +345,8 @@ public class AndroidPlaybackController internal constructor(
             // once the queue has finished. The Play reported above began a new pass; a finished
             // queue has no session to report it on, and its natural end already began one.
             // After a failure, Play is Android's Try Again (spec §12.1): a further attempt of the
-            // same play, inside its session, resuming where the failure saved its position, so one
+            // same play, inside its session, resuming where the failure saved its position (or,
+            // after a failure at or past the end, replaying it as a new session), so one
             // listen interrupted by a failure scrobbles once. Otherwise the selected entry starts
             // a new session.
             val failed = queue.snapshot().currentSession?.currentAttempt?.phase == PlaybackAttemptPhase.Failed
