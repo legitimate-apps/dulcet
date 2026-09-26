@@ -137,15 +137,19 @@ public fun Resources.outcomeLine(outcome: AndroidLibraryChangeOutcome?): String?
 }
 
 /**
- * Why a held change was refused: the `ping`'s error. A 403 or 407 with no envelope is a refusal of
- * access (by the server or a proxy), not a server that could not answer.
+ * Why a held change is waiting: the error of the `ping` that checked the account, which can be
+ * almost anything but a network failure. It says nothing about the item — an error code such as 70
+ * answers the ping, not this change — so it is only ever sign-in, a refusal of access, or the server.
  */
-private fun Resources.heldPhrase(error: DomainError): String =
-    if (error is DomainError.Server.HttpStatus && (error.status == 403 || error.status == 407)) {
-        getString(R.string.library_error_access_refused)
-    } else {
-        errorPhrase(error)
-    }
+private fun Resources.heldPhrase(error: DomainError): String = getString(
+    when {
+        error == DomainError.Auth.InvalidCredentials -> R.string.library_error_credentials
+        error is DomainError.Auth -> R.string.library_error_access_refused
+        error is DomainError.Server.HttpStatus && (error.status == 403 || error.status == 407) ->
+            R.string.library_error_access_refused
+        else -> R.string.library_error_server
+    },
+)
 
 public fun Resources.errorPhrase(error: DomainError): String = getString(
     when (error) {

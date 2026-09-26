@@ -298,8 +298,10 @@ public class AndroidLibraryReader internal constructor(
     }
 
     /**
-     * The changes that have not reached the server, for the sign-out offer (§14.7): null when the
-     * count cannot be read, never a guessed zero. Completes once, on the main thread.
+     * The changes that have not reached the server, for the sign-out offer (§14.7): favourites and
+     * ratings, and playlist edits. Null when either outbox cannot be read, the session cannot be
+     * built, or the reader is closed — never a guessed zero or a partial sum. Completes once, on the
+     * main thread.
      */
     public fun pendingChangeCount(completion: (Long?) -> Unit) {
         val delivered = AtomicBoolean(false)
@@ -308,7 +310,7 @@ public class AndroidLibraryReader internal constructor(
         }
         onReader(onDropped = { finish(null) }) {
             val count = try {
-                composed()?.session?.favourites?.pendingCount()
+                composed()?.session?.pendingChangeCount()
             } catch (cancelled: CancellationException) {
                 finish(null)
                 throw cancelled

@@ -434,6 +434,36 @@ class AndroidLibraryReaderTest {
         )
     }
 
+    /**
+     * The sign-out count includes a pending playlist edit. No facade entry point edits playlists yet,
+     * so the edit is queued on the session directly: the day a shell can queue one, the count the
+     * person is shown already includes it.
+     */
+    @Test
+    fun aPendingPlaylistEditIsCountedForSignOut() {
+        val sessions = LinkedBlockingQueue<LibraryReaderSession>()
+        val reader = AndroidLibraryReader(
+            account = null,
+            compose = { scope, foreground -> AndroidLibraryReaderComposition(session(scope, foreground).also(sessions::put)) },
+            readerDispatcher = newLibraryReaderDispatcher(),
+            mainDispatcher = Dispatchers.Unconfined,
+            initiallyForeground = false,
+        ).also { readers += it }
+        val session = assertNotNull(sessions.poll(30, TimeUnit.SECONDS), "the session was built")
+        reader.setOnline(false)
+        assertTrue(reader.setFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "album-1"), true))
+        fun <T> onReader(read: () -> T): T {
+            val answer = LinkedBlockingQueue<Result<T>>()
+            reader.onReader { answer.put(runCatching(read)) }
+            return assertNotNull(answer.poll(30, TimeUnit.SECONDS), "the reader's thread answered").getOrThrow()
+        }
+        assertEquals(PlaylistEditRecord.Pending, onReader { session.playlists.create("Road").record }, "fixture: the playlist create is queued")
+        assertEquals(1L, onReader { session.favourites.pendingCount() }, "fixture: the favourites' own count is the favourite alone")
+        val pending = LinkedBlockingQueue<Long>()
+        reader.pendingChangeCount { pending.put(it ?: -1) }
+        assertEquals(2L, pending.poll(30, TimeUnit.SECONDS), "a pending playlist edit was not counted")
+    }
+
     /** A copy taken under the list's lock: the reader's thread appends while the test reads. */
     private fun <T> MutableList<T>.snapshot(): List<T> = synchronized(this) { toList() }
 

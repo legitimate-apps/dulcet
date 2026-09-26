@@ -8188,11 +8188,12 @@ fresh disposable server before landing; items 11–14 are what that review chang
       after a return — is left as it is. Item 35's unexplained TV CONF-76 failure under a mutant,
       whose detail was not kept, may be this; it cannot be confirmed.
 
-38. **R3 on the core's seventh round.** R3 was rebased onto the reader core's seventh round
-    (recorded in items 27 and 31), whose `LibraryReaderSession` takes `formPost` and `foreground` as
-    required arguments, and onto `main`'s playlists (item 21). Item 21 came first on `main`, so
-    R2a-core's items are 22–31 and R3's became 32–37; their cross-references and CLAUDE.md trap 44's
-    moved with them.
+38. **R3 on the core's seventh and eighth rounds.** R3 was rebased onto the reader core's seventh
+    round (recorded in items 27 and 31), whose `LibraryReaderSession` takes `formPost` and
+    `foreground` as required arguments, and onto `main`'s playlists (item 21), and then onto the
+    core's eighth round (also recorded in items 27 and 31). Item 21 came first on `main`, so
+    R2a-core's items are 22–31 and R3's became 32–37; their cross-references and CLAUDE.md trap
+    44's moved with them.
     - **Foreground at construction.** The facade passes the foreground state it holds to the
       session's construction, and so to the reader's, instead of reporting it once the session is
       built. That state now starts from the caller: `AndroidLibraryReader.forAccount` takes
@@ -8216,7 +8217,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
       foreground afterwards, retried a reconnect whose epoch read timed out at least three times and
       came back online once the read was allowed to succeed; one created in the background, the
       control, read once and not again in the next 600 ms. Two temporary mutants of the facade each
-      fail it, and nothing else: building the session always in the background (the foreground
+      fail it and no other test of `AndroidLibraryReaderTest`, the class the mutant runs were
+      limited to: building the session always in the background (the foreground
       pass never retried) and always in the foreground (the background pass read 4 times).
     - **What does not reach it:** `forAccount` passing its argument on to the reader it creates is
       covered by review, not by a test: the host tests build the reader directly, because
@@ -8228,13 +8230,22 @@ fresh disposable server before landing; items 11–14 are what that review chang
       on the facade's outcome mapping, which did not name it. Android now publishes it as
       `AndroidLibraryChangeOutcome.Held` with its error, and the album screens say the change is not
       sent yet and why: a busy server's change will be sent later; any other held change is kept and
-      will be sent once the server accepts it. A 403 or 407 with no envelope reads as the server
-      refusing access. A host test asserts the mapping, and a mutant mapping it to `notSaved` fails
-      it. Withdrawing a held change is not offered: neither facade exposes the core's `withdraw` yet.
-    - **Evidence, OBSERVED 2026-09-26, counts read from the JUnit XML, 0 failures and 0 skipped in
-      each.** With `--rerun-tasks`: `:core:jvmTest` 760, `:core:testAndroidHostTest` 873,
-      `:core:macosArm64Test` 811, `:android:app:testDevDebugUnitTest` 12,
-      `:android:app:testProdDebugUnitTest` 12 and `:android:tv:testDebugUnitTest` 6. In the same run
+      will be sent once the server accepts it, with the reason stated as sign-in, a refusal of
+      access, or the server — never anything about the item, because the error is the account
+      check's, not the change's. A host test asserts the mapping, and a mutant mapping it to
+      `notSaved` fails it. `HeldChangeCopyTest` (Robolectric, phone app) asserts the line for each
+      kind of error; stating the error with the general phrase, as a mutant, fails it on `forbidden`
+      ("your account isn't allowed to see this"). Withdrawing a held change is not offered: neither facade exposes the core's `withdraw` yet.
+    - **The sign-out count includes playlist edits (the core's eighth round).** The facade's
+      `pendingChangeCount` reads the session's count, favourites and ratings plus playlist edits,
+      and is null when either outbox cannot be read, as on Apple (§14.7). No Android screen offers
+      sign-out yet. A host test queues a favourite and a playlist create offline, checks that the
+      favourites' own count is 1, and expects 2; the favourites-only count it replaced fails it.
+    - **Evidence, OBSERVED 2026-09-26 on the eighth round, counts read from the JUnit XML, 0
+      failures and 0 skipped in each.** With `--rerun-tasks`: `:core:jvmTest` 764,
+      `:core:testAndroidHostTest` 878, `:core:macosArm64Test` 816,
+      `:android:app:testDevDebugUnitTest` 13, `:android:app:testProdDebugUnitTest` 13 and
+      `:android:tv:testDebugUnitTest` 6. In the same run
       these compiled: `:core:compileKotlinIosArm64`, `:core:compileKotlinIosSimulatorArm64`,
       `:core:compileTestKotlinIosSimulatorArm64`, `:core:allMetadataJar`,
       `:core:bundleAndroidMainAar`, `:core:licensee` and `:android:app:compileProdDebugKotlin`. The

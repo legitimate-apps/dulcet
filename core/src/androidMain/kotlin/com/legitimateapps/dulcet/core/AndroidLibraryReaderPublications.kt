@@ -287,8 +287,8 @@ public sealed interface AndroidLibraryChangeOutcome {
 
     /**
      * Kept unsent, with every change after it: the server asked to wait ([error] is `Server.Busy`),
-     * or this change's request was refused access and so was the `ping` sent to check the account
-     * ([error] is the ping's, whatever it was). A later flush sends it once the server accepts it;
+     * or this change's request was refused access and the `ping` sent to check the account failed
+     * too, other than by a network failure ([error] is the ping's). A later flush sends it once the server accepts it;
      * the item shows the change meanwhile.
      */
     public data class Held(override val target: AndroidLibraryEntity, override val field: AndroidLibraryChangeField, val error: DomainError) :
