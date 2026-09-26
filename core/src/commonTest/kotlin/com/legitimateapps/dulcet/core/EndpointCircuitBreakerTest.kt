@@ -5,6 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.seconds
 
 /** §10.4's breaker in isolation, on a manual monotonic clock. */
 class EndpointCircuitBreakerTest {
@@ -22,6 +24,88 @@ class EndpointCircuitBreakerTest {
         assertEquals(timeout, open.lastError)
         assertEquals(60_000, open.retryInMillis)
         assertTrue(breaker.isOpen(E))
+    }
+
+    // ---- A server that asks for quiet (a 429, trap 24): open at once, for as long as it asked ----
+
+    @Test
+    fun oneBusyAnswerOpensItAtOnceForTheLongerOfThePeriodAndItsRetryAfter() {
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), ordinary())
+        val open = assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        assertEquals(200_000, open.retryInMillis)
+        now += 199_999
+        assertTrue(breaker.isOpen(E))
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        now += 1
+        assertFalse(breaker.isOpen(E))
+        trial(breaker.admit(E))
+    }
+
+    @Test
+    fun aBusyAnswerWithoutALongerRetryAfterOpensForThePeriod() {
+        for (retryAfter in listOf(null, 5.seconds)) {
+            val fresh = EndpointCircuitBreaker(failureThreshold = 3, openMillis = 60_000, monotonicMillis = { now })
+            fresh.recordFailure(E, DomainError.Server.Busy(retryAfter), fresh.admit(E) as EndpointCircuitBreaker.Admission.Allowed)
+            assertEquals(60_000, assertIs<EndpointCircuitBreaker.Admission.Open>(fresh.admit(E)).retryInMillis, "$retryAfter")
+        }
+    }
+
+    /** A `Retry-After` beyond the reader's busy cap holds for that cap, the same one the outbox flushes use. */
+    @Test
+    fun aBusyHoldIsCappedAtTheSharedBusyCap() {
+        for (asked in listOf(3_600.seconds, 2.days)) {
+            val fresh = EndpointCircuitBreaker(failureThreshold = 3, openMillis = 60_000, monotonicMillis = { now })
+            fresh.recordFailure(E, DomainError.Server.Busy(asked), fresh.admit(E) as EndpointCircuitBreaker.Admission.Allowed)
+            assertEquals(
+                LIBRARY_BUSY_CAP.inWholeMilliseconds,
+                assertIs<EndpointCircuitBreaker.Admission.Open>(fresh.admit(E)).retryInMillis,
+                "Retry-After $asked",
+            )
+        }
+    }
+
+    @Test
+    fun theExplicitRequestIsStillAdmittedInsideABusyHoldAndItsOwnBusyHoldsAgain() {
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), ordinary())
+        now += 60_000
+        val trial = trial(breaker.admit(E, explicit = true))
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), trial)
+        now += 199_999
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        now += 1
+        trial(breaker.admit(E))
+    }
+
+    /** A late 429 from a call admitted before the breaker opened extends the hold to its own `Retry-After`. */
+    @Test
+    fun aStragglersBusyAnswerExtendsAnOpenPeriod() {
+        val straggler = ordinary()
+        val later = ordinary()
+        repeat(3) { breaker.recordFailure(E, timeout, ordinary()) }
+        now += 10
+        breaker.recordFailure(E, DomainError.Server.Busy(200.seconds), straggler)
+        // A later 429 asking for less never shortens the hold already running.
+        breaker.recordFailure(E, DomainError.Server.Busy(null), later)
+        now += 60_000
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E), "the ordinary period ended the server's hold")
+        now += 200_000 - 60_000 - 1
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E))
+        now += 1
+        trial(breaker.admit(E))
+    }
+
+    /** ...and never ends a trial in flight: only the trial's own outcome does. */
+    @Test
+    fun aStragglersBusyAnswerNeverEndsTheTrial() {
+        val straggler = ordinary()
+        repeat(3) { breaker.recordFailure(E, timeout, ordinary()) }
+        now += 60_000
+        val trial = trial(breaker.admit(E))
+        breaker.recordFailure(E, DomainError.Server.Busy(3_600.seconds), straggler)
+        // The trial is still the one in flight: nothing else is admitted, explicit or not.
+        assertIs<EndpointCircuitBreaker.Admission.Open>(breaker.admit(E, explicit = true))
+        breaker.recordSuccess(E, trial)
+        assertFalse(breaker.isOpen(E), "the trial's success closes it, as always")
     }
 
     @Test

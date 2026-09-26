@@ -175,7 +175,10 @@ internal class LibraryLyrics(
      *
      * While the §10.4 breaker is open nothing is sent — not this endpoint, and not the other one —
      * and the publication is the stored document (or `Unavailable`) with the latest failure and
-     * [LyricsPublication.breakerOpen] set.
+     * [LyricsPublication.breakerOpen] set. One 429 opens it, for the server's `Retry-After` up to
+     * [LIBRARY_BUSY_CAP] when that is longer than the period. A failure that is not the request's
+     * (the device's store, before anything is sent) is published as the internal failure and never
+     * reaches the breaker.
      */
     suspend fun read(track: LyricsTrack): LyricsPublication = read(track, explicit = false)
 
@@ -265,6 +268,13 @@ internal class LibraryLyrics(
             // admitted before the breaker opened holds nothing, and freeing it would admit a second.
             breaker.abandon(name, admission)
             throw failure
+        } ?: run {
+            // What failed is not the request — most often the device's store before anything was
+            // sent: the endpoint's health is not touched, neither charged nor cleared, and a trial
+            // gives its slot back as a cancelled call does (§10.4). Published as the reader's own
+            // failure, never as the server's.
+            breaker.abandon(name, admission)
+            return fromCache(track, LibraryCachedReason.InternalFailure, LibraryUnavailableReason.InternalFailure)
         }
         // The endpoint's health is decided by the server's answer alone, before anything touches
         // the device's store: a local database failure below is not the server's.
@@ -339,8 +349,13 @@ internal class LibraryLyrics(
      * counts against the endpoint, whatever its error class (§10.4). A code-70 envelope and an
      * answer too large to keep are item-scoped: answers about one track, from a healthy endpoint.
      * The body is parsed once: the envelope's status and the lyrics come from the same tree.
+     *
+     * Null when what failed is not the request: the device's own store — the issue sequence is
+     * written before anything is sent, so its failure sends nothing — or a defect of this client.
+     * The classification is the reader's, as its windows and the outbox use it: only a
+     * [LibraryRequestFailure] is the request's failure, so only it is ever the server's.
      */
-    private suspend fun ask(track: LyricsTrack): LyricsAnswer {
+    private suspend fun ask(track: LyricsTrack): LyricsAnswer? {
         var issueSeq = 0L
         var answered = false
         return try {
@@ -353,8 +368,8 @@ internal class LibraryLyrics(
             LyricsAnswer.Document(issueSeq, source, trimmed.kept, trimmed.dropped)
         } catch (failure: CancellationException) {
             throw failure
-        } catch (failure: Throwable) {
-            val error = failure.asReaderError()
+        } catch (failure: LibraryRequestFailure) {
+            val error = failure.error
             when {
                 // A successful body beyond the response limit, refused by the transport.
                 error == DomainError.Protocol.TooLarge -> LyricsAnswer.TooLarge(issueSeq)
@@ -362,6 +377,8 @@ internal class LibraryLyrics(
                 error.isNotFound() && answered -> LyricsAnswer.NotFound(issueSeq, error)
                 else -> LyricsAnswer.Failed(issueSeq, error)
             }
+        } catch (_: Throwable) {
+            null
         }
     }
 

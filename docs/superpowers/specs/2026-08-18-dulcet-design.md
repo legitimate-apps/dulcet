@@ -1176,11 +1176,21 @@ app stayed open):
 - **Not failures, never counted:** an item-scoped answer — code 70 ("not found") in a well-formed
   envelope, or a successful answer refused only for its size (`Protocol.TooLarge`, §18.4) — which is
   an answer from a healthy endpoint and is recorded as a success; and a cancelled request. An
-  oversized body under a failure status is not that: no envelope that large is a failure the client
-  could read, so it is malformed and counts. An `ok` envelope whose body
+  oversized body under a failure status is not that: its status is read before its size, so it is
+  classified as a body that is not an envelope is (§18.6) — a 429 is `Server.Busy` with its
+  `Retry-After`, a 401 refused credentials, any other 4xx or 5xx `Server.HttpStatus`, anything else
+  malformed — and it counts (seventh review: the size used to be read first, so every such body was
+  malformed and a 429's `Retry-After` was lost). An `ok` envelope whose body
   does not parse, or lacks what the endpoint must return, **is** a failure of the endpoint. So is
   nothing the device does with the answer afterwards: the answer is classified before it is stored,
-  and a failure of the device's own database never reaches the breaker.
+  and a failure of the device's own database never reaches the breaker. **Nor is a failure that is
+  not the request's**: only a `LibraryRequestFailure` is the server's, as in the reader's windows
+  and the outbox (§18.6). The device's own database failing as a read is issued — the issue
+  sequence is written before anything is sent — sends nothing; it is neither charged nor clears the
+  count, a trial it hit gives its slot back as a cancelled one does, and the read publishes the
+  reader's internal failure, never "unreachable". (Seventh review: until then such a failure was
+  published as `Transport.Unreachable` and charged, so three of them opened the breaker with no
+  request sent.)
 - **Open:** nothing is sent to that endpoint, and nothing is sent to any other endpoint in its
   place; the feature publishes what it has stored, or `unavailable`, with the latest failure.
 - **The period** is five minutes of monotonic time (ASSUMED: a chosen value, not a measured one;
@@ -1196,6 +1206,18 @@ app stayed open):
   — is admitted at once as the single trial, inside the period: it is not the automatic traffic the
   period exists to hold back. It is still the one trial (refused while another is out), and its
   failure starts a new full period. The five-minute automatic period is unchanged.
+- **A server that asks for quiet opens it at once** (trap 24; seventh review). A 429
+  (`Server.Busy`) is a failure like any other, and it opens the breaker on that one failure, for
+  `max(period, min(Retry-After, cap))`. The cap is the reader's busy cap, `LIBRARY_BUSY_CAP` in
+  `LibraryReader.kt` — the one bound §18.6's flushes already put on every wait a 429 asks for; the
+  breaker introduces no second one. A 429 without `Retry-After` opens for the period. A later 429
+  never shortens a hold already running; a straggler's extends it and never ends the trial in
+  flight; the trial's own 429 opens a new hold. The explicit request is still admitted inside it.
+  The breaker holds no reader-wide state: a lyrics 429 never pauses the outbox flushes (§18.6).
+  Stated plainly: the period and the cap are both five minutes today, so `Retry-After` cannot yet
+  lengthen the hold — what the 429 changes is that one answer opens the breaker, where three
+  failures were needed before, and the server's longer request is honoured up to the cap whenever
+  the period is shorter than it.
 - **A reconnect resets it.** The reader's one offline→online transition clears every breaker of the
   session, whichever entry point takes it (a platform reachability report or the reconnect sequence
   of §16.14): failures observed before the network went away say nothing about an endpoint after it
@@ -1853,11 +1875,11 @@ of the same error are classified alike.
 
 | owner | `DomainError` | the queue |
 |---|---|---|
-| the track | `Playback.NoPlayableSource`; `Protocol.UnexpectedContentType`; `Protocol.UnexpectedBinary`; `Server.Known` codes 70 and 0 | skips past it (rules 2-4) |
+| the track | `Playback.NoPlayableSource`; `Protocol.UnexpectedContentType`; `Protocol.UnexpectedBinary`; `Protocol.TooLarge`; `Server.Known` codes 70 and 0 | skips past it (rules 2-4) |
 | the connection, the server or the account | every `Transport.*` but `Cancelled`; every `Security.*`, `Auth.*` and `Input.*`; `Server.Busy` (already retried, §12.2); `Server.Unknown`; `Server.HttpStatus` (the library path's bare status, which playback never produces); every other `Server.Known` code; `Protocol.MalformedEnvelope`, `Protocol.NotASubsonicServer`, `Protocol.Incompatible`; `CapabilityUnsupported` | stops and is presented (§3.1) |
 | nobody | `Transport.Cancelled` | a withdrawn request: neither presented nor skipped past |
 
-Three were decided rather than given:
+Four were decided rather than given:
 
 - **`Protocol.UnexpectedBinary` is the track's.** The server answered this item's request with bytes
   whose signature is not the audio its container promises -- most often a damaged or mislabelled
@@ -1874,6 +1896,12 @@ Three were decided rather than given:
 - **`Server.Unknown` is not.** Its code is one this client does not know, or a bare HTTP status from
   whatever answered (a proxy's 502, a 404 from something that is not the server). Nothing ties it
   to this item, so it is presented rather than guessed at.
+- **`Protocol.TooLarge` is the track's** (revision 104 item 23). It is raised only by a request
+  given a size limit — today only a lyrics read (§18.4) — and playback never sends one, so playback
+  cannot receive it. Were a playback request ever given a limit, it would be this item's answer that
+  is too large, not the connection that failed, and the guard bounds any sweep. On the Apple wire it
+  travels as the shell's item-scoped `unsupportedPlan`, which comes back as `NoPlayableSource`: the
+  owner survives the round trip, the name does not.
 
 On Apple, AVFoundation failing to parse, recognise or decode an item (`decodeFailed`,
 `decoderNotFound`, `fileFormatNotRecognized`, `fileFailedToParse`, `failedToParse`,
@@ -4136,7 +4164,14 @@ as the diagnostic. The gate is not consulted differently and the capability set 
 after the period the trial goes to `getLyricsBySongId` again; `retry` — the person's Retry — sends
 the trial at once. A code-70 answer and an answer refused as too large count as healthy; an `ok`
 envelope whose `lyricsList` is malformed, and a `getLyrics` answer without its `lyrics` object, count
-as failures. **Only a well-formed answer, trimmed to the caps, is ever stored, and only an empty
+as failures. **A 429 opens the breaker on that one answer**, for the longer of the period and the
+server's `Retry-After`, the latter never beyond the reader's busy cap (`LIBRARY_BUSY_CAP` in
+`LibraryReader.kt`, the cap §18.6's flushes use; the full rule is §10.4's). Inside that hold no
+automatic read sends anything; `retry` still does. A lyrics 429 never feeds the reader's own wait,
+so it never pauses the favourite and playlist flushes. **A failure that is not the request's** —
+the device's database failing as the read is issued, before anything is sent — is published as the
+reader's internal failure, sends nothing, and neither counts toward the breaker nor clears its count
+(§10.4). **Only a well-formed answer, trimmed to the caps, is ever stored, and only an empty
 document or a code-70 answer from `getLyricsBySongId` is stored as "no lyrics"**: a refused read, a
 transport failure, a failure envelope, a malformed body and an answer refused as too large leave the
 store exactly as it was, so a transient failure can never be remembered as a track without lyrics. A
@@ -4234,8 +4269,9 @@ answer declared a `Content-Length`. The limit is a third again above the larger.
 sends at most one cue per byte of line text (the reference server's LRC parser drops empty cues)
 and each line's text once, not once per singer; a multi-singer format that repeats the text per
 agent could pass the limit at the caps, and is then refused as too large. Beyond the limit a
-successful body is `TooLarge`, remembered like any other, and a failure status's body is malformed
-and counts. Every transport that wraps another must forward the limited request, or the wrapped
+successful body is `TooLarge`, remembered like any other, and a failure status's body is
+classified by that status, as a body that is no envelope is (a 429 keeps `Busy` and its
+`Retry-After`), and counts (§10.4). Every transport that wraps another must forward the limited request, or the wrapped
 one's early stop is lost; CONF-42 asserts that none of its requests went out without the limit.
 
 *Parsing an answer at the limit costs a large share of a second on Apple platforms*, so a body is
@@ -7323,7 +7359,23 @@ fresh disposable server before landing; items 11–14 are what that review chang
     `main`'s items 20 and 21, with every back-reference. The lyrics reads now share `main`'s status
     classification of an answer that is not an envelope (a 429 is `Server.Busy` with its
     `Retry-After`, a 401 refused credentials, another 4xx or 5xx `Server.HttpStatus`), where they
-    previously called every such answer malformed; each is still a failure the breaker counts.
+    previously called every such answer malformed; each is still a failure the breaker counts. At
+    this rebase a 429's `Retry-After` was carried, not honoured: each 429 was one breaker failure
+    like any other, and a trial went out every period whatever the server had asked. **Seventh
+    review** (integration review of the rebase, and the maintainer's decisions): (ab) a 429 now
+    opens the breaker at once, for `max(period, min(Retry-After, LIBRARY_BUSY_CAP))` — the reader's
+    one busy cap, not a second one; a later 429 never shortens the hold, and the explicit Retry is
+    still admitted; the reader's own busy wait is not fed from lyrics (§10.4, §18.4). (ac) A failure
+    of the device's own database as a read was issued was published as `Transport.Unreachable` and
+    charged to the breaker — three opened it with no request sent (OBSERVED by the reviewer's
+    probe, which is now a test); only a `LibraryRequestFailure` is the server's now, as in the
+    reader's windows and the outbox, and anything else publishes the internal failure, touches
+    neither the count nor the trial, and sends nothing (§10.4). (ad) A body beyond the size limit is
+    classified by its status first, so an oversized 429 keeps `Busy` and its `Retry-After` and an
+    oversized 401 keeps refused credentials; before, every non-2xx oversized body was malformed
+    (§10.4). (ae) §12.12's owner table lists `Protocol.TooLarge` as the track's, with its reason.
+    (af) The rebase's commit message said the pre-squash commits remained on the remote; after the
+    force-push they are only on a local branch, and the message says so.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

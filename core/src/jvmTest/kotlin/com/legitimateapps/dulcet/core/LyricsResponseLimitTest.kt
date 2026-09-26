@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The lyrics response limit (§18.4) through the real HTTP stack against a real socket: the limit
@@ -62,8 +63,26 @@ class LyricsResponseLimitTest {
     @Test
     fun aFailureStatusBeyondTheLimitIsNotATooLargeAnswer() {
         StreamingServer(status = 502, bodyBytes = HUGE, declareLength = false).use { server ->
-            // Counted against the endpoint like any body that is not an envelope (§10.4).
-            assertEquals(DomainError.Protocol.MalformedEnvelope, refusal(server).error)
+            // Classified by its status, as a body within the limit is, and counted against the
+            // endpoint like any failure (§10.4).
+            assertEquals(DomainError.Server.HttpStatus(502), refusal(server).error)
+        }
+    }
+
+    /**
+     * The status is read before the size: a 429 whose body is beyond the limit is still the server
+     * asking for quiet, with its `Retry-After`, and a 401 still refused credentials — whether the
+     * length is declared (refused before the body) or not (refused at the limit).
+     */
+    @Test
+    fun aStatusWithMeaningIsKeptWhenItsBodyIsBeyondTheLimit() {
+        for (declared in listOf(true, false)) {
+            StreamingServer(status = 429, bodyBytes = HUGE, declareLength = declared, retryAfter = "3600").use { server ->
+                assertEquals(DomainError.Server.Busy(3_600.seconds), refusal(server).error, "429, declared length: $declared")
+            }
+            StreamingServer(status = 401, bodyBytes = HUGE, declareLength = declared).use { server ->
+                assertEquals(DomainError.Auth.InvalidCredentials, refusal(server).error, "401, declared length: $declared")
+            }
         }
     }
 
@@ -108,6 +127,8 @@ class LyricsResponseLimitTest {
         private val declareLength: Boolean,
         /** Send the headers and then no body at all, holding the connection open. */
         private val stallBody: Boolean = false,
+        /** A raw `Retry-After` header to send, if any. */
+        private val retryAfter: String? = null,
     ) : Closeable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         private val clients = CopyOnWriteArrayList<Socket>()
@@ -141,6 +162,7 @@ class LyricsResponseLimitTest {
                         append("HTTP/1.1 $status Fixture\r\n")
                         append("Content-Type: application/json\r\n")
                         if (declareLength) append("Content-Length: $bodyBytes\r\n")
+                        if (retryAfter != null) append("Retry-After: $retryAfter\r\n")
                         append("Connection: close\r\n\r\n")
                     }.toByteArray(),
                 )

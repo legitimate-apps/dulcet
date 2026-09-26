@@ -14,6 +14,12 @@ import kotlin.time.TimeSource
  *   the count.
  * - **Stays open** for [openMillis] of monotonic time (§18.8: a duration is measured on the
  *   monotonic clock, never the wall clock, and is never persisted).
+ * - **A server that asks for quiet opens it at once.** A [DomainError.Server.Busy] answer (an HTTP
+ *   429) opens the endpoint on that one failure, for the longer of [openMillis] and the server's
+ *   `Retry-After` (trap 24), which is never taken beyond [LIBRARY_BUSY_CAP] — the one cap the
+ *   reader applies to every wait a 429 asks for (§18.6), not a second one. A 429 that
+ *   lands while the endpoint is already open only ever lengthens the hold, and a straggler's never
+ *   ends the trial in flight. An explicit request is still admitted inside the hold, as below.
  * - **Then admits exactly one trial.** While the trial is in flight every other call is refused.
  *   A success closes the breaker. **Only the trial's own failure ends the trial**, and reopens the
  *   breaker for another full period. A straggler — a call admitted before the breaker opened,
@@ -36,7 +42,8 @@ import kotlin.time.TimeSource
  * envelope, or an answer refused for its size — is a well-formed answer from a healthy endpoint,
  * and the caller records it with [recordSuccess]. Cancellation is neither success nor failure: a
  * cancelled call hands its admission to [abandon], which gives the slot back only when that
- * admission is the trial in flight.
+ * admission is the trial in flight. Nor is a failure that is not the request's — the device's own
+ * database failing before anything was sent: the caller abandons that admission too.
  *
  * Confined to its owner's thread like the reader that holds it; it has no lock.
  */
@@ -65,7 +72,9 @@ internal class EndpointCircuitBreaker(
 
     private class State {
         var consecutive = 0
-        var openedAt: Long? = null
+
+        /** When the open period ends, on the monotonic clock; null while the endpoint is closed. */
+        var openUntil: Long? = null
         var lastError: DomainError? = null
 
         /** The admission handed to the trial now in flight, or null when none is. */
@@ -88,12 +97,12 @@ internal class EndpointCircuitBreaker(
      */
     fun admit(endpoint: String, explicit: Boolean = false): Admission {
         val state = states[endpoint] ?: return Admission.Allowed(trial = false, generation)
-        val openedAt = state.openedAt ?: return Admission.Allowed(trial = false, generation)
-        val elapsed = monotonicMillis() - openedAt
-        if (state.trial != null || (elapsed < openMillis && !explicit)) {
+        val openUntil = state.openUntil ?: return Admission.Allowed(trial = false, generation)
+        val remaining = openUntil - monotonicMillis()
+        if (state.trial != null || (remaining > 0 && !explicit)) {
             return Admission.Open(
                 lastError = checkNotNull(state.lastError),
-                retryInMillis = (openMillis - elapsed).coerceAtLeast(0),
+                retryInMillis = remaining.coerceAtLeast(0),
             )
         }
         return Admission.Allowed(trial = true, generation).also { state.trial = it }
@@ -110,17 +119,29 @@ internal class EndpointCircuitBreaker(
         if (admission.generation != generation) return
         val state = states.getOrPut(endpoint) { State() }
         state.lastError = error
+        val now = monotonicMillis()
+        val busyUntil = (error as? DomainError.Server.Busy)?.let { now + busyHoldMillis(it) }
         if (state.trial === admission) {
-            // The trial's own failure: a full new period.
+            // The trial's own failure: a full new period — the server's, when it asked for longer.
             state.trial = null
-            state.openedAt = monotonicMillis()
+            state.openUntil = busyUntil ?: (now + openMillis)
             return
         }
         // Any other call, the trial's straggling predecessors included: a count, never the trial.
         state.consecutive += 1
-        if (state.consecutive >= failureThreshold && state.openedAt == null) {
-            state.openedAt = monotonicMillis()
+        val opened = state.openUntil
+        state.openUntil = when {
+            // The server asked for quiet: open now, and never shorten a hold already running.
+            busyUntil != null -> maxOf(opened ?: busyUntil, busyUntil)
+            opened == null && state.consecutive >= failureThreshold -> now + openMillis
+            else -> opened
         }
+    }
+
+    /** How long a 429 holds the endpoint: the period, or the server's longer `Retry-After` up to [LIBRARY_BUSY_CAP]. */
+    private fun busyHoldMillis(busy: DomainError.Server.Busy): Long {
+        val asked = busy.retryAfter?.inWholeMilliseconds ?: 0
+        return maxOf(openMillis, asked.coerceIn(0, LIBRARY_BUSY_CAP.inWholeMilliseconds))
     }
 
     /**
@@ -163,8 +184,8 @@ internal class EndpointCircuitBreaker(
      */
     fun isOpen(endpoint: String): Boolean {
         val state = states[endpoint] ?: return false
-        val openedAt = state.openedAt ?: return false
-        return state.trial != null || monotonicMillis() - openedAt < openMillis
+        val openUntil = state.openUntil ?: return false
+        return state.trial != null || monotonicMillis() < openUntil
     }
 }
 

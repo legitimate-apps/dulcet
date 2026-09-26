@@ -892,7 +892,14 @@ class LibraryLyricsTest {
     @Test
     fun aBodyBeyondALimitIsTooLargeOnlyWhenTheStatusIsASuccess() = runTest {
         val body = "z".repeat(11)
-        for ((status, expected) in listOf(200 to DomainError.Protocol.TooLarge, 204 to DomainError.Protocol.TooLarge, 502 to DomainError.Protocol.MalformedEnvelope)) {
+        // Any other status is classified by that status, as a body within the limit is (seventh review).
+        val cases = listOf(
+            200 to DomainError.Protocol.TooLarge,
+            204 to DomainError.Protocol.TooLarge,
+            502 to DomainError.Server.HttpStatus(502),
+            302 to DomainError.Protocol.MalformedEnvelope,
+        )
+        for ((status, expected) in cases) {
             val transport = LibraryEndpointTransport { _, _ -> LibraryEndpointResponse(status, body, "http://fixture.invalid/rest") }
             val refused = assertIs<LibraryRequestFailure>(runCatching { transport.request("e", emptyMap(), 10) }.exceptionOrNull())
             assertEquals(expected, refused.error, "status $status")
@@ -1104,6 +1111,167 @@ class LibraryLyricsTest {
         assertEquals(LibraryFreshness.Live, joined.await().freshness, "a read that joined is not cancelled with it")
         assertEquals(2, env.transport.log.size, "it asked again for itself")
         assertFalse(lyrics.breakerOpen, "and the cancellation counted for nothing")
+    }
+
+    // ---- Seventh review: the device's own failures, and a server that asks for quiet -----------------
+
+    /**
+     * The device's database fails as the request is issued (the issue sequence is written first),
+     * so nothing is sent. That is the device's failure, never the server's: not "unreachable", and
+     * never charged to the endpoint (§10.4). Three of them are the breaker's threshold, so a
+     * breaker that counted them would be open.
+     */
+    @Test
+    fun aDeviceDatabaseFailureBeforeTheRequestIsLocalAndNeverChargedToTheBreaker() = lyricsTest { env ->
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        env.transport.bodies["getLyricsBySongId"] = OBSERVED_SIDECAR_LRC
+        env.driver.execute(null, "DROP TABLE cache_meta", 0)
+        val published = listOf("d1", "d2", "d3").map { lyrics.read(LyricsTrack(it, "A", "B")) }
+        assertEquals(0, env.transport.log.size, "a request went out although the device failed before issuing it")
+        published.forEach {
+            assertEquals(LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure), it.freshness)
+            assertFalse(it.breakerOpen)
+        }
+        assertFalse(lyrics.breakerOpen, "three local failures were charged to the endpoint")
+    }
+
+    /** A local failure neither counts toward the breaker nor clears the failures the server's answers counted. */
+    @Test
+    fun aLocalFailureNeitherChargesNorClearsTheServersFailures() = lyricsTest { env ->
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        env.transport.failWith["getLyricsBySongId"] = DomainError.Transport.Unreachable
+        lyrics.read(LyricsTrack("s1", "A", "B"))
+        lyrics.read(LyricsTrack("s2", "A", "B"))
+        assertEquals(2, env.transport.log.size)
+        // The device's store fails the next issue: the table it writes is renamed away for one read.
+        env.driver.execute(null, "ALTER TABLE cache_meta RENAME TO cache_meta_away", 0)
+        val local = lyrics.read(LyricsTrack("s3", "A", "B"))
+        env.driver.execute(null, "ALTER TABLE cache_meta_away RENAME TO cache_meta", 0)
+        assertEquals(LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure), local.freshness)
+        assertEquals(2, env.transport.log.size, "the local failure sent a request")
+        assertFalse(lyrics.breakerOpen, "the local failure was counted as the third failure")
+        // The server's third failure opens it: the local one did not clear the two before it.
+        lyrics.read(LyricsTrack("s4", "A", "B"))
+        assertEquals(3, env.transport.log.size)
+        assertTrue(lyrics.breakerOpen, "the local failure cleared the server's failures")
+    }
+
+    /**
+     * The trial the breaker admits after its period fails locally: the trial slot is given back and
+     * the period is not restarted, so the next read is admitted. Charged as the trial's failure, it
+     * would have opened a new full period.
+     */
+    @Test
+    fun aTrialThatFailsLocallyGivesItsSlotBackWithoutANewPeriod() = lyricsTest { env ->
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        env.transport.failWith["getLyricsBySongId"] = DomainError.Transport.Unreachable
+        listOf("o1", "o2", "o3").forEach { lyrics.read(LyricsTrack(it, "A", "B")) }
+        assertTrue(lyrics.breakerOpen)
+        env.monotonic += BREAKER_OPEN_MILLIS
+        env.driver.execute(null, "ALTER TABLE cache_meta RENAME TO cache_meta_away", 0)
+        val trial = lyrics.read(LyricsTrack("o4", "A", "B"))
+        env.driver.execute(null, "ALTER TABLE cache_meta_away RENAME TO cache_meta", 0)
+        assertEquals(LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure), trial.freshness)
+        assertEquals(3, env.transport.log.size)
+        assertFalse(lyrics.breakerOpen, "the trial's local failure restarted the period")
+        env.transport.failWith.clear()
+        env.transport.bodies["getLyricsBySongId"] = OBSERVED_SIDECAR_LRC
+        assertEquals(LibraryFreshness.Live, lyrics.read(LyricsTrack("o5", "A", "B")).freshness)
+        assertEquals(4, env.transport.log.size, "the next read was not admitted as the trial")
+    }
+
+    /**
+     * A 429 opens the endpoint's breaker at once, for as long as the server asked up to the reader's
+     * busy cap (trap 24): `Retry-After: 3600` holds for [LIBRARY_BUSY_CAP], not the hour, and not
+     * only the normal period (here [BREAKER_OPEN_MILLIS], shorter than the cap). No automatic
+     * request goes out inside it; the person's Retry still sends, and its own 429 holds again.
+     */
+    @Test
+    fun a429HoldsTheEndpointForItsRetryAfterAndTheExplicitRetryStillSends() = lyricsTest { env ->
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        env.transport.status["getLyricsBySongId"] = Triple(429, BUSY_ENVELOPE, "3600")
+        val start = env.monotonic
+        val first = lyrics.read(LyricsTrack("b1", "A", "B"))
+        assertEquals(LibraryFreshness.Unavailable(LibraryUnavailableReason.Failed(DomainError.Server.Busy(3_600_000.milliseconds))), first.freshness)
+        assertEquals(1, env.transport.log.size)
+        assertTrue(lyrics.breakerOpen, "one 429 did not open the breaker")
+        val cap = LIBRARY_BUSY_CAP.inWholeMilliseconds
+        check(cap > BREAKER_OPEN_MILLIS) { "the harness's period must be shorter than the cap, or this proves nothing" }
+        env.monotonic = start + BREAKER_OPEN_MILLIS
+        assertTrue(lyrics.read(LyricsTrack("b2", "A", "B")).breakerOpen)
+        env.monotonic = start + cap - 1
+        assertTrue(lyrics.read(LyricsTrack("b3", "A", "B")).breakerOpen)
+        assertEquals(1, env.transport.log.size, "an automatic request went out inside the server's Retry-After")
+        // The person asked: sent at once, inside the hold.
+        lyrics.retry(LyricsTrack("b4", "A", "B"))
+        assertEquals(2, env.transport.log.size, "the explicit Retry was held back")
+        val retried = env.monotonic
+        env.monotonic = retried + cap - 1
+        lyrics.read(LyricsTrack("b5", "A", "B"))
+        assertEquals(2, env.transport.log.size, "the Retry's own 429 did not hold for its Retry-After")
+        env.monotonic = retried + cap
+        lyrics.read(LyricsTrack("b6", "A", "B"))
+        assertEquals(3, env.transport.log.size, "the trial did not go out once the cap had passed")
+        assertNull(env.session.reader.busyError(), "a lyrics 429 held the reader's outbox flushes")
+    }
+
+    /** A 429 with no `Retry-After` opens at once, for the normal period. */
+    @Test
+    fun a429WithoutRetryAfterOpensAtOnceForTheNormalPeriod() = lyricsTest { env -> assertNormalPeriodAfter429(env, null) }
+
+    /** A `Retry-After` shorter than the normal period does not shorten it. */
+    @Test
+    fun a429WithAShortRetryAfterOpensAtOnceForTheNormalPeriod() = lyricsTest { env -> assertNormalPeriodAfter429(env, "5") }
+
+    private suspend fun assertNormalPeriodAfter429(env: Env, retryAfter: String?) {
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        env.transport.status["getLyricsBySongId"] = Triple(429, BUSY_ENVELOPE, retryAfter)
+        val start = env.monotonic
+        lyrics.read(LyricsTrack("n1", "A", "B"))
+        assertEquals(1, env.transport.log.size)
+        assertTrue(lyrics.breakerOpen, "one 429 did not open the breaker")
+        env.monotonic = start + BREAKER_OPEN_MILLIS - 1
+        lyrics.read(LyricsTrack("n2", "A", "B"))
+        assertEquals(1, env.transport.log.size, "sent inside the normal period")
+        env.monotonic = start + BREAKER_OPEN_MILLIS
+        lyrics.read(LyricsTrack("n3", "A", "B"))
+        assertEquals(2, env.transport.log.size, "held beyond the normal period")
+    }
+
+    /** An absurd `Retry-After` holds for the reader's busy cap, like any longer one. */
+    @Test
+    fun a429RetryAfterIsCappedAtTheSharedBusyCap() = lyricsTest { env ->
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        env.transport.status["getLyricsBySongId"] = Triple(429, BUSY_ENVELOPE, "999999999")
+        val start = env.monotonic
+        lyrics.read(LyricsTrack("c1", "A", "B"))
+        env.monotonic = start + LIBRARY_BUSY_CAP.inWholeMilliseconds - 1
+        lyrics.read(LyricsTrack("c2", "A", "B"))
+        assertEquals(1, env.transport.log.size, "sent inside the cap")
+        env.monotonic = start + LIBRARY_BUSY_CAP.inWholeMilliseconds
+        lyrics.read(LyricsTrack("c3", "A", "B"))
+        assertEquals(2, env.transport.log.size, "held beyond the cap")
+    }
+
+    /**
+     * A body beyond the limit is classified by its HTTP status first, as one within it is: a 429 is
+     * still the server asking for quiet, with its `Retry-After`, and a 401 still refused
+     * credentials. Only a successful body is too large; any other status with no status meaning
+     * is malformed.
+     */
+    @Test
+    fun aBodyBeyondTheLimitIsClassifiedByItsStatusFirst() = runTest {
+        val oversized = "x".repeat(64)
+        suspend fun refusal(code: Int, retryAfter: String?): DomainError {
+            val transport = LibraryEndpointTransport { _, _ -> LibraryEndpointResponse(code, oversized, "http://fixture.invalid/rest", retryAfter = retryAfter) }
+            val thrown = runCatching { transport.request("getLyricsBySongId", emptyMap(), 16) }.exceptionOrNull()
+            return assertIs<LibraryRequestFailure>(thrown, "status $code").error
+        }
+        assertEquals(DomainError.Server.Busy(3_600_000.milliseconds), refusal(429, "3600"))
+        assertEquals(DomainError.Auth.InvalidCredentials, refusal(401, null))
+        assertEquals(DomainError.Server.HttpStatus(503), refusal(503, null))
+        assertEquals(DomainError.Protocol.TooLarge, refusal(200, null))
+        assertEquals(DomainError.Protocol.MalformedEnvelope, refusal(302, null))
     }
 
     // ---- Sixth review: a remembered answer comes before joining a request in flight ------------
@@ -1916,6 +2084,9 @@ class LibraryLyricsTest {
         val codes = mutableMapOf<String, Int>()
         val failWith = mutableMapOf<String, DomainError>()
 
+        /** An answer with an HTTP status, a body and a raw `Retry-After`, in place of any other. */
+        val status = mutableMapOf<String, Triple<Int, String, String?>>()
+
         /** When set, a request is logged and then waits here: a request in flight. */
         var hold: CompletableDeferred<Unit>? = null
 
@@ -1940,6 +2111,9 @@ class LibraryLyricsTest {
 
         override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
             log += endpoint to parameters
+            status[endpoint]?.let { (code, body, retryAfter) ->
+                return LibraryEndpointResponse(code, body, "http://fixture.invalid/rest", retryAfter = retryAfter)
+            }
             answers.removeFirstOrNull()?.let { return LibraryEndpointResponse(200, it.await(), "http://fixture.invalid/rest") }
             holdNext?.also { holdNext = null }?.await()
             hold?.await()
@@ -1998,6 +2172,9 @@ class LibraryLyricsTest {
 
     private companion object {
         const val BREAKER_OPEN_MILLIS = 120_000L
+
+        /** What a limiter in front of the server may send with its 429: the generic code 0. */
+        const val BUSY_ENVELOPE = """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}"""
         const val SERVER_ID = "server:lyrics"
         val TRACK = LyricsTrack("tr-31/opaque:not-an-int", "Dulcet Fixtures", "Thirty One Seconds")
         val OTHER_TRACK = LyricsTrack("other-track", "Dulcet Fixtures", "Another")

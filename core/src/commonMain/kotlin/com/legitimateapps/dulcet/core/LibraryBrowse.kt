@@ -150,9 +150,9 @@ internal fun interface LibraryEndpointTransport {
 
     /**
      * [request] with the body limited to [maxBodyBytes]. A successful (2xx) body beyond it throws
-     * [DomainError.Protocol.TooLarge], an item-scoped refusal; any other status's body beyond it
-     * throws [DomainError.Protocol.MalformedEnvelope], since no envelope that large is a failure
-     * this client could read. A transport that can stop reading at the limit overrides this, so
+     * [DomainError.Protocol.TooLarge], an item-scoped refusal; any other status's body beyond it is
+     * classified by that status, as [okPayload] classifies a body that is not an envelope (see
+     * [bodyBeyondLimit]). A transport that can stop reading at the limit overrides this, so
      * the limit bounds traffic and memory, not only what is kept; this default reads the whole
      * body first. 🚨 A transport that wraps another must forward this overload, or the wrapped
      * transport's early stop is silently lost.
@@ -160,15 +160,36 @@ internal fun interface LibraryEndpointTransport {
     suspend fun request(endpoint: String, parameters: Map<String, String>, maxBodyBytes: Int): LibraryEndpointResponse {
         val response = request(endpoint, parameters)
         if (response.body.encodeToByteArray().size > maxBodyBytes) {
-            throw LibraryRequestFailure(bodyBeyondLimit(response.statusCode))
+            throw LibraryRequestFailure(bodyBeyondLimit(response.statusCode, response.retryAfter))
         }
         return response
     }
 }
 
-/** The failure for a body beyond a request's size limit (see [LibraryEndpointTransport.request]). */
-internal fun bodyBeyondLimit(statusCode: Int): DomainError =
-    if (statusCode in 200..299) DomainError.Protocol.TooLarge else DomainError.Protocol.MalformedEnvelope
+/**
+ * The failure for a body beyond a request's size limit (see [LibraryEndpointTransport.request]).
+ * The status is read first, and the size only decides what a success means: a successful body is
+ * [DomainError.Protocol.TooLarge], an item-scoped refusal. Any other status keeps the meaning
+ * [okPayload] gives it — a 429 is the server asking for quiet, with its `Retry-After`, and a 401
+ * refused credentials — since a body that large is never an envelope this client reads.
+ */
+internal fun bodyBeyondLimit(statusCode: Int, retryAfter: String?): DomainError =
+    if (statusCode in 200..299) DomainError.Protocol.TooLarge else statusWithoutEnvelope(statusCode, retryAfter)
+
+/** A 429, named from the status whatever the body: the server asking for quiet (spec §18.6). */
+private fun busyStatus(statusCode: Int, retryAfter: String?): DomainError? =
+    if (statusCode == 429) DomainError.Server.Busy(parseRetryAfterSeconds(retryAfter)) else null
+
+/**
+ * What a status says of a response whose body is no envelope (spec §18.6): a 429 is busy, a 401
+ * refused credentials, any other 4xx or 5xx that status, and anything else malformed.
+ */
+private fun statusWithoutEnvelope(statusCode: Int, retryAfter: String?): DomainError =
+    busyStatus(statusCode, retryAfter) ?: when (statusCode) {
+        401 -> DomainError.Auth.InvalidCredentials
+        in 400..599 -> DomainError.Server.HttpStatus(statusCode)
+        else -> DomainError.Protocol.MalformedEnvelope
+    }
 
 /**
  * 🚨 **Retired by the reader (spec §16.18, phase R1b).** New code reads through [LibraryReader],
@@ -513,22 +534,16 @@ internal suspend fun LibraryEndpointTransport.checkedRequest(
  * The payload of this response's `ok` envelope, from one parse of the body. A failure envelope
  * throws its [DomainError]. A rate limit is named from the STATUS, whatever the body: the reference
  * server's own limiter answers 429 with an envelope carrying only the generic code 0, and its
- * `Retry-After` is honoured. An error status with no envelope is the server or a proxy refusing the
+ * `Retry-After` is carried for the caller to honour (the §18.6 flushes, the §10.4 breaker). An
+ * error status with no envelope is the server or a proxy refusing the
  * HTTP request itself, and is named as such, never as a malformed answer (spec §18.6): a 401 as
  * refused credentials, as playback names it; anything else — a 414 for a URL too long, a 502 from
  * a gateway, a 403 or 407 from a proxy — by its status. Any other body that is not an envelope is
  * malformed. An envelope, whatever the status, is judged as an envelope.
  */
 internal fun LibraryEndpointResponse.okPayload(): JsonObject {
-    if (statusCode == 429) throw LibraryRequestFailure(DomainError.Server.Busy(parseRetryAfterSeconds(retryAfter)))
-    val envelope = parseLibraryEnvelope(body)
-        ?: throw LibraryRequestFailure(
-            when (statusCode) {
-                401 -> DomainError.Auth.InvalidCredentials
-                in 400..599 -> DomainError.Server.HttpStatus(statusCode)
-                else -> DomainError.Protocol.MalformedEnvelope
-            },
-        )
+    busyStatus(statusCode, retryAfter)?.let { throw LibraryRequestFailure(it) }
+    val envelope = parseLibraryEnvelope(body) ?: throw LibraryRequestFailure(statusWithoutEnvelope(statusCode, retryAfter))
     if (envelope.status != "ok") {
         val error = envelope.payload["error"] as? JsonObject
         val code = error.int("code") ?: -1

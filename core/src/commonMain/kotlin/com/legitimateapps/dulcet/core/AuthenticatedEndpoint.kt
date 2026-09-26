@@ -393,7 +393,7 @@ internal class AuthenticatedEndpointClient(
      * the network before the refusal (§18.4 residual 1 has the measurements).
      */
     private suspend fun io.ktor.client.statement.HttpResponse.bodyAsBytesWithin(limit: Int): ByteArray {
-        val refusal = bodyBeyondLimit(status.value)
+        val refusal = bodyBeyondLimit(status.value, headers[HttpHeaders.RetryAfter])
         val declared = headers[HttpHeaders.ContentLength]?.toLongOrNull()
         if (declared != null && declared > limit) throw AuthenticatedEndpointFailure(refusal)
         val channel = bodyAsChannel()
