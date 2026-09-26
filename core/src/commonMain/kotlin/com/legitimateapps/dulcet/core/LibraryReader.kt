@@ -98,11 +98,13 @@ internal class LibraryReader(
     /**
      * Whether the reader is CONNECTED (§16.14): every window, search and look-ahead reads the server
      * only while this is true, so offline none of them issues a request. Offline, the only requests
-     * are a running reconnect's epoch read and the outbox's sends, which [canSend] gates on the
-     * platform's report instead. [send] enforces it for every request, whenever that request was
-     * started: one that reaches the front of the queue after the reader went offline is refused
-     * unsent, and a page answered after the report sends neither its *after* reading nor a
-     * re-anchor's read. It becomes true in exactly one place
+     * are a running reconnect's own (its flush and its epoch read) and the outbox's sends, and those
+     * only while [canSend]. [send] enforces it for every request, whenever that request was started:
+     * one that reaches the front of the queue after the reader went offline is refused unsent
+     * ([ReaderSendRefused]) — the outbox's too, once [canSend] is false — and a page answered after
+     * the report sends neither its *after* reading nor a re-anchor's read. A refused read is not a
+     * failed one: the screen records no failure, and the read is owed to the next reconnect.
+     * It becomes true in exactly one place
      * — [reconnect], after the outbox flush and a successful epoch read — and false at once when the
      * platform reports the server unreachable, or when a step after that reconnect's transition
      * throws. A new reader starts connected.
@@ -143,18 +145,48 @@ internal class LibraryReader(
     private var inFlightReconnect: Deferred<ReaderConnectionOutcome>? = null
 
     /**
-     * The retry an internal failure scheduled while the platform reports the server reachable
-     * ([scheduleReconnectRetry]); null when none is pending.
+     * The retry a TRANSIENT failure of a reconnect's epoch read scheduled while the app is in the
+     * foreground and the platform reports the server reachable ([scheduleReconnectRetry]); null when
+     * none is pending.
      */
     private var reconnectRetry: Job? = null
 
     /**
      * The wait before the next such retry: [LibraryReaderConfig.reconnectRetryInitialMillis],
      * doubled by each retry scheduled, capped at [LibraryReaderConfig.reconnectRetryMaxMillis], and
-     * reset by a reconnect that reads the epoch. A duration measured by the coroutine clock (the
-     * monotonic one, as the epoch cadence's); it lives in memory only and is never persisted.
+     * reset by a reconnect that reads the epoch and by a return to the foreground. A server's
+     * `Retry-After` is a floor under it. A duration measured by the coroutine clock (the monotonic
+     * one, as the epoch cadence's); it lives in memory only and is never persisted.
      */
     private var reconnectRetryDelayMillis: Long = config.reconnectRetryInitialMillis
+
+    /**
+     * Whether the platform last reported the app in the foreground ([setForeground]). A new reader
+     * is not: nothing reads on a timer — the epoch cadence or a reconnect retry — until the platform
+     * says the app is in the foreground (§16.11: nothing reads the epoch in the background).
+     */
+    var foreground: Boolean = false
+        private set
+
+    /**
+     * Why an offline reader that the platform reports reachable is not coming back by itself: its
+     * last reconnect failed in a way no timer retries — the server refused it (authentication,
+     * security, not a Subsonic server, an incompatible protocol) or the reader itself failed. Every
+     * screen says so instead of `offline`, until the next reachability report, return to the
+     * foreground or reconnect settles it. Null otherwise; always null while [online].
+     */
+    internal var standstill: ReaderStandstill? = null
+        private set
+
+    /**
+     * True from a reconnect's offline-to-online transition until its sequence has run every step:
+     * no screen says `live` meanwhile — one whose read is coming says `revalidating` (or `loading`),
+     * and one with nothing coming publishes nothing — and at the end of the sequence every screen is
+     * published once more: `live` if the sequence completed, what failed if it did not. A failed
+     * sequence therefore never shows a screen `live` and then takes it back.
+     */
+    internal var completingReconnect: Boolean = false
+        private set
 
     /**
      * The epoch key under which the §16.14 / §16.11 sequence last ran EVERY step — the visible
@@ -251,18 +283,27 @@ internal class LibraryReader(
      * online throughout, and its screens and searches keep reading as usual, so one of their reads
      * can go out before the flush's send: a change made while connected can be overtaken (§18.3).
      *
+     * From the transition until the last step, no screen says `live` ([completingReconnect]): the
+     * reader is back online only when the whole sequence has run.
+     *
      * A reading that fails is returned as [ReaderConnectionOutcome.Failed], and nothing after it
-     * runs: no screen is revalidated or relabelled. If a step after the transition throws, the
-     * reconnect returns [ReaderConnectionOutcome.InternalFailure] and takes the reader offline again
-     * — exactly as an unreachable report does — so it is never left online with a screen that was
-     * not revalidated. A reading is adopted only once it is stored, and "the epoch changed" is
-     * judged against the epoch at which the sequence last COMPLETED ([completedSequence]), so the
-     * next sequence after any internal failure runs every step again, the downloaded-album recheck
-     * included. A reader left offline runs it at the next reachability report or reconnect, or — if
-     * the failure was internal and the platform still reports the server reachable — at a retry
-     * after a bounded backoff ([scheduleReconnectRetry]). A reader that was already online stays
-     * online; its screens were revalidated or keep saying what failed, and the next epoch-cadence
-     * reading or reconnect runs the steps it still owes.
+     * runs: no screen is revalidated. If a step after the transition throws, the reconnect returns
+     * [ReaderConnectionOutcome.InternalFailure] and takes the reader offline again — exactly as an
+     * unreachable report does — so it is never left online with a screen that was not revalidated.
+     * A reading is adopted only once it is stored, and "the epoch changed" is judged against the
+     * epoch at which the sequence last COMPLETED ([completedSequence]), so the next sequence after
+     * any failure runs every step again, the downloaded-album recheck included.
+     *
+     * **What runs it again, for a reader left offline while the platform reports the server
+     * reachable.** A TRANSIENT failure of the epoch read — a timeout, `unreachable`, a busy server
+     * (its `Retry-After` a floor under the wait) or an unknown server error — is retried by itself
+     * after a bounded backoff, but only while the app is in the foreground ([scheduleReconnectRetry]).
+     * Any other failure — authentication, security, not a Subsonic server, an incompatible protocol,
+     * or the reader's own — is never retried on a timer: it waits for the next reachability report,
+     * the next return to the foreground or a reconnect the person asks for, and every screen says
+     * what it is ([standstill]). A reader that was already online stays online; its screens were
+     * revalidated or keep saying what failed, and the next epoch-cadence reading or reconnect runs
+     * the steps it still owes.
      *
      * For its own run a reconnect lets the outbox send ([canSend]), but it never overwrites the
      * platform's [reachable] report. One reconnect runs at a time: a call made while one is
@@ -311,8 +352,10 @@ internal class LibraryReader(
                     if (!online) {
                         changeOnline(true)
                         transitioned = true
+                        completingReconnect = true
                         // Every screen says at once that it is coming back, rather than "offline"
-                        // until its turn below: `revalidating` or `loading` where a read is coming.
+                        // until its turn below — `revalidating` or `loading` — and none says `live`
+                        // until the sequence has run every step.
                         visibleHandles().forEach(ReaderHandle::prepareForReconnect)
                     }
                     visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
@@ -320,6 +363,15 @@ internal class LibraryReader(
                     if (baseline.epochKey == null || baseline.epochKey != reading.epoch.key) recheckDownloadedAlbums()
                     completedSequence = CompletedSequence(reading.epoch.key)
                     reconnectRetryDelayMillis = config.reconnectRetryInitialMillis
+                    standstill = null
+                    if (transitioned) {
+                        completingReconnect = false
+                        visibleHandles().forEach(ReaderHandle::republish)
+                    }
+                    reading
+                }
+                is ReaderConnectionOutcome.Failed -> {
+                    afterFailedRead(reading.error)
                     reading
                 }
                 else -> reading
@@ -329,40 +381,67 @@ internal class LibraryReader(
         } catch (failure: Throwable) {
             // The reader's own failure (its database, a hook). Before the transition nothing was
             // marked online; after it, the reader goes offline again, so the next report or
-            // reconnect runs the whole sequence rather than finding the reader online.
+            // reconnect runs the whole sequence rather than finding the reader online. It is never
+            // retried on a timer: a reader that failed once will usually fail the same way again.
             uncaughtFailures += failure
-            if (transitioned) {
-                try {
-                    goOffline() // marks the reader offline before anything in it can throw
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (again: Throwable) {
-                    uncaughtFailures += again
+            completingReconnect = false
+            try {
+                if (transitioned) {
+                    if (reachable) standstill = ReaderStandstill.InternalFailure
+                    goOffline() // marks the reader offline before anything in it can throw, and republishes
+                } else if (!online && reachable) {
+                    settle(ReaderStandstill.InternalFailure)
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (again: Throwable) {
+                uncaughtFailures += again
             }
-            // A stable network sends no further report, so an offline reader the platform still
-            // reports reachable retries by itself rather than waiting for one.
-            if (!online && reachable) scheduleReconnectRetry()
             ReaderConnectionOutcome.InternalFailure
         }
     }
 
     /**
-     * After an internal failure left the reader offline while the platform reports the server
-     * reachable: one reconnect after [reconnectRetryDelayMillis], the wait then doubled up to its
-     * cap (§16.14; the figures are ASSUMED). Cancelled by an unreachable report, by any reconnect
-     * starting first, and with the reader's scope when the reader is closed; the wait is reset by a
-     * reconnect that reads the epoch. A reconnect whose epoch READ fails is not retried here: that
-     * is the server answering, and the next report or reconnect runs it again.
+     * A reconnect's epoch read failed, and the reader is offline while the platform reports the
+     * server reachable. A transient failure is retried by itself, in the foreground; any other is
+     * shown for what it is and waits for a report, the foreground or the person.
      */
-    private fun scheduleReconnectRetry() {
+    private fun afterFailedRead(error: DomainError) {
+        if (online || !reachable) return
+        val floor = error.automaticRetryFloorMillis()
+        if (floor == null) {
+            settle(ReaderStandstill.Failed(error))
+            return
+        }
+        settle(null)
+        if (foreground) scheduleReconnectRetry(floor)
+    }
+
+    /** Sets [standstill], republishing every screen of an offline reader when it changes. */
+    private fun settle(next: ReaderStandstill?) {
+        if (standstill == next) return
+        standstill = next
+        if (!online) visibleHandles().forEach(ReaderHandle::republish)
+    }
+
+    /**
+     * After a transient failure of a reconnect's epoch read left the reader offline, in the
+     * foreground, while the platform reports the server reachable: one reconnect after
+     * [reconnectRetryDelayMillis] — or [floorMillis], a busy server's `Retry-After`, if longer — the
+     * wait then doubled up to its cap (§16.14; the figures are ASSUMED). It runs only if, when it
+     * fires, the app is still in the foreground, the server still reported reachable and the reader
+     * still offline. Cancelled by a move to the background, an unreachable report, any reconnect
+     * starting first, and with the reader's scope when the reader is closed.
+     */
+    private fun scheduleReconnectRetry(floorMillis: Long) {
         reconnectRetry?.cancel()
-        val wait = reconnectRetryDelayMillis
-        reconnectRetryDelayMillis = minOf(wait * 2, config.reconnectRetryMaxMillis)
+        val base = reconnectRetryDelayMillis
+        reconnectRetryDelayMillis = minOf(base * 2, config.reconnectRetryMaxMillis)
+        val wait = maxOf(base, floorMillis)
         reconnectRetry = scope.launch {
             delay(wait)
             reconnectRetry = null
-            if (reachable && !online) startReconnect()
+            if (foreground && reachable && !online) startReconnect()
         }
     }
 
@@ -372,12 +451,25 @@ internal class LibraryReader(
      * the background. The platform reports foreground transitions; the cadence itself is core policy.
      * One reading that throws (the epoch cannot be stored, a hook fails) is recorded in
      * [uncaughtFailures] and never ends the cadence: the next reading comes at its usual time.
+     *
+     * The background also stops a pending reconnect retry; a return to the foreground while the
+     * reader is offline and the platform reports the server reachable starts a fresh reconnect,
+     * with the retry's backoff reset — whatever ended the last one.
      */
     fun setForeground(foreground: Boolean) {
         checkConfined()
+        this.foreground = foreground
         periodicEpoch?.cancel()
         periodicEpoch = null
-        if (!foreground) return
+        if (!foreground) {
+            reconnectRetry?.cancel()
+            reconnectRetry = null
+            return
+        }
+        if (!online && reachable) {
+            reconnectRetryDelayMillis = config.reconnectRetryInitialMillis
+            startReconnect()
+        }
         periodicEpoch = scope.launch {
             while (true) {
                 delay(config.epochIntervalMillis)
@@ -428,7 +520,8 @@ internal class LibraryReader(
      *
      * - **Unreachable:** the reader is offline at once. Every window republishes — no request —
      *   every other visible surface revalidates (an open search says `deviceOffline`), look-ahead
-     *   stops, and a reconnect in flight or a retry pending is cancelled.
+     *   stops, a reconnect in flight or a retry pending is cancelled, and a [standstill] is cleared:
+     *   every screen says `offline`.
      * - **Reachable, while offline:** REQUESTS a [reconnect]; it does not mark the reader online
      *   itself. The reconnect's flush, epoch read and revalidation run in §16.14's order, and a
      *   reconnect already running is joined — so a shell may report reachability and call
@@ -446,11 +539,15 @@ internal class LibraryReader(
         inFlightReconnect = null
         reconnectRetry?.cancel()
         reconnectRetry = null
+        // Unreachable is now the whole truth: a screen that said why the reader was not coming back
+        // says `offline` again.
+        settle(null)
         goOffline()
     }
 
     /** Offline at once: look-ahead stops, every window republishes and every search re-runs on the device. */
     private fun goOffline() {
+        completingReconnect = false
         if (!online) return
         changeOnline(false)
         lookAhead.cancelAll()
@@ -582,8 +679,9 @@ internal class LibraryReader(
      *
      * **Offline, nothing is sent (§16.14).** Checked at the same moment, so it holds for a request
      * started before the reader went offline, too: while [online] is false the request is refused
-     * unsent with `unreachable`, unless [whileOffline] says it is one of the two kinds an offline
-     * reader sends — the outbox's (gated by [canSend]) and a running reconnect's epoch read.
+     * unsent with [ReaderSendRefused], unless [whileOffline] says it is one of the two kinds an
+     * offline reader sends — the outbox's and a running reconnect's epoch read — AND [canSend] still
+     * holds. So an outbox send that waited for a slot across an unreachable report is refused too.
      */
     internal suspend fun send(
         endpoint: String,
@@ -593,7 +691,7 @@ internal class LibraryReader(
         whileOffline: Boolean = false,
     ): SentResponse =
         permits.withPermit {
-            if (!online && !whileOffline) throw LibraryRequestFailure(DomainError.Transport.Unreachable)
+            if (!online && (!whileOffline || !canSend)) throw ReaderSendRefused()
             issue(issued) {
                 if (maxBodyBytes == null) {
                     transport.request(endpoint, parameters)
@@ -831,6 +929,8 @@ internal class LibraryReader(
             if (write.albumGone) DetailReadResult.Gone else DetailReadResult.Read
         } catch (failure: CancellationException) {
             throw failure
+        } catch (refused: ReaderSendRefused) {
+            DetailReadResult.Refused
         } catch (failure: Throwable) {
             val error = failure.asReaderError()
             if (error.isNotFound() && seq > 0) {
@@ -888,6 +988,44 @@ internal sealed interface DetailReadResult {
     data object Read : DetailReadResult
     data object Gone : DetailReadResult
     data class Failed(val error: DomainError) : DetailReadResult
+
+    /** Not sent: the reader went offline while the read waited ([ReaderSendRefused]). Owed, not failed. */
+    data object Refused : DetailReadResult
+}
+
+/**
+ * [LibraryReader.send]'s refusal of a request that reached the front of the queue after the reader
+ * went offline (§16.14). The request was never sent, so it proves nothing about the server: a read
+ * refused this way is NOT a failed read — the screen records no failure and keeps saying what it
+ * said (offline) — and the read is owed to the next reconnect. Its [error] is `unreachable`, for any
+ * caller that does not tell the two apart (the outbox keeps the change, as for any unreachable).
+ */
+internal class ReaderSendRefused : LibraryRequestFailure(DomainError.Transport.Unreachable)
+
+/**
+ * Why an offline reader the platform reports reachable is not coming back by itself
+ * ([LibraryReader.standstill]); every screen shows it in place of `offline`.
+ */
+internal sealed interface ReaderStandstill {
+    /** The server refused the reconnect's epoch read in a way no timer retries. */
+    data class Failed(val error: DomainError) : ReaderStandstill
+
+    /** The reader itself failed during the reconnect (its database, a hook). */
+    data object InternalFailure : ReaderStandstill
+}
+
+/**
+ * The floor under an automatic reconnect retry's wait, in milliseconds, for a TRANSIENT failure of
+ * the epoch read; null for a failure no timer retries (§16.14). Transient: a timeout, `unreachable`
+ * (the caller retries only while the platform reports the server reachable), a busy server — its
+ * `Retry-After` is the floor (CLAUDE.md trap 24) — and an unknown server error. Everything else —
+ * authentication, security, not a Subsonic server, an incompatible protocol — needs a person.
+ */
+internal fun DomainError.automaticRetryFloorMillis(): Long? = when (this) {
+    DomainError.Transport.Timeout, DomainError.Transport.Unreachable -> 0L
+    is DomainError.Server.Busy -> retryAfter?.inWholeMilliseconds ?: 0L
+    is DomainError.Server.Unknown -> 0L
+    else -> null
 }
 
 internal data class LibraryReaderConfig(

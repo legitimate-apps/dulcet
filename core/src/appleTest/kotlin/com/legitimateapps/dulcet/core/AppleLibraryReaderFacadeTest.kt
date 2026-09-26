@@ -289,7 +289,16 @@ class AppleLibraryReaderFacadeTest {
             album.last.freshness.kind == "live" && local.last.freshness.kind == "live" && never.last.freshness.kind == "live"
         }
         assertTrue(album.all.drop(marks[0]).none { it.freshness.reason == "stale" }, "a screen said stale on the way back")
-        assertTrue(never.all.drop(marks[1]).all { it.freshness.kind in setOf("loading", "live") }, "the album never read: ${never.all.drop(marks[1]).map { it.freshness.kind }}")
+        // The album never read says `loading` until its read lands, then — the reconnect still
+        // running — `cached(revalidating)`, and `live` only once the reconnect has run every step.
+        val neverRead = never.all.drop(marks[1]).map { listOf(it.freshness.kind, it.freshness.reason) }
+        assertEquals(listOf("loading", null), neverRead.first(), "the album never read: $neverRead")
+        assertEquals(listOf("live", null), neverRead.last(), "the album never read: $neverRead")
+        assertTrue(
+            neverRead.all { it == listOf("loading", null) || it == listOf("cached", "revalidating") || it == listOf("live", null) },
+            "the album never read: $neverRead",
+        )
+        assertEquals(1, neverRead.count { it[0] == "live" }, "the album never read said live before the end: $neverRead")
         assertEquals(listOf("streamable", "streamable"), album.last.items.map { it.playability })
         assertEquals("server", local.last.order)
 

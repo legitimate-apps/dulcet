@@ -717,9 +717,14 @@ internal class LibraryFavourites(
                     // Only a failure of the request is the server's; the device's own database failing
                     // propagates, with every change kept.
                     val failure = try {
-                        // One of the two kinds of request an offline reader sends: gated by canSend.
+                        // One of the two kinds of request an offline reader sends — and only while
+                        // canSend holds when it reaches the front of the queue, not only when queued.
                         reader.sendChecked(change.endpoint(), change.parameters(), whileOffline = true)
                         null
+                    } catch (notSent: ReaderSendRefused) {
+                        // Refused unsent after an unreachable report: kept, and not counted as sent.
+                        sent -= 1
+                        notSent.error
                     } catch (thrown: LibraryRequestFailure) {
                         thrown.error
                     }

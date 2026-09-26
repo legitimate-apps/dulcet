@@ -62,6 +62,26 @@ internal abstract class ReaderHandle(
     /** Set when the reader itself threw while serving this screen; cleared by the next success. */
     protected var internalFailure = false
 
+    /**
+     * Set when a read of this screen was not sent because the reader went offline while it waited
+     * ([ReaderSendRefused], or the offline check before a request): the read was not made, so no
+     * failure is recorded, and it is OWED. The next reconnect's revalidation makes it whatever the
+     * screen's age — as a refresh would — and clears the flag.
+     */
+    protected var readOwed = false
+
+    /** The last publication built, for [emit]'s duplicate check while a reconnect completes. */
+    private var lastBuilt: LibraryPublication? = null
+
+    /**
+     * Set at a transition for a screen with no read coming ([prepareForReconnect]). Until the
+     * reconnect has run every step it goes on saying what it said while offline — never
+     * `revalidating` with nothing coming for it, and never `live` before the sequence is complete —
+     * so it publishes nothing unless its content changes (a tap still shows at once); at the end it
+     * says `live` once.
+     */
+    private var quietUntilReconnectEnds = false
+
     /** The last publication's items, which [setViewport] indexes into. */
     protected var published: List<LibraryItem> = emptyList()
 
@@ -95,7 +115,25 @@ internal abstract class ReaderHandle(
     open fun awaitsQuietEpoch(): Boolean = false
 
     /** Called with the window's lock held. */
-    protected abstract suspend fun performRevalidate(cause: RevalidateCause)
+    protected abstract suspend fun performRevalidate(requested: RevalidateCause)
+
+    /**
+     * The cause a revalidation runs under: a refresh if a read is [readOwed] — made whatever the
+     * screen's age — and the flag cleared, for a read that is refused again sets it again.
+     */
+    protected fun takeOwed(cause: RevalidateCause): RevalidateCause {
+        if (!readOwed) return cause
+        readOwed = false
+        return RevalidateCause.Refresh
+    }
+
+    /**
+     * Records why a read failed — unless it was refused unsent because the reader went offline
+     * ([ReaderSendRefused]): that read is owed, and the screen keeps saying what it said.
+     */
+    protected fun readFailed(thrown: Throwable) {
+        if (thrown is ReaderSendRefused) readOwed = true else failure = thrown.asReaderError()
+    }
 
     /** Builds the publication from the cache as it stands now. */
     protected abstract fun snapshot(): LibraryPublication
@@ -114,23 +152,25 @@ internal abstract class ReaderHandle(
 
     /**
      * The reader has just come back online and is about to revalidate every screen in turn
-     * ([LibraryReader.reconnect]). Republished now, so a screen whose read is coming says
-     * `cached(revalidating)` or `loading` at once rather than `offline` until its turn, and a fresh
-     * one says `live`. Never a spinner with nothing coming: the flag is set here only when
-     * [readsOnReconnect] says a read is coming, the revalidation decides the same way before it
-     * publishes anything, and it clears the flag whether or not it reads.
+     * ([LibraryReader.reconnect]). A screen whose read is coming is republished now, so it says
+     * `cached(revalidating)` or `loading` at once rather than `offline` until its turn. A fresh one
+     * publishes nothing until the reconnect has run every step, and then says `live` once: never a
+     * spinner with nothing coming, and never `live` before the sequence is complete. The flag is set
+     * here only when [readsOnReconnect] says a read is coming, the revalidation decides the same way
+     * before it publishes anything, and it clears the flag whether or not it reads.
      */
     fun prepareForReconnect() {
         if (closed) return
         val coming = try {
-            readsOnReconnect()
+            readOwed || readsOnReconnect()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
             true // the revalidation will run, and will say what failed
         }
         if (coming) revalidationPending = true
-        emitSnapshot()
+        quietUntilReconnectEnds = !coming
+        if (coming) emitSnapshot()
     }
 
     /**
@@ -160,6 +200,10 @@ internal abstract class ReaderHandle(
      */
     private fun emit(publication: LibraryPublication) {
         if (closed) return
+        // While a reconnect completes, a frame identical to the last one says nothing new, so it is
+        // not delivered: the sequence's end publishes each screen once more.
+        if (reader.completingReconnect && publication == lastBuilt) return
+        lastBuilt = publication
         sequence += 1
         published = publication.items
         try {
@@ -224,8 +268,11 @@ internal abstract class ReaderHandle(
     protected fun cachedFreshness(asOfWall: Long?, liveUnderCurrentEpoch: Boolean): LibraryFreshness {
         val error = failure
         return when {
-            !reader.online -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Offline)
-            inFlight > 0 || revalidationPending -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
+            !reader.online || (reader.completingReconnect && quietUntilReconnectEnds) ->
+                LibraryFreshness.Cached(asOfWall, offlineReason())
+            // Nothing is `live` until a reconnect has run every step (§16.14).
+            inFlight > 0 || revalidationPending || reader.completingReconnect ->
+                LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
             internalFailure -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.InternalFailure)
             error != null -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Failed(error))
             liveUnderCurrentEpoch -> LibraryFreshness.Live
@@ -237,12 +284,29 @@ internal abstract class ReaderHandle(
     protected fun emptyFreshness(): LibraryFreshness {
         val error = failure
         return when {
-            !reader.online -> LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline)
-            inFlight > 0 || revalidationPending -> LibraryFreshness.Loading
+            !reader.online -> LibraryFreshness.Unavailable(
+                when (val standstill = reader.standstill) {
+                    null -> LibraryUnavailableReason.NotCachedOffline
+                    is ReaderStandstill.Failed -> LibraryUnavailableReason.Failed(standstill.error)
+                    ReaderStandstill.InternalFailure -> LibraryUnavailableReason.InternalFailure
+                },
+            )
+            inFlight > 0 || revalidationPending || reader.completingReconnect -> LibraryFreshness.Loading
             internalFailure -> LibraryFreshness.Unavailable(LibraryUnavailableReason.InternalFailure)
             error != null -> LibraryFreshness.Unavailable(LibraryUnavailableReason.Failed(error))
             else -> LibraryFreshness.Loading
         }
+    }
+
+    /**
+     * Why cached content is shown while the reader is offline: `offline`, or — when the platform
+     * reports the server reachable and the last reconnect failed in a way no timer retries — that
+     * failure ([LibraryReader.standstill]).
+     */
+    protected fun offlineReason(): LibraryCachedReason = when (val standstill = reader.standstill) {
+        null -> LibraryCachedReason.Offline
+        is ReaderStandstill.Failed -> LibraryCachedReason.Failed(standstill.error)
+        ReaderStandstill.InternalFailure -> LibraryCachedReason.InternalFailure
     }
 
     /** Items for rows read in one batch; per-user state is overlaid, never written back. */
@@ -457,8 +521,9 @@ internal class ListWindow(
         return cause == RevalidateCause.Refresh || mustRebase(state, epoch) || !readRecently(state, epoch)
     }
 
-    override suspend fun performRevalidate(cause: RevalidateCause) {
+    override suspend fun performRevalidate(requested: RevalidateCause) {
         if (closed || !reader.online) return
+        val cause = takeOwed(requested)
         if (!readComing(cause)) {
             // Fresh: nothing is read, so nothing says `revalidating` — and nothing is republished,
             // unless a `revalidating` this handle already published must be taken back.
@@ -476,7 +541,8 @@ internal class ListWindow(
         live {
             val epoch = reader.ensureEpoch()
             if (epoch == null) {
-                failure = DomainError.Transport.Unreachable
+                // Not read because the reader went offline meanwhile: owed, not failed.
+                if (reader.online) failure = DomainError.Transport.Unreachable else readOwed = true
                 return@live
             }
             if (!spec.paged) {
@@ -504,7 +570,7 @@ internal class ListWindow(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (thrown: Throwable) {
-            failure = thrown.asReaderError()
+            readFailed(thrown)
             return
         }
         val parsed = try {
@@ -645,19 +711,24 @@ internal class ListWindow(
      * reading, and so the next page's *before*.
      *
      * Offline, it sends nothing (§16.14) and returns null WITHOUT recording a failure — the screen
-     * says offline, not that a read failed: no page request once the reader is offline, and for a
-     * page answered after the unreachable report, no *after* reading, so the page is not used.
+     * says offline, not that a read failed — and the read is owed to the next reconnect
+     * ([readOwed]): no page request once the reader is offline, including one refused at the queue
+     * ([ReaderSendRefused]), and for a page answered after the unreachable report, no *after*
+     * reading, so the page is not used.
      */
     private suspend fun readPage(offset: Int): PageRead? {
         val sizeParameter = spec.sizeParameter ?: return null
-        if (!reader.online) return null
+        if (!reader.online) {
+            readOwed = true
+            return null
+        }
         val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + ("offset" to offset.toString())
         val sent = try {
             reader.sendChecked(spec.endpoint, parameters)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (thrown: Throwable) {
-            failure = thrown.asReaderError()
+            readFailed(thrown)
             return null
         }
         val parsed = try {
@@ -667,12 +738,18 @@ internal class ListWindow(
             return null
         }
         // The *after* reading is issued only once the page's response has arrived (§16.12).
-        if (!reader.online) return null
+        if (!reader.online) {
+            readOwed = true
+            return null
+        }
         var afterError: DomainError? = null
         val after = try {
             reader.epochReader.readScanStatus()
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (refused: ReaderSendRefused) {
+            readOwed = true
+            return null
         } catch (thrown: Throwable) {
             afterError = thrown.asReaderError()
             null
@@ -893,7 +970,7 @@ internal class ListWindow(
         }
         publishedPositions = local.indices.toList()
         val freshness = if (local.isNotEmpty()) {
-            LibraryFreshness.Cached(null, LibraryCachedReason.Offline)
+            LibraryFreshness.Cached(null, offlineReason())
         } else {
             emptyFreshness()
         }
@@ -995,8 +1072,9 @@ internal class AlbumDetailWindow(
     override fun mentionsAny(rawIds: Set<String>): Boolean =
         album.rawId in rawIds || published.any { it.rawId in rawIds }
 
-    override suspend fun performRevalidate(cause: RevalidateCause) {
+    override suspend fun performRevalidate(requested: RevalidateCause) {
         if (closed || !reader.online) return
+        val cause = takeOwed(requested)
         val cached = cache.album(album.rawId)
         // A detail read live under the current epoch within the interval is not re-read — which is
         // what lets a looked-ahead album open with zero requests (CONF-87). Nothing is read, so
@@ -1030,6 +1108,7 @@ internal class AlbumDetailWindow(
                 gone = true
             }
             is DetailReadResult.Failed -> failure = result.error
+            DetailReadResult.Refused -> readOwed = true
         }
         emitSnapshot()
     }
@@ -1128,12 +1207,13 @@ internal class CollectionDetailWindow(
     override fun mentionsAny(rawIds: Set<String>): Boolean =
         rawId in rawIds || queriedId in rawIds || published.any { it.rawId in rawIds }
 
-    override suspend fun performRevalidate(cause: RevalidateCause) {
+    override suspend fun performRevalidate(requested: RevalidateCause) {
         if (closed || !reader.online) return
         if (isLocalPlaylist) {
             emitSnapshot()
             return
         }
+        val cause = takeOwed(requested)
         if (cache.listState(listKey) != null && cause != RevalidateCause.Open) {
             inFlight += 1
             emitSnapshot()
@@ -1164,6 +1244,8 @@ internal class CollectionDetailWindow(
                 reader.liveListReads[listKey] = cache.now()
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (refused: ReaderSendRefused) {
+                readOwed = true
             } catch (thrown: Throwable) {
                 val error = thrown.asReaderError()
                 // A not-found is only a finding once the request was actually sent with a sequence.

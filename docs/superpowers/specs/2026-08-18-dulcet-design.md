@@ -3334,8 +3334,9 @@ under an unchanged epoch.
 1. **Epoch reads** happen on connect, on every return to the foreground, on reconnect (§16.14), and
    every **5 minutes** while a library screen is visible and the app is in the foreground (ASSUMED
    interval — a `getScanStatus` is a few milliseconds; tune from measurement, never raise it to
-   hide a cost). Nothing reads the epoch in the background. Each page read also ends with a
-   `getScanStatus` (§16.12), which refreshes the stored epoch as a side effect.
+   hide a cost). Nothing reads the epoch in the background — neither this cadence nor a
+   reconnect's automatic retry (§16.14), which also runs only in the foreground. Each page read
+   also ends with a `getScanStatus` (§16.12), which refreshes the stored epoch as a side effect.
 2. **A changed epoch marks every cached catalog read stale by comparison, not by writing.** A row is
    catalog-current when its `fetched_epoch` equals the latest epoch; no bulk update runs.
 3. **Revalidating the visible screen** means: re-read the pages of its window that intersect the
@@ -3752,8 +3753,8 @@ screens and searches keep reading, and a read can go out before the flush's send
 connected can be overtaken (§18.3).
 
 A reconnect whose epoch reading fails stops there — the flush of step 1 may already have sent
-changes, but a reader that was offline stays offline and nothing is revalidated or relabelled — says
-which failure, and the next report or reconnect tries again.
+changes, but a reader that was offline stays offline and nothing is revalidated — and says which
+failure. What tries again is below.
 
 **An epoch is adopted only once it is stored, and a sequence that fails part-way leaves its steps
 owed** (item 25, corrected in place after the round-4 review). If storing a reading throws, the reader
@@ -3767,12 +3768,36 @@ sequence runs every step again, the step-4 recheck included. A reader that was a
 the reconnect began has no transition to undo: it stays online — its screens were revalidated, or say
 what failed — and the next epoch-cadence reading or reconnect runs the steps it still owes.
 
-**A stable network sends no further report**, so an internal failure is retried without one. While
-the platform still reports the server reachable, an offline reader runs the reconnect again after
-2 s, the wait doubling to a cap of 60 s (both figures ASSUMED), measured by the monotonic clock and
-never persisted (CLAUDE.md trap 20). The retry stops at an unreachable report or when the reader is closed, and
-the wait resets when a reconnect reads the epoch. A reconnect whose epoch *read* fails is not retried
-this way: that is the server answering, and the next report or reconnect tries again.
+**What runs a failed reconnect again, by the kind of failure** (item 25, corrected in place after
+the round-5 review). A stable network sends no further report, so a reader left offline while the
+platform reports the server reachable must not wait for one — but only a failure that can pass by
+itself is retried by itself:
+
+- **Transient: retried automatically, in the foreground only.** The epoch read timed out, failed as
+  `unreachable` while the platform reports the server reachable, met a busy server, or met an
+  unknown server error. The reconnect runs again after 2 s, the wait doubling to a cap of 60 s (both
+  figures ASSUMED); a busy server's `Retry-After` is the floor under the wait (CLAUDE.md trap 24).
+  The wait is measured by the monotonic clock and never persisted (CLAUDE.md trap 20). The retry runs
+  only while the app is in the foreground and the platform reports the server reachable: a move to
+  the background, an unreachable report or closing the reader stops it, and a reconnect that reads
+  the epoch resets the wait. Until then every screen says `offline`.
+- **Anything else: never retried on a timer.** Authentication, security, not a Subsonic server, an
+  incompatible protocol, and the reader's own failure — its database, a hook, such as the downloaded-
+  album recheck throwing. A timer would repeat a failing login, or a defect, for ever. These wait for
+  the next reachability report, the next return to the foreground, or a reconnect the person asks
+  for, and until then every screen says what the failure is — `failed(<kind>)` or `internalFailure`,
+  not `offline`. An unreachable report makes them say `offline` again.
+
+A return to the foreground while the reader is offline and the platform reports the server reachable
+starts a fresh reconnect at once, the wait reset, whatever ended the last one.
+
+**A screen says `live` only once a reconnect has run every step.** From the transition until the last
+step a screen whose read is coming says `revalidating` (or `loading` with nothing cached), a screen
+with nothing coming publishes nothing — it goes on saying `offline` rather than claim a read that is
+not coming — and each is published once more at the end: `live` if the sequence completed, what failed
+if it did not. A reconnect that fails
+after the transition therefore never shows a screen `live` and then takes it back, and no retry makes
+a screen flicker.
 
 A screen's listener that throws is the listener's failure and never stops a step. At step 3 a screen
 says `revalidating` only when a read is coming: it decides whether it will read before it publishes
@@ -3787,8 +3812,12 @@ reads the device only and issues no request; the epoch is read by the reconnect.
 requests are therefore a running reconnect's own, and the outbox's sends while the platform reports the
 server reachable. The core enforces that where a request is SENT, not only where an operation starts:
 a request that reaches the front of the per-server queue after the reader went offline is refused
-unsent, and a page answered after the unreachable report sends neither its *after* reading nor a
-rebase's re-anchor read, and is not used — the screen says offline, not that a read failed. An epoch
+unsent — an outbox send included, once the outbox may no longer send — and a page answered after the
+unreachable report sends neither its *after* reading nor a rebase's re-anchor read, and is not used.
+**A read refused this way is not a failed read.** It was never sent, so it proves nothing about the
+server: the screen records no failure and keeps saying `offline`, and the read is OWED — the next
+reconnect's step 3 makes it, whatever the screen's age, as a refresh would. A refused outbox send keeps
+its change for the reconnect's flush. An epoch
 change seen by the foreground cadence (§16.11 policy 3) revalidates the open searches as well as the
 windows, and one cadence reading that throws is recorded and never ends the cadence.
 
@@ -7631,7 +7660,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     where its read is coming — never `offline` until its turn, never a spinner with nothing coming — and
     a window with nothing cached says `loading` while a read is in flight or pending, as a cached one
     says `revalidating`. (After the third review: a fresh window then said `revalidating` again at its
-    own turn, with no read coming. A window now decides whether it will read before it publishes.) The
+    own turn, with no read coming. A window now decides whether it will read before it publishes.
+    After the round-5 review a fresh window no longer says `live` at the transition either: it
+    publishes nothing until the sequence has run every step, and then says `live` once, §16.14.) The
     facade's `connect`/`reconnect` completions report THIS call's reading and its error kind;
     `epochKnown` no longer reflects any earlier reading. While offline, `connect` issues no request.
 
@@ -7689,16 +7720,34 @@ fresh disposable server before landing; items 11–14 are what that review chang
       rebase whose page was answered after the unreachable report. Its *after* reading, a new
       re-anchor read and another *after* reading all went out. The reader now refuses every request
       once offline at the point of SENDING, except the outbox's and the reconnect's epoch read. A page
-      answered offline sends nothing more, is not used, and leaves no failure on the screen.
+      answered offline sends nothing more and is not used.
     - One failed epoch-cadence reading ended the cadence for the rest of the foreground session. It
       is now recorded, and the cadence continues.
 
-    The sticky offline state after an internal failure, which the round-4 review recorded as decided
-    behaviour, is fixed. A stable network sends no further report, so while the platform reports the
-    server reachable the reader retries by itself: after 2 s, doubling to a cap of 60 s (ASSUMED
-    figures), on the monotonic clock and never persisted. The retry stops at an unreachable report or
-    at close, and resets on success. A reconnect whose epoch READ fails is still retried only at the
-    next report or reconnect: that is the server answering. `ReaderCurrentOrOfflineTest` pins every
+    **Corrected in place after the round-5 review.** Two of the round-4 fixes still leaked, and the
+    retry that round added was the wrong shape.
+    - *"Leaves no failure on the screen"* failed for a read refused at the queue. The send gate's
+      refusal was recorded like a transport failure, so a fresh grid or album screen whose refresh
+      waited for the slot across the unreachable report said `failed(unreachable)` — and kept saying
+      it after the reconnect, on an online reader with fresh data. A refused read is now OWED, not
+      failed: the screen keeps saying `offline`, and the next reconnect makes the read (§16.14).
+    - *"Offline, the only requests are …"* failed for the outbox. Its exemption from the send gate
+      held whatever the outbox's own gate said when the send reached the front of the queue, so a
+      `star` queued across the unreachable report went out after it. The exemption now holds only
+      while the outbox may send, checked at that moment; the change is kept for the reconnect.
+    - The retry after an internal failure read in the background, which §16.11 forbids, and under a
+      failure that recurred after every transition it flipped every screen `live` and `offline` and
+      re-read it every 60 s, for ever; one failed epoch read, meanwhile, ended it and left the reader
+      offline on a stable network. It is replaced by the retry of §16.14, by failure kind: only a
+      transient failure of the epoch read is retried by itself, and only in the foreground; every
+      other failure, the reader's own included, waits for a report, the foreground or the person,
+      and every screen says what it is. A screen says `live` only once the whole sequence has run;
+      one with no read coming goes on saying what it said until then, and a tap on it still shows at
+      once.
+      "A failed read is the server answering", which this item said, was wrong for a timeout: a
+      timeout is not an answer.
+
+    `ReaderCurrentOrOfflineTest`, `ReaderReconnectRetryTest` and `ReaderReconnectStepsTest` pin every
     one of these; see item 29.
 26. **Searches are revalidated like windows, released when closed, and carry playability.** Every
     reconnect re-ran every open search — a request each, the label flipping to "On this device" and
@@ -7777,7 +7826,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     check is load-bearing, not defence in depth. A viewport queued for a window before its close takes
     the detail look-ahead over from whichever window held it, and the close then cancels that
     look-ahead. With the check, another window's look-ahead made 20 reads; without it, 0. A macOS test
-    now pins it (item 29). Seven of the review's surviving mutants (A–G) now have killing tests. They pin
+    now pins it (item 29). **After the round-5 review:** nothing of a closed reader stays scheduled —
+    with a reconnect retry pending, closing the reader's scope leaves the scheduler idle without
+    advancing it (the review's C1). Seven of the review's surviving mutants (A–G) now have killing tests. They pin
     cancel-before-release in `close()`, §7.2's cancel of a queued operation (the completion handler and
     the cancel itself), windows-before-searches at reconnect, nothing revalidated after a failed epoch
     read, no outcome delivered after a client close, and the facade's failure publication keeping its
