@@ -705,9 +705,10 @@ public class AppleLibraryWindowSubscription internal constructor(
 
     /**
      * Re-reads the visible pages whatever their age. It does nothing while the reader is offline —
-     * a screen saying `offline`, or the reconnect failure that keeps the reader offline, such as
-     * `failed(invalidCredentials)` or `internalFailure`. A "Try again" for such a screen must call
-     * the client's `reconnect`, which runs the whole sequence and then re-reads every screen (§16.14).
+     * a screen saying `offline`, or naming the reconnect failure that keeps the reader offline, such
+     * as `failed` of kind `authentication`, or `internalFailure`. A "Try again" for such a screen
+     * must call the client's `reconnect`, which runs the whole sequence and then re-reads every
+     * screen (§16.14).
      */
     public fun refresh() {
         call { it.refresh() }
