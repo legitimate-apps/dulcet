@@ -7457,6 +7457,58 @@ fresh disposable server before landing; items 11–14 are what that review chang
         stale offset. Removing every offline layer at once was killed after the round-4 review, on
         three tests.
 
+    **After the round-6 review (round 7), rebased onto item 21.** OBSERVED 2026-09-26 on macOS arm64,
+    at the commit that completes the code, counted from the JUnit XML with every task forced to
+    execute (`--rerun-tasks`, 34 of 34 tasks executed): `jvmTest` ran 760 tests, `macosArm64Test`
+    811 and `testAndroidHostTest` 859, each with 0 failures. The seven compiles passed, and the macOS
+    debug framework linked (42 of 42 tasks executed).
+    - **Red first, decisions 2–6**, against the round-6 commit, before the rebase. The round's ten new
+      core tests were run there. At that commit the session has no `foreground` argument, so the
+      launch-time test constructs a session and never calls `setForeground`. Five failed, each on
+      its stated assertion:
+      - the launch-time retry;
+      - the two quiet-screen labels (the reviewer's b6, and a refresh variant);
+      - the two owed extends (the reviewer's r6, and a "load more" asked for offline).
+
+      The other five pin behaviour that was already right: the four survivor tests, and the
+      reviewer's no-flicker chain. The new macOS facade test needs the new constructor, so it
+      cannot run at that commit. The mutant D5b shows that it matters.
+    - **Red first, decision 1**, against the integration commit, which has item 21's checked request
+      path and not the retry change. Three of the six tests failed:
+      - the `Retry-After` cap;
+      - a proxy's 503 page during a restart;
+      - 502 and 504.
+
+      The other three pin the checked path's naming as item 21 left it: a 429 retried after its
+      `Retry-After`, the refusing statuses never retried, and code 0 at HTTP 200 never retried. The
+      mutant D1e removes that path's 429 rule and is killed by the busy test among others. So the busy
+      test depends on the real path, not on a fixture.
+    - **Mutation, re-run on the rebased head.** 21 mutants, each against a green baseline (760 JVM
+      tests; 41 in the facade class): 20 against the whole JVM suite and D5b against the facade
+      class. Every tracked file was byte-identical after each one. 20 were killed:
+      - R53a1, R53b1, N7f and N7g, each by one new test;
+      - R6-2: the quiet label ranked above the in-flight check (R62a), and a screen's own read that
+        leaves the quiet flag set (R62b);
+      - R6-3: a refused extend owed as a page read (R63a); owed extends never made (R63b); an
+        offline "load more" dropped (R63c); an owed extend not counted as a read coming (R63d);
+      - the moved anchors of R53j (`live` before the sequence completes) and R53l (a quiet screen
+        says `revalidating`);
+      - decision 5: the session ignoring its `foreground` argument (D5a), and the client passing
+        `false` to its composition (D5b);
+      - decision 1: a gateway status not transient (D1a), and every bare status transient (D1b);
+        `Retry-After` uncapped (D1c), and ignored as the floor (D1d); the checked path's 429 rule
+        removed (D1e); and code 0 treated as transient (D1f).
+
+      Before the rebase, R62a and R63d survived the first run. Two tests added after it kill them.
+      Under R62a, the frame that announced a read said `offline`, and the reader's duplicate
+      suppression dropped it. S3d survives, as argued above: not equivalent, and both behaviours
+      acceptable.
+    - **Live.** CONF-84 and CONF-86 passed (2 of 2), through the production session and Ktor
+      transport. They ran against a fresh disposable Navidrome 0.63.2 on a local high port, whose
+      data was deleted afterwards; it held no star before the run. The conformance health check
+      created its account, then stopped at its ffmpeg pin, because the local ffmpeg is one patch
+      release behind. Neither CONF touches transcoding.
+
     **A retention that is not the reviewed leak.** The release test first required all forty closed
     search subscriptions to be collected, and it failed intermittently. A diagnostic ran its steps 200
     times, each on a fresh database. In 13 of those rounds exactly one closed subscription stayed
@@ -7484,7 +7536,13 @@ fresh disposable server before landing; items 11–14 are what that review chang
     documentation paragraph, on the reconnect's retry: no declaration was added, removed or changed.
     After the round-5 review, against that review's commit, it is two documentation paragraphs — the
     reconnect's retry by failure kind, and `setForeground`, which a shell must call on every change:
-    no declaration was added, removed or changed.
+    no declaration was added, removed or changed. After the round-6 review, against that review's
+    commit, one declaration of the reader facade changed: the client's public initializer is
+    `initWithDatabaseName:account:foreground:`, where it was `initWithDatabaseName:account:`. The
+    facade's other hunks are documentation: the constructor, `setForeground`, the window
+    subscription's `refresh`, and the favourite outcome's new `held` kind. Every other hunk of that
+    diff came with the rebase: item 21's playlist and `HttpStatus` declarations, and the playback
+    work merged before it.
 
     **Not reached.**
     - No Swift compiles against the header yet.
@@ -7492,9 +7550,11 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - No test yet runs the public constructor's own composition (item 24).
     - How often a real app hits the close race of item 30 is still ASSUMED.
     - The retry's figures (2 s doubling to 60 s) are ASSUMED; no measurement chose them.
-    - The reader retries only when told the app is in the foreground, and starts out told it is not.
-      A shell that never calls `setForeground` gets no automatic retry; each shell must report every
-      change, the first included. No shell does yet.
+    - The reader retries only in the foreground. A shell states the foreground state at
+      construction and reports every change after it. No shell does either yet.
+    - The retry's handling of a 429 and of a gateway status is shown through the checked request
+      path with the exact bytes the reference server and a proxy send, not against a live limiter
+      or a live proxy.
     - How long every screen says `revalidating` while a reconnect rechecks many downloaded albums
       is unmeasured: `live` waits for the whole sequence.
     - The viewport-wins re-rebase of item 29 does not advance the tear-retry count. Each one needs a
