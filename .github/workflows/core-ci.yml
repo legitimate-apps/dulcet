@@ -208,7 +208,12 @@ jobs:
     # One attempt output PER SURFACE, because a matrix combines its members' outputs into one set:
     # a single `attempt` would hold whichever member finished last, which after a partial re-run is
     # the wrong attempt for the other surface. Each member sets only its own output and evaluates
-    # the other to an empty string, the pattern GitHub documents for per-member matrix outputs.
+    # the other to an empty string. An empty output is never sent, so it cannot clobber the other
+    # member's value: OBSERVED in run 36240038191, where each member logged `Set output` only for
+    # its own surface, and in actions/runner JobExtension.cs, which skips empty outputs. A member
+    # that is not re-run keeps its output: OBSERVED in the same run's attempt 2, which re-ran only
+    # the phone member, and whose core-ci downloaded `...-phone-36240038191-2` beside
+    # `...-tv-36240038191-1`.
     # Only repetition 1 is downloaded by the required job, so only repetition 1 reports.
     outputs:
       attempt-phone: ${{ matrix.surface == 'phone' && matrix.rep == 1 && github.run_attempt || '' }}
@@ -321,7 +326,7 @@ jobs:
       ANDROID_EMULATOR_RESULT: ${{ needs.android-emulator.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require build and Linux conformance environment
+      - name: Require build, Linux conformance and both emulator legs
         run: |
           echo "core-build=$CORE_BUILD_RESULT"
           echo "conformance-env-linux=$CONFORMANCE_ENV_LINUX_RESULT"
@@ -335,7 +340,10 @@ jobs:
       # failed jobs and this one, not the jobs that passed, so a name built from this job's attempt
       # asks for evidence that was never uploaded. OBSERVED in run 36238393531: attempt 2 re-ran only
       # the phone emulator leg and this job, and failed on
-      # `dulcet-core-conformance-android-evidence-36238393531-2`, which no job had written.
+      # `dulcet-core-conformance-android-evidence-36238393531-2`, which no job had written. With
+      # the attempt outputs, OBSERVED in run 36240038191 attempt 2 (only the phone leg re-run): this
+      # job downloaded phone -2 and the other three artifacts -1, and verified tests=42 reports=32,
+      # the same as attempt 1.
       #
       # Why this cannot read stale evidence: each upload name carries its job and the attempt that
       # ran it, and an upload-artifact@v4 artifact is immutable -- a second upload of one name fails
@@ -343,8 +351,10 @@ jobs:
       # by that same execution, so the name here is the artifact of the job's LATEST execution. A
       # job that failed and then passed on re-run therefore supplies its passing attempt, and one
       # that passed and was then re-run supplies the re-run -- which, having passed the step above,
-      # succeeded. Every attempt's artifact stays in the run, so a superseded failure keeps its
-      # evidence for diagnosis.
+      # succeeded. After a PARTIAL re-run the earlier attempts' artifacts stay in the run, so a
+      # superseded failure keeps its evidence for diagnosis. "Re-run all jobs" does not keep them:
+      # OBSERVED in run 36238393531, whose full attempt 3 left only the -3 artifacts listed
+      # (actions/upload-artifact#585).
       - name: Download Android core-conformance evidence
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:

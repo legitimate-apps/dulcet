@@ -661,6 +661,10 @@ def evaluate_template(value: str, bindings: dict[str, object]) -> str:
 
 
 ATTEMPT_CONTEXT = "github.run_attempt"
+# The download-artifact inputs that choose WHICH artifact is read. `path` only says where it lands.
+SELECTING_INPUTS = ("name", "pattern", "artifact-ids")
+# Inputs that point download-artifact at another run or repository.
+CROSS_RUN_INPUTS = {"run-id", "github-token", "repository"}
 ATTEMPT_OUTPUT = re.compile(r"^\$\{\{ (?:(?P<guard>.+?) && )?github\.run_attempt(?: \|\| '')? \}\}$")
 MATRIX_TERM = re.compile(
     r"^matrix\.(?P<key>[\w-]+) == (?P<value>'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false)$",
@@ -710,9 +714,10 @@ def partial_rerun_errors(workflow: Path, lines: list[str]) -> list[str]:
             if ATTEMPT_CONTEXT not in name:
                 found.append(
                     f"{workflow}: job {job} uploads {name or 'an unnamed artifact'} without "
-                    "${{ github.run_attempt }} in its name; a re-run of the job would collide with "
-                    "the earlier attempt's immutable artifact, and overwriting it would destroy "
-                    "that attempt's evidence",
+                    "${{ github.run_attempt }} in its name; a re-run of the job can collide with "
+                    "the earlier attempt's artifact (upload-artifact@v4 documents a failure when the "
+                    "name already exists), and overwrite: true would delete that attempt's "
+                    "evidence",
                 )
 
     for job, job_steps_list in steps.items():
@@ -723,7 +728,14 @@ def partial_rerun_errors(workflow: Path, lines: list[str]) -> list[str]:
             inputs = {key: expression(str(value))
                       for key, value in (step.get("with") or {}).items()}
             label = step.get("name") or step.get("uses")
-            if any(ATTEMPT_CONTEXT in value for value in inputs.values()):
+            foreign = sorted(set(inputs) & CROSS_RUN_INPUTS)
+            if foreign:
+                found.append(
+                    f"{workflow}: job {job} step {label!r} sets {', '.join(foreign)}, so it can read "
+                    "another run's artifacts; evidence for this run's check must come from this run",
+                )
+                continue
+            if any(ATTEMPT_CONTEXT in inputs.get(key, "") for key in SELECTING_INPUTS):
                 found.append(
                     f"{workflow}: job {job} step {label!r} downloads by its OWN attempt; "
                     "\"Re-run failed jobs\" does not re-run the job that passed, so that name was "
@@ -781,6 +793,172 @@ def partial_rerun_errors(workflow: Path, lines: list[str]) -> list[str]:
                         f"{workflow}: job {job} step {label!r} downloads {name}, which no upload "
                         f"in {producer} produces for the member its {output} output reports",
                     )
+    return found
+
+
+# The jobs branch protection requires by name, in the workflow that defines each. Each one gates a
+# merge, so each is held to the aggregator rules below whether or not it currently downloads.
+REQUIRED_AGGREGATORS = {"apple-ci.yml": "apple-ci", "core-ci.yml": "core-ci"}
+ARTIFACT_READ_IN_SHELL = re.compile(r"\bgh\s+run\s+download\b|/actions/artifacts\b|/artifacts/\d")
+
+
+def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
+    """The gate every evidence-reading job must be: results first, then evidence, no escape hatch.
+
+    An aggregator is a job REQUIRED_AGGREGATORS names, or any job that downloads an artifact. Its
+    evidence-reading is sound only if the jobs it reads from SUCCEEDED in the execution whose
+    artifact it downloads, so for every job it needs it must test `needs.<job>.result` equal to
+    `success`, in an unconditional, blocking step, BEFORE its first download: evidence from an
+    execution that did not succeed is then never read at all. It must run `if: always()` (a failed
+    job would otherwise skip it, and a skipped required check does not block a merge), make exactly
+    one direct, unconditional verify call after every download, download unconditionally into the
+    paths that call reads, and read every attempt output its producers export for it. No job it
+    needs, and not the aggregator itself, may set job-level `continue-on-error`.
+
+    What this cannot see, because it reads the workflow text and does not execute it: artifact
+    reads inside a script a step invokes, through a composite or local action, via `curl` with a
+    computed URL, or via actions/upload-artifact/merge. Shell reads it can recognise -- `gh run
+    download`, or an artifacts REST path -- are rejected in ANY job of any workflow, because the
+    rules above cannot reason about them; use actions/download-artifact by exact name instead.
+    """
+    found: list[str] = []
+    spans = {name: (start, end) for name, start, end in job_spans(lines)}
+    properties = {name: job_properties(lines, start, end) for name, (start, end) in spans.items()}
+    steps = {name: job_steps(lines, start, end) for name, (start, end) in spans.items()}
+
+    def downloads(step: dict[str, object]) -> bool:
+        return str(step.get("uses", "")).startswith("actions/download-artifact@")
+
+    for job, job_steps_list in steps.items():
+        for step in job_steps_list:
+            if ARTIFACT_READ_IN_SHELL.search(code_before_comment(str(step.get("run", "")))):
+                found.append(
+                    f"{workflow}: job {job} step {step.get('name') or 'run'!r} reads artifacts "
+                    "from the shell (gh run download or the artifacts API), which the aggregator "
+                    "rules cannot check; use actions/download-artifact by exact name",
+                )
+
+    required = REQUIRED_AGGREGATORS.get(workflow.name)
+    aggregators = sorted({job for job, job_steps_list in steps.items()
+                          if any(downloads(step) for step in job_steps_list)}
+                         | ({required} & set(spans)))
+    for aggregator in aggregators:
+        props = properties[aggregator]
+        agg_steps = steps[aggregator]
+        needed = listed(props.get("needs"))
+        legs = sorted(set(spans) - {aggregator}) if aggregator == required else sorted(needed)
+        if aggregator == required:
+            if str(props.get("name", "")).strip("'\"") != aggregator:
+                found.append(
+                    f"{workflow}: job {aggregator} must be named exactly {aggregator}; branch "
+                    "protection matches the check by name",
+                )
+            if sorted(needed) != legs:
+                found.append(
+                    f"{workflow}: job {aggregator} must need every leg {legs}, "
+                    f"and needs {sorted(needed)}",
+                )
+        # Without always(), a failed leg SKIPS the aggregator, and a skipped required check does not
+        # block a merge. `!cancelled()` fails the same way for a cancelled run, and success() is the
+        # default this replaces.
+        if expression(str(props.get("if", ""))) not in ("${{ always() }}", "always()"):
+            found.append(
+                f"{workflow}: job {aggregator} must run if: ${{{{ always() }}}}; otherwise a "
+                "failed leg skips it, and a skipped required check does not block a merge",
+            )
+        environment = props.get("env") if isinstance(props.get("env"), dict) else {}
+        # Where each `test "$X" = success` is: only unconditional, blocking shell steps count.
+        tested_at: dict[str, int] = {}
+        for index, step in enumerate(agg_steps):
+            if "if" in step or step.get("continue-on-error", "false") != "false":
+                continue
+            if str(step.get("shell", "bash")) not in {"bash", "sh"}:
+                continue
+            for words in direct_commands(str(step.get("run", ""))):
+                if (len(words) == 4 and words[0] == "test" and words[2] in {"=", "=="}
+                        and words[3] == "success"):
+                    tested_at.setdefault(words[1].strip("${}"), index)
+        download_steps = [index for index, step in enumerate(agg_steps) if downloads(step)]
+        first_download = min(download_steps, default=len(agg_steps))
+        for leg in legs:
+            bound = {name for name, value in environment.items()
+                     if expression(value) == f"${{{{ needs.{leg}.result }}}}"}
+            positions = [tested_at[name] for name in bound if name in tested_at]
+            if not positions:
+                found.append(
+                    f"{workflow}: job {aggregator} must require needs.{leg}.result to "
+                    "equal success in an unconditional step; any other test lets a cancelled or "
+                    "skipped leg pass",
+                )
+            elif min(positions) > first_download:
+                found.append(
+                    f"{workflow}: job {aggregator} tests needs.{leg}.result only after downloading "
+                    "evidence; test every result first, so evidence from an execution that did not "
+                    "succeed is never read",
+                )
+
+        # The evidence check is the other half of what the aggregator is for, and it is as easy to
+        # defang as the result test: `continue-on-error`, a step `if:`, `|| true`, or a position
+        # before the downloads each leave the aggregator green with the evidence unchecked. So
+        # exactly one step makes the verify call as a direct command, unconditionally, after every
+        # download -- and no download may be made optional either, or the call would read an empty
+        # directory.
+        verify_steps = [index for index, step in enumerate(agg_steps)
+                        if any(words[:2] == ["python3", "tools/verify-parity-evidence"]
+                               for words in direct_commands(str(step.get("run", ""))))]
+        if len(verify_steps) != 1:
+            found.append(
+                f"{workflow}: job {aggregator} must make exactly one direct "
+                f"python3 tools/verify-parity-evidence call, and makes {len(verify_steps)}; a call "
+                "inside a condition, a list or a pipeline cannot fail the job",
+            )
+        for index in verify_steps + download_steps:
+            step = agg_steps[index]
+            if "if" in step or step.get("continue-on-error", "false") != "false":
+                found.append(
+                    f"{workflow}: job {aggregator} step "
+                    f"{step.get('name') or step.get('uses')!r} must be unconditional and blocking "
+                    f"(no if:, no continue-on-error); otherwise {aggregator} passes with the "
+                    "evidence unchecked",
+                )
+        if verify_steps and download_steps and max(download_steps) > min(verify_steps):
+            found.append(
+                f"{workflow}: job {aggregator} verifies evidence before every download "
+                "has run; the verify call would read directories that are not there yet",
+            )
+        download_paths = {expression(str((agg_steps[index].get("with") or {}).get("path", "")))
+                          for index in download_steps}
+        download_names = " ".join(expression(str((agg_steps[index].get("with") or {})
+                                                 .get("name", "")))
+                                  for index in download_steps)
+        for argument in [argument
+                         for step in agg_steps
+                         for words in evidence_commands(str(step.get("run", "")))
+                         if words[:2] == ["python3", "tools/verify-parity-evidence"]
+                         for argument in words[2:]]:
+            if not argument.startswith("$RUNNER_TEMP/") and argument not in download_paths:
+                found.append(
+                    f"{workflow}: verify-parity-evidence reads {argument}, which "
+                    f"{aggregator} never downloads; it would be empty on that machine",
+                )
+        # A producer exports an attempt output only so that this job can name its evidence. One the
+        # aggregator never reads is a surface whose evidence nobody checks.
+        for leg in legs:
+            outputs = properties[leg].get("outputs")
+            for output, value in (outputs.items() if isinstance(outputs, dict) else []):
+                if (ATTEMPT_CONTEXT in value
+                        and f"${{{{ needs.{leg}.outputs.{output} }}}}" not in download_names):
+                    found.append(
+                        f"{workflow}: job {leg} exports attempt output {output}, which no "
+                        f"{aggregator} download names; that evidence is never read",
+                    )
+        for job_name in [aggregator, *legs]:
+            if job_name in properties and properties[job_name].get(
+                    "continue-on-error", "false") != "false":
+                found.append(
+                    f"{workflow}: job {job_name} sets continue-on-error; a required "
+                    "job that cannot fail the run is not a gate",
+                )
     return found
 
 
@@ -856,6 +1034,10 @@ for workflow in workflows:
     # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
     # aggregators, so a new aggregator cannot reintroduce it.
     errors.extend(partial_rerun_errors(workflow, lines))
+    # core-ci's stale-evidence argument rests on its result check running before any download.
+    # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it
+    # were all accepted -- so the aggregator rules now apply to every evidence-reading job.
+    errors.extend(aggregator_errors(workflow, lines))
 
 # Every JUnit directory an Apple step writes must reach verify-parity-evidence, and every
 # directory it reads must be written by a step. PR #65 failed apple-ci with "evidence test did not
@@ -982,86 +1164,11 @@ if apple_ci:
         )
         aggregator_steps: list[dict[str, object]] = []
     else:
+        # The aggregator's own gate -- its name, if: always(), needing and testing every leg before
+        # any download, the verify call's position and the absence of escape hatches -- is checked
+        # for every workflow by aggregator_errors(). What stays here is apple-ci's evidence handoff.
         start, end = apple_jobs[APPLE_AGGREGATOR]
-        aggregator = job_properties(apple_lines, start, end)
         aggregator_steps = job_steps(apple_lines, start, end)
-        if str(aggregator.get("name", "")).strip("'\"") != APPLE_AGGREGATOR:
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must be named exactly {APPLE_AGGREGATOR}; "
-                "branch protection matches the check by name",
-            )
-        # Without always(), a failed leg SKIPS the aggregator, and a skipped required check does not
-        # block a merge. `!cancelled()` fails the same way for a cancelled run, and success() is the
-        # default this replaces.
-        if expression(str(aggregator.get("if", ""))) not in ("${{ always() }}", "always()"):
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must run if: ${{{{ always() }}}}; otherwise a "
-                "failed leg skips it, and a skipped required check does not block a merge",
-            )
-        needed = listed(aggregator.get("needs"))
-        if sorted(needed) != legs:
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must need every leg {legs}, "
-                f"and needs {sorted(needed)}",
-            )
-        environment = aggregator.get("env") if isinstance(aggregator.get("env"), dict) else {}
-        required = {
-            words[1].strip("${}")
-            for step in aggregator_steps
-            if "if" not in step and step.get("continue-on-error", "false") == "false"
-            and str(step.get("shell", "bash")) in {"bash", "sh"}
-            for words in direct_commands(str(step.get("run", "")))
-            if len(words) == 4 and words[0] == "test" and words[2] in {"=", "=="}
-            and words[3] == "success"
-        }
-        for leg in legs:
-            bound = {name for name, value in environment.items()
-                     if expression(value) == f"${{{{ needs.{leg}.result }}}}"}
-            if not bound & required:
-                errors.append(
-                    f"{apple_ci_path}: job {APPLE_AGGREGATOR} must require needs.{leg}.result to "
-                    "equal success in an unconditional step; any other test lets a cancelled or "
-                    "skipped leg pass",
-                )
-
-        # The evidence check is the other half of what the aggregator is for, and it is as easy to
-        # defang as the result test: `continue-on-error`, a step `if:`, `|| true`, or a position
-        # before the downloads each leave apple-ci green with the evidence unchecked. So exactly one
-        # step makes the verify call as a direct command, unconditionally, after every download --
-        # and no download may be made optional either, or the call would read an empty directory.
-        verify_steps = [index for index, step in enumerate(aggregator_steps)
-                        if any(words[:2] == ["python3", "tools/verify-parity-evidence"]
-                               for words in direct_commands(str(step.get("run", ""))))]
-        download_steps = [index for index, step in enumerate(aggregator_steps)
-                          if str(step.get("uses", "")).startswith("actions/download-artifact@")]
-        if len(verify_steps) != 1:
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must make exactly one direct "
-                f"python3 tools/verify-parity-evidence call, and makes {len(verify_steps)}; a call "
-                "inside a condition, a list or a pipeline cannot fail the job",
-            )
-        for index in verify_steps + download_steps:
-            step = aggregator_steps[index]
-            if "if" in step or step.get("continue-on-error", "false") != "false":
-                errors.append(
-                    f"{apple_ci_path}: job {APPLE_AGGREGATOR} step "
-                    f"{step.get('name') or step.get('uses')!r} must be unconditional and blocking "
-                    "(no if:, no continue-on-error); otherwise apple-ci passes with the evidence "
-                    "unchecked",
-                )
-        if verify_steps and download_steps and max(download_steps) > min(verify_steps):
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} verifies evidence before every download "
-                "has run; the verify call would read directories that are not there yet",
-            )
-        for job_name in [APPLE_AGGREGATOR, *legs]:
-            job_start, job_end = apple_jobs[job_name]
-            if job_properties(apple_lines, job_start, job_end).get(
-                    "continue-on-error", "false") != "false":
-                errors.append(
-                    f"{apple_ci_path}: job {job_name} sets continue-on-error; a required Apple "
-                    "job that cannot fail the run is not a gate",
-                )
 
     # Evidence is verified in the required job, and only there: FEATURES.yml cites job apple-ci,
     # and verify-parity-evidence resolves citations against GITHUB_JOB.
@@ -1142,21 +1249,6 @@ if apple_ci:
         elif name not in produced:
             errors.append(
                 f"{apple_ci_path}: {APPLE_AGGREGATOR} downloads {name}, which no leg uploads",
-            )
-    verify_arguments = [
-        argument
-        for step in aggregator_steps
-        for words in evidence_commands(str(step.get("run", "")))
-        if words[:2] == ["python3", "tools/verify-parity-evidence"]
-        for argument in words[2:]
-    ]
-    for argument in verify_arguments:
-        if argument.startswith("$RUNNER_TEMP/"):
-            continue
-        if argument not in download_names.values():
-            errors.append(
-                f"{apple_ci_path}: verify-parity-evidence reads {argument}, which "
-                f"{APPLE_AGGREGATOR} never downloads; it would be empty on that machine",
             )
 
 # The directory wiring above is necessary and was not sufficient. verify-parity-evidence matches on
