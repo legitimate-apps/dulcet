@@ -59,6 +59,7 @@ class AppleLibraryReaderFacadeTest {
             LibraryFreshness.Cached(null, LibraryCachedReason.Offline) to listOf("cached", "offline", null, null),
             LibraryFreshness.Cached(7, LibraryCachedReason.Failed(failed)) to listOf("cached", "failed", "timeout", 7L),
             LibraryFreshness.Cached(8, LibraryCachedReason.Stale) to listOf("cached", "stale", null, 8L),
+            LibraryFreshness.Cached(10, LibraryCachedReason.Owed) to listOf("cached", "owed", null, 10L),
             LibraryFreshness.Cached(9, LibraryCachedReason.InternalFailure) to listOf("cached", "internalFailure", null, 9L),
             LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline) to listOf("unavailable", "notCachedOffline", null, null),
             LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone) to listOf("unavailable", "gone", null, null),

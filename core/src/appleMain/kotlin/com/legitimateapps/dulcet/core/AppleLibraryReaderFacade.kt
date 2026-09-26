@@ -697,18 +697,27 @@ public class AppleLibraryWindowSubscription internal constructor(
     private var clock: (() -> Long)? = null
     private var liveAt: Long? = null
 
-    /** Reads the next page of a paged list, at most one page beyond the viewport. */
+    /**
+     * Reads the next page of a paged list, at most one page beyond the viewport. One not made —
+     * offline, failed, or discarded by a rebase — is owed: the screen says `cached` with reason
+     * `failed` or `owed`, never `live`, and the next [refresh] or reconnect makes it (§16.14).
+     */
     public fun loadMore() {
         call { it.loadMore() }
     }
 
-    /** Reads the page before a window that starts below the top (after a rebase, §16.12). */
+    /**
+     * Reads the page before a window that starts below the top (after a rebase, §16.12). Owed when
+     * not made, as [loadMore] is.
+     */
     public fun loadBefore() {
         call { it.loadBefore() }
     }
 
     /**
-     * Re-reads the visible pages whatever their age. It does nothing while the reader is offline —
+     * Re-reads the visible pages whatever their age, then makes any [loadMore] or [loadBefore]
+     * still owed — so a "Try again" for a screen saying `failed` retries a failed "load more" too.
+     * It does nothing while the reader is offline —
      * a screen saying `offline`, or naming the reconnect failure that keeps the reader offline, such
      * as `failed` of kind `authentication`, or `internalFailure`. A "Try again" for such a screen
      * must call the client's `reconnect`, which runs the whole sequence and then re-reads every
