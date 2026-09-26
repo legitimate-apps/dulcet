@@ -370,6 +370,213 @@ enum DulcetStrings {
         formatted("account.connect.connected", "Connected to %@", serverName)
     }
 
+    // MARK: The library reader (§16.14, §16.15). Words the person sees are "Available offline",
+    // "Downloaded" and "Not available offline"; never "cached" or "sync".
+
+    static let readerUntitled = text("reader.untitled", "Unknown")
+    static let readerHome = text("reader.section.home", "Home")
+    static let readerAlbums = text("reader.section.albums", "Albums")
+    static let readerArtists = text("reader.section.artists", "Artists")
+    static let readerGenres = text("reader.section.genres", "Genres")
+    static let readerPlaylists = text("reader.section.playlists", "Playlists")
+    static let readerFavorites = text("reader.section.favorites", "Favorites")
+    static let readerSongs = text("reader.section.songs", "Songs")
+    static let readerRecentlyAdded = text("reader.home.recentlyAdded", "Recently Added")
+    static let readerRecentlyPlayed = text("reader.home.recentlyPlayed", "Recently Played")
+    static let readerMostPlayed = text("reader.home.mostPlayed", "Most Played")
+    static let readerSortBy = text("reader.sort", "Sort By")
+    static let readerSortTitle = text("reader.sort.title", "Title")
+    static let readerSortArtist = text("reader.sort.artist", "Artist")
+    static let readerSortRecentlyAdded = text("reader.sort.recentlyAdded", "Recently Added")
+    static let readerSortRecentlyPlayed = text("reader.sort.recentlyPlayed", "Recently Played")
+    static let readerSortMostPlayed = text("reader.sort.mostPlayed", "Most Played")
+    static let readerSortTopRated = text("reader.sort.topRated", "Top Rated")
+    static let readerSortRandom = text("reader.sort.random", "Random")
+    static let readerSortFavorites = text("reader.sort.favorites", "Favorites")
+    static let readerJustNow = text("reader.age.justNow", "just now")
+    static let readerSeenUnknownAge = text("reader.seen.unknownAge", "Showing what this device had saved, age unknown")
+    static let readerReasonOffline = text("reader.reason.offline", "you\u{2019}re offline")
+    static let readerReasonRevalidating = text("reader.reason.revalidating", "checking your server")
+    static let readerReasonStale = text("reader.reason.stale", "your library has changed since")
+    static let readerReasonOwed = text("reader.reason.owed", "more is still to load")
+    static let readerReasonInternal = text("reader.reason.internal", "something went wrong on this device")
+    static let readerErrorUnreachable = text("reader.error.unreachable", "couldn\u{2019}t reach your server")
+    static let readerErrorTimeout = text("reader.error.timeout", "your server didn\u{2019}t answer in time")
+    static let readerErrorCredentials = text("reader.error.credentials", "your server didn\u{2019}t accept your sign-in")
+    static let readerErrorForbidden = text("reader.error.forbidden", "your account isn\u{2019}t allowed to see this")
+    static let readerErrorBusy = text("reader.error.busy", "your server is busy")
+    static let readerErrorNotFound = text("reader.error.notFound", "your server no longer has this")
+    static let readerErrorTLS = text("reader.error.tls", "your server\u{2019}s certificate isn\u{2019}t trusted")
+    static let readerErrorAccessRefused = text("reader.error.accessRefused", "your server refused access")
+    static let readerErrorServer = text("reader.error.server", "your server couldn\u{2019}t answer")
+    static let readerUnavailableAlbum = text("reader.unavailable.album", "You haven\u{2019}t opened this album on this device. Connect to your server to see it.")
+    static let readerUnavailableList = text("reader.unavailable.list", "You haven\u{2019}t opened this on this device. Connect to your server to see it.")
+    static let readerUnavailableAlbumTracks = text("reader.unavailable.albumTracks", "This album\u{2019}s tracks aren\u{2019}t on this device. Connect to your server to see them.")
+    static let readerUnavailableGone = text("reader.unavailable.gone", "This is no longer on your server.")
+    static let readerUnavailableInternal = text("reader.unavailable.internal", "Couldn\u{2019}t load this \u{2014} something went wrong on this device.")
+    static let readerUnavailableClosed = text("reader.unavailable.closed", "This screen has closed.")
+    static let readerEmptyList = text("reader.empty", "Nothing here yet.")
+    static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library \u{2014} this list may change")
+    static let readerCoverageChanging = text("reader.coverage.changing", "This list kept changing while it was read \u{2014} it may be incomplete")
+    static let readerAvailableOffline = text("reader.availableOffline", "Available offline")
+    static let readerNotAvailableOffline = text("reader.notAvailableOffline", "Not available offline")
+    static let readerDownloaded = text("reader.downloaded", "Downloaded")
+    static let readerPlaysOnReconnect = text("reader.playsOnReconnect", "Not downloaded. It\u{2019}ll play when you reconnect.")
+    static let readerNothingPlayable = text("reader.nothingPlayable", "Nothing here can play right now.")
+    static let readerNoEpoch = text("reader.noEpoch", "Your server doesn\u{2019}t say when its library changes, so a long list can occasionally miss an item while the library is changing.")
+    static let readerChangeHeldBusy = text("reader.change.heldBusy", "That change isn\u{2019}t sent yet \u{2014} your server is busy. It will be sent later.")
+    static let readerChangeSuperseded = text("reader.change.superseded", "Changed on another device \u{2014} showing your server\u{2019}s value")
+    static let readerChangeNotRecorded = text("reader.change.notRecorded", "Couldn\u{2019}t save that change on this device")
+    static let readerFavoritePending = text("reader.favorite.pending", "Waiting to send")
+    static let readerFavoriteHeld = text("reader.favorite.held", "Not sent yet")
+    static let readerFavoriteOn = text("reader.favorite.on", "Favorite")
+    static let readerDeviceOnlyTitle = text("reader.deviceOnly.title", "Showing what\u{2019}s on this device")
+    static let readerSearchScopeDevice = text("reader.search.scope.device", "On this device")
+    static let readerSearchScopeServer = text("reader.search.scope.server", "Your server")
+    static let readerSearchRowDevice = text("reader.search.row.device", "On this device")
+    static let readerSearchSummary = text("reader.search.summary", "Results come from your server and from what this device has seen, from the first character.")
+    static let readerSearchIdleBody = text("reader.search.idle.body", "Find artists, albums, and tracks on your server and on this device.")
+    static let readerSearchEmptyTitle = text("reader.search.empty.title", "No matches")
+    static let readerSignOutPendingStay = text("reader.signOut.stay", "Stay Signed In")
+    static let readerSignOutDiscard = text("reader.signOut.discard", "Sign Out and Discard")
+    static let readerSignOutSend = text("reader.signOut.send", "Send Changes, Then Sign Out")
+    static let readerSignOutPendingUnknown = text("reader.signOut.pendingUnknown", "Dulcet couldn\u{2019}t check for changes that haven\u{2019}t reached your server. Signing out now discards any there are.")
+    static let readerSignOutSending = text("reader.signOut.sending", "Sending your changes\u{2026}")
+    static let readerSignOutSendFailed = text("reader.signOut.sendFailed", "Your server couldn\u{2019}t be reached, so your changes weren\u{2019}t sent.")
+    static let readerTryAgain = text("reader.tryAgain", "Try Again")
+    static let readerPlayAll = text("reader.playAll", "Play")
+    static let readerSeeAll = text("reader.seeAll", "See All")
+    static let readerSignOutTitle = text("reader.signOut.title", "Changes Not Sent")
+
+    static func readerSeenAt(_ age: String) -> String {
+        formatted("reader.seen.at", "Showing what you last saw %@", age)
+    }
+
+    /// A reader row read aloud: its title, then its subtitle.
+    static func readerRowAccessibility(_ title: String, _ subtitle: String) -> String {
+        formatted("reader.row.accessibility", "%1$@, %2$@", title, subtitle)
+    }
+
+    static func readerSeenWithReason(_ seen: String, _ reason: String) -> String {
+        formatted("reader.seen.withReason", "%1$@ \u{2014} %2$@", seen, reason)
+    }
+
+    static func readerUnavailableFailed(_ phrase: String) -> String {
+        formatted("reader.unavailable.failed", "Couldn\u{2019}t load this \u{2014} %@.", phrase)
+    }
+
+    static func readerCoverageOpen(shown: String, total: String) -> String {
+        formatted("reader.coverage.openTotal", "Showing %1$@ of %2$@ \u{2014} the rest need a connection", shown, total)
+    }
+
+    static func readerCoverageOpen(shown: String) -> String {
+        formatted("reader.coverage.open", "Showing %@ \u{2014} the rest need a connection", shown)
+    }
+
+    static func readerCount(_ kind: DulcetReaderCountKind, _ count: Int) -> String {
+        switch kind {
+        case .albums: pluralized("reader.count.albums", fallback: "%d albums", count: count)
+        case .artists: pluralized("reader.count.artists", fallback: "%d artists", count: count)
+        case .tracks: pluralized("reader.count.tracks", fallback: "%d tracks", count: count)
+        case .playlists: pluralized("reader.count.playlists", fallback: "%d playlists", count: count)
+        case .items: pluralized("reader.count.items", fallback: "%d items", count: count)
+        }
+    }
+
+    static func readerConnectionFailed(_ phrase: String) -> String {
+        formatted("reader.connectionFailed", "Couldn\u{2019}t connect to your server \u{2014} %@", phrase)
+    }
+
+    static func readerDeviceOnlyBody(_ serverName: String) -> String {
+        formatted(
+            "reader.deviceOnly.body",
+            "Dulcet will contact %@ only after you choose Reconnect.",
+            serverName
+        )
+    }
+
+    static func readerDiscardedChanges(_ count: Int) -> String {
+        pluralized(
+            "reader.discardedChanges",
+            fallback: "%d favorites or ratings weren\u{2019}t sent and have been discarded: this device is now signed in as someone else.",
+            count: count
+        )
+    }
+
+    static func readerChangeNotSaved(_ phrase: String) -> String {
+        formatted("reader.change.notSaved", "Couldn\u{2019}t save that change \u{2014} %@", phrase)
+    }
+
+    static func readerChangeHeldRefused(_ phrase: String) -> String {
+        formatted(
+            "reader.change.heldRefused",
+            "That change isn\u{2019}t sent yet \u{2014} %@. It\u{2019}s kept, and will be sent once your server accepts it.",
+            phrase
+        )
+    }
+
+    static func readerSearchScopeOffline(albums: Int, tracks: Int) -> String {
+        formatted(
+            "reader.search.scope.offline",
+            "Searching what\u{2019}s available offline \u{2014} %1$@ and %2$@ on this device",
+            readerCount(.albums, albums),
+            readerCount(.tracks, tracks)
+        )
+    }
+
+    static func readerSearchScopeFailed(_ phrase: String) -> String {
+        formatted("reader.search.scope.failed", "On this device \u{2014} %@", phrase)
+    }
+
+    static func readerSignOutPending(_ count: Int) -> String {
+        pluralized(
+            "reader.signOut.pending",
+            fallback: "%d changes haven\u{2019}t reached your server. Signing out now discards them.",
+            count: count
+        )
+    }
+
+    static func readerSignOutPendingOnline(_ count: Int) -> String {
+        pluralized(
+            "reader.signOut.pendingOnline",
+            fallback: "%d changes haven\u{2019}t reached your server yet. Send them before signing out, or sign out and discard them.",
+            count: count
+        )
+    }
+
+    static func readerFavoriteAccessibility(_ title: String) -> String {
+        formatted("reader.favorite.accessibility", "%@, Favorite", title)
+    }
+
+    static func readerGenreSummary(albums: Int?, songs: Int?) -> String {
+        let parts = [albums.map { readerCount(.albums, $0) }, songs.map { readerCount(.tracks, $0) }].compactMap { $0 }
+        return ListFormatter.localizedString(byJoining: parts)
+    }
+
+    /// Why the reader could not read, in the words the screens use.
+    static func readerErrorPhrase(_ kind: DulcetReaderErrorKind) -> String {
+        switch kind {
+        case .unreachable, .cancelled: readerErrorUnreachable
+        case .timeout: readerErrorTimeout
+        case .invalidCredentials, .authentication: readerErrorCredentials
+        case .forbidden: readerErrorForbidden
+        case .serverBusy: readerErrorBusy
+        case .tlsUntrusted, .security: readerErrorTLS
+        case .notFound: readerErrorNotFound
+        case .internalFailure, .closed: readerReasonInternal
+        case .protocol, .server, .playback, .input, .capability: readerErrorServer
+        }
+    }
+
+    /// Why a held change waits: what the ping that checked the account said -- never the item.
+    static func readerHeldPhrase(_ kind: DulcetReaderErrorKind) -> String {
+        switch kind {
+        case .invalidCredentials: readerErrorCredentials
+        case .authentication, .forbidden: readerErrorAccessRefused
+        default: readerErrorServer
+        }
+    }
+
     static func dynamicText(_ key: String, fallback: String) -> String {
         Bundle.module.localizedString(forKey: key, value: fallback, table: nil)
     }
@@ -384,6 +591,11 @@ enum DulcetStrings {
             locale: Locale.current,
             arguments: arguments
         )
+    }
+
+    /// A quantity, grouped as the locale groups quantities ("2,950").
+    static func groupedNumber(_ value: Int, locale: Locale = .current) -> String {
+        value.formatted(.number.locale(locale))
     }
 
     static func identifierNumber(_ value: Int, locale: Locale = .current) -> String {
@@ -430,6 +642,14 @@ public enum DulcetPlaybackStrings {
         defaultValue: "Audio",
         bundle: .module
     )
+}
+
+enum DulcetReaderCountKind {
+    case albums
+    case artists
+    case tracks
+    case playlists
+    case items
 }
 
 enum DulcetLinks {

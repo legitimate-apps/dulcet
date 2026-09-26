@@ -17,6 +17,52 @@ struct DulcetSearchView: View {
     /// A search command asked for the field's focus; `onFocusRequestHandled` clears the request.
     var focusRequested = false
     var onFocusRequestHandled: () -> Void = {}
+    /// The reader's search, when the reader draws this screen (§16.15): rows from the first
+    /// character, labelled with where they came from.
+    var reader: DulcetReaderSearchContent?
+
+    private enum Phase {
+        case idle
+        case loading
+        case results
+        case empty
+        case error
+    }
+
+    private var phase: Phase {
+        guard let reader else {
+            return switch snapshot.state {
+            case .searchLoading: .loading
+            case .searchResults: .results
+            case .searchEmpty: .empty
+            case .searchError: .error
+            default: .idle
+            }
+        }
+        let trimmed = reader.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .idle }
+        guard let publication = reader.publication else { return .loading }
+        if !publication.rows.isEmpty { return .results }
+        // Nothing on the device yet; the server's answer is still coming for a query it is asked.
+        if publication.scope == .deviceWhileServerPending, trimmed.count >= 2 { return .loading }
+        return .empty
+    }
+
+    private var results: [DulcetSearchResult] {
+        reader.map { $0.publication?.rows.map(\.result) ?? [] } ?? snapshot.searchResults
+    }
+
+    private func readerRow(_ id: DulcetSearchResult.ID) -> DulcetReaderSearchRow? {
+        reader?.publication?.rows.first { $0.id == id }
+    }
+
+    private func activate(_ id: DulcetSearchResult.ID) {
+        if let reader, let row = readerRow(id) {
+            reader.onActivate(row)
+        } else {
+            onActivateResult(id)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -52,7 +98,7 @@ struct DulcetSearchView: View {
                     // result from the keyboard silently did nothing.
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
-                Text(DulcetStrings.searchSummary)
+                Text(reader == nil ? DulcetStrings.searchSummary : DulcetStrings.readerSearchSummary)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
@@ -84,22 +130,22 @@ struct DulcetSearchView: View {
 
     @ViewBuilder
     private var searchContent: some View {
-        switch snapshot.state {
-        case .searchLoading:
+        switch phase {
+        case .loading:
             VStack(spacing: DulcetSpacing.sm) {
                 ProgressView()
                 Text(DulcetStrings.searchLoading)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
-        case .searchResults:
+        case .results:
             resultsTable
-        case .searchEmpty:
+        case .empty:
             searchMessage(
                 symbol: "magnifyingglass",
                 title: DulcetStrings.searchEmptyTitle,
                 body: DulcetStrings.searchEmptyBody
             )
-        case .searchError:
+        case .error:
             VStack(spacing: DulcetSpacing.md) {
                 searchMessage(
                     symbol: "exclamationmark.magnifyingglass",
@@ -109,11 +155,11 @@ struct DulcetSearchView: View {
                 Button(DulcetStrings.searchRetry, action: onRetry)
                     .buttonStyle(.borderedProminent)
             }
-        default:
+        case .idle:
             searchMessage(
                 symbol: "magnifyingglass",
                 title: DulcetStrings.searchIdleTitle,
-                body: DulcetStrings.searchIdleBody
+                body: reader == nil ? DulcetStrings.searchIdleBody : DulcetStrings.readerSearchIdleBody
             )
         }
     }
@@ -124,17 +170,25 @@ struct DulcetSearchView: View {
                 Text(DulcetStrings.bestMatches)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text(DulcetStrings.searchResultCount(snapshot.searchResults.count))
+                Text(DulcetStrings.searchResultCount(results.count))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
             }
+            if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
+                Label(label, systemImage: "iphone")
+                    .font(.caption.weight(.medium))
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(nil)
+                    .accessibilityIdentifier("dulcet.search.scope")
+            }
 
 #if os(macOS)
-            Table(snapshot.searchResults, selection: $selectedResultID) {
+            Table(results, selection: $selectedResultID) {
                 TableColumn(DulcetStrings.resultColumn) { result in
                     DulcetSearchResultIdentity(
                         result: result,
-                        rank: snapshot.searchResults.firstIndex(of: result)
+                        rank: results.firstIndex(of: result),
+                        readerRow: readerRow(result.id)
                     )
                 }
                 .width(min: 320, ideal: 620)
@@ -148,16 +202,16 @@ struct DulcetSearchView: View {
             .alternatingRowBackgrounds(.disabled)
             .contextMenu(forSelectionType: DulcetSearchResult.ID.self) { selection in
                 if let id = selection.first,
-                   let result = snapshot.searchResults.first(where: { $0.id == id }) {
-                    DulcetSearchResultMenuItems(result: result) {
+                   let result = results.first(where: { $0.id == id }) {
+                    DulcetSearchResultMenuItems(result: result, readerRow: readerRow(id)) {
                         selectedResultID = id
-                        onActivateResult(id)
+                        activate(id)
                     }
                 }
             } primaryAction: { selection in
                 guard let id = selection.first else { return }
                 selectedResultID = id
-                onActivateResult(id)
+                activate(id)
             }
 #else
             // Selection is the macOS Table's idiom; touch and the remote share the library's
@@ -165,12 +219,16 @@ struct DulcetSearchView: View {
             // (play a track, open an album or artist) through onActivateResult.
             ScrollView {
                 LazyVStack(spacing: DulcetSpacing.sm) {
-                    ForEach(Array(snapshot.searchResults.enumerated()), id: \.element.id) { index, result in
+                    ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
                         Button {
-                            onActivateResult(result.id)
+                            activate(result.id)
                         } label: {
                             HStack(spacing: DulcetSpacing.md) {
-                                DulcetSearchResultIdentity(result: result, rank: index)
+                                DulcetSearchResultIdentity(
+                                    result: result,
+                                    rank: index,
+                                    readerRow: readerRow(result.id)
+                                )
                                 Spacer(minLength: DulcetSpacing.md)
                                 Text(result.kind.displayTitle)
                                     .font(.callout.weight(.semibold))
@@ -191,8 +249,8 @@ struct DulcetSearchView: View {
                         ))
 #if os(iOS)
                         .contextMenu {
-                            DulcetSearchResultMenuItems(result: result) {
-                                onActivateResult(result.id)
+                            DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
+                                activate(result.id)
                             }
                         } preview: {
                             DulcetContextMenuPreview(
@@ -207,6 +265,7 @@ struct DulcetSearchView: View {
                             artwork: result.artwork,
                             title: result.title,
                             isEnabled: result.playableTrack != nil
+                                && readerRow(result.id)?.isUnavailableOffline != true
                         ) { result.playableTrack.map(DulcetQueueAddition.searchResult) }
 #endif
                     }
@@ -240,7 +299,9 @@ struct DulcetSearchView: View {
     }
 
     private var pagedKinds: [DulcetSearchResultKind] {
-        [.track, .album, .artist].filter(snapshot.searchHasMoreKinds.contains)
+        // The reader's search has no per-kind paging (§16.15): what it holds is what it shows.
+        guard reader == nil else { return [] }
+        return [.track, .album, .artist].filter(snapshot.searchHasMoreKinds.contains)
     }
 
     private func loadMoreTitle(for kind: DulcetSearchResultKind) -> String {
@@ -275,13 +336,14 @@ struct DulcetSearchView: View {
 private struct DulcetSearchResultMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let result: DulcetSearchResult
+    var readerRow: DulcetReaderSearchRow?
     let onActivate: () -> Void
 
     var body: some View {
         switch result.kind {
         case .track:
             Button(DulcetStrings.play, systemImage: "play", action: onActivate)
-            if let track = result.playableTrack {
+            if let track = result.playableTrack, readerRow?.isUnavailableOffline != true {
                 DulcetQueueInsertionMenuItems(addition: .searchResult(track))
             }
             if let track = result.playableTrack, let albumID = store.libraryAlbumID(for: track) {
@@ -293,6 +355,9 @@ private struct DulcetSearchResultMenuItems: View {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack", action: onActivate)
         case .artist:
             Button(DulcetStrings.goToArtist, systemImage: "music.mic", action: onActivate)
+        }
+        if let readerRow, let target = readerRow.favouriteTarget {
+            DulcetFavouriteMenuItem(target: target, published: readerRow.isFavourite)
         }
         if result.kind != .artist {
             ForEach(artistTargets, id: \.id) { target in
@@ -336,10 +401,17 @@ private struct DulcetSearchResultIdentity: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let result: DulcetSearchResult
     let rank: Int?
+    var readerRow: DulcetReaderSearchRow?
+
+    private var unavailableOffline: Bool { readerRow?.isUnavailableOffline == true }
 
     var body: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-            DulcetArtworkView(artwork: result.artwork, size: DulcetMetrics.denseRowArtworkSize)
+            DulcetArtworkView(
+                artwork: result.artwork,
+                size: DulcetMetrics.denseRowArtworkSize,
+                muted: unavailableOffline
+            )
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(result.title)
@@ -357,14 +429,42 @@ private struct DulcetSearchResultIdentity: View {
                         .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
+                if let readerRow, readerRow.source == .device || unavailableOffline {
+                    Text(unavailableOffline
+                        ? DulcetStrings.readerNotAvailableOffline
+                        : DulcetStrings.readerSearchRowDevice)
+                        .font(.caption2.weight(.medium))
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(nil)
+                }
+            }
+            if let readerRow, readerRow.favouriteTarget != nil {
+                DulcetFavouriteIndicator(id: readerRow.id, published: readerRow.isFavourite)
             }
         }
-        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        var label = DulcetStrings.searchResultAccessibility(
             title: result.title,
             subtitle: result.subtitle,
             kind: result.kind.displayTitle
-        ))
+        )
+        if unavailableOffline {
+            label += ", " + DulcetStrings.readerNotAvailableOffline
+        } else if readerRow?.source == .device {
+            label += ", " + DulcetStrings.readerSearchRowDevice
+        }
+        return label
     }
+}
+
+/// What the reader's search shows, and what activating a row does.
+struct DulcetReaderSearchContent {
+    let query: String
+    let publication: DulcetReaderSearchPublication?
+    let onActivate: (DulcetReaderSearchRow) -> Void
 }
 
 extension DulcetSearchResultKind {

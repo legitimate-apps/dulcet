@@ -50,5 +50,133 @@
             <string>%d results</string>
         </dict>
     </dict>
+    <key>reader.count.albums</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@albums@</string>
+        <key>albums</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d album</string>
+            <key>other</key>
+            <string>%d albums</string>
+        </dict>
+    </dict>
+    <key>reader.count.artists</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@artists@</string>
+        <key>artists</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d artist</string>
+            <key>other</key>
+            <string>%d artists</string>
+        </dict>
+    </dict>
+    <key>reader.count.tracks</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@tracks@</string>
+        <key>tracks</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d track</string>
+            <key>other</key>
+            <string>%d tracks</string>
+        </dict>
+    </dict>
+    <key>reader.count.playlists</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@playlists@</string>
+        <key>playlists</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d playlist</string>
+            <key>other</key>
+            <string>%d playlists</string>
+        </dict>
+    </dict>
+    <key>reader.count.items</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d item</string>
+            <key>other</key>
+            <string>%d items</string>
+        </dict>
+    </dict>
+    <key>reader.discardedChanges</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@changes@</string>
+        <key>changes</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d favorite or rating wasn’t sent and has been discarded: this device is now signed in as someone else.</string>
+            <key>other</key>
+            <string>%d favorites or ratings weren’t sent and have been discarded: this device is now signed in as someone else.</string>
+        </dict>
+    </dict>
+    <key>reader.signOut.pending</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@changes@</string>
+        <key>changes</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d change hasn’t reached your server. Signing out now discards it.</string>
+            <key>other</key>
+            <string>%d changes haven’t reached your server. Signing out now discards them.</string>
+        </dict>
+    </dict>
+    <key>reader.signOut.pendingOnline</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@changes@</string>
+        <key>changes</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d change hasn’t reached your server yet. Send it before signing out, or sign out and discard it.</string>
+            <key>other</key>
+            <string>%d changes haven’t reached your server yet. Send them before signing out, or sign out and discard them.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

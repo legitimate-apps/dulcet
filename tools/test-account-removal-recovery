@@ -13,9 +13,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--source-ref')
-CONTROLS = ['superseded', 'cancelled', 'timeout-reconnect', 'keep-account', 'success']
+CONTROLS = ['superseded', 'cancelled', 'timeout-reconnect', 'keep-account', 'success', 'reader-closes-first']
 parser.add_argument('--control', choices=CONTROLS)
-parser.add_argument('--mutant', choices=['generation', 'cancellation', 'reconfigure'])
+parser.add_argument('--mutant', choices=['generation', 'cancellation', 'reconfigure', 'reader-close'])
 args = parser.parse_args()
 
 
@@ -49,6 +49,10 @@ if args.mutant == 'reconfigure':
     call = 'self.configureDownloads(account: account, request: self.currentSnapshot.accountForm)'
     assert call in recovery
     methods = before + recovery.replace(call, '_ = account')
+if args.mutant == 'reader-close':
+    call = 'session.close { continuation.resume() }'
+    assert call in methods
+    methods = methods.replace(call, 'continuation.resume()')
 
 harness = r'''
 import Foundation
@@ -109,6 +113,16 @@ __DOWNLOAD__
     }
     func resume() { let saved = continuation; continuation = nil; saved?.resume() }
 }
+// The library reader's session: removal must see it stopped before the credential goes.
+@MainActor final class ReaderSession {
+    var closes = 0
+    var hold = false
+    var pending: (() -> Void)?
+    func close(_ completion: @escaping () -> Void) {
+        closes += 1
+        if hold { pending = completion } else { completion() }
+    }
+}
 @MainActor final class Credentials {
     var deletes = 0
     func delete() throws { deletes += 1 }
@@ -135,6 +149,9 @@ struct Snapshot {
     var accountRemovalWatchdog: Task<Void, Never>?
     var accountRemovalTimeout: Duration = .milliseconds(20)
     var finished = false
+    var librarySession: ReaderSession?
+    var reopenedReaders = 0
+    func openConnectedReader(account: String, request: String) { reopenedReaders += 1 }
     func cancelLibraryBrowse() {}
     func cancelSearchRequest() {}
     // The removal path also cancels an in-flight library refresh. The control lifts that
@@ -211,12 +228,27 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                 let presentation = Presentation()
                 let artwork = Artwork()
                 downloads.shouldSuspend = false
-                artwork.shouldSuspend = name != "success"
+                artwork.shouldSuspend = name == "keep-account"
                 presentation.downloadController = downloads
                 presentation.artworkFetcher = artwork
+                let reader = ReaderSession()
+                reader.hold = name == "reader-closes-first"
+                if name != "success" { presentation.librarySession = reader }
+                // Only the reader holds this removal up; the watchdog must not win the race.
+                if name == "reader-closes-first" { presentation.accountRemovalTimeout = .seconds(30) }
                 presentation.removeAccount()
                 let worker = presentation.accountRemovalTask!
-                if name == "keep-account" {
+                if name == "reader-closes-first" {
+                    try await until { reader.pending != nil }
+                    try require(presentation.credentialStore?.deletes == 0 && !presentation.finished,
+                                "the credential was deleted while the reader was still stopping")
+                    let completion = reader.pending!
+                    reader.pending = nil
+                    completion()
+                    await worker.value
+                    try require(presentation.finished && presentation.credentialStore?.deletes == 1 &&
+                                reader.closes == 1, "removal did not finish once the reader stopped")
+                } else if name == "keep-account" {
                     try await until { artwork.continuation != nil }
                     try require(downloads.account == nil, "cleanup must clear configuration before recovery")
                     try await until { presentation.accountRemovalStatus == .failed }
@@ -227,6 +259,8 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                                 presentation.currentSnapshot.state == .accountConnected &&
                                 presentation.credentialStore?.deletes == 0 && !presentation.finished,
                                 "Keep Account returned connected with downloads unconfigured")
+                    try require(reader.closes == 0 && presentation.reopenedReaders == 1,
+                                "Keep Account did not leave the kept account's library open")
                 } else {
                     await worker.value
                     try require(presentation.finished && presentation.credentialStore?.deletes == 1 &&

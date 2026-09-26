@@ -239,9 +239,10 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return nil }
             return .seek(sessionID: sessionID, position: event.positionTime)
         }
-        // Rating and like are deliberately NOT registered. Favourites do not exist yet (spec
-        // §18.3's outbox is unbuilt), and a registered command that answers "failed" puts a
-        // heart on the lock screen that does nothing. They come back with the feature.
+        // Rating is deliberately NOT registered: ratings have no surface yet, and a registered
+        // command that answers "failed" puts a control on the lock screen that does nothing.
+        // Like is owned by `DulcetSystemLikeCommand`, which the library session drives: its
+        // state is the favourite, not the playback session's.
     }
 
     private func addTarget(
@@ -279,7 +280,7 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
         commandCenter.previousTrackCommand.isEnabled = state?.remoteCapabilities.allowsPrevious == true
         commandCenter.changePlaybackPositionCommand.isEnabled = state?.seekability == .seekable
         commandCenter.ratingCommand.isEnabled = false
-        commandCenter.likeCommand.isEnabled = false
+        DulcetSystemLikeCommand.shared.apply(to: commandCenter, hasItem: hasItem)
     }
 
     private func disableUnsupportedCommands() {
@@ -328,5 +329,139 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
         decodedArtwork = (data, artwork)
         lock.unlock()
         return artwork
+    }
+}
+
+/// The lock screen's heart (spec §12.10): the like command of the system's Now Playing entry,
+/// which marks the current track a favourite through the library reader, as the app's own heart
+/// does.
+///
+/// It is separate from the per-session transport commands above because what it shows is the
+/// favourite, which the library session owns and which changes without playback changing. The
+/// app installs one handler for the process; with none installed the heart is not offered.
+public final class DulcetSystemLikeCommand: @unchecked Sendable {
+    public static let shared = DulcetSystemLikeCommand()
+
+    private let lock = NSLock()
+    private var available = false
+    private var isFavourite = false
+    private var hasItem = false
+    private var handler: (@Sendable () -> Bool)?
+    private var target: Any?
+    private let commandCenter: MPRemoteCommandCenter
+
+    init(commandCenter: MPRemoteCommandCenter = .shared()) {
+        self.commandCenter = commandCenter
+    }
+
+    /// Installs the toggle, called when the heart is pressed; nil withdraws the heart.
+    public func setToggleHandler(_ handler: (@Sendable () -> Bool)?) {
+        lock.lock()
+        self.handler = handler
+        let installed = target
+        lock.unlock()
+        if handler != nil, installed == nil {
+            let added = commandCenter.likeCommand.addTarget { [weak self] _ in
+                guard let self else { return .commandFailed }
+                self.lock.lock()
+                let handler = self.handler
+                let available = self.available && self.hasItem
+                self.lock.unlock()
+                guard available, let handler else { return .noActionableNowPlayingItem }
+                return handler() ? .success : .commandFailed
+            }
+            lock.lock()
+            target = added
+            lock.unlock()
+        } else if handler == nil, let installed {
+            commandCenter.likeCommand.removeTarget(installed)
+            lock.lock()
+            target = nil
+            lock.unlock()
+        }
+        apply(to: commandCenter, hasItem: nil)
+    }
+
+    /// Whether the current track can be made a favourite, and whether it is one. Call it on
+    /// every change of either.
+    public func update(available: Bool, isFavourite: Bool) {
+        lock.lock()
+        self.available = available
+        self.isFavourite = isFavourite
+        lock.unlock()
+        apply(to: commandCenter, hasItem: nil)
+    }
+
+    /// Applies the heart's state; `hasItem` is the Now Playing entry's presence when it changed.
+    func apply(to center: MPRemoteCommandCenter, hasItem: Bool?) {
+        lock.lock()
+        if let hasItem { self.hasItem = hasItem }
+        let enabled = handler != nil && available && self.hasItem && center === commandCenter
+        let active = isFavourite
+        lock.unlock()
+        center.likeCommand.isEnabled = enabled
+        center.likeCommand.isActive = enabled && active
+        center.likeCommand.localizedTitle = DulcetStrings.favorite
+    }
+}
+
+/// Keeps the lock screen's heart in step with the library session: offered while a track of the
+/// reader's account is current, filled while it is a favourite, and pressing it toggles the
+/// favourite exactly as the player's own heart does -- shown at once, sent through the outbox.
+@MainActor
+public final class DulcetLikeCommandDriver {
+    private weak var store: DulcetPresentationStore?
+    private let command: DulcetSystemLikeCommand
+
+    public init(store: DulcetPresentationStore, command: DulcetSystemLikeCommand = .shared) {
+        self.store = store
+        self.command = command
+        command.setToggleHandler { [weak self] in
+            // The command centre calls its targets on the main thread.
+            if Thread.isMainThread {
+                return MainActor.assumeIsolated { self?.toggle() ?? false }
+            }
+            return DispatchQueue.main.sync { MainActor.assumeIsolated { self?.toggle() ?? false } }
+        }
+        observe()
+    }
+
+    deinit {
+        command.setToggleHandler(nil)
+    }
+
+    private func observe() {
+        withObservationTracking {
+            refresh()
+        } onChange: {
+            Task { @MainActor [weak self] in self?.observe() }
+        }
+    }
+
+    /// The current track and the session's word on it, or nil when the heart is not offered.
+    private var current: (session: DulcetLibrarySession, track: DulcetTrack)? {
+        guard let store, let session = store.librarySession, session.reader != nil,
+              let track = store.snapshot.nowPlaying?.current,
+              track.id.providerInstanceID == session.account?.providerInstanceID else { return nil }
+        return (session, track)
+    }
+
+    private func refresh() {
+        guard let (session, track) = current else {
+            command.update(available: false, isFavourite: false)
+            return
+        }
+        command.update(
+            available: true,
+            isFavourite: session.isFavourite(track.id, published: session.knownFavourites[track.id] ?? track.isFavorite)
+        )
+    }
+
+    private func toggle() -> Bool {
+        guard let (session, track) = current else { return false }
+        return session.toggleFavourite(
+            DulcetFavouriteTarget(kind: .track, id: track.id),
+            published: session.knownFavourites[track.id] ?? track.isFavorite
+        )
     }
 }
