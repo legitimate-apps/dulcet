@@ -820,6 +820,12 @@ internal class LibraryReaderSession(
     otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
     /** Required: whether the account's server advertises the OpenSubsonic `formPost` extension (§18.6). */
     formPost: Boolean,
+    /**
+     * Observed endpoint health for this session (§10.4), handed to the reader, which owns the
+     * offline-to-online transition that resets it. Not held by a feature object, so a shell that
+     * asks for [lyrics] again does not get a fresh, closed breaker.
+     */
+    breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
@@ -853,6 +859,7 @@ internal class LibraryReaderSession(
             override fun overlayDetail(rawId: String, header: LibraryItem.Playlist?, entries: List<LibraryItem>?) =
                 playlistsRef.overlayDetail(rawId, header, entries)
         },
+        breaker = breaker,
     )
 
     val favourites = LibraryFavourites(reader, outbox).also { favouritesRef = it }
@@ -872,6 +879,15 @@ internal class LibraryReaderSession(
         }
     }
 
+    /**
+     * Lyrics for this account (§18.4). [capabilities] are the account's negotiated set, which the
+     * endpoint gate reads; [preferredLanguages] are the person's, most preferred first.
+     */
+    fun lyrics(capabilities: CapabilitySet, preferredLanguages: List<String>): LibraryLyrics {
+        reader.checkConfined()
+        return LibraryLyrics(reader, capabilities, preferredLanguages)
+    }
+
     /** A search over this reader whose rows carry the same overlaid favourite state (§16.15). */
     fun openSearch(
         config: LibrarySearchConfig = LibrarySearchConfig(),
@@ -887,7 +903,7 @@ internal class LibraryReaderSession(
     /**
      * Reachability, as the platform reports it: the reader republishes its windows, and every open
      * search re-runs so its scope says `deviceOffline` (or merges the server again) without waiting
-     * for a keystroke.
+     * for a keystroke. Coming back online also resets the §10.4 breaker, in the reader.
      */
     fun setOnline(reachable: Boolean) {
         reader.checkConfined()

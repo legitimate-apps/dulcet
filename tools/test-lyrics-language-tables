@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Prove the language-table generator checks each table's citation in that table's own KDoc.
+
+The two tables in LyricsLanguage.kt cite different sources that happen to share a retrieval date.
+A check that looks for each citation anywhere in the file therefore passes when one table's date is
+changed, because the other table still carries the old one. Each case below changes exactly one
+table's citation and requires the generator to refuse the file and to name that table.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOL = "tools/generate_lyrics_language_tables.py"
+KOTLIN = "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/LyricsLanguage.kt"
+TABLES = ("ISO_639_2_TO_1", "MACROLANGUAGE_OF")
+
+
+def run(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, TOOL, "--citations-only"], cwd=root, capture_output=True, text=True, check=False
+    )
+
+
+def materialize(root: Path, kotlin: str) -> None:
+    (root / "tools").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / TOOL, root / TOOL)
+    target = root / KOTLIN
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(kotlin, encoding="utf-8")
+
+
+def kdoc_span(kotlin: str, table: str) -> tuple[int, int]:
+    declaration = kotlin.index(f"internal val {table}: Map<String, String>")
+    end = kotlin.rindex("*/", 0, declaration)
+    return kotlin.rindex("/**", 0, end), end
+
+
+def edit_one_kdoc(kotlin: str, table: str, pattern: str, replacement: str) -> str:
+    """Rewrites the first match of [pattern] inside [table]'s KDoc only, and proves it did."""
+    start, end = kdoc_span(kotlin, table)
+    kdoc = kotlin[start:end]
+    edited, count = re.subn(pattern, replacement, kdoc, count=1)
+    if count != 1 or edited == kdoc:
+        raise AssertionError(f"the edit {pattern!r} did not land in the KDoc of {table}")
+    result = kotlin[:start] + edited + kotlin[end:]
+    for other in TABLES:
+        if other != table:
+            other_start, other_end = kdoc_span(result, other)
+            original_start, original_end = kdoc_span(kotlin, other)
+            if result[other_start:other_end] != kotlin[original_start:original_end]:
+                raise AssertionError(f"editing {table} changed the KDoc of {other}")
+    return result
+
+
+original = (ROOT / KOTLIN).read_text(encoding="utf-8")
+
+with tempfile.TemporaryDirectory(prefix="dulcet-lyrics-tables-ok-") as directory:
+    root = Path(directory)
+    materialize(root, original)
+    result = run(root)
+    if result.returncode != 0:
+        raise AssertionError(f"the committed citations were refused: {result.stdout}{result.stderr}")
+
+cases = []
+for table in TABLES:
+    # The retrieval date may be wrapped across a line break, so match it with any whitespace.
+    cases.append((table, "retrieval date", r"retrieved(\s+\*?\s*)2026-09-24", r"retrieved\g<1>2026-09-23"))
+    cases.append((table, "digest", r"sha256(\s+\*?\s*)([0-9a-f])", r"sha256\g<1>0\g<2>"))
+    cases.append((table, "URL", r"https://", r"http://"))
+
+for table, what, pattern, replacement in cases:
+    with tempfile.TemporaryDirectory(prefix="dulcet-lyrics-tables-drift-") as directory:
+        root = Path(directory)
+        materialize(root, edit_one_kdoc(original, table, pattern, replacement))
+        result = run(root)
+        output = result.stdout + result.stderr
+        if result.returncode == 0:
+            raise AssertionError(f"changing the {what} in the KDoc of {table} alone was accepted: {output}")
+        if table not in output:
+            raise AssertionError(f"changing the {what} of {table} was refused without naming it: {output}")
+
+# A citation moved from its own table's KDoc into the other one's must not count for it either.
+iso_start, iso_end = kdoc_span(original, "ISO_639_2_TO_1")
+iso_kdoc = original[iso_start:iso_end]
+moved = original[:iso_start] + "/**\n * ISO 639-2 to ISO 639-1.\n " + original[iso_end:]
+macro_start, macro_end = kdoc_span(moved, "MACROLANGUAGE_OF")
+moved = moved[:macro_end] + iso_kdoc.replace("/**", "*", 1) + "\n " + moved[macro_end:]
+if "loc.gov" not in moved[slice(*kdoc_span(moved, "MACROLANGUAGE_OF"))]:
+    raise AssertionError("the moved citation did not land in the other table's KDoc")
+with tempfile.TemporaryDirectory(prefix="dulcet-lyrics-tables-moved-") as directory:
+    root = Path(directory)
+    materialize(root, moved)
+    result = run(root)
+    if result.returncode == 0 or "ISO_639_2_TO_1" not in result.stdout + result.stderr:
+        raise AssertionError(f"a citation in the wrong table's KDoc was accepted: {result.stdout}{result.stderr}")
+
+print(f"test-lyrics-language-tables: committed citations accepted; {len(cases) + 1} single-table drifts refused")

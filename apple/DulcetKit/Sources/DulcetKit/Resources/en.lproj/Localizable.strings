@@ -184,6 +184,9 @@
 "account.error.notASubsonicServer.title" = "This is not an OpenSubsonic endpoint";
 "account.error.notASubsonicServer.message" = "The address responded, but not as an OpenSubsonic server.";
 "account.error.notASubsonicServer.recovery" = "Enter the server base address rather than a web player or sign-in page.";
+"account.error.responseTooLarge.title" = "The server’s answer was too large";
+"account.error.responseTooLarge.message" = "The server replied with more data than Dulcet reads for this request.";
+"account.error.responseTooLarge.recovery" = "Try again. If it keeps happening, check what the server returns for this item.";
 "account.error.knownServerError.title" = "The server rejected account setup";
 "account.error.knownServerError.message" = "The server returned a recognized OpenSubsonic error.";
 "account.error.knownServerError.recovery" = "Review the account and server settings, then try again.";
@@ -211,6 +214,9 @@
 "account.error.credentialPersistenceFailed.title" = "The account could not be saved";
 "account.error.credentialPersistenceFailed.message" = "The server accepted the account, but the system Keychain did not save it.";
 "account.error.credentialPersistenceFailed.recovery" = "Review Keychain access for Dulcet, then connect again.";
+"account.error.unrecognizedFailure.title" = "Account setup did not finish";
+"account.error.unrecognizedFailure.message" = "Dulcet received a failure it does not recognize.";
+"account.error.unrecognizedFailure.recovery" = "Try again. If it keeps happening, update Dulcet.";
 "action.cancel" = "Cancel";
 "album.discNumber" = "Disc %@";
 "status.server" = "%@ · Online";

@@ -161,10 +161,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
                 completion(.cancelled)
                 return
             }
-            guard let failure = Self.failureKind(kind) else {
-                preconditionFailure("The core exported an unmapped library error kind")
-            }
-            completion(.failed(DulcetLibraryFailure(kind: failure)))
+            completion(.failed(DulcetLibraryFailure(kind: Self.failureKind(kind))))
         }
         return DulcetCoreBrowseOperation(operation: operation)
     }
@@ -270,10 +267,7 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
             // already on screen.
             return
         }
-        guard let kind = Self.failureKind(errorKind) else {
-            preconditionFailure("The core exported an unmapped library sync error kind")
-        }
-        completion(.failed(DulcetLibraryFailure(kind: kind)))
+        completion(.failed(DulcetLibraryFailure(kind: Self.failureKind(errorKind))))
     }
 
     /// A preview is delivered as `.preview`, never as `.loaded`. The distinction is what tells
@@ -345,11 +339,13 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         )
     }
 
-    private static func failureKind(_ coreKind: String) -> DulcetLibraryFailureKind? {
+    /// A kind this build does not know is `.unrecognized`, a generic failure: never a trap, and
+    /// never explained as a server Dulcet could not read.
+    private static func failureKind(_ coreKind: String) -> DulcetLibraryFailureKind {
         if coreKind == "unsupported" {
             return .capability
         }
-        return DulcetLibraryFailureKind(rawValue: coreKind)
+        return DulcetLibraryFailureKind(coreKind: coreKind)
     }
 
     private static func copyAlbum(_ album: AppleLibraryAlbumDto) -> DulcetAlbum {
@@ -469,7 +465,7 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
         let operation = client.startSearch(request: coreRequest) { outcome in
             if let page = outcome.page {
                 completion(.loaded(DulcetSearchPage(
-                    results: page.results.map(Self.copyResult),
+                    results: page.results.compactMap(Self.copyResult),
                     counts: page
                 )))
                 return
@@ -481,20 +477,19 @@ final class DulcetCoreServerSearch: DulcetServerSearching {
                 completion(.cancelled)
                 return
             }
-            guard let kind = DulcetSearchFailureKind(rawValue: error.kind) else {
-                preconditionFailure("The core exported an unmapped search error kind")
-            }
-            completion(.failed(DulcetSearchFailure(kind: kind)))
+            completion(.failed(DulcetSearchFailure(kind: DulcetSearchFailureKind(coreKind: error.kind))))
         }
         return DulcetCoreSearchOperation(operation: operation)
     }
 
-    private static func copyResult(_ result: AppleSearchResultItemDto) -> DulcetSearchResult {
-        let kind: DulcetSearchResultKind = switch result.type {
-        case "Track": .track
-        case "Album": .album
-        case "Artist": .artist
-        default: preconditionFailure("The core exported an unmapped search result type")
+    /// Nil for a result type this build does not know: it is left out, never a trap.
+    private static func copyResult(_ result: AppleSearchResultItemDto) -> DulcetSearchResult? {
+        let kind: DulcetSearchResultKind
+        switch result.type {
+        case "Track": kind = .track
+        case "Album": kind = .album
+        case "Artist": kind = .artist
+        default: return nil
         }
         let duration = result.durationMilliseconds.map { value in
             Duration.milliseconds(value.int64Value)
@@ -795,11 +790,8 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
             guard let error = outcome.errorPresentation else {
                 preconditionFailure("A failed account connection must carry its presentation key")
             }
-            guard let kind = DulcetAccountFailureKind(rawValue: error.kind) else {
-                preconditionFailure("The core exported an unmapped account error kind")
-            }
             let context = DulcetAccountErrorContext(
-                kind: kind,
+                kind: DulcetAccountFailureKind(coreKind: error.kind),
                 serverName: URL(string: request.serverURL)?.host ?? request.serverURL,
                 targetHost: error.targetHost,
                 invalidServerURLIsInternationalized:

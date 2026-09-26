@@ -31,6 +31,9 @@ SELECT sum(row_count) FROM (
   UNION ALL SELECT count(*) FROM cache_list WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_list_member WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_pin WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_lyrics WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_lyrics_layer WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_lyrics_line WHERE server_id = :server_id
 );
 
 deleteMutationOutboxForServer:
@@ -96,6 +99,9 @@ DELETE FROM deletion_reconciliation WHERE server_id = ?;
 -- The seen-cache of one account (spec §16.10), including its binding and pins. Account removal
 -- (§14.7) deletes the account's downloads in the same transaction, so no pin outlives its reason.
 deleteSeenCacheForServer {
+  DELETE FROM cache_lyrics_line WHERE server_id = :server_id;
+  DELETE FROM cache_lyrics_layer WHERE server_id = :server_id;
+  DELETE FROM cache_lyrics WHERE server_id = :server_id;
   DELETE FROM cache_list_member WHERE server_id = :server_id;
   DELETE FROM cache_list WHERE server_id = :server_id;
   DELETE FROM cache_credit WHERE server_id = :server_id;

@@ -156,7 +156,7 @@ struct DulcetLibraryErrorView: View {
         case .authentication: DulcetStrings.libraryErrorAuthentication
         case .tlsUntrusted, .security: DulcetStrings.libraryErrorSecurity
         case .protocol, .server: DulcetStrings.libraryErrorProtocol
-        case .unreachable, .input, .capability, nil: DulcetStrings.libraryErrorGeneric
+        case .unreachable, .input, .capability, .unrecognized, nil: DulcetStrings.libraryErrorGeneric
         }
     }
 }

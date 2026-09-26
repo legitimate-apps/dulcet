@@ -1160,9 +1160,89 @@ featureEnabled = protocolSupports && extensionAdvertised && userPermitted
 **Advertised capability and observed operational health are stored separately.** A single
 unsupported-endpoint error does **not** mutate the advertised set — it may be transient,
 permission-scoped, item-scoped, malformed-request-scoped, or caused by a proxy. Instead, each
-capability carries a **circuit breaker**: three consecutive failures of the same endpoint with the same
-error class, within one session, opens the breaker for that endpoint for the rest of the session and
-surfaces a diagnostic. The advertised set is refreshed only at login and on explicit user action.
+capability carries a **circuit breaker**: three consecutive failures of the same endpoint, of any
+error class, within one session, open the breaker for that endpoint for a **bounded period** and
+surface a diagnostic. The advertised set is refreshed only at login and on explicit user action.
+
+The breaker's rules (revision 104 item 23 replaced "for the rest of the session" — an open breaker
+that could only close on relaunch turned one bad minute into a missing feature for as long as the
+app stayed open):
+
+- **Every failure counts, whatever its class** (decided by the maintainer at review, correcting the
+  first cut, which counted only a run of one class): a proxy alternating a gateway error page with a
+  timeout is one unhealthy endpoint, and a per-class count never opened on it. The error survives
+  only as the diagnostic — the latest one is what the open breaker reports. A success resets the
+  count.
+- **Not failures, never counted:** an item-scoped answer — code 70 ("not found") in a well-formed
+  envelope, or a successful answer refused only for its size (`Protocol.TooLarge`, §18.4) — which is
+  an answer from a healthy endpoint and is recorded as a success; and a cancelled request. An
+  oversized body under a failure status is not that: its status is read before its size, so it is
+  classified as a body that is not an envelope is (§18.6) — a 429 is `Server.Busy` with its
+  `Retry-After`, a 401 refused credentials, any other 4xx or 5xx `Server.HttpStatus`, anything else
+  malformed — and it counts (seventh review: the size used to be read first, so every such body was
+  malformed and a 429's `Retry-After` was lost). An `ok` envelope whose body
+  does not parse, or lacks what the endpoint must return, **is** a failure of the endpoint. So is
+  nothing the device does with the answer afterwards: the answer is classified before it is stored,
+  and a failure of the device's own database never reaches the breaker. **Nor is a failure that is
+  not the request's**: only a `LibraryRequestFailure` is the server's, as in the reader's windows
+  and the outbox (§18.6). The device's own database failing as a read is issued — the issue
+  sequence is written before anything is sent — sends nothing; it is neither charged nor clears the
+  count, a trial it hit gives its slot back as a cancelled one does, and the read publishes the
+  reader's internal failure, never "unreachable". (Seventh review: until then such a failure was
+  published as `Transport.Unreachable` and charged, so three of them opened the breaker with no
+  request sent.)
+- **Open:** nothing is sent to that endpoint, and nothing is sent to any other endpoint in its
+  place; the feature publishes what it has stored, or `unavailable`, with the latest failure.
+- **The period** is five minutes of monotonic time (ASSUMED: a chosen value, not a measured one;
+  §18.8 — never the wall clock, never persisted). Then exactly one trial is admitted; while it is
+  out every other call is refused. **The trial's own** success closes the breaker; its failure
+  reopens it for another full period; a cancelled trial gives its slot back. Only the trial does any
+  of these: a straggler — a call admitted before the breaker opened, answering late — holds no slot,
+  so its failure is recorded as the diagnostic and changes nothing else, its success closes nothing,
+  and its cancellation frees nothing. That holds for the whole time the breaker is open — during the
+  period, with a trial out, and after the period before a trial is admitted — and for an ordinary
+  three-failure opening as much as a 429. **Deliberate: one trial decides.** A concurrent call's
+  success landing after the opening failure therefore does not close the breaker, and recovery
+  waits out the period (five minutes) and then the trial's answer; do not "fix" that back. The
+  breaker recognises the trial by the admission it handed out, not by a flag. (Corrected at the
+  second review: a straggler's failure used to end the trial, and a Retry then sent a second one
+  beside it. Corrected after the seventh review, §28 item 23 (ah): any success closed the breaker,
+  so a straggler's ended a 429 hold, forgot the trial in flight, and closed an ordinary opening
+  early.)
+- **The person can ask now.** An explicit user request — a Retry control, never an automatic refresh
+  — is admitted at once as the single trial, inside the period: it is not the automatic traffic the
+  period exists to hold back. It is still the one trial (refused while another is out), and its
+  failure starts a new full period. The five-minute automatic period is unchanged.
+- **A server that asks for quiet opens it at once** (trap 24; seventh review). A 429
+  (`Server.Busy`) is a failure like any other, and it opens the breaker on that one failure, for
+  `max(period, min(Retry-After, cap))`. The cap is the reader's busy cap, `LIBRARY_BUSY_CAP` in
+  `LibraryReader.kt` — the one bound §18.6's flushes already put on every wait a 429 asks for; the
+  breaker introduces no second one. A 429 without `Retry-After` opens for the period. **A hold
+  already running is never shortened by any later failure**: a straggler's 429 extends it and never
+  ends the trial in flight, and the trial's own failure — a 429 or any other — opens a new hold that
+  ends at the later of its own end and the running one's. Within one connection only the trial's
+  own success ends a hold early; a reconnect's reset also ends it (below). The explicit request is
+  still admitted inside it. (Corrected after the seventh review, §28 item 23 (ag): the trial's own
+  failure replaced the hold, so a trial timing out after a straggler's longer 429 was re-admitted
+  one period later, before the server's `Retry-After` had ended.)
+  The breaker holds no reader-wide state: a lyrics 429 never pauses the outbox flushes (§18.6).
+  Stated plainly: the period and the cap are both five minutes today, so `Retry-After` cannot yet
+  lengthen the hold — what the 429 changes is that one answer opens the breaker, where three
+  failures were needed before, and the server's longer request is honoured up to the cap whenever
+  the period is shorter than it.
+- **A reconnect resets it.** The reader's one offline→online transition clears every breaker of the
+  session, whichever entry point takes it (a platform reachability report or the reconnect sequence
+  of §16.14): failures observed before the network went away say nothing about an endpoint after it
+  came back. Losing the network, or being told again that it is up, resets nothing. **The reset
+  also forgets calls already in flight**: every admission carries the generation it was handed out
+  in, a reset starts a new one, and a success, failure or cancellation from an older generation
+  changes nothing. (Corrected at the third review: three requests sent before a reconnect and
+  failing after it opened the breaker at once.)
+- **It is session state.** It lives on the account's reader, so a feature object created again does
+  not start with a closed breaker, and it dies with the session.
+
+Implemented so far for the lyrics read (§18.4) in `EndpointCircuitBreaker.kt`; other endpoints adopt
+it as their features are built.
 
 Every `FEATURES.yml` row names which inputs gate it (§19).
 
@@ -1205,7 +1285,9 @@ playing from library A) is deferred and is not a v1 feature.
 the subtractive migration of §16.17. They are replaced by the seen-cache: `cache_binding`,
 `cache_epoch`, `cache_artist` / `cache_album` / `cache_track` / `cache_playlist`, `cache_credit`,
 `cache_list` / `cache_list_member` and `cache_pin` (§16.10). Queue, download, outbox, artwork and
-resume tables are unchanged.
+resume tables are unchanged. Schema 7 adds three playlist header columns to `cache_playlist`
+(§18.6), and schema 8 adds `cache_lyrics`, `cache_lyrics_layer` and `cache_lyrics_line` (§18.4) —
+both additive, seeded with nothing, and not protected data.
 
 ### 11.4 Migrations and protected data
 
@@ -1231,12 +1313,32 @@ resume tables are unchanged.
   constraints (compared as expressions, whitespace aside) a fresh install creates, and compares the
   `cache_playlist` rows of every fixture that holds the columns schema 7 added — a cache table, so
   not protected data, but a column a schema added is compared with data — each again with a
-  negative control. From schema 7 a fixture is generated, not edited by hand:
-  `tools/generate_migration_fixture.py --to N` copies fixture N−1, applies `migrations/<N−1>.sqm`
-  as shipped, sets the schema version, adds that version's seed rows and vacuums; `--check`
-  regenerates into a temporary directory and requires the committed fixture to be byte-identical.
-  It writes only with the SQLite build that wrote the earlier fixtures (3.51.0, no bytes reserved
-  per page) and refuses any other, since a different build lays pages out differently.
+  negative control. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
+  that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
+  instrument reading nothing) and requires the newest fixture to equal it object for object
+  (columns, keys, indexes, triggers). Its negative control drops a column from a copy of the newest
+  fixture and must be rejected naming that column. From schema 7 a fixture is generated, not edited
+  by hand: `tools/generate_migration_fixture.py --to N` copies fixture N−1, applies
+  `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
+  vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
+  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v8 (v1–v3 were
+  written by 3.50.6; none reserves bytes per page), and refuses any other, since a different build
+  lays pages out differently (revision 104, item 23). That byte check is local; CI runs
+  `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
+  every generated fixture and compares the normalised schema, `user_version`, every table's rows and
+  the files beside the database, and its control (`tools/test-migration-fixture-generator`) proves
+  it refuses a changed seed row, a changed sequence, a hand-edited row, a hand-edited schema, a
+  hand-edited `user_version` and a stray file beside the database, naming each. A seed only raises
+  the issue sequence (`MAX`), never lowers one an earlier seed set.
+  When a migration lands between the last fixture and a new one, the generator gains a seed for
+  that version reproducing the committed fixture byte for byte (`--check`) before the next version
+  is added — so a renumbered migration moves its seed to the new number rather than editing a
+  fixture: lyrics, written as `6.sqm` (schema 7), became `7.sqm` (schema 8) when the playlist
+  columns landed as `6.sqm` first, and its seed moved from v7 to v8 while v7 stayed byte for byte
+  what the playlists merge committed. A JVM test reads every committed fixture's lyrics rows and
+  requires each `stored_bytes` to equal what the store's own function computes, tying the tool's
+  copy of that function to the Kotlin one.
 - A cache rebuild is permitted when a migration is genuinely hard, but only through the tested path in
   §11.5, never as a silent `DROP`.
 
@@ -1785,11 +1887,11 @@ of the same error are classified alike.
 
 | owner | `DomainError` | the queue |
 |---|---|---|
-| the track | `Playback.NoPlayableSource`; `Protocol.UnexpectedContentType`; `Protocol.UnexpectedBinary`; `Server.Known` codes 70 and 0 | skips past it (rules 2-4) |
+| the track | `Playback.NoPlayableSource`; `Protocol.UnexpectedContentType`; `Protocol.UnexpectedBinary`; `Protocol.TooLarge`; `Server.Known` codes 70 and 0 | skips past it (rules 2-4) |
 | the connection, the server or the account | every `Transport.*` but `Cancelled`; every `Security.*`, `Auth.*` and `Input.*`; `Server.Busy` (already retried, §12.2); `Server.Unknown`; `Server.HttpStatus` (the library path's bare status, which playback never produces); every other `Server.Known` code; `Protocol.MalformedEnvelope`, `Protocol.NotASubsonicServer`, `Protocol.Incompatible`; `CapabilityUnsupported` | stops and is presented (§3.1) |
 | nobody | `Transport.Cancelled` | a withdrawn request: neither presented nor skipped past |
 
-Three were decided rather than given:
+Four were decided rather than given:
 
 - **`Protocol.UnexpectedBinary` is the track's.** The server answered this item's request with bytes
   whose signature is not the audio its container promises -- most often a damaged or mislabelled
@@ -1806,6 +1908,12 @@ Three were decided rather than given:
 - **`Server.Unknown` is not.** Its code is one this client does not know, or a bare HTTP status from
   whatever answered (a proxy's 502, a 404 from something that is not the server). Nothing ties it
   to this item, so it is presented rather than guessed at.
+- **`Protocol.TooLarge` is the track's** (revision 104 item 23). It is raised only by a request
+  given a size limit — today only a lyrics read (§18.4) — and playback never sends one, so playback
+  cannot receive it. Were a playback request ever given a limit, it would be this item's answer that
+  is too large, not the connection that failed, and the guard bounds any sweep. On the Apple wire it
+  travels as the shell's item-scoped `unsupportedPlan`, which comes back as `NoPlayableSource`: the
+  owner survives the round trip, the name does not.
 
 On Apple, AVFoundation failing to parse, recognise or decode an item (`decodeFailed`,
 `decoderNotFound`, `fileFormatNotRecognized`, `fileFailedToParse`, `failedToParse`,
@@ -3121,6 +3229,9 @@ person.
 | `cache_list_member` | the server's order: position → `(item_kind, raw_id)` | `(server_id, list_key, position)` |
 | `cache_pin` | why an entity must not be evicted: `download` \| `queue` \| `playing` | `(server_id, item_kind, raw_id, reason)` |
 | `cache_meta` | the last issued request sequence (below) and the search-normalization version applied (§16.17) | singleton |
+| `cache_lyrics` | one track's lyrics document: source (`songLyrics` \| `getLyrics`), `fetched_at_wall`, `issue_seq`, `last_access_wall`; with no layers it records "no lyrics" (§18.4, schema 8) | `(server_id, raw_id)` |
+| `cache_lyrics_layer` | language (nullable: unknown), synced, `offset_milliseconds`, `kind`, display artist and title | `(server_id, raw_id, layer_ordinal)` |
+| `cache_lyrics_line` | text and `start_milliseconds` (null in an unsynced layer) | `(server_id, raw_id, layer_ordinal, line_ordinal)` |
 
 `cache_album` also carries `detail_fetched_epoch`: the epoch its **track membership** was read under,
 which is what detail freshness is judged by — never the summary row's `fetched_epoch`, which any list
@@ -4048,6 +4159,322 @@ Classic `getLyrics` is unsynced and artist/title-keyed. The `songLyrics` extensi
 song-id-keyed and structured/synced lyrics. Gated per §10.4: synced-lyrics UI appears only when the
 extension is advertised **and** the item actually has synced lyrics.
 
+**Revision 104, item 22 — implemented in the core** (`Lyrics.kt`, `LibraryLyrics.kt`; CONF-42).
+
+*The endpoint gate is a conjunction* (CORPUS §4 line 7): `getLyricsBySongId` is used when the
+server speaks OpenSubsonic **and** advertises `songLyrics` at a version the client implements (1 or
+2) **and** no registered quirk blocks it; version 2 is read with `enhanced=true`. Otherwise — and
+only otherwise — classic `getLyrics(artist, title)` is used. **A failed `getLyricsBySongId` is never
+retried as `getLyrics`**: one failed request does not revoke an advertised capability (§10.4); it
+publishes the cached document with the failure, or `unavailable(failed)`.
+
+*The breaker* (§10.4, revision 104 item 23). The lyrics read goes through the session's breaker for
+whichever endpoint the gate chose. Three consecutive failures of any class open it: a read then
+sends **nothing** — not the chosen endpoint and not the other one — and publishes the stored
+document as `cached(asOf, failed(latest error))`, or `unavailable(failed)`, with `breakerOpen` set
+as the diagnostic. The gate is not consulted differently and the capability set is untouched, so
+after the period the trial goes to `getLyricsBySongId` again; `retry` — the person's Retry — sends
+the trial at once. A code-70 answer and an answer refused as too large count as healthy; an `ok`
+envelope whose `lyricsList` is malformed, and a `getLyrics` answer without its `lyrics` object, count
+as failures. **A 429 opens the breaker on that one answer**, for the longer of the period and the
+server's `Retry-After`, the latter never beyond the reader's busy cap (`LIBRARY_BUSY_CAP` in
+`LibraryReader.kt`, the cap §18.6's flushes use; the full rule is §10.4's). Inside that hold no
+automatic read sends anything; `retry` still does. No later failure shortens that hold, the
+trial's own included; within one connection nothing but the trial's success ends it early, and a
+reconnect's reset ends it as it ends every breaker state (below). A lyrics 429 never feeds the
+reader's own wait, so it never pauses the favourite and playlist flushes. **A failure that is not
+the request's** — the device's database failing as the read is issued, before anything is sent — is
+published as the reader's internal failure, sends nothing, and neither counts toward the breaker nor
+clears its count (§10.4).
+**Only a well-formed answer, trimmed to the caps, is ever stored, and only an empty
+document or a code-70 answer from `getLyricsBySongId` is stored as "no lyrics"**: a refused read, a
+transport failure, a failure envelope, a malformed body and an answer refused as too large leave the
+store exactly as it was, so a transient failure can never be remembered as a track without lyrics. A
+publication carries `notFound` when THIS read was answered with code 70 — the only way to tell that
+answer from a track without lyrics, since both publish live with no layers. The marker describes
+the answer, not where the document came from: `getLyrics`' code 70 is not stored, so that
+publication carries it on whatever the store already held, and a later read serving a stored
+code-70 result does not (the code was right and its comment wrong, second review). A failure of the
+device's own store publishes `unavailable(internalFailure)` and is never charged to the server.
+
+*Bounds* (ASSUMED, chosen rather than measured). A time — a JSON number, or a string holding one
+(accepted: a server may derive its JSON from XML attributes; not seen on the reference server) — is
+truncated to whole milliseconds; NaN, infinities and anything that is not a decimal number are not
+times, and a synced line without a time is malformed. **A synced layer with any start or offset
+beyond ±24 hours is not trusted**: its text is kept and its timing dropped, so it is stored and shown
+unsynced. An unsynced layer's offset is ignored and stored as zero. One stored document is capped
+at 16 layers, 2,000 lines and 64 KiB of stored text (UTF-8, every string counted; a character
+outside the Basic Multilingual Plane is four bytes).
+
+**An answer beyond the caps is trimmed, not refused** (decided by the maintainer at the second
+review, which found a short song with sixteen translations refused whole and downloaded again on
+every read; the order corrected at the third). The layers are considered in the order the selection
+ranks them (rules 1–4 below, with the person's languages): the main layers with visible text first,
+best first, so the layer the selection would show comes first; then the extra layers with text, by
+the same rank; then the layers with no visible text. A layer is kept when it fits beside every layer
+kept before it, else dropped and the next considered: a large layer does not take the smaller ones
+after it with it, and a preferred layer the server lists last is never crowded out by one it lists
+first. The kept layers stay in the server's order, and **the document says how many layers it
+dropped** (`TrackLyrics.droppedLayers` and `isTrimmed`, stored with it), so a shell can say that some
+lyrics were too large to show and nothing presents a trimmed document as complete. When the
+best-ranked main layer does not fit on its own but another main layer with text does, that one is
+shown. Only an answer with main layers with text, none of which fits on its own, is refused, as
+`Protocol.TooLarge` — never `MalformedEnvelope`, since the server did nothing wrong. A main layer
+with no visible text never stands in for one that is too large: it cannot be shown, so keeping it
+and dropping the real one would publish "no lyrics" where the truth is "too large" (third review).
+
+The refusal is **remembered for the session**, per endpoint and track, across lyrics objects and
+reconnects (the size is the file's, not the network's): an automatic read of that track sends
+nothing and publishes the stored document, or `unavailable`, with that failure. The person's Retry
+asks again, and an answer that fits, or a code-70 answer, forgets it. **The verdict follows the
+newest request** (third review): each answer carries its request's issue order, and an older
+answer never overrides what a newer one decided — an automatic read's refusal landing after a
+Retry's document does not bring the refusal back, and publishes what is stored; an older document
+does not undo a newer refusal. When an older refusal lands after a newer answer that fits, the read
+publishes the document that answer stored, as a read of it; if that document is no longer stored —
+evicted, which a store over its budget does at once — the read is a miss and asks again, and it
+is never published as the older refusal (fourth review). **While any request of a track is in
+flight, an automatic read of it sends none** (fourth review: "one request" held only for the newest
+flight, so an automatic read sent a third request while an older one was still downloading): every
+request in flight is tracked, and an automatic read joins the newest one still in flight — waits for
+its answer and selects from it with its own languages. If that request is cancelled, or its answer
+was such a miss, the read asks again from the top: a verdict may have landed meanwhile. The person's
+Retry always sends its own. An automatic read answers from a remembered verdict or timeout
+**before** it looks for a request to join, so it never waits on the person's Retry of a track it
+already has an answer for (sixth review). **A request is joined only within the breaker's
+observation window it was admitted in** (fifth review: an automatic read after a reconnect joined a
+request admitted before it and published that request's failure without having asked anything
+since): every request carries the breaker generation it was admitted in, and an automatic read joins
+only one of the current generation, so after a reconnect it sends its own. Admission, not sending, is
+what counts: a request admitted before a reconnect may still wait for a permit and go out after it
+(ASSUMED, by reading the reader's permit queue), and it is treated as the older window's all the same
+— at worst one duplicate request per track. **What carries over a reconnect, and what never does**
+(maintainer's decision, sixth review): an older request's document, its too-large verdict and its
+code-70 answer (stored as a document with no lyrics) carry over, all ordered by issue, because they
+belong to the file, not the connection. The breaker, the timeout memory and joinability never carry
+over: its failure or success is not counted in the new window (§10.4), its timeout is never
+remembered (the period mark it gets is from its own generation), and no read of the new window
+joins it. An older request still answers its own caller.
+
+**A rule for the platform bridges** (sixth review; no shell consumes lyrics yet). A read begun
+before a reconnect answers its own caller after it, and that answer can be a failure published
+after a newer read has already shown live lyrics — the core does this on purpose, since it is the
+answer to that request. A Swift or Android bridge must therefore cancel a read that a newer read of
+the same track supersedes, or order publications by admission and drop an older one; a panel that
+paints whichever publication arrives last would repaint a failure over live lyrics.
+
+A read is one endpoint as the gate chose it and one track: **`songLyrics` v1 and v2 are separate
+reads** (fourth review) — v2 asks for more (`enhanced=true`), so its refusal says nothing about v1's
+size, and a v1 read never joins a v2 request — although both call `getLyricsBySongId` and share its
+breaker. The session remembers the verdicts of at most **1,000** reads and, separately, the timeouts
+of 1,000 (ASSUMED: far above the tracks one session plays), forgetting the least recently used
+first; a read with a request in flight is never forgotten, and a forgotten read is simply asked
+again.
+
+**The response is limited too**, so the caps bound what a read downloads and parses, not only what
+it stores: at most **8 MiB** of body, read no further. The figure is sized from the caps with the
+cue data `enhanced=true` adds (third review: the earlier 1 MiB, and its "about 450 KiB of JSON at
+its worst", left the cues out and refused whole answers whose main layer fit every cap). OBSERVED
+2026-09-24 on a disposable Navidrome 0.63.2 with word-timed LRC built from one-byte cues of `&` —
+the worst case for size, since JSON escapes it as six bytes and every cue repeats it: sixteen
+embedded layers of 125 lines × 32 cues (64,000 cues, the line cap) answered 5,966,375 bytes, and one
+sidecar layer of 16 lines × 4,096 cues (65,536 cues, the text cap) with nine-digit times answered
+6,257,748 bytes — 89 bytes per cue beyond the 393,956 of the same lyrics without cues. Neither
+answer declared a `Content-Length`. The limit is a third again above the larger. ASSUMED: a server
+sends at most one cue per byte of line text (the reference server's LRC parser drops empty cues)
+and each line's text once, not once per singer; a multi-singer format that repeats the text per
+agent could pass the limit at the caps, and is then refused as too large. Beyond the limit a
+successful body is `TooLarge`, remembered like any other, and a failure status's body is
+classified by that status, as a body that is no envelope is (a 429 keeps `Busy` and its
+`Retry-After`), and counts (§10.4). Every transport that wraps another must forward the limited request, or the wrapped
+one's early stop is lost; CONF-42 asserts that none of its requests went out without the limit.
+
+*Parsing an answer at the limit costs a large share of a second on Apple platforms*, so a body is
+parsed **once** (fourth review: the envelope check and the lyrics each parsed it, on the reader's
+single thread): the envelope's status and the lyrics are read from the same tree. OBSERVED
+2026-09-25 on the worst body the limit admits for one layer — the 6,322,375-byte `enhanced=true`
+answer of *the response is limited too* above, one main layer at the text cap as 65,536 one-byte
+cues — parsed and extracted into layers, median of seven runs after two warm-ups, on a loaded
+Apple Silicon Mac: the JVM test runtime 56 ms twice-parsed and **21 ms** once (19–37 ms); the
+macOS native *debug* test binary 1,590 ms twice-parsed and **770 ms** once (589–2,107 ms). The fourth
+review measured one parse at 601 ms native and 50 ms JVM, and the parsed tree at about 65–70 MB.
+Release builds and devices are not measured (ASSUMED faster than a debug binary, not shown); the
+cost is paid only for an answer near the limit, which a real song is not.
+
+How early a refusal stops the download depends on the HTTP engine. On the JVM engine (CIO, which
+Android also uses) a declared `Content-Length` beyond the limit is refused before a byte of the body
+is read, and an undeclared body at the first read past the limit. OBSERVED 2026-09-24 through the
+transport against a loopback server with the 8 MiB limit: a declared 64 MiB was refused in 6 ms with
+2.9 MB sent (socket buffering), an undeclared stream in 19 ms with 12.5 MB sent, and a declared
+64 MiB followed by no body in 4 ms; exactly 8 MiB was read whole.
+
+*Residual 1 — Darwin reads further, and a stalling server becomes a timeout.* Ktor's Darwin engine
+completes the response only when the first body bytes arrive, and buffers the body without bound,
+so neither "before a byte is read" nor "read no further" holds on Apple platforms. OBSERVED with the
+same fixture on macOS: at the second review with the 1 MiB limit, 6.4 MB (declared) and 15.4 MB
+(undeclared) left the server before the refusal, and a declared 64 MiB with no body was
+`Transport.Timeout` after 30,005 ms; on 2026-09-24 with the 8 MiB limit, 9.4 MB and 27.5 MB, and
+the stall a timeout after 30,004 ms. These are single samples: the fourth review measured 11.47 MB
+before the declared refusal. The stall is the costly case: a timeout is a failure, so it
+counts toward the breaker, and it is never a size verdict. **Built (fourth review, proposal (b)):
+a timed-out read is remembered for one breaker period**, per endpoint, `enhanced` flag and track, so
+automatic reads do not pay the 30 s again: until the period ends, an automatic read of it sends
+nothing and publishes the stored document, or `unavailable`, with `Transport.Timeout` — never as
+too large. The breaker's reset (a reconnect) forgets it, the person's Retry asks again past it, and
+an answer to a newer request replaces it; an older answer neither ends a newer timeout nor is
+remembered over a newer answer. `breakerOpen` is set exactly when the breaker is open and the
+publication was refused by it or answered from a remembered verdict or timeout. Two publications
+that send nothing while it is open carry `false`: an offline read, whose truer reason is Offline, and
+an automatic read that joined the trial when the trial fails, since it shares an answer that was
+really sent. **Deferred — the
+real fix, proposal (a):** refusing a declared length before the body, which the engine's
+configuration cannot do (it offers no callback between the headers and the body). It would take a
+session delegate of Dulcet's own, which the fourth review judged feasible (ASSUMED, not tried) at
+this price: a dedicated HTTP client for lyrics, the fail-closed TLS trust handler re-created on
+that delegate, and the delegate's own
+cancellation (`NSURLErrorCancelled`) reclassified as the refusal rather than a cancellation. It is
+deferred because re-creating the TLS handler is a security surface, and not worth taking on for a
+server that is hostile or broken. iOS and tvOS use the same engine and are ASSUMED to behave the
+same.
+
+*The store's bound.* Two bounds, whichever binds first: the 5,000-document ceiling and a **32 MiB
+byte budget** (ASSUMED: the maintainer's figure, decided at the third review). Each document is
+stored with what its rows hold (`stored_bytes`: every string's UTF-8 length, eight bytes per
+integer, and the account and track keys twice per row, since SQLite stores a rowid table's key again
+in its primary-key index). When the account's documents pass either bound, the least recently read
+are evicted until the store is one per cent below the bound it passed; a pinned track's lyrics are
+never evicted, and neither is the document just written, so those may keep the store above the
+budget. The ceiling alone does not bound the store: OBSERVED 2026-09-24, reproducing the third
+review's figures, by filling the lyrics tables with SQLite 3.51.0 the way the store writes them — one
+transaction per document, no VACUUM, track ids in ascending and in shuffled order — a document at
+every cap takes 417–422 KiB of pages with a 36-byte server id and a 32-byte track id, because each
+of its 2,000 line rows repeats both keys, in the row and again in its primary-key index, so 5,000 of
+them take about **2.0 GiB**; at a 64-byte track id, which the server chooses, about 570 KiB each. A
+real song (one layer, 60 lines of 40 bytes) takes 13.3–13.7 KiB, 5,000 of them about 66 MiB. The
+budget's measure reads 0.87–0.99 of the pages a document occupies (0.94–0.99 at every cap, 0.92–0.98
+for the 60-line song, 0.87–0.88 for a one-line one), so 32 MiB of it is at most about 37 MiB of
+pages beyond the exempt documents: about 80 documents at every cap, or about 2,400–2,500 real
+songs, the budget binding before the ceiling. **When the pinned documents alone pass the budget**
+— the same figures, about 2,400 pinned real songs or about 80 pinned documents at every cap (fourth
+review) — every unpinned document but the one just written is evicted, so the unpinned cache holds
+one document. That is kept, as decided: online, every read is live anyway, and only offline reading
+of unpinned tracks loses its cache. Eviction reads its candidates in batches of 64 (ASSUMED), least
+recently read first, until the store is below the bound or nothing evictable is left. (The second revision's 400 KiB, 1.9 GiB and 12.5 KiB were
+measured after a VACUUM, which packs pages the store never packs.)
+
+*The model* (public, pure, shared by every shell): a `TrackLyrics` is the source, the layers kept
+within the caps in the server's order, the selected index, and how many layers trimming dropped
+(`droppedLayers`, zero for a complete document; `isTrimmed`). A `LyricsLayer` is one `structuredLyrics` entry —
+language (null when the server says `und`, `xxx` or nothing; the OpenSubsonic docs make `xxx`
+equivalent to `und`), synced, offset, lines, `kind`, display artist and title. A `LyricsLine` is
+its text and, in a synced layer only, a start. Times are `Duration`s (§9.5 invariant 6) in Kotlin.
+A `Duration` does not cross the Objective-C boundary as a usable number — it arrives as its raw
+internal encoding, which reads as an integer and is not one — so every `Duration` member and
+constructor is hidden from Objective-C and each has a milliseconds twin that Swift sees; an absent
+time is `nil`, never a sentinel, because -1 ms is a real effective start. Synced lines are stored
+sorted by start. `getLyrics` becomes one unsynced layer with
+no language; its leading and trailing blank lines are dropped and inner blank lines kept.
+
+*Selection* (`selectLyricsLayer`), in order:
+
+1. only `main` layers (a missing `kind` is `main`) with visible text compete — a translation or
+   pronunciation layer is never the lyrics;
+2. **synced beats unsynced, whatever the language** — timing belongs to what is sung, and the
+   scrolling display is the feature;
+3. then the person's languages in preference order (BCP 47 or ISO 639). **The person's explicit
+   list outranks every related-language fallback** (decided by the maintainer at the second review):
+   a layer in any listed language beats a macrolanguage relative of an earlier one, so
+   `[zh-Hans, en]` over `yue` and `eng` shows `eng`, `[hr, en]` over `srp` and `eng` shows `eng`,
+   and `[ms, en]` over `ind` and `eng` shows `eng`. A relative (`nb`/`nn` with `no`/`nor`, `yue` with
+   `zh`, `hr` and `sr` in `hbs`; `cmn` is `zh` itself) is used only when no layer is in a listed
+   language, and then in the order of the preference it relates to. Within one preference the same
+   script comes before an unstated one before a different one (`zh-Hant` prefers `zh-Hant`; `zh-TW`
+   and `zh-HK` imply Traditional, `zh-CN` and `zh-SG` Simplified); a different script is still the
+   person's language and beats a relative and an unknown one. **List order decides before script**
+(decided by the maintainer at the third review): a layer whose language matches a preference and
+states no script matches that preference, so it wins over a layer that matches a *later* preference
+exactly — `[zh-Hans, zh-Hant]` over `zh-Hant` and `zh` shows `zh`, because `zh` answers the first
+preference and `zh-Hant` only the second. Every ISO 639-2 B and T code with an
+   ISO 639-1 code folds onto it, from a table generated from the Library of Congress list, and the
+   macrolanguage relation is generated from the ISO 639-3 authority's mappings — both by
+   `tools/generate_lyrics_language_tables.py`, which pins each source by sha256 and checks the
+   citations in `LyricsLanguage.kt`. Then a layer of unknown language; then any other language;
+4. then the alphabetically first language code, ignoring case and surrounding space; then the
+   layer's `kind`, the same way (a missing one is empty); and only then the server's order, for
+   layers identical in every one of these. So the selection does not depend on the order the server
+   lists layers in (fourth review) — the kept layers are still *shown* in the server's order.
+   **OBSERVED 2026-09-23** (fixture configuration, Navidrome 0.63.2): one track's language layers
+   come back in the same order on every request but in a *different* order after a rescan (`deu,
+   eng, por` in one scan, `eng, por, deu` in another), and **OBSERVED 2026-09-24** on two disposable
+   instances of Navidrome 0.63.2 built from the same fixture corpus, one track's multilingual
+   embedded layers came back as `por, deu, eng` on one and `eng, deu, por` on the other, each
+   instance repeating its own order (eight requests on one), so a tie left to server order would
+   change the shown language between rescans and between servers with nothing else changed. A
+   third fresh instance returned `por, deu, eng` again (**OBSERVED 2026-09-25**, fifth review), and a
+   fourth returned `deu, por, eng`, a third distinct order, to both the JVM and the macOS leg of
+   CONF-42 (**OBSERVED 2026-09-25**, its `multilingual_order` marker): the order is not a function of
+   the file.
+
+A declared consequence of rule 2: a person who prefers Portuguese, on a track with synced German
+and English and unsynced Portuguese, is shown the synced German. The unselected layers stay in the
+document for a shell that offers a language switch — every one that fits the caps; trimming drops
+the lowest-ranked first, and the document counts them.
+
+*The current line* (`LyricsLayer.cursorAt(position)`, `cursorAtMilliseconds`) is a pure function
+of the media position (§12.3), so a seek in either direction needs nothing but the new position.
+The current line is the **last** line whose effective start — `start − offset`; **positive offset
+means the lyrics appear sooner** (OpenSubsonic `structuredLyrics`) — is at or before the position,
+with the boundary inclusive. Lines sharing an effective start are one **group** — a bilingual LRC
+lists the original and its translation under one timestamp — and the cursor names the group:
+`index` is its **first** line and `lastIndex` its last, so a shell highlights `index..lastIndex`
+(consecutive in any layer the parser stored). Before the first line, and on a group whose every line
+is blank (a gap in an LRC file, which the reference server returns as a line with `value: ""`), the
+cursor reports an **interlude** so the shell shows the instrumental state instead of highlighting
+empty text. It also returns the effective starts bounding the current group for a progress
+animation. An unsynced layer has no current line. **The cursor is total**: it returns an answer for
+every position and every stored value, including values no parser would store, because an exception
+that reaches Swift ends the process; the ordered timeline it searches is built once per layer.
+
+*Cache and offline.* A read goes through the reader (§16.8): its request is bounded and sequenced
+like any other, the answer is written through into the seen-cache (`cache_lyrics`,
+`cache_lyrics_layer`, `cache_lyrics_line`, §16.10) and the publication is built **from the
+cache**, so what is shown online is what is shown offline. Online, every read asks the server —
+one request per track whose lyrics are opened, nothing speculative — and `cached` gives the stored
+document with no request for the panel's first frame. A document with no layers is a fact —
+"this track has no lyrics" — including for a track id the server answers with code 70. Offline, a
+stored document publishes `cached(asOf, offline)` with no request; nothing stored publishes
+`unavailable`. Lyrics documents have their own ceiling (5,000 documents and 32 MiB, both ASSUMED; *the store's
+bound* above) with least-recently-accessed eviction that never takes a pinned track's lyrics
+(§16.13), and a track evicted from the
+cache takes its lyrics with it. They are purged with the namespace (CONF-80) and deleted with the
+account (§14.7). They are **not** protected data (§11.4): the server can always answer again.
+
+**OBSERVED 2026-09-23** (fixture configuration, disposable Navidrome 0.63.2): a sidecar `.lrc`
+yields one synced layer with `lang: "xxx"`, its `[offset:+250]` as `offset: 250`, and a blank LRC
+line as `{"start": …, "value": ""}`; a sidecar `.txt` and an embedded `LYRICS` tag each yield one
+unsynced `xxx` layer; FLAC `LYRICS:<LANG>` comments yield one layer per language, synced when the
+text carries LRC timestamps; a track with none answers `lyricsList: {}`; `enhanced=true` adds
+`kind: "main"` to every layer and, for this corpus, nothing else — because the corpus has no
+word-timed lyrics. For word-timed LRC it also adds a `cueLine` per line carrying the line's text
+again and one cue per word or syllable with its own text, times and byte offsets (OBSERVED
+2026-09-24, *the response is limited too* above); `getLyrics` returns the LRC text
+with its timestamps stripped, an unmatched artist/title answers `ok` with `value: ""`, and for a
+multilingual file it returns one language only.
+
+*For the shells* — the Now Playing panel is W17's UI half, not built here: render the selected
+layer; when synced, call `cursorAtMilliseconds(position)` on each position update, scroll to `index`
+and highlight through `lastIndex`, dimming on `isInterlude`; when unsynced, show the text statically; when the selected
+layer is null, say there are no lyrics; when `isTrimmed`, say that some lyrics were too large to
+show. The reader's `LibraryLyrics` is internal like the rest of
+the reader and reaches a shell through the facade that R2 adds; `LyricsContract` exposes the same
+production path to the conformance suite.
+
+*Future work — word-by-word highlighting.* The core does not model cues: `enhanced=true` is read for
+its extra layers (translation, pronunciation), and the `cueLine` data it also carries is downloaded,
+counted against the response limit, and discarded. Highlighting each word or syllable as it is sung
+needs a cue model, its own caps, and a cursor over cues; the limit above already admits the cues of a
+document at every cap, so adopting them needs no change to what is downloaded.
+
 ### 18.5 Similar / radio — deferred
 
 `sonicSimilarity` is negotiated and recorded. **No UI and no conformance test in v1** — its
@@ -4877,8 +5304,11 @@ Generalising from ffmpeg, because it will not be the last dependency of this sha
 **Media corpus:** generated at setup by `tools/seed-corpus` — synthesized tone and silence files in
 FLAC, MP3, Ogg and M4A with known tags, known durations, and deliberately awkward cases (unicode
 titles, multi-disc albums, several album artists, a track with no album, a very long title, a 300-track
-album for paging, a 29-second track and a 31-second track for the threshold boundary). **No
-copyrighted audio and no binary blobs in the repository.**
+album for paging, a 29-second track and a 31-second track for the threshold boundary). Lyrics
+fixtures (CONF-42) ride on existing tracks so the media count is unchanged: a sidecar `.lrc` with an
+offset and a blank line, a sidecar `.txt`, embedded lyrics in three languages (two synced), embedded
+plain lyrics, and the health probe with none. **No copyrighted audio and no binary blobs in the
+repository.**
 
 ### 20.3 Three test layers, each with an honest name
 
@@ -4933,7 +5363,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-35 | paging past the end returns an empty list, not an error |
 | CONF-33 | library mutated mid-import: the committed generation is internally consistent and the stability witness detects the change — **retired by phase R5 of §16.18**; CONF-70 pins the reader's equivalent |
 | CONF-44 | `getCoverArt` size behavior, content types, HTTP-200 JSON/XML error envelopes, code-70 unavailable mapping, and positive image signatures |
-| CONF-42 | `songLyrics` v2 structured response shape |
+| CONF-42 | `songLyrics` v2 structured response shape, read by the production lyrics path against the corpus's lyrics fixtures after asserting `songLyrics` v2 is advertised: a sidecar LRC is one synced `main` layer with its offset, unknown language and blank gap line; three embedded languages select by the person's language among the synced layers, and a synced layer beats a preferred-language unsynced one; sidecar text and embedded plain lyrics are unsynced; the control track has no layers; code 70 is no lyrics; offline serves the stored document with zero requests; every request goes out with the response size limit; and `getLyrics` is used only when the extension is not advertised (§18.4) |
 | CONF-10d | permission errors for the restricted user map to `Auth.Forbidden`, not a generic failure |
 | CONF-61 | unknown fields in a response are preserved and ignored |
 | CONF-31 | generation-pinned reads: a sync generation's reads observe one committed snapshot (§16.3) — **retired by phase R5 of §16.18** with the engine it pins |
@@ -6829,6 +7259,153 @@ fresh disposable server before landing; items 11–14 are what that review chang
     candidate the person is asked about. The seventh round's test that guarded the union now expects
     that question. (be) **Rebased onto `main`.** Rebased onto `main` at 7277d34b (#145): one textual conflict, in `docs/CONFORMANCE.md`, where `main` had added the CONF-09b evidence-boundary sections after CONF-87; resolved by keeping them whole and placing the CONF-88..91 rows after CONF-87 in the table. This record merged without conflict, `main`'s revisions above and this item inside Revision 104. `main`'s schema is still 6, so this branch's `6.sqm` and schema 7 stand. (bf) **Failing first.** The 7 new tests in `PlaylistEditingEighthReviewTest` and the flipped union guard, run against the seventh round's code (b6f40423): 4 of 24 fail on the JVM and the same 4 on `macosArm64` — p6 and p7 (the tombstone's own lookup failing out, and refused: not counted, not told), p4 (sent a third time, 3 creates for 2), and the flipped guard (the person not asked). p2, p3 and p5 pin behaviour both rounds share, and p8 is the control that a kept create's refused lookup is told. (bg)
     **Mutation run.** 18 compiling mutants against a baseline of 296 tests that all pass: 17 killed. The reviewer's M1 and M10 made the last-failure arm tell and count a tombstone's failure — which is now the code — so their inverses were run instead: that arm silencing a tombstone (killed by p6) and not counting it (p6's refused count); M2, silence taken only from the proven-unsent set (p2); the seventh round's clause restored (p7); the refused arm silencing a tombstone (p7); the set ignored; the union restored and the re-send's listing alone (p4 and the flipped guard, each); the restore arm unreachable, the re-send's name kept, its songs kept; R8; the removed tombstone not remembered, every refused create treated as deleted, a deleted create's refusal still counted; and two carried from the sixth round. The seventh round's survivor, dropping the first send's own listing, no longer exists: that listing is now all the restore keeps, and both of its alternatives are killed. 1 survives: the seventh round's check put back on the last-failure arm, equivalent by the argument in (bc) — a row still current there is never a deleted create's non-tombstone, and the tombstone's own failure no longer satisfies the check. A control that does not compile is counted as nothing. (bh) **Live.** CONF-88..91 once on the JVM against one fresh disposable Navidrome 0.63.2, 6 of 6, the server holding no playlist before and after; it was then stopped and its data deleted. Every suite run again from nothing: 639 `macosArm64` and 736 Android host tests, none failing, and the Android app (dev and prod) and TV unit tests. The first JVM run failed 3 of 637, all wall-clock deadline tests in host resolution and library browsing, which this change does not touch, with the host's load average near 157; run again at a load near 30, those two classes passed 3 times of 3 and the whole JVM suite passed 637 of 637. Every target compiles: iOS, macOS, the iOS simulator tests, the conformance JVM tests, and the Android app (dev and prod) and TV. The migration gate and `--check` pass.
+
+22. **Lyrics in the core (§18.4, CONF-42).** The model, selection policy and playback cursor are pure public
+    functions every shell calls; the read goes through the reader and the seen-cache (schema 8:
+    `cache_lyrics`, `cache_lyrics_layer`, `cache_lyrics_line`, additive, not protected). Decided:
+    synced beats unsynced whatever the language, then the person's language, then an unknown
+    language, then any other; `getLyrics` only when the `songLyrics` conjunction is false, never as
+    a fallback after a failure. Found: OBSERVED 2026-09-23 on the reference server, a track's
+    language layers change order between scans, so remaining ties are broken by language code, not
+    by server order; `xxx` is the unknown-language code for sidecar and untagged lyrics; a blank LRC
+    line is returned as a line with empty text, which the cursor reports as an interlude. §18.4's
+    first paragraph is kept; the rest is new. The corpus gains lyrics fixtures on existing tracks
+    (§20.2.2).
+
+23. **The §10.4 breaker, first adopted by lyrics (§10.4, §18.4).** Corrected in place: §10.4 said an open breaker
+    stays open "for the rest of the session". Decided by the maintainer: repeated failures stop
+    calls for a **bounded period** without revoking the capability — five minutes of monotonic time
+    (ASSUMED), then one trial whose result decides; a reconnect resets every breaker. Also decided:
+    the error class includes a server error's code; code 70 and cancellation never count; an `ok`
+    envelope with a malformed body does; an open breaker sends nothing to any endpoint; the breaker
+    is held by the reader session, not by a feature object, so asking for lyrics again cannot hand
+    back a fresh, closed one. §18.4 states the lyrics consequence: nothing but a well-formed answer
+    within the caps is ever stored.
+    **Corrected at independent review of the first cut**, each with a test that failed first:
+    (a) the error class no longer decides — any failure counts (maintainer's decision), so a proxy
+    alternating a 502 page with a timeout now opens it; (b) an explicit user retry is admitted as
+    the trial at once (maintainer's decision; the automatic period stays five minutes, ASSUMED);
+    (c) the reset moved from the session into the reader's single offline→online transition, since
+    the reconnect sequence set the reader online without the session seeing a transition; (d) a
+    `getLyrics` body without its `lyrics` object was stored as "no lyrics" and counted as a success —
+    it is now malformed; (e) a local database failure while storing an answer was charged to the
+    server as unreachable — the answer is now classified before it is stored; (f) a server start or
+    offset of 5e18 ms crashed the cursor ("summing infinite durations") and survived the cache round
+    trip — times beyond ±24 h are now untrusted and the cursor is total. The earlier claim that
+    `LyricsControlPublication` carries `breakerOpen` "so the conformance path can see the
+    diagnostic" is withdrawn: no conformance test ever read it, and the field is removed; the
+    conformance path gains `notFound` instead, which CONF-42 asserts to prove it saw code 70.
+    **Corrected at the second review**, each with a test that failed first: (g) an answer beyond
+    the caps was refused whole as `MalformedEnvelope` and downloaded again on every read — it is now
+    trimmed, main layers first, and refused only when no main layer fits alone, as the new
+    `Protocol.TooLarge`, remembered for the session; the response body is limited to 1 MiB and read
+    no further (maintainer's decisions; the limit ASSUMED); (h) a straggler's failure ended the trial
+    in flight, so a Retry sent a second trial beside it — only the trial's own admission ends it now;
+    (i) a person's later listed language lost to a relative of an earlier one (`[zh-Hans, en]` showed
+    `yue`) — the list now outranks every relative (maintainer's decision). Also: §18.4's "313 MiB"
+    was the text alone, and the measured bound is about 1.9 GiB (above; 2.0 GiB, third review); the `notFound` comment
+    claimed the marker never rides a publication served from the store, which `getLyrics`' code 70
+    does by design, so the comment was corrected and the code kept; and the language tables' generator
+    is committed. Tests were added for three mutants the review found alive: a bilingual group
+    judged by its last line only, a legacy `value: null` read as malformed, and a four-byte character
+    counted as two bytes.
+    **Corrected at the third review** (maintainer's decisions), each with a test that failed first:
+    (j) the 1 MiB response limit refused whole answers whose main layer fit every cap, because
+    `enhanced=true` adds word- and syllable-level cues that its "about 450 KiB" figure left out — the
+    limit is now 8 MiB, sized from a measured worst case (§18.4), and "`enhanced=true` adds `kind`
+    and nothing else" is qualified to the corpus it was observed on; (k) the limit's texts said a
+    declared length is refused "before a byte is read" and the rest "never downloaded" on every
+    platform — that holds for the JVM engine only, and Darwin is now OBSERVED and stated as §18.4
+    residual 1; (l) trimming packed in server order, so it kept an unsynced main layer over a synced
+    one, or German over the person's English, and nothing marked the result — it now packs in the
+    selection's rank order and the document counts the layers it dropped; (m) a blank main layer
+    counted as a main layer that fits, so a real one too large to keep was hidden behind a live "no
+    lyrics"; (n) the breaker's reset did not cover calls in flight, so three failures sent before a
+    reconnect opened it after — admissions carry a generation (§10.4); (o) the too-large verdict was
+    unordered, so an older automatic read's refusal overrode a newer Retry's document, and two
+    concurrent automatic reads downloaded twice — verdicts follow the issue order and automatic
+    reads of one track share one request; (p) the Apple account facade presented `TooLarge` as a
+    malformed server, and a kind the Swift side did not know ended the process — it has its own
+    kind, and an unknown one is shown as a generic failure. Also: list order deciding before script
+    is recorded as decided (§18.4 rule 3); the store's figures had been measured after a VACUUM the
+    store never runs and are corrected to about 420 KiB and 2.0 GiB, and a 32 MiB byte budget joins
+    the document ceiling (maintainer's decision, ASSUMED); the language generator's citation check
+    is per table, with a control; and the v7 migration fixture, written by hand with a SQLite build
+    that reserves 12 bytes per page, is generated by a committed tool with the build that wrote
+    v4–v6 (§11.4; corrected at the fourth review, which found v1–v3 written by 3.50.6). Two behaviours the review found correct but unpinned are now tested: a code-70
+    answer forgets the verdict, and the verdict is kept per endpoint.
+    **Corrected at the fourth review** (maintainer's decisions): (q) "concurrent automatic reads share
+    one request" held only for the newest request in flight — an automatic read sent a third request
+    while an older one was still downloading — so every request in flight is tracked and an
+    automatic read joins the newest one remaining; (r) an older refusal landing after a newer answer
+    that fit was published as the refusal when that answer's document had been evicted — it is now a
+    miss, asked again; (s) `songLyrics` v1 and v2 shared a verdict and a request although v2 asks
+    for more — they are separate reads; (t) the selection's last tie-break was the server's order,
+    which differs between instances — it is the language code, then the kind, then the server's
+    order; (u) a Darwin stall was paid again on every automatic read — a timeout is now remembered
+    for one breaker period (§18.4 residual 1, whose real fix is recorded as deferred); (v) the body
+    was parsed twice — once now, and the cost is measured (§18.4); (w) three Apple paths still ended
+    the process on a failure kind they did not know — each maps it to a generic failure; (x) the
+    verdicts were unbounded and the eviction query unlimited — 1,000 verdicts and batches of 64,
+    both ASSUMED. Also: the fixture generator's seed only raises the issue sequence, its semantic
+    check runs in the parity gate with a control, and a JVM test ties its copy of the stored-bytes
+    function to the Kotlin one (§11.4); the SQLite history is corrected (v1–v3 3.50.6, v4–v7
+    3.51.0); and the behaviour when pinned documents alone pass the byte budget is stated (§18.4).
+    **Corrected at the fifth review** (maintainer's decisions): (y) moving seven breaker tests off
+    `Timeout` left "a timeout counts toward the breaker" untested, and an eighth test, repeating a
+    timeout on one track, sent one request where it meant five, so its assertion held whatever the
+    breaker did — the breaker is tested through timeouts again, a track per read, with the request
+    count asserted; (z) an automatic read after a reconnect joined a request sent before it and
+    published that request's failure — flights carry the breaker generation (§18.4); (aa) a
+    remembered timeout or verdict published while the breaker was open did not say so. Also: three
+    timeout-memory ordering rules and the joiner's re-ask on a miss are pinned, the fixture
+    generator's control covers `user_version` and the files beside the database, and a third and a
+    fourth Navidrome instance's layer orders are recorded (§18.4 rule 4). **Sixth review** (maintainer's
+    decisions): what carries over a reconnect is stated exactly — an older request's document,
+    too-large verdict and code-70 answer, never the breaker, the timeout memory or joinability; a
+    request's window is the one it was admitted in, not sent in; the answer-before-join order is
+    pinned; the `breakerOpen` sentence is narrowed to what the code does (offline reads and joiners
+    of a failed trial carry `false`); and the bridges' duty to cancel or order superseded reads is
+    recorded (§18.4). **Rebased onto `main`** at b0a90608 (#146, after #142 and #143). Lyrics was
+    written as `6.sqm` (schema 7) and `main` had meanwhile shipped the playlist columns as `6.sqm`;
+    `main`'s `6.sqm`, its `7.db` and its v7 fixture are kept byte for byte, and lyrics is now
+    `7.sqm` (schema 8, `8.db`), its fixture seed moved from v7 to v8 (§11.4). Items 22 and 23 were
+    numbered 20 and 21, under revision 99, on the branch's base; they are renumbered here, after
+    `main`'s items 20 and 21, with every back-reference. The lyrics reads now share `main`'s status
+    classification of an answer that is not an envelope (a 429 is `Server.Busy` with its
+    `Retry-After`, a 401 refused credentials, another 4xx or 5xx `Server.HttpStatus`), where they
+    previously called every such answer malformed; each is still a failure the breaker counts. At
+    this rebase a 429's `Retry-After` was carried, not honoured: each 429 was one breaker failure
+    like any other, and a trial went out every period whatever the server had asked. **Seventh
+    review** (integration review of the rebase, and the maintainer's decisions): (ab) a 429 now
+    opens the breaker at once, for `max(period, min(Retry-After, LIBRARY_BUSY_CAP))` — the reader's
+    one busy cap, not a second one; a later 429 never shortens the hold, and the explicit Retry is
+    still admitted; the reader's own busy wait is not fed from lyrics (§10.4, §18.4). (ac) A failure
+    of the device's own database as a read was issued was published as `Transport.Unreachable` and
+    charged to the breaker — three opened it with no request sent (OBSERVED by the reviewer's
+    probe, which is now a test); only a `LibraryRequestFailure` is the server's now, as in the
+    reader's windows and the outbox, and anything else publishes the internal failure, touches
+    neither the count nor the trial, and sends nothing (§10.4). (ad) A body beyond the size limit is
+    classified by its status first, so an oversized 429 keeps `Busy` and its `Retry-After` and an
+    oversized 401 keeps refused credentials; before, every non-2xx oversized body was malformed
+    (§10.4). (ae) §12.12's owner table lists `Protocol.TooLarge` as the track's, with its reason.
+    (af) The rebase's commit message said the pre-squash commits remained on the remote; after the
+    force-push they are only on a local branch, and the message says so. **After the seventh
+    review**, each with a test that failed first: (ag) the review's one NIT — the trial's own
+    failure replaced the hold already running, so with a 60 s period, after a straggler's 429 asked
+    for 200 s, the trial's timeout re-admitted a trial 60 s later — the new hold now ends at the
+    later of the two, for an ordinary failure and a shorter 429 alike (latent while the period
+    equals the busy cap); (ah) found while fixing it — any success closed the open breaker, so a
+    straggler's ended a 429 hold and forgot the trial in flight, which §10.4's "only the trial"
+    implied but did not say — it now changes nothing while the breaker is open, for the whole open
+    state. The consequence is deliberate and now stated in §10.4: after an ordinary three-failure
+    opening, a concurrent call's late success no longer closes the breaker, so recovery waits out
+    the full period (five minutes) and then the trial's answer — one trial decides (§10.4, §18.4).
+    **Eighth review** (maintainer's decisions): the "only the trial's success ends a hold early"
+    wording in §10.4 and §18.4 is qualified to one connection, since a reconnect's reset also ends
+    one (the reset is unchanged); the success rule is pinned in the window after the period with no
+    trial admitted, where a guard applied only while a hold ran or a trial was out passed every
+    earlier test.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

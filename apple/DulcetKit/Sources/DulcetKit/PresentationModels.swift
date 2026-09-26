@@ -144,6 +144,7 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
     case malformedEnvelope
     case incompatibleProtocol
     case notASubsonicServer
+    case responseTooLarge
     case knownServerError
     case unknownServerError
     case invalidCredentials
@@ -153,6 +154,16 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
     case crossOriginRedirectRejected
     case capabilityUnsupported
     case credentialPersistenceFailed
+    /// A kind the core named that this build has no copy for. Never sent by the core on purpose;
+    /// it is what ``init(coreKind:)`` answers for a name it does not know.
+    case unrecognizedFailure
+
+    /// The kind the core named, or ``unrecognizedFailure`` for a name this build does not know, so
+    /// a kind added to the core before its copy exists shows a generic failure instead of ending
+    /// the process or borrowing another kind's explanation.
+    public init(coreKind: String) {
+        self = DulcetAccountFailureKind(rawValue: coreKind) ?? .unrecognizedFailure
+    }
 
     public var family: DulcetAccountErrorFamily {
         switch self {
@@ -163,9 +174,9 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
             .transport
         case .tlsUntrusted, .localNetworkPolicyRejected, .redirectRejected:
             .security
-        case .malformedEnvelope, .incompatibleProtocol, .notASubsonicServer:
+        case .malformedEnvelope, .incompatibleProtocol, .notASubsonicServer, .responseTooLarge:
             .protocol
-        case .knownServerError, .unknownServerError:
+        case .knownServerError, .unknownServerError, .unrecognizedFailure:
             .server
         case .invalidCredentials, .tokenAuthenticationUnsupported, .forbidden,
              .unsupportedAuthenticationChallenge, .crossOriginRedirectRejected:
@@ -625,6 +636,16 @@ public enum DulcetSearchFailureKind: String, Sendable, Hashable {
     case server
     case input
     case capability
+    /// A kind the core named that this build does not know. Never sent by the core on purpose;
+    /// it is what ``init(coreKind:)`` answers for a name it does not know.
+    case unrecognized
+
+    /// The kind the core named, or ``unrecognized`` for a name this build does not know, so a
+    /// search failure kind added to the core before this build knows it shows a generic failure
+    /// instead of ending the process or being explained as a server Dulcet could not read.
+    public init(coreKind: String) {
+        self = DulcetSearchFailureKind(rawValue: coreKind) ?? .unrecognized
+    }
 }
 
 public struct DulcetSearchFailure: Sendable, Hashable {
@@ -726,6 +747,16 @@ public enum DulcetLibraryFailureKind: String, Sendable, Hashable {
     case server
     case input
     case capability
+    /// A kind the core named that this build does not know. Never sent by the core on purpose;
+    /// it is what ``init(coreKind:)`` answers for a name it does not know.
+    case unrecognized
+
+    /// The kind the core named, or ``unrecognized`` for a name this build does not know, so a
+    /// library failure kind added to the core before this build knows it shows a generic failure
+    /// instead of ending the process or being explained as a server Dulcet could not read.
+    public init(coreKind: String) {
+        self = DulcetLibraryFailureKind(rawValue: coreKind) ?? .unrecognized
+    }
 }
 
 public struct DulcetLibraryFailure: Sendable, Hashable {
