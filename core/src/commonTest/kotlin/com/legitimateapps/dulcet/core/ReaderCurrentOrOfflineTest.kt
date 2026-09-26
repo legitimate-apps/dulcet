@@ -352,6 +352,8 @@ class ReaderCurrentOrOfflineTest {
         assertTrue(session.reader.online)
         val labels = pubs.all.drop(pubMark).map { it.value.freshness.label() }
         assertFalse(labels.any { it == "cached(Failed)" }, "a refused read left a failure: $labels")
+        // The owed read is coming, so the screen says so at the transition, and `live` at the end.
+        assertEquals(listOf("cached(Revalidating)", "Live"), labels.distinct(), "the owed read was not announced: $labels")
         assertEquals(LibraryFreshness.Live, pubs.last.freshness)
         assertEquals(1, env.server.count("getAlbumList2") - lists, "the owed read was not made at the reconnect")
     }
@@ -385,6 +387,8 @@ class ReaderCurrentOrOfflineTest {
         assertTrue(session.reader.online)
         val labels = pubs.all.drop(pubMark).map { it.value.freshness.label() }
         assertFalse(labels.any { it == "cached(Failed)" }, "a refused read left a failure: $labels")
+        // The owed read is coming, so the screen says so at the transition, and `live` at the end.
+        assertEquals(listOf("cached(Revalidating)", "Live"), labels.distinct(), "the owed read was not announced: $labels")
         assertEquals(LibraryFreshness.Live, pubs.last.freshness)
         assertEquals(
             1,
