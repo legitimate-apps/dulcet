@@ -774,4 +774,65 @@ class ReaderCurrentOrOfflineTest {
         assertEquals(listOf("Live/200"), seen.filter { it.startsWith("Live") }, "seen: $seen")
         assertEquals("Live/200", seen.last(), "seen: $seen")
     }
+
+    /**
+     * The round-7 review's NIT 5. The reconnect's revalidation takes the owed extends before it
+     * reads; one that then fails inside the reader (here the server rescanned, so the window is
+     * rebased, and the rebase's write fails once) used to lose them: the screen said
+     * `internalFailure`, and the next revalidation re-read the viewport and never the page the
+     * person asked for. An owed extend survives the failure, and the next revalidation — the
+     * person's "Try again" — makes it.
+     */
+    @Test
+    fun anOwedLoadMoreSurvivesARevalidationThatFailsInternally() = owedLoadMoreSurvivesAnInternalFailure(rescanned = true)
+
+    /**
+     * The same failure in the owed extend itself: the grid is fresh, so the reconnect reads nothing
+     * for it and goes straight to the extend, whose page write fails once. An extend leaves the owed
+     * list only once made, so the one that threw is owed again.
+     */
+    @Test
+    fun anOwedLoadMoreWhoseOwnWriteFailsIsOwedAgain() = owedLoadMoreSurvivesAnInternalFailure(rescanned = false)
+
+    private fun owedLoadMoreSurvivesAnInternalFailure(rescanned: Boolean) = sessionTest { env ->
+        val session = env.session()
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        handle.setViewport(90, 99)
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        handle.loadMore()
+        advanceUntilIdle()
+        assertEquals(100, pubs.last.items.size, "fixture: the load more was not made offline")
+        if (rescanned) env.server.base.lastScan = "2026-09-24T10:00:00Z" // the reconnect's epoch differs: a rebase
+        var writes = 0
+        env.driver.failWrite = { sql ->
+            sql.contains("cache_list_member", ignoreCase = true) && sql.trimStart().startsWith("INSERT", ignoreCase = true) && writes++ == 0
+        }
+        val mark = env.server.log.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        env.driver.failWrite = null
+        // The condition under test: the revalidation that was to make the extend failed inside the reader.
+        assertTrue(writes >= 1, "fixture: the injected write failure never fired; the test measured nothing")
+        assertEquals("cached(InternalFailure)", pubs.last.freshness.label(), "fixture: the revalidation failed internally")
+        assertTrue(session.reader.online, "fixture: the reconnect itself completed")
+        val before = env.server.log.drop(mark).filter { it.endpoint == "getAlbumList2" }.map { it.parameters["offset"] }
+        if (rescanned) {
+            assertFalse("100" in before, "fixture: the extend was made before the failure: $before")
+        } else {
+            assertEquals(listOf<String?>("100"), before, "fixture: only the extend was read, and its write failed")
+        }
+        assertEquals(100, pubs.last.items.size, "fixture: the failed page was not shown")
+        val retry = env.server.log.size
+        handle.refresh()
+        advanceUntilIdle()
+        val offsets = env.server.log.drop(retry).filter { it.endpoint == "getAlbumList2" }.map { it.parameters["offset"] }
+        assertTrue("100" in offsets, "the owed load more (offset 100) was lost to the internal failure: $offsets")
+        assertEquals(200, pubs.last.items.size, "the page the person asked for never arrived")
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+    }
 }

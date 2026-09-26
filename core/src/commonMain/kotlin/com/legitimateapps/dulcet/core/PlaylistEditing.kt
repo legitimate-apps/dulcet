@@ -516,6 +516,14 @@ internal class PlaylistOutbox(
             decode(row.target_id, row.field_, row.value_, row.local_sequence, row.wall_clock)
         }
 
+    /**
+     * Every playlist row this account has queued, including one [all] cannot decode — never sent,
+     * and lost at sign-out just the same. The favourites' rows share the table and are counted by
+     * their own outbox, never here.
+     */
+    fun pendingCount(): Long =
+        queries.selectPendingMutations(cache.serverId).executeAsList().count { it.field_.startsWith(PLAYLIST_FIELD_PREFIX) }.toLong()
+
     fun rowsFor(playlistId: String): List<PendingPlaylistRow> = all().filter { it.playlistId == playlistId }
 
     fun find(playlistId: String, kind: PlaylistRowKind): PendingPlaylistRow? =
@@ -703,10 +711,14 @@ internal class PlaylistEditor(
         outcomeListeners += listener
     }
 
-    /** For the sign-out offer of §14.7: playlist changes that have not reached the server. */
-    fun pendingCount(): Long {
+    /**
+     * For the sign-out offer of §14.7: playlist changes that have not reached the server, or null
+     * when the outbox cannot be read — never a guessed zero, which tells the person nothing will be
+     * lost. A queued row that cannot be decoded is counted: it will never be sent, so it is lost too.
+     */
+    fun pendingCount(): Long? {
         reader.checkConfined()
-        return guarded(0L) { outbox.all().size.toLong() }
+        return guarded(null) { outbox.pendingCount() }
     }
 
     /**
