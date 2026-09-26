@@ -90,6 +90,47 @@ class TvAccountSignOutTest {
         assertEquals(listOf("remove:${account.id}"), data.log)
     }
 
+    /**
+     * Stay signed in is the default of §14.7 in every dialog that could remove something, so the
+     * remote's CENTER on whatever holds focus when a dialog opens never signs out: the offer, the
+     * unknown count, and the offer made again after the choice.
+     */
+    @Test fun stayHoldsTheFocusInEveryDialogThatCouldRemoveSomething() {
+        store.save("Fixture Server", "https://music.example.invalid", "listener", "tv-password", false)
+        compose.setContent { TvAccountHost(signOut, "id") { Text("app") } }
+
+        data.pending = PendingChanges(setOf("song-1"), 1)
+        press("tv.account.signout")
+        compose.onNodeWithTag("signout.offer").assertIsDisplayed()
+        compose.onNodeWithTag("signout.send").assertIsDisplayed()
+        awaitFocused("signout.stay", "the offer")
+        press("signout.stay")
+
+        data.pending = null
+        press("tv.account.signout")
+        compose.onNodeWithTag("signout.unknown").assertIsDisplayed()
+        awaitFocused("signout.stay", "the unknown count")
+        press("signout.stay")
+
+        // Offered one play; a second is recorded before the choice, so the offer is made again,
+        // behind the progress screen, as a new dialog.
+        data.pending = PendingChanges(setOf("song-1"), 0)
+        press("tv.account.signout")
+        compose.onNodeWithTag("signout.offer").assertIsDisplayed()
+        data.pending = PendingChanges(setOf("song-1", "song-2"), 0)
+        press("signout.discard")
+        compose.waitUntil(5_000) { (signOut.state.value as? SignOutState.Offer)?.hidesAccount == true }
+        awaitFocused("signout.stay", "the offer made again")
+        assertEquals("tv-account", store.load()?.id, "Nothing was removed")
+    }
+
+    private fun awaitFocused(tag: String, where: String) {
+        val focused = runCatching {
+            compose.waitUntil(5_000) { runCatching { compose.onNodeWithTag(tag).assertIsFocused() }.isSuccess }
+        }.isSuccess
+        kotlin.test.assertTrue(focused, "Stay signed in must hold the focus in $where")
+    }
+
     private fun press(tag: String) {
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
@@ -106,7 +147,8 @@ class TvAccountSignOutTest {
     private class QuietAccountData : AccountDataGateway {
         val log = mutableListOf<String>()
         var removeGate: CompletableDeferred<Unit>? = null
-        override suspend fun pendingChanges(account: StoredAccount) = PendingChanges(emptySet(), 0)
+        var pending: PendingChanges? = PendingChanges(emptySet(), 0)
+        override suspend fun pendingChanges(account: StoredAccount) = pending
         override suspend fun send(account: StoredAccount, changes: Boolean) = PendingChanges(emptySet(), 0)
         override suspend fun removeAccountData(serverId: String) { log += "remove:$serverId"; removeGate?.await() }
         override suspend fun sweep(activeAccountId: () -> String?): Set<String> = emptySet()

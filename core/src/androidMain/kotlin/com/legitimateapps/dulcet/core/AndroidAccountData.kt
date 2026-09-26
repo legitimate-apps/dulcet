@@ -5,12 +5,15 @@ import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okio.FileSystem
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The device-held half of signing out on Android (spec §14.7): the account's unsent plays, sending
@@ -38,6 +41,8 @@ public class AndroidAccountData internal constructor(
     private val senderFor: (PlaybackEndpointAccount) -> ScrobbleEndpointSender,
     private val wall: OutboxWallClock,
     private val monotonic: OutboxMonotonicClock,
+    /** How long a removal waits for the library reader before it gives up and deletes nothing. */
+    private val readerCloseBound: Duration = READER_CLOSE_BOUND,
     /** Returns once the process's library reader has terminated (§14.7 step 6 waits for it). */
     private val closeLibraryReader: suspend () -> Unit,
 ) {
@@ -111,13 +116,22 @@ public class AndroidAccountData internal constructor(
      * binding, the outboxes, the queue, resume positions and the library). Idempotent, so an
      * interrupted sign-out can run it again at launch. Throws when anything the account owns may
      * survive; nothing is deleted before the reader has terminated.
+     *
+     * The wait is bounded by [READER_CLOSE_BOUND], past the reader's own worst case of about 85 s
+     * (§14.7), because a reader task that never finishes holds that completion forever. The bound is
+     * the coroutine timeout of the dispatcher this runs on, a monotonic clock. Past it nothing is
+     * deleted and this throws [LibraryReaderStillRunning]: the caller keeps its `removing` mark, and
+     * the launch sweep ([sweepAccountsOtherThan]) deletes the data at a later launch.
      */
     public suspend fun removeAccountData() {
-        closeLibraryReader()
+        withTimeoutOrNull(readerCloseBound) { closeLibraryReader() } ?: throw LibraryReaderStillRunning()
         removeStored(serverId, openStore, artworkRoot, downloadRoot)
     }
 
     public companion object {
+        /** How long [removeAccountData] waits for the library reader to terminate. */
+        public val READER_CLOSE_BOUND: Duration = 90.seconds
+
         /** The directory [AndroidArtworkRepository] caches this account's artwork in. */
         internal fun artworkRootFor(context: Context, serverId: String): File =
             File(artworkParentFor(context), AndroidArtworkRepository.digest(serverId))
@@ -140,15 +154,21 @@ public class AndroidAccountData internal constructor(
         /**
          * Deletes the rows, cached artwork and downloaded media of every account except the one saved
          * now — accounts a sign-out began and did not finish, and anything written for a signed-out
-         * account after its removal (see the class documentation). Run at launch, before any account
-         * is signed out in this process. It closes no library reader: the only reader it could meet
-         * belongs to the saved account, which it keeps. Returns the ids whose rows it deleted.
-         * Throws, having deleted what it could, when anything may survive.
+         * account after its removal (see the class documentation) — and every downloaded or partial
+         * file that no download row names. Returns the ids whose rows it deleted. Throws, having
+         * deleted what it could, when anything may survive.
          *
-         * [activeAccountId] is read only AFTER the rows and directories are listed. An account saved
-         * after that read cannot own a row or an artwork directory at listing time — both are written
-         * only for an account already saved — so nothing an account saved meanwhile owns is ever
-         * listed, whichever moment it was saved.
+         * It closes no library reader, and it runs whenever an activity creates its sign-out, not
+         * only at a cold start: in a process that is still alive a reader closed by an earlier
+         * removal may not have terminated yet, and a sign-out may begin while this runs. A row such
+         * a reader writes after this has read the rows is left for the next sweep, which deletes it;
+         * nothing here claims that none can be written.
+         *
+         * [activeAccountId] is read only AFTER the rows, directories and download files are listed,
+         * and the download rows' file names only after that. An account saved after the listing
+         * cannot own a row, an artwork directory or a file at listing time — all are written only for
+         * an account already saved, and a download's row before its file — so nothing an account
+         * saved meanwhile owns is ever listed, whichever moment it was saved.
          */
         public suspend fun sweepAccountsOtherThan(context: Context, activeAccountId: () -> String?): Set<String> {
             val application = context.applicationContext
@@ -166,23 +186,35 @@ public class AndroidAccountData internal constructor(
             downloadRoot: File,
             activeAccountId: () -> String?,
         ): Set<String> = withContext(Dispatchers.IO) {
+            val files = downloadFiles(downloadRoot)
+            val listedFiles = files.listFiles()
             val withRows = withStore(openStore) { store ->
                 store.database.serverDataQueries.selectServerIdsWithRows().executeAsList().toSet()
             }
             val directories = artworkParent.listFiles { entry -> entry.isDirectory }.orEmpty().toList()
             val active = activeAccountId()
+            val named = withStore(openStore) { store ->
+                store.database.downloadsQueries.selectDownloadFileNames().executeAsList()
+                    .map { DownloadId(it.download_id) to it.file_relative_path }
+            }
             val keptDirectory = active?.let(AndroidArtworkRepository::digest)
             var failure: IOException? = null
             val swept = mutableSetOf<String>()
             for (id in withRows) {
                 if (id == active) continue
                 removed += id
-                withStore(openStore) { store -> DownloadPolicyEngine(store.database, downloadFiles(downloadRoot)).removeAccountData(id) }
+                withStore(openStore) { store -> DownloadPolicyEngine(store.database, files).removeAccountData(id) }
                 swept += id
             }
             for (directory in directories) {
                 if (directory.name == keptDirectory) continue
                 if (!directory.deleteRecursively()) failure = IOException("cached artwork could not be deleted")
+            }
+            // A file no row names belongs to no account: nothing could find it to delete it later.
+            try {
+                files.deleteUnnamed(listedFiles, named)
+            } catch (unreadable: IOException) {
+                failure = unreadable
             }
             failure?.let { throw it }
             swept
@@ -218,3 +250,6 @@ public class AndroidAccountData internal constructor(
         }
     }
 }
+
+/** The library reader had not terminated within [AndroidAccountData.READER_CLOSE_BOUND]; nothing was deleted. */
+public class LibraryReaderStillRunning : IOException("the library reader did not terminate within its bound")

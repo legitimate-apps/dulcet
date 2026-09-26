@@ -16,9 +16,21 @@ import kotlin.time.Duration.Companion.seconds
  * could not be reached, so the caller must not remove the account yet.
  *
  * The service is this app's own and runs in-process, so it answers at once; the bound only keeps
- * a sign-out from waiting forever on a service that failed to start. Call on the main thread.
+ * a sign-out from waiting forever on a service that failed to start. When the service is not
+ * running, the bind creates it, and it then builds no controller: one built only to be closed would
+ * restore the signing-out account's queue and send its plays. Call on the main thread.
  */
-public suspend fun releasePlaybackForSignOut(context: Context): Boolean = withTimeoutOrNull(RELEASE_TIMEOUT) {
+public suspend fun releasePlaybackForSignOut(context: Context): Boolean {
+    // Counted before the bind, so a service this bind creates builds no controller (see onCreate).
+    PlaybackService.releaseBindings.incrementAndGet()
+    return try {
+        bindAndRelease(context)
+    } finally {
+        PlaybackService.releaseBindings.decrementAndGet()
+    }
+}
+
+private suspend fun bindAndRelease(context: Context): Boolean = withTimeoutOrNull(RELEASE_TIMEOUT) {
     suspendCancellableCoroutine { continuation ->
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {

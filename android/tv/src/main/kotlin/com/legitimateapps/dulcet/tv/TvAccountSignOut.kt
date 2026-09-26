@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -82,16 +85,30 @@ internal fun TvAccountHost(signOut: AccountSignOut, account: Any?, content: @Com
         return
     }
     val saved = remember(account, state) { signOut.savedAccountId() != null }
-    Box(Modifier.fillMaxSize()) {
-        content()
+    val entry = remember { FocusRequester() }
+    // A row of its own above the screen, so it covers nothing, and UP from a screen's topmost
+    // control reaches it. A text field keeps UP for its cursor, so a screen whose topmost control is
+    // one hands UP to [LocalTvAccountEntry] itself.
+    Column(Modifier.fillMaxSize()) {
         if (saved) {
-            Button(
-                onClick = signOut::request,
-                modifier = Modifier.align(Alignment.BottomStart).padding(24.dp).testTag("tv.account.signout"),
-            ) { Text(stringResource(SharedR.string.account_signout_action)) }
+            Row(Modifier.fillMaxWidth().padding(start = 56.dp, top = 16.dp, end = 56.dp)) {
+                Button(
+                    onClick = signOut::request,
+                    modifier = Modifier.focusRequester(entry).testTag("tv.account.signout"),
+                ) { Text(stringResource(SharedR.string.account_signout_action)) }
+            }
+        }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            CompositionLocalProvider(LocalTvAccountEntry provides entry.takeIf { saved }) { content() }
         }
     }
 }
+
+/**
+ * The account entry's focus while it is shown, for a screen whose topmost control is a text field:
+ * a text field consumes UP for its cursor, so the D-pad could otherwise never leave it upward.
+ */
+internal val LocalTvAccountEntry = staticCompositionLocalOf<FocusRequester?> { null }
 
 /** One dialog per step of §14.7 that needs an answer; dismissing one means Stay signed in. */
 @Composable

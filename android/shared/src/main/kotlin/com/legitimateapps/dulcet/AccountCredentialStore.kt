@@ -178,7 +178,13 @@ public class AndroidAccountCredentialStore public constructor(
      */
     override fun delete() {
         val id = preferences.getString(ACTIVE_ACCOUNT_KEY, null) ?: return
+        val payload = preferences.getString(payloadKey(id), null)
         if (!preferences.edit().remove(payloadKey(id)).remove(ACTIVE_ACCOUNT_KEY).commit()) {
+            // The failed commit still removed the record from the in-memory map. Put it back, so this
+            // process goes on seeing the account that is still on disk rather than no account.
+            val restore = preferences.edit().putString(ACTIVE_ACCOUNT_KEY, id)
+            if (payload != null) restore.putString(payloadKey(id), payload)
+            restore.apply()
             throw CredentialStoreException(CredentialStoreException.Reason.PersistenceFailed)
         }
         try {

@@ -24,7 +24,10 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        ensurePlayback()
+        // A service created by a sign-out's release bind has nothing to release; a controller built
+        // here would restore the signing-out account's queue and send its plays, only to be closed.
+        // Every other entry builds it lazily, as it does for an account saved after creation.
+        if (releaseBindings.get() == 0) ensurePlayback()
     }
 
     /** The account [playback] was built for; its credentials are the controller's for its life. */
@@ -108,5 +111,10 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    companion object { const val LOCAL_BIND = "com.legitimateapps.dulcet.playback.BIND" }
+    companion object {
+        const val LOCAL_BIND = "com.legitimateapps.dulcet.playback.BIND"
+
+        /** Sign-out release binds in flight ([releasePlaybackForSignOut]); while any is, onCreate builds nothing. */
+        internal val releaseBindings = java.util.concurrent.atomic.AtomicInteger(0)
+    }
 }

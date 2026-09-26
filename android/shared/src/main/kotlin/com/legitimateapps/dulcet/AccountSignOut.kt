@@ -144,8 +144,17 @@ public class AccountRemovalJournal(private val preferences: SharedPreferences) {
     // A copy: the set SharedPreferences returns must not be modified.
     @Synchronized private fun read(key: String): Set<String> = preferences.getStringSet(key, null).orEmpty().toSet()
 
-    @Synchronized private fun write(key: String, value: Set<String>): Boolean =
-        preferences.edit().putStringSet(key, value).commit()
+    /**
+     * False when the value did not reach disk. `commit()` updates the in-memory map even then, so
+     * the previous value is put back: this process must not act on a mark, or a key, that a
+     * relaunch would not find.
+     */
+    @Synchronized private fun write(key: String, value: Set<String>): Boolean {
+        val previous = read(key)
+        if (preferences.edit().putStringSet(key, value).commit()) return true
+        preferences.edit().putStringSet(key, previous).apply()
+        return false
+    }
 
     public companion object {
         public const val PREFERENCES_NAME: String = "dulcet.account.removal"
@@ -185,8 +194,11 @@ public sealed interface SignOutState {
 
 /**
  * Signing out on Android (spec §14.7, and its Android paragraph for where this order differs).
- * Nothing destructive happens until the person has answered the offer of step 2; until the
- * credential is deleted, Stay signed in undoes it.
+ * Nothing destructive happens until the person has answered the offer of step 2, and Stay signed in
+ * is offered until then. From the choice onward it is refused: the choice releases playback and may
+ * send what is owed, neither of which Stay could undo. It is offered again only where the offer is
+ * made again, and choosing it there keeps the account, since nothing is marked or deleted before
+ * the recount has passed.
  *
  * On a choice to sign out: playback is released first, so no new play is recorded and no other
  * delivery races the send; what is owed is read again, and anything not offered — a play by its
@@ -194,8 +206,9 @@ public sealed interface SignOutState {
  * account's `removing` entry is written, its credential deleted (step 3), and — once the process's
  * library reader has terminated — its cached artwork and downloaded media (step 5) and every row it
  * owns (step 6) deleted. Android downloads nothing, so step 4 has no tasks, and the credential store
- * is the account record, so step 7 is step 3. A removal whose data step fails keeps its entry and is
- * finished at a later launch by [resumeInterrupted].
+ * is the account record, so step 7 is step 3. A removal whose data step fails — including a reader
+ * that has not terminated within its bound — keeps its entry, lands on the connect form like a
+ * finished one, and is finished at a later launch by [resumeInterrupted].
  *
  * An account whose saved record cannot be read can still be signed out: its id is read without the
  * record, what it owes is stated as unknown, and nothing is sent.
@@ -389,16 +402,23 @@ public class AccountSignOut(
      * by the preferences' `commit()`, never by their in-memory map, and fails with
      * `PersistenceFailed` when the record may still be on disk. A failure to delete only the key,
      * after the record, still counts as deleted, and the key is retried at a later launch.
+     *
+     * The key is recorded as left BEFORE the record is deleted and cleared once both are gone, so a
+     * process that dies between the record's deletion and the key's still leaves the key for a
+     * later launch. While the record is saved the launch retry skips its id.
      */
     private fun deleteCredential(serverId: String): Boolean {
         val active = try { credentials.activeAccountId() } catch (_: CredentialStoreException) { return false }
         if (active != serverId) return true
+        if (!journal.keyLeft(serverId)) return false
         try {
             credentials.delete()
         } catch (failure: CredentialStoreException) {
-            if (failure.reason != CredentialStoreException.Reason.SecureStorageUnavailable) return false
-            journal.keyLeft(serverId)
+            if (failure.reason == CredentialStoreException.Reason.SecureStorageUnavailable) return true
+            journal.keyDeleted(serverId)
+            return false
         }
+        journal.keyDeleted(serverId)
         return true
     }
 

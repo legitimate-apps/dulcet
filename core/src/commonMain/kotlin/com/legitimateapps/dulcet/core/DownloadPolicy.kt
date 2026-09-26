@@ -622,6 +622,25 @@ internal class DownloadFileStore(
         fileSystem.delete(destinationPath(row), mustExist = false)
     }
 
+    /** Every file in the download directory and in its temporary directory, for [deleteUnnamed]. */
+    fun listFiles(): List<Path> =
+        (fileSystem.listOrNull(root).orEmpty() + fileSystem.listOrNull(temporaryRoot).orEmpty())
+            .filter { fileSystem.metadataOrNull(it)?.isRegularFile == true }
+
+    /**
+     * Deletes each of [listed] that no row in [named] names, as its destination or as its temporary
+     * file, and returns how many it deleted. [listed] must be taken BEFORE [named] is read: a row is
+     * written before any of its files, so a file listed first whose row appears meanwhile is named.
+     */
+    fun deleteUnnamed(listed: List<Path>, named: List<Pair<DownloadId, String>>): Int {
+        val kept = named.flatMapTo(mutableSetOf()) { (id, relativePath) ->
+            listOf(root / relativePath, temporaryRoot / "${id.value}.partial")
+        }
+        val unnamed = listed.filter { it !in kept }
+        unnamed.forEach { fileSystem.delete(it, mustExist = false) }
+        return unnamed.size
+    }
+
     fun deleteUnownedTemporaryFiles(activeTaskIds: Set<DownloadId>): Set<DownloadId> {
         val deleted = mutableSetOf<DownloadId>()
         fileSystem.listOrNull(temporaryRoot).orEmpty().forEach { path ->

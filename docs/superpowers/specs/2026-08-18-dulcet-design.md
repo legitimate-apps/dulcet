@@ -2393,6 +2393,13 @@ and reconciliation against a changed server item. The platform owns the **execut
   (§12.8), pause on `Server.Busy` for at least `Retry-After`, and are never scheduled at a
   concurrency that could exhaust the server's cap while a session is playing.
 - **tvOS ships no downloads.** Its `FEATURES.yml` cells are `n/a` with a reason, not `planned`.
+- **A precondition for the Android executor (revision 112).** Android's launch sweep (§14.7) deletes
+  every file in the download directory and its `.tmp` directory that no `download` row names, as its
+  `file_relative_path` or as `<downloadId>.partial`. It lists the files before it reads the rows, so
+  a row written before its first file is always safe; `enqueue` already inserts the row before any
+  file exists. An executor must keep both rules: write a file only after its row, and only under a
+  name the row gives it. A file written first, or under any other name, is deleted at the next
+  launch. Android has no executor yet, so nothing writes a file there today.
 
 ### 14.6 Storage budget and eviction priority
 
@@ -2454,7 +2461,11 @@ item 32).
 **The order on Android (revision 112).** Android marks the account `removing` only once the person
 has chosen to sign out, not at step 1, and runs the steps in this order:
 
-1. the offer of step 2, with nothing marked — **Stay signed in** leaves nothing to undo;
+1. the offer of step 2, with nothing marked — **Stay signed in** leaves nothing to undo. The unmarked
+   span is longer than the offer: it runs on through the release, the recount and, on Send, the
+   whole send. Stay is offered only while a question is open — the offer, the unknown count, and
+   the offer made again after the choice — and refused from the choice onward, since the release
+   and the send cannot be undone; choosing it at a re-offer keeps the account;
 2. on a choice to sign out, playback is released: the service's controller for the account is
    closed and its media session removed, so no later account inherits them;
 3. what the account owes is counted again, plays by identity (a server id, a track and the wall
@@ -2465,20 +2476,31 @@ has chosen to sign out, not at step 1, and runs the steps in this order:
 5. the credential is deleted (step 3). The deletion counts as done once the record's removal is
    committed to disk; a Keystore key that cannot be deleted then is recorded and retried at a later
    launch, since the key alone decrypts nothing;
-6. the account's library reader is closed and its termination awaited (step 6's rule above);
+6. the account's library reader is closed and its termination awaited (step 6's rule above), for at
+   most 90 s on a monotonic clock, past the reader's own worst case of about 85 s. Past that nothing
+   is deleted: the mark stays, the person lands on the connect form as after a finished sign-out,
+   and a later launch's sweep deletes the data;
 7. the account's artwork cache and downloaded files are deleted, then its database rows (steps 5
    and 6). Android downloads nothing through a platform task, so step 4 has none to cancel;
 8. the `removing` mark is cleared.
 
-At every launch, a removal the previous process left marked resumes: its credential, if still
-saved, is deleted before any account is read, and its data removal runs behind a signing-out screen.
-Then a sweep deletes the database rows, the artwork cache and the recorded downloaded files of every
-server id that is not the saved account's. A downloaded file with no row is not found by it. The sweep lists what exists before it reads the saved account, so an account saved while
-it runs cannot lose anything it wrote. It is what cleans up a write that lands after a removal: a
+Whenever an activity creates its sign-out — at every launch, and when an activity is re-created in
+a process that is still alive — a removal left marked resumes: its credential, if still saved, is
+deleted before any account is read, and its data removal runs behind a signing-out screen. Then a
+sweep deletes the database rows, the artwork cache and the recorded downloaded files of every server
+id that is not the saved account's, and every downloaded or partial file no row names (§14.5). The
+sweep lists what exists before it reads the saved account, and lists the download files before it
+reads the rows that name them, so an account saved while it runs cannot lose anything it wrote. In a
+process that is still alive the sweep can meet a reader an earlier removal closed and that has not
+yet terminated, and a sign-out can begin while it runs; it waits for neither, so a row such a reader
+writes after the sweep has read the rows survives until the next sweep. It is what cleans up a write that lands after a removal: a
 reader still running past its bound, an artwork load that checked the account just before it was
 removed, or any writer this section does not know about. A saved account whose record cannot be
 decrypted can still be signed out, because the removal needs only its id; the offer then states the
-count as unknown. Removal leaves the last-selected tab (a preference holding no account data).
+count as unknown. A person who connects an account from that form instead of signing out gets a new
+id, and the next sweep deletes the old id's unsent plays and changes **without an offer**. They
+could not have been sent — the credential that would send them is the unreadable one — and before
+revision 112 they were stranded rather than deleted, but the loss is not announced. Removal leaves the last-selected tab (a preference holding no account data).
 Why the mark moved is §28 revision 112.
 
 ---
@@ -6173,8 +6195,11 @@ may take the same number first, so it may be renumbered at merge.
    process dies while the offer is open, the next launch resumes a removal the person never chose,
    and discards whatever they were about to send. Android writes the mark once they choose to sign
    out, immediately before the credential is deleted. Nothing is lost by the move: until that point
-   the account is still whole, so Stay signed in has nothing to undo, and a process that dies during
-   the offer simply relaunches signed in. Apple's order is unchanged; §14.7 states Android's.
+   the account is still whole, so a process that dies before the mark simply relaunches signed in.
+   That unmarked span is longer than the offer — it runs on through the release of playback, the
+   recount and, on Send, the whole send — and Stay signed in is refused within it once the person has
+   chosen, because the release and a send cannot be undone. A death anywhere in it loses the chosen
+   sign-out visibly and half-applies nothing. Apple's order is unchanged; §14.7 states Android's.
 2. **The count is taken again after the choice, by identity.** Playback keeps running while the
    offer is open, so a play can cross the scrobble threshold in that time. A second count by total
    misses a play that was sent while another was recorded, so plays are compared by identity, and
@@ -6185,8 +6210,9 @@ may take the same number first, so it may be renumbered at merge.
    reader's close is bounded (§14.7), and an artwork load can check the account just before it is
    removed, so a write can still land after a removal. The removal therefore does not claim that
    nothing writes afterwards: every launch deletes the rows, artwork and recorded downloads of every
-   server id that is not the saved account's. Server ids are random and never reused, so the
-   process also refuses artwork writes for an id it has removed.
+   server id that is not the saved account's, and every download or partial file that no row names.
+   Server ids are random and never reused, so the process also refuses artwork writes for an id it
+   has removed.
 5. **Playback compares account ids.** An account can be saved without a sign-out (the connect form
    shown for an unreadable record), so the playback service releases a controller built for any id
    other than the saved one instead of handing it to the new account.
@@ -6196,8 +6222,27 @@ may take the same number first, so it may be renumbered at merge.
    library-reader write queued behind the removal and shows it cannot recreate the account's rows,
    and a canary test plants a value in the credential store, the database, the artwork cache and the
    download directory, finds each before signing out, and finds none after. How rarely a reader
-   outlives its bound is still **ASSUMED** (§28 revision 104 item 32). A downloaded file with no row
-   is not found by the sweep.
+   outlives its bound is still **ASSUMED** (§28 revision 104 item 32).
+8. **Corrections from review.**
+   - **The TV entry is reachable by remote.** Sign out was an overlay in the bottom corner. From
+     the launch state, an empty query field, no D-pad direction reached it, and it overlapped the
+     last result. It is now a row of its own above every screen, and the query field hands UP to
+     it, since a text field keeps UP for its cursor. A Robolectric test reaches it, and activates
+     it, with D-pad keys alone. The library screens were not tested this way.
+   - **The wait for the reader is bounded at 90 s** (§14.7 item 6), because a reader task that never
+     finishes held the removal, and the person watching it, forever.
+   - **The sweep deletes download files that no row names** (§14.5 records the executor's side).
+   - **A failed `commit()` no longer shows a state the disk lacks.** SharedPreferences updates its
+     in-memory map even when the disk write fails. The credential record and the journal now
+     restore it. Otherwise the account looked signed out while still saved, and a mark could be
+     resumed in the same process although it was never persisted.
+   - **A crash between the record's deletion and the key's no longer orphans the key.** The key is
+     recorded as left before the record goes.
+   - **The release bind builds no controller.** A service created only by the release used to build
+     one for the signing-out account, and so restored its queue and sent its plays, before closing it.
+   - **The production gateway's changes path is tested.** A favourite is queued offline on the real
+     reader, offered, and sent through its reconnect to a loopback server. Before this, a gateway
+     that reported no changes, or never flushed them, passed every test.
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it

@@ -97,6 +97,25 @@ class PlaybackReleaseTest {
         assertEquals(false, release.await(), "An unanswered release must fail the sign-out")
         assertEquals(1, silent.unbinds, "The abandoned binding must be released")
     }
+
+    /**
+     * With the service not running, the release bind creates it. A controller built at that
+     * creation would restore the signing-out account's queue and send its plays only to be closed,
+     * so none is built; the service builds one lazily afterwards, as for any later bind.
+     */
+    @Test fun aServiceCreatedByTheReleaseBindBuildsNoController() {
+        val creating = CreatingBindingContext(RuntimeEnvironment.getApplication())
+        try {
+            var released: Boolean? = null
+            CoroutineScope(Dispatchers.Main.immediate).launch { released = releasePlaybackForSignOut(creating) }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(true, released)
+            val service = assertNotNull(creating.lifecycle, "control: the release bind created the service").get()
+            assertEquals(false, creating.controllerAtCreation, "A service created to be released must build no controller")
+            assertEquals(1, creating.unbinds, "The sign-out must not keep the service bound")
+            assertNotNull(service.ensurePlayback(), "Afterwards the service still builds one when asked")
+        } finally { creating.lifecycle?.destroy() }
+    }
 }
 
 /** An account can be saved without a sign-out (the connect form shown for an unreadable record, and on TV). */
@@ -146,6 +165,22 @@ class SwitchableAccountStore {
 /** Whether the controller's player has been released, which only its close does. */
 private fun AndroidPlaybackController.isClosed(): Boolean =
     ((sessionPlayer as ForwardingPlayer).wrappedPlayer as ExoPlayer).isReleased
+
+/** Creates the service on a bind, as the platform does for a service not yet running, and connects it. */
+private class CreatingBindingContext(base: Context) : ContextWrapper(base) {
+    var lifecycle: org.robolectric.android.controller.ServiceController<PlaybackService>? = null
+    var controllerAtCreation: Boolean? = null
+    var unbinds = 0
+    override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
+        android.os.Handler(Looper.getMainLooper()).post {
+            val created = Robolectric.buildService(PlaybackService::class.java, service).create().also { lifecycle = it }
+            controllerAtCreation = created.get().playback != null
+            conn.onServiceConnected(ComponentName(this, PlaybackService::class.java), created.get().onBind(service))
+        }
+        return true
+    }
+    override fun unbindService(conn: ServiceConnection) { unbinds += 1 }
+}
 
 /** Accepts a binding and never connects it. */
 private class SilentBindingContext(base: Context) : ContextWrapper(base) {

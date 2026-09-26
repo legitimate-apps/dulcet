@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import android.os.Handler
+import app.cash.sqldelight.db.SqlDriver
 import android.os.Looper
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -8,7 +9,10 @@ import kotlinx.coroutines.test.setMain
 import org.junit.Before
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,6 +25,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.test.*
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** The device-held half of signing out (spec §14.7 steps 2, 5 and 6) against the production Android driver. */
@@ -142,7 +147,7 @@ class AndroidAccountDataTest {
         }
         val removal = AndroidAccountData(SERVER, ::open, AndroidAccountData.artworkRootFor(context, SERVER), downloads,
             { error("no sender") }, OutboxWallClock { NOW }, OutboxMonotonicClock { 0.seconds },
-            AndroidAccountData::closeProcessLibraryReader)
+            closeLibraryReader = AndroidAccountData::closeProcessLibraryReader)
         var failure: Throwable? = null
         val finished = CountDownLatch(1)
         thread {
@@ -159,6 +164,44 @@ class AndroidAccountDataTest {
         assertTrue(wrote.await(10, TimeUnit.SECONDS), "The control requires the reader's queued write to run")
         assertNull(failure)
         assertEquals(0L, rowsFor(SERVER), "A write the reader had queued recreated the account's rows after the removal")
+    }
+
+    /**
+     * A reader task that never finishes holds the reader's completion forever (§14.7), so the wait
+     * for it is bounded: at the bound the removal fails having deleted nothing, which keeps the
+     * caller's `removing` mark for the launch sweep. Measured on the test scheduler's clock, which
+     * is the one the coroutine timeout reads.
+     */
+    @Test fun aReaderThatNeverTerminatesFailsTheRemovalAtItsBoundAndDeletesNothing() = runTest {
+        seed(SERVER, plays = 1, edits = 1, everything = true)
+        val artwork = cacheArtwork(SERVER)
+        val download = download(SERVER)
+        var waited = false
+        val removal = AndroidAccountData(SERVER, ::open, AndroidAccountData.artworkRootFor(context, SERVER), downloads,
+            { error("no sender") }, OutboxWallClock { NOW }, OutboxMonotonicClock { 0.seconds }) {
+            waited = true
+            awaitCancellation()
+        }
+        val started = testScheduler.currentTime
+
+        assertFailsWith<LibraryReaderStillRunning> { removal.removeAccountData() }
+
+        assertTrue(waited, "The control requires the removal to have waited for the reader")
+        assertEquals(AndroidAccountData.READER_CLOSE_BOUND.inWholeMilliseconds, testScheduler.currentTime - started, "It gives up at its bound, not before")
+        assertEquals(90_000L, AndroidAccountData.READER_CLOSE_BOUND.inWholeMilliseconds, "Past the reader's own worst case of about 85 s")
+        assertTrue(rowsFor(SERVER) > 6, "Nothing may be deleted while the reader may still write")
+        assertTrue(artwork.walk().any { it.isFile })
+        assertTrue(download.isFile)
+    }
+
+    @Test fun aReaderTerminatingJustInsideTheBoundIsWaitedForAndTheRemovalCompletes() = runTest {
+        seed(SERVER, plays = 1, edits = 1, everything = true)
+        val removal = AndroidAccountData(SERVER, ::open, AndroidAccountData.artworkRootFor(context, SERVER), downloads,
+            { error("no sender") }, OutboxWallClock { NOW }, OutboxMonotonicClock { 0.seconds }) {
+            delay(AndroidAccountData.READER_CLOSE_BOUND - 1.milliseconds)
+        }
+        removal.removeAccountData()
+        assertEquals(0L, rowsFor(SERVER))
     }
 
     @Test fun anArtworkLoadFinishingAfterTheRemovalDoesNotRecreateTheAccountsDirectory() = runBlocking {
@@ -198,6 +241,48 @@ class AndroidAccountDataTest {
         assertTrue(keptDownload.isFile, "The saved account's download must survive")
     }
 
+    /**
+     * A downloaded or partial file that no row names belongs to no account, so nothing else would
+     * ever find it; the sweep deletes it. The saved account's own files, named by its row, stay.
+     */
+    @Test fun theSweepDeletesDownloadedAndPartialFilesThatNoRowNames() = runBlocking {
+        seed(OTHER, plays = 0, edits = 0)
+        val kept = download(OTHER)
+        val keptPartial = File(downloads, ".tmp/download-$OTHER.partial").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1)) }
+        val stray = File(downloads, "download:stray.mp3").apply { writeBytes(byteArrayOf(1, 2)) }
+        val strayPartial = File(downloads, ".tmp/download:stray.partial").apply { writeBytes(byteArrayOf(1)) }
+        assertTrue(stray.isFile && strayPartial.isFile, "The control needs the stray files first")
+
+        sweep { OTHER }
+
+        assertFalse(stray.exists(), "A downloaded file no row names survived the sweep")
+        assertFalse(strayPartial.exists(), "A partial file no row names survived the sweep")
+        assertTrue(kept.isFile, "The saved account's download must survive")
+        assertTrue(keptPartial.isFile, "The saved account's partial download must survive")
+    }
+
+    /**
+     * The files are listed BEFORE the rows naming them are read, so a download whose row is written
+     * after that read, and whose file follows its row, was never listed and so cannot be taken for
+     * a stray. The second store the sweep opens is the one it reads the names from; the download is
+     * made as that store closes. Listed after the read (the mutant), its file is deleted.
+     */
+    @Test fun aDownloadMadeJustAfterTheNamesAreReadIsNotTakenForAStray() = runBlocking {
+        val newcomer = "account-downloading-during-the-sweep-${UUID.randomUUID()}"
+        var opened = 0
+        var madeDownload: File? = null
+        AndroidAccountData.sweep({
+            opened += 1
+            val driver = DulcetDriverFactory(context, databaseName).createDriver()
+            val hook = if (opened == 2) ({ madeDownload = download(newcomer) }) else ({})
+            DulcetDatabaseStore.open(object : SqlDriver by driver {
+                override fun close() { driver.close(); hook() }
+            })
+        }, File(context.cacheDir, "artwork"), downloads) { newcomer }
+        assertTrue(opened >= 2, "control: the sweep opened the store it reads the names from")
+        assertTrue(madeDownload!!.isFile, "A download made just after the names were read was deleted as a stray")
+    }
+
     @Test fun withNoAccountSavedTheSweepDeletesEveryAccount() = runBlocking {
         seed(SERVER, plays = 1, edits = 0, everything = true)
         val artwork = cacheArtwork(SERVER)
@@ -216,15 +301,18 @@ class AndroidAccountDataTest {
         val newcomer = "account-saved-during-the-sweep-${UUID.randomUUID()}"
         seed(SERVER, plays = 1, edits = 0)
         var read = 0
+        var newcomerDownload: File? = null
         val swept = sweep {
             read += 1
             seed(newcomer, plays = 1, edits = 1, everything = true)
             runBlocking { cacheArtwork(newcomer) }
+            newcomerDownload = download(newcomer)
             null
         }
         assertEquals(1, read)
         assertEquals(setOf(SERVER), swept)
         assertTrue(rowsFor(newcomer) > 0, "An account saved during the sweep lost its rows")
+        assertTrue(newcomerDownload!!.isFile, "An account saved during the sweep lost its downloaded file")
         assertTrue(AndroidAccountData.artworkRootFor(context, newcomer).exists(), "An account saved during the sweep lost its artwork")
     }
 

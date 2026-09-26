@@ -115,6 +115,7 @@ internal fun TvSearchScreen(
     val state by presenter.state.collectAsStateWithLifecycle()
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
+    val accountEntry = LocalTvAccountEntry.current
     val resultFocus = remember(state.results.map { it.id }) {
         List(state.results.size) { FocusRequester() }
     }
@@ -154,15 +155,18 @@ internal fun TvSearchScreen(
                         .fillMaxWidth()
                         .focusRequester(queryFocus)
                         .onPreviewKeyEvent { event ->
-                            if (
-                                event.type == KeyEventType.KeyDown &&
-                                event.key == Key.DirectionDown &&
-                                resultFocus.isNotEmpty()
-                            ) {
-                                resultFocus.first().requestFocus()
-                                true
-                            } else {
-                                false
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when {
+                                event.key == Key.DirectionDown && resultFocus.isNotEmpty() -> {
+                                    resultFocus.first().requestFocus()
+                                    true
+                                }
+                                // The field keeps UP for its cursor; the account entry sits above it.
+                                event.key == Key.DirectionUp && accountEntry != null -> {
+                                    accountEntry.requestFocus()
+                                    true
+                                }
+                                else -> false
                             }
                         }
                         .testTag("search.query"),
@@ -194,8 +198,7 @@ internal fun TvSearchScreen(
                         ).joinToString(" · ").ifEmpty { null },
                         index = index,
                         focusRequester = resultFocus[index],
-                        previousFocusRequester = resultFocus.getOrNull(index - 1) ?: queryFocus,
-                        nextFocusRequester = resultFocus.getOrNull(index + 1),
+                        queryFocusRequester = queryFocus.takeIf { index == 0 },
                         onActivate = { router.activate(result) },
                     )
                 }
@@ -210,8 +213,8 @@ private fun TvSearchResult(
     note: String?,
     index: Int,
     focusRequester: FocusRequester,
-    previousFocusRequester: FocusRequester,
-    nextFocusRequester: FocusRequester?,
+    /** The query field, above the first result only: UP from there goes to it. */
+    queryFocusRequester: FocusRequester?,
     onActivate: () -> Unit,
 ) {
     Card(
@@ -221,13 +224,12 @@ private fun TvSearchResult(
             .focusRequester(focusRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // Between results the list's own focus search moves UP and DOWN: it composes a
+                // result not yet on screen, where a requester of one never composed takes nothing,
+                // which left the D-pad stuck at the last result the screen had room for.
                 when (event.key) {
-                    Key.DirectionUp -> {
-                        previousFocusRequester.requestFocus()
-                        true
-                    }
-                    Key.DirectionDown -> if (nextFocusRequester != null) {
-                        nextFocusRequester.requestFocus()
+                    Key.DirectionUp -> if (queryFocusRequester != null) {
+                        queryFocusRequester.requestFocus()
                         true
                     } else {
                         false

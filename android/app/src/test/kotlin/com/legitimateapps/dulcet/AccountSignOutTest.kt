@@ -318,6 +318,29 @@ class AccountSignOutTest {
         assertTrue(journal.keysLeft().isEmpty())
     }
 
+    /**
+     * A process that dies after the record left the disk and before the key did must still leave
+     * the key for a later launch: so the key is recorded before the record is deleted. Observed at
+     * the moment the key's deletion begins, which is the last point such a death can precede.
+     */
+    @Test fun theKeyIsRecordedAsLeftBeforeTheRecordIsDeletedAndClearedOnceBothAreGone() = runTest {
+        val account = saved()
+        var recordedWhenTheKeyGoes: Set<String>? = null
+        var recordGoneByThen: Boolean? = null
+        cipher.onDelete = {
+            recordedWhenTheKeyGoes = AccountRemovalJournal(application).keysLeft()
+            recordGoneByThen = store.activeAccountId() == null
+        }
+        val flow = flow()
+        flow.request(); advanceUntilIdle()
+        flow.signOut(); advanceUntilIdle()
+        assertEquals(true, recordGoneByThen, "control: the key is deleted after the record")
+        assertEquals(setOf(account.id), recordedWhenTheKeyGoes, "A death before the key's deletion would orphan the key")
+        assertFalse(account.id in cipher.keys)
+        assertTrue(journal.keysLeft().isEmpty(), "Once both are gone nothing is left to retry")
+        assertEquals(1, signedOut)
+    }
+
     @Test fun aRemovalThatDidNotFinishIsFinishedAtTheNextLaunch() = runTest {
         val account = saved()
         data.removeFails = true
@@ -429,10 +452,12 @@ internal class PlaintextCipher : AccountCredentialCipher {
     val keys = mutableSetOf<String>()
     var unreadable = false
     var deleteFails = false
+    var onDelete: (String) -> Unit = {}
     override fun encrypt(id: String, plaintext: ByteArray): ByteArray { keys += id; return plaintext }
     override fun decrypt(id: String, payload: ByteArray): ByteArray =
         if (unreadable) throw CredentialStoreException(CredentialStoreException.Reason.SecureStorageUnavailable) else payload
     override fun delete(id: String) {
+        onDelete(id)
         if (deleteFails) throw IllegalStateException("keystore unavailable")
         keys -= id
     }
