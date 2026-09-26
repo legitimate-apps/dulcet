@@ -796,16 +796,28 @@ def partial_rerun_errors(workflow: Path, lines: list[str]) -> list[str]:
     return found
 
 
-# The jobs branch protection requires by name, in the workflow that defines each. Each one gates a
-# merge, so each is held to the aggregator rules below whether or not it currently downloads.
-REQUIRED_AGGREGATORS = {"apple-ci.yml": "apple-ci", "core-ci.yml": "core-ci"}
-ARTIFACT_READ_IN_SHELL = re.compile(r"\bgh\s+run\s+download\b|/actions/artifacts\b|/artifacts/\d")
+# The checks branch protection requires, matched on a job's id or its name. One that needs other
+# jobs or downloads artifacts gates a merge on their outcome, so it is held to the aggregator rules
+# below whether or not it currently verifies anything. One that does neither (parity-gate today)
+# checks its own work and is not an aggregator.
+REQUIRED_CHECKS = {"apple-ci", "core-ci", "parity-gate"}
+# Shell reads of Actions artifacts: `gh run download`, or the artifacts REST API by its path. Local
+# paths that merely contain "artifacts" (`ls build/artifacts/1`) are not reads and do not match.
+ARTIFACT_READ_IN_SHELL = re.compile(
+    r"\bgh\s+run\s+download\b|\brepos/\S+/actions/(?:runs/\S+/)?artifacts\b")
+# A verify call anywhere in a run block, direct or not: a call wrapped in `|| true` must not stop
+# the job counting as an aggregator, or defanging the call would also exempt it from the rules.
+VERIFY_MENTION = re.compile(r"\bpython3\s+tools/verify-parity-evidence\b")
 
 
 def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
     """The gate every evidence-reading job must be: results first, then evidence, no escape hatch.
 
-    An aggregator is a job REQUIRED_AGGREGATORS names, or any job that downloads an artifact. Its
+    An aggregator is a job that runs `tools/verify-parity-evidence`, or a required check
+    (REQUIRED_CHECKS, by job id or name) that needs other jobs or downloads artifacts. A job that
+    only downloads -- a summary, or one half of a split release -- is not an aggregator: it is held
+    to the naming and attempt rules in partial_rerun_errors(), and to nothing here but the shell-read
+    ban, because nothing it does certifies evidence. An aggregator's
     evidence-reading is sound only if the jobs it reads from SUCCEEDED in the execution whose
     artifact it downloads, so for every job it needs it must test `needs.<job>.result` equal to
     `success`, in an unconditional, blocking step, BEFORE its first download: evidence from an
@@ -838,17 +850,27 @@ def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
                     "rules cannot check; use actions/download-artifact by exact name",
                 )
 
-    required = REQUIRED_AGGREGATORS.get(workflow.name)
-    aggregators = sorted({job for job, job_steps_list in steps.items()
-                          if any(downloads(step) for step in job_steps_list)}
-                         | ({required} & set(spans)))
+    def required_check(job: str) -> bool:
+        return (job in REQUIRED_CHECKS
+                or str(properties[job].get("name", "")).strip("'\"") in REQUIRED_CHECKS)
+
+    def verifies(job: str) -> bool:
+        return any(VERIFY_MENTION.search(code_before_comment(line))
+                   for step in steps[job] for line in str(step.get("run", "")).splitlines())
+
+    aggregators = sorted(
+        job for job in spans
+        if verifies(job)
+        or (required_check(job) and (listed(properties[job].get("needs"))
+                                     or any(downloads(step) for step in steps[job]))))
     for aggregator in aggregators:
         props = properties[aggregator]
         agg_steps = steps[aggregator]
         needed = listed(props.get("needs"))
-        legs = sorted(set(spans) - {aggregator}) if aggregator == required else sorted(needed)
-        if aggregator == required:
-            if str(props.get("name", "")).strip("'\"") != aggregator:
+        required = required_check(aggregator)
+        legs = sorted(set(spans) - {aggregator}) if required else sorted(needed)
+        if required:
+            if aggregator in REQUIRED_CHECKS and str(props.get("name", "")).strip("'\"") != aggregator:
                 found.append(
                     f"{workflow}: job {aggregator} must be named exactly {aggregator}; branch "
                     "protection matches the check by name",

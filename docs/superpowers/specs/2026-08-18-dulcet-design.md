@@ -6412,13 +6412,18 @@ numbered one above the highest revision on `main` when it was written, and may b
      surface's evidence being named by another surface's attempt.
    - **The aggregator's gate.** These rules were enforced only for `apple-ci` until review found
      twelve edits to the real `core-ci.yml` that defeated the result check and were all accepted.
-     They now apply to `core-ci`, `apple-ci`, and any job that downloads an artifact. The job must
-     run `if: always()`. It must test every needed job's result for `success` in an unconditional,
-     blocking step before its first download. It must download unconditionally into the paths its
+     They now apply to every evidence aggregator: any job that runs `tools/verify-parity-evidence`,
+     and any required check (`core-ci`, `apple-ci`, `parity-gate`, by job id or name) that needs
+     other jobs or downloads artifacts. A job that only downloads, such as a summary or one half of
+     a split release, keeps only the artifact-name rules above and the shell-read ban below. An
+     aggregator must run `if: always()`. It must test every needed job's result for `success` in
+     an unconditional, blocking shell step before its first download. It must download unconditionally into the paths its
      single direct verify call reads, after every download. It must read every attempt output its
-     producers export. No job it needs may set `continue-on-error`.
-   - **Shell reads.** `gh run download` and the artifacts REST API are rejected in any job, because
-     the rules cannot reason about them. The checker's docstring names what a text check cannot
+     producers export. Neither the aggregator itself nor any job it needs may set
+     `continue-on-error`.
+   - **Shell reads.** `gh run download` and the artifacts REST API (a `repos/…/actions/…artifacts`
+     path) are rejected in any job, because the rules cannot reason about them. A local path that
+     merely contains `artifacts` is not a read and is allowed. The checker's docstring names what a text check cannot
      see.
    - **Mutation coverage.** `tools/test-verify-ci-policy` records mutants of these rules. Each one
      names the case that must fail against the mutated verifier, and one equivalent mutant is kept

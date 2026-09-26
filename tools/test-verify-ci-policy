@@ -1064,6 +1064,7 @@ def real_core_ci(mutate):
 
 
 OWN_ATTEMPT = "by its OWN attempt"
+SUMMARY_JOB = '  summary:\n    needs: [build]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - name: Download build evidence for a summary\n        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0\n        with:\n          name: build-evidence-${{ github.run_id }}-${{ needs.build.outputs.attempt }}\n          path: summary-results\n      - name: Summarise\n        run: ls summary-results\n'
 RESULT_STEP = '      - name: Require build, Linux conformance and both emulator legs\n'
 RERUN_CASES = (
     ("the partial-re-run shape is accepted", lambda t: t, ""),
@@ -1217,12 +1218,36 @@ RERUN_CASES = (
     ("the real core-ci.yml with no evidence check at all is rejected",
      real_core_ci(lambda t: t[:t.index("      # Each download names")]),
      "job core-ci must make exactly one direct python3 tools/verify-parity-evidence call, and makes 0"),
+    # The aggregator rules bind jobs that certify evidence, not every job that downloads: a summary
+    # job, or one half of a split release, keeps only the naming and attempt rules (review round 2).
+    ("a plain downloading summary job is accepted",
+     lambda t: t + SUMMARY_JOB, ""),
+    ("a downloading job that verifies evidence without testing results is rejected",
+     lambda t: t + SUMMARY_JOB.replace(
+         "        run: ls summary-results\n",
+         "        run: python3 tools/verify-parity-evidence summary-results\n"),
+     "job summary must require needs.build.result to equal success"),
+    # The shell-read ban names Actions artifacts, not every path that says "artifacts".
+    ("a local path containing artifacts is accepted",
+     edit("          ./gradlew :core:verifySqlDelightMigration\n",
+          "          ./gradlew :core:verifySqlDelightMigration\n          ls build/artifacts/1\n"),
+     ""),
+    ("an artifacts API read from the shell is rejected",
+     edit("          ./gradlew :core:verifySqlDelightMigration\n",
+          "          ./gradlew :core:verifySqlDelightMigration\n"
+          "          gh api repos/o/r/actions/artifacts/1/zip > evidence.zip\n"),
+     "reads artifacts from the shell"),
+    # A `test ... = success` line only fails a job in a shell that runs it.
+    ("a result check in a non-shell step is rejected",
+     edit("      - name: Require every job\n",
+          "      - name: Require every job\n        shell: python\n"),
+     "job gate must require needs.build.result to equal success"),
     ("a run_attempt in a download's path only is accepted",
      edit("          path: build-results\n",
           "          path: build-results\n      - name: Stage\n        run: echo ${{ github.run_attempt }}\n"),
      ""),
 )
-EXPECTED_RERUN_CASES = 35
+EXPECTED_RERUN_CASES = 40
 rerun_cases_run: list[str] = []
 
 
@@ -1273,8 +1298,11 @@ print(f"partial re-run controls passed: {len(rerun_cases_run)}/{EXPECTED_RERUN_C
 # has a control that fails without it" can be re-checked rather than taken on trust. Each entry
 # edits verify_ci_policy.py once, and names the case that must fail against the edited copy. The
 # edit text must occur exactly once, so a refactor that moves the code fails here loudly instead of
-# silently testing nothing. Sources: the implementer's first 8, four the review of #152 found
-# surviving (its other 10 were not recorded), and one per rule added in response to that review.
+# silently testing nothing. Sources, in order: the implementer's first 8; three of the four the
+# review of #152 found surviving (the fourth is the equivalent mutant recorded below); 11 for the
+# aggregator rules added in response to that review; four the review's round 2 killed but had not
+# recorded; and five for round 2's changes (result checks outside a shell, aggregator scoping, the
+# shell-read pattern).
 CHECKER_MUTANTS = (
     ("rule not wired", "    errors.extend(partial_rerun_errors(workflow, lines))\n", "    pass\n",
      "the real core-ci.yml downloading by its own attempt is rejected"),
@@ -1333,9 +1361,40 @@ CHECKER_MUTANTS = (
     ("an undownloaded verify path accepted",
      '            if not argument.startswith("$RUNNER_TEMP/") and argument not in download_paths:',
      "            if False:", "an evidence path the aggregator never downloads is rejected"),
-    ("a required aggregator that downloads nothing is not checked",
-     "                         | ({required} & set(spans)))", "                         | set())",
+    ("a required check that downloads nothing is not an aggregator",
+     "        or (required_check(job) and (listed(properties[job].get(\"needs\"))",
+     "        or (False and (listed(properties[job].get(\"needs\"))",
      "the real core-ci.yml with no evidence check at all is rejected"),
+    # Killed by the round-1 cases, recorded after review round 2.
+    ("the produced-name equality skipped", "                if name not in produced:",
+     "                if False:",
+     "the real core-ci.yml reading phone evidence by the TV leg's attempt is rejected"),
+    ("guard terms after the first ignored", '    for term in guard.split(" && "):',
+     '    for term in guard.split(" && ")[:1]:', "the partial-re-run shape is accepted"),
+    ("a missing attempt output tolerated",
+     "                bindings = attempt_output_bindings(value, matrix) if value else (",
+     "                bindings = attempt_output_bindings(value, matrix) if value else {} if True else (",
+     "a missing attempt output is rejected"),
+    ("a pattern-only download accepted", "            if not name or not references:",
+     "            if name and not references:",
+     "a download by pattern with no producing attempt is rejected"),
+    # Review round 2.
+    ("a result check outside a shell counts",
+     '            if str(step.get("shell", "bash")) not in {"bash", "sh"}:\n                continue\n',
+     "", "a result check in a non-shell step is rejected"),
+    ("every downloader treated as an aggregator", "        if verifies(job)\n",
+     "        if verifies(job) or any(downloads(step) for step in steps[job])\n",
+     "a plain downloading summary job is accepted"),
+    ("a verifying job exempt unless required", "        if verifies(job)\n", "        if False\n",
+     "a downloading job that verifies evidence without testing results is rejected"),
+    ("the shell-read pattern matches local paths",
+     '    r"\\bgh\\s+run\\s+download\\b|\\brepos/\\S+/actions/(?:runs/\\S+/)?artifacts\\b")',
+     '    r"\\bgh\\s+run\\s+download\\b|/actions/artifacts\\b|/artifacts/\\d")',
+     "a local path containing artifacts is accepted"),
+    ("the shell-read pattern misses the artifacts API",
+     '    r"\\bgh\\s+run\\s+download\\b|\\brepos/\\S+/actions/(?:runs/\\S+/)?artifacts\\b")',
+     '    r"\\bgh\\s+run\\s+download\\b")',
+     "an artifacts API read from the shell is rejected"),
 )
 # One mutant is EQUIVALENT, recorded so nobody spends time on it again: adding an unresolvable
 # upload name to `produced` raw can never pair, because the raw name still contains
@@ -1347,7 +1406,7 @@ EQUIVALENT_MUTANTS = (
      "                    except Unresolved:\n                        produced.add(expression(str("
      "(upload.get(\"with\") or {}).get(\"name\", \"\"))))\n"),
 )
-EXPECTED_CHECKER_MUTANTS = 22
+EXPECTED_CHECKER_MUTANTS = 31
 checker_mutants_killed: list[str] = []
 rerun_case_index = {case[0]: case for case in RERUN_CASES}
 
