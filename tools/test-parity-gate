@@ -759,6 +759,38 @@ expect_rejection(
     lambda document: macos_evidence(document)[0].update(test="MissingTest/missingTest"),
     "evidence test does not exist",
 )
+
+
+# A change may delete a test together with the evidence rows that cited it: the base document then
+# cites a test the submitted tree no longer has, and that alone must not fail the gate. The second
+# control is the other half: a row the submitted document KEEPS must still name a test that exists,
+# whatever the base cited.
+_DELETED_TEST_ROW = {
+    "observes": "a proof this change deleted together with this row",
+    "workflow": "apple-ci",
+    "job": "apple-ci",
+    "test": "DeletedWithItsRowTest/deletedWithItsRow",
+}
+
+
+def _base_cites_a_test_the_change_deleted(base: dict[str, object], _current: dict[str, object]) -> None:
+    macos_evidence(base).append(dict(_DELETED_TEST_ROW))
+
+
+def _change_keeps_a_row_citing_a_deleted_test(base: dict[str, object], current: dict[str, object]) -> None:
+    macos_evidence(base).append(dict(_DELETED_TEST_ROW))
+    macos_evidence(current).append(dict(_DELETED_TEST_ROW))
+
+
+expect_comparison(
+    "a base row whose test was deleted with it",
+    _base_cites_a_test_the_change_deleted,
+)
+expect_comparison(
+    "a kept row whose test was deleted",
+    _change_keeps_a_row_citing_a_deleted_test,
+    "FEATURES.yml: account.connect/macos evidence test does not exist",
+)
 expect_rejection(
     "required aggregator that never verifies executed tests",
     lambda document: macos_evidence(document)[0].update(
@@ -823,10 +855,10 @@ expect_rejection(
 # count that disagreed with the list it claims to summarize -- which is exactly the defect this
 # fixture exists to detect in real reports.
 passing_cases = """\
-  <testcase classname="com.legitimateapps.dulcet.AndroidProductionLibrarySyncAppConformanceTest"
-            name="librarySyncSchedulesSecondGenerationAndReopensOffline" time="0.1" />
-  <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvProductionLibrarySyncAppConformanceTest"
-            name="librarySyncSchedulesSecondGenerationAndReopensOffline" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.AndroidProductionLibraryReaderAppConformanceTest"
+            name="conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvProductionLibraryReaderAppConformanceTest"
+            name="conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.AndroidProductionSearchAppConformanceTest"
             name="conf41ProductionQueryMergesAndRoutesOpaqueId" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvProductionSearchAppConformanceTest"

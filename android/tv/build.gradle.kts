@@ -62,6 +62,8 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.media3.session)
     testImplementation(kotlin("test-junit"))
+    // The album-play proof binds the production playback service, a Media3 session service.
+    testImplementation(libs.media3.session)
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)

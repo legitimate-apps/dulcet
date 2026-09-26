@@ -647,15 +647,9 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
-            },
-            {
-              "observes": "the real app library surface starts production sync, displays committed AndroidSqliteDriver generations 1 then 2 with the second started by a monotonic scheduler; no refresh fires while stopped, and after connection refusal a recreated activity browses identical saved generation-2 metadata with zero sync starts",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "AndroidProductionLibrarySyncAppConformanceTest/librarySyncSchedulesSecondGenerationAndReopensOffline"
             }
           ],
-          "reason": "The disposable Linux job executes the app library lifecycle proof with production AndroidLibraryDatabase sync and committed reads. It asserts the refresh callback marker, foreground lifecycle behavior, generations 1 and 2, a connection refusal, and saved metadata rendered after activity/store reopen without synchronization. JUnit is consumed by the required core-ci evidence verifier. This is Compose/Robolectric AndroidSqliteDriver evidence; Keystore cryptography is host-shadowed. It does not claim physical-device execution."
+          "reason": "CONF-31, CONF-32 and CONF-33 are executed by the core conformance suite on the Android host runtime in the disposable Linux job, and its JUnit is consumed by the required core-ci evidence verifier. That is the core sync contract only. The Android apps no longer run sync: they browse the library through the reader (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with it. This row is retired through accepted_removals when the sync code is deleted (spec 16.18, phase R5); the status is kept until then as that plan states."
         },
         "androidtv": {
           "status": "shipped",
@@ -677,15 +671,107 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
-            },
-            {
-              "observes": "the real app library surface starts production sync, displays committed AndroidSqliteDriver generations 1 then 2 with the second started by a monotonic scheduler; no refresh fires while stopped, and after connection refusal a recreated activity browses identical saved generation-2 metadata with zero sync starts; TV remote activation and row focus are asserted",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "AndroidTvProductionLibrarySyncAppConformanceTest/librarySyncSchedulesSecondGenerationAndReopensOffline"
             }
           ],
-          "reason": "The disposable Linux job executes the app library lifecycle proof with production AndroidLibraryDatabase sync and committed reads. It asserts the refresh callback marker, foreground lifecycle behavior, generations 1 and 2, a connection refusal, and saved metadata rendered after activity/store reopen without synchronization. JUnit is consumed by the required core-ci evidence verifier. This is Compose/Robolectric AndroidSqliteDriver evidence; Keystore cryptography is host-shadowed. It does not claim physical-device execution."
+          "reason": "CONF-31, CONF-32 and CONF-33 are executed by the core conformance suite on the Android host runtime in the disposable Linux job, and its JUnit is consumed by the required core-ci evidence verifier. That is the core sync contract only. The Android apps no longer run sync: they browse the library through the reader (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with it. This row is retired through accepted_removals when the sync code is deleted (spec 16.18, phase R5); the status is kept until then as that plan states."
+        }
+      }
+    },
+    {
+      "id": "library.browse",
+      "title": "Browse the library, live and from what this device has seen",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1614-offline-the-presentation-states-and-reconnect",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-76", "CONF-77", "CONF-82", "CONF-86", "CONF-87"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"}, "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives them through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+          },
+          "evidence": [
+            {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
+            {"conformance": "CONF-77", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77ReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElse"},
+            {"conformance": "CONF-86", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive"},
+            {"observes": "returning the phone app to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder, after sixteen minutes in the background with nothing read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly"},
+            {"observes": "the core's epoch cadence runs while the phone app is in the foreground with a library screen open, reads only the epoch while it is unchanged, and stops in the background",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77EpochCadenceRunsInTheForegroundOnly"},
+            {"observes": "a reconnect answered after the platform reported the network gone leaves the phone app's library offline: the session counts the answer, starts no second reconnect, and nothing more is read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline"},
+            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the phone app's reader offline; a return to the foreground and trying again from the album screen each tell the reader the network is reachable before reconnecting, and trying again then reads live",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack"},
+            {"observes": "a playable track tapped on the phone's album screen queues the album in the server's order, current at that track, in the production playback service",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aTrackTappedPlaysTheAlbumFromThatTrack"}
+          ],
+          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence."
+        },
+        "androidtv": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives them through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+          },
+          "evidence": [
+            {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
+            {"conformance": "CONF-77", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77ReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElse"},
+            {"conformance": "CONF-86", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive"},
+            {"observes": "returning the TV app to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder, after sixteen minutes in the background with nothing read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly"},
+            {"observes": "the core's epoch cadence runs while the TV app is in the foreground with a library screen open, reads only the epoch while it is unchanged, and stops in the background",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77EpochCadenceRunsInTheForegroundOnly"},
+            {"observes": "a reconnect answered after the platform reported the network gone leaves the TV app's library offline: the session counts the answer, starts no second reconnect, and nothing more is read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline"},
+            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the TV app's reader offline; a return to the foreground and trying again from the album screen each tell the reader the network is reachable before reconnecting, and trying again then reads live",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack"},
+            {"observes": "a playable track selected with the remote on the TV album screen queues the album in the server's order, current at that track, in the production playback service, and opens the TV's own Now Playing activity",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aTrackSelectedWithTheRemotePlaysTheAlbumFromThatTrackAndOpensNowPlaying"}
+          ],
+          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence."
+        }
+      }
+    },
+    {
+      "id": "library.favourites",
+      "title": "Favourite what is in the library, shown at once",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1620-favourites-and-ratings-in-a-reader-the-local-change-is-shown-at-once",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-84"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"}, "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-84", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf84StarShowsWithTheTapSurvivesARevalidationCompactsAndAdoptsTheEcho"}
+          ],
+          "reason": "The conformance-env-linux job runs the phone app's favourite proof against the disposable server and exports its JUnit to the required core-ci execution verifier: an album's star shows in the first publication after the tap, survives a revalidation that lands before the send is answered, and the send's acknowledgement is adopted into the cache with no read; three taps made offline are one pending change, sent once at reconnect. The server is read directly to check each. The cell is partial because the app offers the favourite on albums only, and no rating at all; CONF-84's rating overlay is exercised by core tests alone. Compose/Robolectric evidence, not a physical-device claim."
+        },
+        "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-84", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf84StarShowsWithTheTapSurvivesARevalidationCompactsAndAdoptsTheEcho"}
+          ],
+          "reason": "The conformance-env-linux job runs the TV app's favourite proof against the disposable server and exports its JUnit to the required core-ci execution verifier: an album's star shows in the first publication after the tap, survives a revalidation that lands before the send is answered, and the send's acknowledgement is adopted into the cache with no read; three taps made offline are one pending change, sent once at reconnect. The server is read directly to check each. The cell is partial because the app offers the favourite on albums only, and no rating at all; CONF-84's rating overlay is exercised by core tests alone. Compose/Robolectric evidence, not a physical-device claim."
         }
       }
     },
@@ -695,6 +781,10 @@
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#181-search",
       "gates": ["account:authenticated"],
       "conformance": ["CONF-41"],
+      "platform_conformance": {
+        "android": ["CONF-79"],
+        "androidtv": ["CONF-79"]
+      },
       "platforms": {
         "macos": {
           "status": "shipped",
@@ -743,28 +833,32 @@
           "evidence": [
             {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
              "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"},
-            {"observes": "the Android app's production Compose search field and shared presenter render the ranked merged rows and route an activated row into the production SearchDetailIntent with its opaque id unchanged and no credential canaries; the ranked rows are supplied by RankedMergedFixtureSearchDataSource, so the production merge and wire path is not exercised here",
+            {"observes": "the Android app's production Compose search field and shared presenter render the ranked merged rows and route an activated row into the production SearchDetailIntent with its opaque id unchanged and no credential canaries; the ranked rows are supplied by RankedMergedFixtureSearchSource, so the production merge and wire path is not exercised here",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidSearchAppConformanceTest/conf41QueryRendersMergedRankingAndActivationRoutesToDetail"},
-            {"observes": "the real MainActivity accepts Compose text input, uses ProductionSearchHostDependencies and CoreSearchDataSource with the committed-generation SQLDelight library search through AndroidLibrarySearchSource and common-core LocalLibrarySearch and live disposable Navidrome ServerSearch, renders an in-place cached-row refresh, retained local-only row and appended server-only row through mergeSearchResults, and activates through SearchIntentRouter preserving a nonnumeric opaque id; credential and whole-query redaction canaries pass",
+            {"conformance": "CONF-79", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf79SearchPublishesEachScopeWithSeenCountsOffline"},
+            {"observes": "the real MainActivity accepts Compose text input and searches through ProductionSearchHostDependencies and AndroidLibrarySearchSource on the process's AndroidLibraryReader: the device's rows come from the reader's seen-cache, written by an earlier production search and then made stale, and the server's from live disposable Navidrome search3; it renders the server's row replacing the cached one at index 0, the device-only row at index 1 and a server-only row of the core's stable ranking at index 2, and activates through SearchIntentRouter preserving a nonnumeric opaque id; credential and whole-query redaction canaries pass",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionSearchAppConformanceTest/conf41ProductionQueryMergesAndRoutesOpaqueId"}
           ],
-          "reason": "The conformance-env-linux job selects the production app proof explicitly and exports its JUnit report to the required core-ci execution verifier. The proof first asserts that one character returns local rows, then uses the real activity, stored account, production dependencies, stored normalized library index, live ServerSearch and mergeSearchResults. It observes ranked replacement/retention/append behavior and an unchanged opaque detail-intent id. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The older fixture control remains as a separate UI regression test."
+          "reason": "The conformance-env-linux job selects the production app proofs explicitly and exports their JUnit report to the required core-ci execution verifier. The CONF-41 proof first asserts that one character returns device rows, then uses the real activity, stored account, production dependencies, the reader's search over its seen-cache and the live server. It observes ranked replacement/retention/append behavior and an unchanged opaque detail-intent id. The CONF-79 proof drives the same app's search through each of its scopes, the offline one with the seen-cache's counts read independently from the app's database. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The fixture control remains as a separate UI regression test."
         },
         "androidtv": {
           "status": "shipped",
           "evidence": [
             {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
              "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"},
-            {"observes": "the Android TV app's production tv-material surface accepts TV text entry, moves focus across successive result cards under real DirectionDown key events with focus asserted, and routes a DirectionCenter activation into the production SearchDetailIntent with its opaque artist id unchanged and no credential canaries; the ranked rows are supplied by TvRankedMergedFixtureSearchDataSource, so the production merge and wire path is not exercised here",
+            {"observes": "the Android TV app's production tv-material surface accepts TV text entry, moves focus across successive result cards under real DirectionDown key events with focus asserted, and routes a DirectionCenter activation into the production SearchDetailIntent with its opaque artist id unchanged and no credential canaries; the ranked rows are supplied by TvRankedMergedFixtureSearchSource, so the production merge and wire path is not exercised here",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvSearchAppConformanceTest/conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail"},
-            {"observes": "the real TvSearchActivity accepts hardware letter-key input and asserts successive D-pad focus movement, uses ProductionSearchHostDependencies and CoreSearchDataSource with the committed-generation SQLDelight library search through AndroidLibrarySearchSource and common-core LocalLibrarySearch and live disposable Navidrome ServerSearch, renders an in-place cached-row refresh, retained local-only row and appended server-only row through mergeSearchResults, and activates through SearchIntentRouter preserving a nonnumeric opaque id; credential and whole-query redaction canaries pass",
+            {"conformance": "CONF-79", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf79SearchPublishesEachScopeWithSeenCountsOffline"},
+            {"observes": "the real TvSearchActivity accepts hardware letter-key input and asserts successive D-pad focus movement, and searches through ProductionSearchHostDependencies and AndroidLibrarySearchSource on the process's AndroidLibraryReader: the device's rows come from the reader's seen-cache, written by an earlier production search and then made stale, and the server's from live disposable Navidrome search3; it renders the server's row replacing the cached one at index 0, the device-only row at index 1 and a server-only row of the core's stable ranking at index 2, and activates through SearchIntentRouter preserving a nonnumeric opaque id; credential and whole-query redaction canaries pass",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionSearchAppConformanceTest/conf41ProductionQueryMergesAndRoutesOpaqueId"}
           ],
-          "reason": "The conformance-env-linux job selects the production app proof explicitly and exports its JUnit report to the required core-ci execution verifier. The proof first asserts that one character returns local rows, then uses the real activity, stored account, production dependencies, stored normalized library index, live ServerSearch and mergeSearchResults. It observes ranked replacement/retention/append behavior and an unchanged opaque detail-intent id. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The older fixture control remains as a separate UI regression test."
+          "reason": "The conformance-env-linux job selects the production app proofs explicitly and exports their JUnit report to the required core-ci execution verifier. The CONF-41 proof first asserts that one character returns device rows, then uses the real activity, stored account, production dependencies, the reader's search over its seen-cache and the live server. It observes ranked replacement/retention/append behavior and an unchanged opaque detail-intent id. The CONF-79 proof drives the same app's search through each of its scopes, the offline one with the seen-cache's counts read independently from the app's database. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The fixture control remains as a separate UI regression test."
         }
       }
     },

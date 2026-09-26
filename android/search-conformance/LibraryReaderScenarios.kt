@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet.search.conformance
 
+import android.content.ComponentName
+import android.content.Intent
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsActions
@@ -31,13 +33,16 @@ import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidLibrarySeenCounts
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
+import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.library.LibraryConnectionState
 import com.legitimateapps.dulcet.library.LibraryFrame
 import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibraryObservationState
+import com.legitimateapps.dulcet.playback.PlaybackService
 import com.legitimateapps.dulcet.search.SearchObservation
 import com.legitimateapps.dulcet.search.SearchUiState
 import java.time.Duration
+import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import kotlin.test.assertEquals
@@ -59,7 +64,8 @@ interface ReaderAppUi {
 }
 
 /**
- * The reader's conformance scenarios (CONF-76, 77, 79, 84, 86), driven through the production app —
+ * The reader's conformance scenarios (CONF-76, 77, 79, 84, 86), and the session's own reachability
+ * and album play beside them, driven through the production app —
  * its activity, its `LibrarySession`, the process's `AndroidLibraryReader` — against the disposable
  * server, counting requests at a loopback forwarder. Each platform's test class calls each scenario
  * from its own test method, so every CONF id has its own test identity per platform.
@@ -328,6 +334,163 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         while (started.elapsedNow().inWholeMilliseconds < millis) {
             shadowOf(Looper.getMainLooper()).idle()
             Thread.sleep(20)
+        }
+    }
+
+    // ---- The session's own reachability ------------------------------------------------------------
+
+    /**
+     * A reconnect answered after the platform reported the network gone leaves the library offline.
+     * The session hears the answer — its count of reconnect answers moves, the marker that the
+     * handling ran — and does not act on it: no second reconnect starts, and nothing more is read.
+     */
+    fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() {
+        ui.openLibrary()
+        awaitHomeLive()
+        awaitQuiet()
+        environment.network.lose()
+        await("the library to say offline") {
+            observed().connections.last() is LibraryConnectionState.Offline && HOME.all { last(it).freshness.isOfflineCached() }
+        }
+        awaitQuiet()
+
+        // The network comes back, and the reconnect it starts is held at its epoch read.
+        val mark = proxy.size()
+        val reconnectsBefore = observed().reconnects
+        proxy.hold { it.endpoint in EPOCH_READS }
+        environment.network.restore()
+        await("the reconnect's epoch read to be issued, and held") {
+            observed().reconnects > reconnectsBefore && proxy.since(mark).any { it.endpoint in EPOCH_READS && !it.answered }
+        }
+        val reconnects = observed().reconnects
+        val answers = observed().reconnectAnswers
+
+        // The network goes again before the reconnect answers.
+        val lossMark = proxy.size()
+        environment.network.lose()
+        await("the reconnect's answer to reach the session") { observed().reconnectAnswers > answers }
+        awaitQuiet(held = true)
+        assertIs<LibraryConnectionState.Offline>(observed().connections.last(), "offline stands: ${observed().connections}")
+        assertEquals(reconnects, observed().reconnects, "the late answer starts no reconnect")
+        assertEquals(emptyList(), readerRequests(lossMark).map { it.endpoint }, "nothing is read after the loss")
+        assertTrue(HOME.all { last(it).freshness.isOfflineCached() }, "every row still says offline")
+
+        proxy.release()
+        environment.network.restore()
+        await("the library back online") { observed().connections.last() is LibraryConnectionState.Online }
+        assertNoCredentialLeak()
+        println("SHELL OBSERVED $platform late-reconnect-answer answers=${observed().reconnectAnswers - answers} " +
+            "reconnects-after-loss=0 requests-after-loss=0")
+    }
+
+    /**
+     * A reconnect that finds the server unreachable while the platform reports a network takes the
+     * reader offline: the session tells the reader the server is unreachable, and every screen says
+     * offline. A return to the foreground and trying again each tell the reader the platform's view —
+     * reachable — before reconnecting, so it is not left believing what the failed reconnect found.
+     */
+    fun anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack() {
+        ui.openLibrary()
+        awaitHomeLive()
+        val album = server.albumId(OPENED_ALBUM)
+        openHomeAlbum(OPENED_ALBUM)
+        await("the album live") { last("album:$album").freshness == AndroidLibraryFreshness.Live }
+        awaitQuiet()
+
+        // Every connection is closed unanswered, and the app returns to the foreground.
+        proxy.drop { true }
+        val mark = proxy.size()
+        val reconnectsBefore = observed().reconnects
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        await("the foreground reconnect to find the server unreachable") {
+            observed().reconnects > reconnectsBefore &&
+                observed().connections.last() == LibraryConnectionState.Offline(DomainError.Transport.Unreachable)
+        }
+        await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
+        assertTrue(proxy.since(mark).any { it.endpoint in EPOCH_READS && it.answered && it.status == 0 },
+            "control: the reconnect's epoch read reached the proxy and was dropped: ${proxy.since(mark)}")
+        assertEquals(false, observed().reachabilityReports.last(), "the reader was told the server is unreachable")
+
+        // Back to the foreground while the server still cannot be reached. The platform reports a
+        // network, so the reader is told so before the reconnect, and the reconnect then tells it
+        // otherwise: a return does not leave the reader with what the previous reconnect told it.
+        val beforeReturn = observed().reachabilityReports.size
+        val answersBeforeReturn = observed().reconnectAnswers
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        await("the second foreground reconnect to be answered") { observed().reconnectAnswers > answersBeforeReturn }
+        assertEquals(listOf(true, false), observed().reachabilityReports.drop(beforeReturn),
+            "a return to the foreground told the reader the platform's view, then the reconnect's")
+
+        // "Try again", from the album's refresh: the reader is told reachable, then reconnects.
+        proxy.drop(null)
+        val reports = observed().reachabilityReports.size
+        compose.onNodeWithTag("album.refresh").performClick()
+        await("trying again to reconnect") {
+            observed().connections.last() is LibraryConnectionState.Online && last("album:$album").freshness == AndroidLibraryFreshness.Live
+        }
+        val told = observed().reachabilityReports.drop(reports)
+        assertEquals(listOf(true), told, "trying again told the reader the platform's view, once")
+        assertNoCredentialLeak()
+        println("SHELL OBSERVED $platform unreachable-server offline=${LibraryConnectionState.Offline(DomainError.Transport.Unreachable)} " +
+            "told-after-try-again=$told")
+    }
+
+    /**
+     * A playable track selected on an album screen plays the album from that track (§14.1): the
+     * production playback service's queue is the album's tracks in the server's order, current at
+     * the selected one. [afterPlay] then checks what the platform does next.
+     */
+    fun aTrackSelectedPlaysTheAlbumFromThatTrack(afterPlay: () -> Unit) {
+        val app = RuntimeEnvironment.getApplication()
+        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val binder = checkNotNull(service.get().onBind(Intent(PlaybackService.LOCAL_BIND))) { "setup: no local binder" }
+            shadowOf(app).setComponentNameAndServiceForBindServiceForIntent(
+                Intent(app, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+                ComponentName(app, PlaybackService::class.java),
+                binder,
+            )
+            // The screen binds the service when it starts; it started before the binding existed.
+            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+            val playback = checkNotNull(service.get().playback) { "setup: the service has no controller" }
+            assertTrue(playback.state.value.queue.isEmpty(), "setup: nothing is queued yet")
+
+            ui.openLibrary()
+            awaitHomeLive()
+            val album = server.albumId(OPENED_ALBUM)
+            val songs = server.get("getAlbum", mapOf("id" to album)).getJSONObject("album").getJSONArray("song")
+            val expected = (0 until songs.length()).map { songs.getJSONObject(it).getString("id") }
+            assertTrue(expected.size >= 3, "setup: the album needs a track before and after the one selected")
+            openHomeAlbum(OPENED_ALBUM)
+            await("the album live, with its tracks") {
+                last("album:$album").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
+            }
+            ui.select("album.track.1", from = "album.track.0")
+            try {
+                // The controller runs on the main thread, and its song read resumes there by a message
+                // posted from the HTTP client's thread. The host runtime's main looper runs posted
+                // messages only when something idles it, and a wait that only drives Compose does
+                // not, so the queue was published in 2 of 8 runs before this. A device's main looper
+                // always runs; idling it here is that.
+                await("the album to be queued") {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    playback.state.value.queue.isNotEmpty()
+                }
+            } catch (failure: AssertionError) {
+                // What the controller made of the selection, and what each request was answered with.
+                throw AssertionError("${failure.message}; playback=${playback.state.value}; answered=${proxy.log()}", failure)
+            }
+            val state = playback.state.value
+            assertEquals(expected, state.queue.map { it.track.rawId }, "the queue is the album, in the server's order")
+            assertEquals(1, state.currentIndex, "playing from the selected track")
+            afterPlay()
+            assertNoCredentialLeak()
+            println("PLAYBACK OBSERVED $platform album-play queue=${state.queue.size} current=${state.currentIndex}")
+        } finally {
+            service.destroy()
         }
     }
 

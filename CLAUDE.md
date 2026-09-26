@@ -454,6 +454,16 @@ They are deliberately not reproduced in this repository.**
     (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
     (docs/verification/android-playback-surfaces.md).
 
+44. **In a Robolectric host test, work the playback controller resumes on the main thread waits
+    until something idles the main looper.** `AndroidPlaybackController` runs on the main
+    dispatcher, and its song read resumes by a message the HTTP client posts from its own thread.
+    A Compose `waitUntil` does not idle the looper, so the request is answered (HTTP 200 at the
+    forwarder) while the controller shows nothing — no queue, no error — and every dispatcher
+    thread is idle. It is timing-dependent, so it reads as a flake: 2 of 8 album-play runs passed.
+    Idle the main looper inside the wait (`shadowOf(Looper.getMainLooper()).idle()`), as a device's
+    always runs: 8 of 8. The reader is unaffected; its requests run on its own thread (spec §28
+    revision 104 item 34).
+
 ## Review and delegation
 
 **Architecture decisions and verification stay with the maintainer; implementation of a

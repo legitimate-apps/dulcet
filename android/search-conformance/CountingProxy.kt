@@ -24,7 +24,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
         val endpoint: String,
         val parameters: Map<String, String>,
         @Volatile var answered: Boolean = false,
-        /** The HTTP status the app received; 0 until answered. */
+        /** The HTTP status the app received; 0 until answered, and for a dropped connection. */
         @Volatile var status: Int = 0,
     ) {
         override fun toString(): String = "$endpoint${parameters["type"]?.let { "[$it]" } ?: ""}:$status"
@@ -34,6 +34,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
     private val seen = mutableListOf<Seen>()
     private var holdRule: ((Seen) -> Boolean)? = null
     private var failRule: ((Seen) -> Boolean)? = null
+    private var dropRule: ((Seen) -> Boolean)? = null
     private var gate = CountDownLatch(1)
     private val executor = Executors.newFixedThreadPool(16)
     private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 64).apply {
@@ -74,6 +75,12 @@ class CountingProxy(private val target: String) : AutoCloseable {
     /** Answers every matching request with HTTP 500 and no body, without asking the server. */
     fun fail(rule: ((Seen) -> Boolean)?) = synchronized(lock) { failRule = rule }
 
+    /**
+     * Closes the connection of every matching request without any answer, as a server that cannot
+     * be reached leaves it: the client sees a transport failure, not an HTTP status.
+     */
+    fun drop(rule: ((Seen) -> Boolean)?) = synchronized(lock) { dropRule = rule }
+
     private fun forward(exchange: HttpExchange) {
         val uri = exchange.requestURI
         val body = exchange.requestBody.readBytes()
@@ -88,6 +95,11 @@ class CountingProxy(private val target: String) : AutoCloseable {
                 Triple(holdRule?.invoke(entry) == true, gate, failRule?.invoke(entry) == true)
             }
             if (held) latch.await(HOLD_CEILING_SECONDS, TimeUnit.SECONDS)
+            if (synchronized(lock) { dropRule?.invoke(entry) == true }) {
+                // No status: closing an exchange before its headers are sent closes the connection.
+                entry.status = 0
+                return
+            }
             if (failing) {
                 entry.status = 500
                 exchange.sendResponseHeaders(500, -1)

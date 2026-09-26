@@ -155,7 +155,11 @@ def validate_exceptions(document: dict, key: str, source: str) -> None:
             fail(f"{key} entries require a reason and #<number> PR")
 
 
-def validate(document: dict, source: str) -> dict[str, dict]:
+def validate(document: dict, source: str, *, base: bool = False) -> dict[str, dict]:
+    """Validate one matrix. With [base], it is the document being compared against, not the one
+    submitted: its cited test names are not required to exist in the submitted tree, because a
+    change may delete a test together with the evidence rows that cited it. The submitted document
+    is always validated first, so every row it keeps or adds must still name a test that exists."""
     unknown = set(document) - TOP_KEYS
     if unknown:
         fail(f"{source}: unknown top-level keys: {sorted(unknown)}")
@@ -324,7 +328,7 @@ def validate(document: dict, source: str) -> dict[str, dict]:
 
                     if (entry["workflow"], entry["job"]) not in jobs:
                         fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
-                    if entry["test"].split("/")[-1].split("#")[-1] not in tests:
+                    if not base and entry["test"].split("/")[-1].split("#")[-1] not in tests:
                         fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
                     if entry["job"] not in required_checks:
                         fail(
@@ -440,7 +444,7 @@ try:
     # declarations, which is semantically the same as the new list being empty; current
     # documents still have to carry the structural key and are validated above.
     previous_document.setdefault("accepted_promotions", [])
-    previous = validate(previous_document, "base FEATURES.yml")
+    previous = validate(previous_document, "base FEATURES.yml", base=True)
     for feature_id, old_feature in previous.items():
         if feature_id not in current:
             fail(f"feature row removed: {feature_id}")

@@ -54,6 +54,11 @@ import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.core.AndroidLibraryPublication
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
+import com.legitimateapps.dulcet.core.AndroidQueueSource
+import com.legitimateapps.dulcet.playback.PlaybackIntents
+import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R
 
@@ -74,7 +79,7 @@ public fun LibraryEntry(account: SearchAccount, search: @Composable () -> Unit) 
     Box(Modifier.fillMaxSize().background(Color.White)) {
         when {
             !showingLibrary -> search()
-            album != null -> TvAlbumScreen(session, album!!) { album = null }
+            album != null -> TvAlbumScreen(session, account.providerInstanceId, album!!) { album = null }
             else -> TvLibraryHome(session) { album = it }
         }
         BasicText(if (showingLibrary) "Search" else "Library",
@@ -203,8 +208,10 @@ private fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean
 }
 
 @Composable
-private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Unit) {
+private fun TvAlbumScreen(session: LibrarySession, provider: String, rawId: String, back: () -> Unit) {
     val surface = rememberSurface(session, rawId) { openAlbum(rawId) }
+    val context = LocalContext.current
+    val playback = rememberPlaybackController()
     BackHandler(onBack = back)
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
@@ -264,41 +271,63 @@ private fun TvAlbumScreen(session: LibrarySession, rawId: String, back: () -> Un
                 )
             }
             AndroidLibraryItemsState.Present -> itemsIndexed(current.items) { position, item ->
-                if (item is AndroidLibraryItem.Track) TvTrackRow(item, position) {
-                    note = resources.getString(R.string.library_plays_on_reconnect)
-                }
+                if (item is AndroidLibraryItem.Track) TvTrackRow(
+                    item,
+                    position,
+                    onPlay = {
+                        // The album from this track, as the phone plays it; then the TV's Now Playing.
+                        if (playAlbum(playback, provider, current, item.rawId)) {
+                            context.startActivity(PlaybackIntents.showNowPlaying(context))
+                        }
+                    },
+                    onUnavailable = { note = resources.getString(R.string.library_plays_on_reconnect) },
+                )
             }
         }
     }
 }
 
 /**
- * One track. The TV's library does not play from an album yet; a row this device cannot play offline
- * says why when selected, as the phone's does (§16.14). Every row is ONE focus target of one kind, so
- * the D-pad stops on it once, and a row whose playability changes while focused (going offline, or
- * reconnecting) keeps its focus. Only a row that can say something offers an action: the centre key
- * or Enter, and a click for accessibility services.
+ * The album's playable tracks queued from [trackRawId] (§14.1): the phone's album play. False, and
+ * nothing played, before the playback service is bound or when nothing in the album can play.
+ */
+private fun playAlbum(playback: AndroidPlaybackController?, provider: String, publication: AndroidLibraryPublication, trackRawId: String): Boolean {
+    val album = publication.header as? AndroidLibraryItem.Album ?: return false
+    val tracks = publication.playableTracks(provider)
+    if (playback == null || tracks.isEmpty()) return false
+    val start = tracks.indexOfFirst { it.rawId == trackRawId }.takeIf { it >= 0 } ?: 0
+    playback.playQueue(tracks, start, AndroidQueueSource.Album, album.title, album.rawId, false)
+    return true
+}
+
+/**
+ * One track. Selected, a row that can play plays the album from it; a row this device cannot play
+ * offline says why, as the phone's does (§16.14). Every row is ONE focus target of one kind, so the
+ * D-pad stops on it once, and a row whose playability changes while focused (going offline, or
+ * reconnecting) keeps its focus. Its action is the centre key or Enter, and a click for
+ * accessibility services.
  */
 @Composable
-private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, onUnavailable: () -> Unit) {
+private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, onPlay: () -> Unit, onUnavailable: () -> Unit) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
+    val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
     var focused by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().testTag("album.track.$position")
             // One accessibility node whatever the playability: focusable() does not merge the row's
-            // texts, so this does. A row that can say something is described and clickable too.
+            // texts, so this does. A row that cannot play is described as such.
             .semantics(mergeDescendants = true) {
                 if (unavailable) {
                     contentDescription = "${track.title.orEmpty()}, ${resources.getString(R.string.library_not_available_offline)}"
-                    onClick { onUnavailable(); true }
                 }
+                onClick { select(); true }
             }
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
-                val select = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
-                if (unavailable && select && event.type == KeyEventType.KeyUp) {
-                    onUnavailable()
+                val centre = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
+                if (centre && event.type == KeyEventType.KeyUp) {
+                    select()
                     true
                 } else {
                     false

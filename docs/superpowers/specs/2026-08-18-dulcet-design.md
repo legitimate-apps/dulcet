@@ -3974,7 +3974,11 @@ retires `library.sync` through it. The gate change lands in the same phase as th
 so no unused declaration path exists in the meantime. The new rows are **`library.browse`** (CONF-76,
 77, 82, 86, 87) and **`library.offline`** (CONF-78, 80, 81, 83, 85), `planned` on every platform
 until each cell carries its own evidence; `search.query` gains CONF-79, and a new
-**`library.favourites`** row carries CONF-84.
+**`library.favourites`** row carries CONF-84. R3 added `library.browse` and `library.favourites`,
+`partial` on `android` and `androidtv` and `planned` elsewhere, and gave `search.query` CONF-79 as
+`platform_conformance` on those two platforms only: a `shipped` cell cannot carry an unevidenced id,
+and the Apple search cells are `shipped`, so the Apple destinations gain it with their own evidence in
+R2b. `library.offline` is added with its first evidence (§28 revision 104 item 34).
 
 **Conformance and control ids** (§20.4 carries the registry rows). *Server-fact* ids pin the
 server's behaviour and are R0's; *reader* ids drive the production code.
@@ -4847,6 +4851,10 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
    the `planned` → `blocked` → `partial` → `shipped` order must gain at least one evidence row absent
    from the base cell, unless a matching `accepted_promotions` declaration records why that is
    structurally impossible. `n/a` is outside the order. The two exception lists do not cross-authorize.
+   The base document is compared, not re-submitted: the tests it cites need not exist in the
+   submitted tree, because a change may delete a test together with the rows that cited it. Every
+   row the submitted document keeps or adds must still name a test that exists (§28 revision 104
+   item 34).
 
    ⚠️ **Revision 2's mechanism does not exist and has been replaced.** It said a protected
    `regression-approved` label "may only be applied by a CODEOWNER." **OBSERVED** (GitHub, Managing
@@ -7710,7 +7718,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
       runs only then.
     - It forwards the platform's default-network callback to `setOnline`, registered on the main
       thread.
-    - It reconnects on `start()` when there is a network.
+    - It reconnects on `start()` when there is a network, telling the reader first that the
+      network is reachable (item 34).
 
     Reachability:
     - **Offline.** The platform reporting no network means offline. Of a reconnect's failures, only
@@ -7725,15 +7734,17 @@ fresh disposable server before landing; items 11–14 are what that review chang
       review found that a new network did not clear the failure.
     - **A setup that failed and later succeeded** leaves the shell saying the reader is failed while
       its screens read again. Live content in that state makes the shell reconnect, which settles it
-      and gives the fresh reader its flush and epoch read.
+      and gives the fresh reader its flush and epoch read. The core's own retry of a reconnect that
+      failed on its side reaches the shell the same way (item 34).
     - **A reconnect's answer that arrives after the platform reported the network gone** leaves the
       shell offline, whatever its connection answer. An answer that the reader is closed still
-      closes the shell, and a count of discarded changes it carries is still announced. Mutation
-      shows no test orders the answer after the loss (item 32), so this rests on reading the code.
+      closes the shell, and a count of discarded changes it carries is still announced. A test
+      orders the answer after the loss (item 34).
     - **A reader closed under the shell** (by an account change, or by `closeCurrent`) is its own
       state, with no connection line and no "Try again": nothing can reconnect it.
     - **"Try again" with no network** stays offline. The reader is never told the server is reachable
-      while the platform reports no network.
+      while the platform reports no network. With a network, it is told so before the reconnect
+      (item 34).
     - **The two account-level statements** are made once, on the library's first screen. One is a
       server that reports no scan stamp (§16.12). The other is unsent changes discarded because the
       user changed (§16.10).
@@ -7751,8 +7762,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
       it.
     - **Each TV control is one focus target.** `focusable()` in front of `clickable()` made two, and
       the centre key on the first did nothing. A TV track row is focusable whatever its playability,
-      with the centre key and an accessibility click only when it has something to say, so a row
-      that becomes unplayable while focused keeps its focus. It is one accessibility node in both
+      so a row that becomes unplayable while focused keeps its focus. Its centre key and
+      accessibility click say why an unplayable row cannot play; on a playable row they play the
+      album from it (item 34). It is one accessibility node in both
       states, with its texts merged; the fifth review found that merge lost. CONF-76 on the TV now
       reaches the unplayable track with the D-pad: it focuses the control above, steps down once and
       asserts where focus landed, steps to the next track and back (which must exist), presses the
@@ -7829,7 +7841,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
         itself when told the network is back, and the live content that follows makes the shell
         reconnect. The two together are killed, by CONF-77 on both apps.
       - A reconnect's answer arriving after a newer loss of network, and overriding it, survives. No
-        test produces that ordering, so that guard rests on reading the code.
+        test produced that ordering; item 34 adds one.
       - The TV track row made two focus targets again survived at first, because D-pad search moves
         only between siblings, so every step landed on the outer target. It is killed now, by
         asserting that the row still holds focus after the centre key. The row handles only the
@@ -7853,7 +7865,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - **`FEATURES.yml` still cites the two deleted `ProductionLibrarySync` tests** as evidence for
       `library.sync` on `android` and `androidtv`. `tools/verify-parity-evidence` fails on an evidence
       test that did not execute, so core-ci will fail until those cells are declared and the reader's
-      tests are cited. R3 leaves `FEATURES.yml` to the maintainer.
+      tests are cited. R3 left `FEATURES.yml` to the maintainer; item 34 updates it.
     - **The Apple facade drops `itemsUnavailableReason`.** R3 leaves Apple code alone, so an Apple
       shell cannot yet say why a track list is unavailable while its header shows.
     - **Android has no sign-out or account-removal path.** `AndroidLibraryReader.closeCurrent` is
@@ -7862,7 +7874,88 @@ fresh disposable server before landing; items 11–14 are what that review chang
       that, run again, left it green; its failure detail was not kept. It passed in that rerun and
       in every unmutated baseline. It is recorded, not explained.
     - **The TV's album screen lists tracks but does not play them.** Playing from a TV album is not
-      built. The TV library had no album screen before R3.
+      built. The TV library had no album screen before R3. Item 34 builds it.
+34. **R3 on the core's fourth and fifth rounds.** R3 was rebased onto the reader core that sends
+    nothing while offline, checks `online` before each page read and the re-anchor, retries a
+    reconnect that failed on its own side (2 s doubling to 60 s, while the platform reports the
+    network reachable), publishes nothing from a fresh album screen at a foreground reconnect,
+    stores the epoch before adopting it, and lets a viewport the person set win over the re-anchor.
+    - **Nothing R3 did was removed as a duplicate, because none of it duplicates the core.** The
+      Android facade has no retry and no send gating of its own: `setOnline` forwards reachability
+      and `reconnect` calls the reader's. The shell's reconnect on a reported network joins the
+      reconnect the core starts itself. "Try again" with no network sends nothing, which the core
+      would also do, but it also keeps the screens' "you're offline" instead of a failed attempt.
+      The self-heal on live content (item 31) is kept, and is now also how the shell learns that the
+      core's own retry succeeded.
+    - **What the shell added.** The core keeps only the latest reachability it was told and a
+      reconnect never changes it. The shell tells it unreachable when a reconnect found the server
+      so (item 31). Before this round nothing told it reachable again, and the core retries only
+      while told reachable, so its retry never ran after that. `start()` and "Try again" now tell
+      the reader the network is reachable before reconnecting, and only when the platform reports
+      one. OBSERVED by a test on each app. The server's connections are closed unanswered, and the
+      reconnect takes the reader offline with `unreachable`; the last report told is unreachable. A
+      second return to the foreground, the server still unreachable, tells exactly reachable and
+      then unreachable. After "Try again" on the album screen the reports told since are exactly
+      one reachable, the connection is online and the album is live again. The test asserts what
+      the reader is told, not the core's retry that depends on it: no test makes a reconnect fail on
+      the reader's own side after its transition.
+    - **A reconnect's answer that arrives after the platform reported the network gone** (item 32's
+      survivor) now has a test on each app. The network is lost, the epoch reads are held, the
+      network returns and a held epoch read is awaited, then the network is lost again, which
+      cancels that reconnect. The test waits for the session to count the answer, then asserts the
+      last connection state is offline, no reconnect was started, no request was issued after the
+      loss, and the home screen is offline from the cache. Without the shell's guard, the answer
+      starts a new reconnect and the state becomes connecting.
+    - **The facade's window calls are not re-checked when they run.** Apple's facade re-checks its
+      listener and closed state inside each queued call; Android's checks the listener only before
+      queueing. The window's close and the reader's close are queued behind any earlier call on the
+      same single thread, and closing the handle cancels what that call launched. This comes from
+      reading the code, not from a test, so no guard was added that no test could reach.
+    - **The TV album plays (item 33).** It was already absent on `main` before R3: `main`'s TV
+      library was a list of synced rows with no action and no album screen. The TV album screen
+      now plays through the same production path as the phone's: a playable track's centre key or
+      accessibility click queues the album's playable tracks in the server's order, current at that
+      track, in the playback service, and opens the TV's Now Playing activity. OBSERVED by a test
+      that binds the production playback service, selects the second track with the remote from the
+      first, and asserts the queue's ids and current index and that the started activity resolves
+      to the TV playback activity. It observes the queue, not audio. The phone has the same test.
+    - **A host-runtime trap the album-play tests found.** The playback controller runs on the main
+      thread, and its song read resumes there by a message the HTTP client posts from its own
+      thread. The host runtime runs the main looper's messages only when something idles it, and
+      the tests' wait drove Compose without idling it. So the read was answered (OBSERVED at the
+      forwarder, HTTP 200) while the queue stayed empty with no error, and every dispatcher thread
+      was idle. The queue was published in 2 of 8 runs: 0 of 5 on the phone, 2 of 3 on the TV.
+      The wait now idles the main looper, as a device's always runs, and the two tests passed 8 of 8
+      in four rounds. Nothing in the product changed for this; the reader's own requests are
+      unaffected because they run on the reader's thread.
+    - **`FEATURES.yml`.** `library.browse` and `library.favourites` are new rows, `partial` on
+      `android` and `androidtv` and `planned` on Apple. `library.browse` declares CONF-82 and CONF-87
+      as unevidenced, because their tests are core tests whose results no evidence-verified job
+      exports. `library.favourites` is partial because the apps offer the favourite on albums only
+      and no rating. CONF-79 is declared as platform conformance of `search.query` on the two
+      Android platforms. `library.sync` keeps its status on `android` and `androidtv` until R5
+      retires it, citing only the core's CONF-31..33 tests; its app proofs were removed with the
+      sync-backed shells.
+    - **The parity gate no longer requires the base document's evidence tests to exist.** A pull
+      request that deletes a test together with the row citing it was refused, because the gate
+      checked the base document against the current tree (§19.3). Kept rows must still name tests
+      that exist. `tools/test-parity-gate` has a control for each, and the old check fails the first.
+    - **Evidence, OBSERVED 2026-09-25 on this round's code, counts read from the JUnit XML, 0
+      failures and 0 skipped in each.** With `--rerun-tasks`: `:core:jvmTest` 445,
+      `:core:testAndroidHostTest` 561, `:core:macosArm64Test` 492,
+      `:android:app:testDevDebugUnitTest` 12, `:android:app:testProdDebugUnitTest` 12 and
+      `:android:tv:testDebugUnitTest` 6. In the same run these compiled: `:core:compileKotlinIosArm64`,
+      `:core:compileKotlinIosSimulatorArm64`, `:core:compileTestKotlinIosSimulatorArm64`,
+      `:core:allMetadataJar`, `:core:bundleAndroidMainAar`, `:core:licensee` and
+      `:android:app:compileProdDebugKotlin`. The live suites, against a fresh disposable server of
+      the pinned version, ran 10 reader tests and 1 search test on each app. Every one of the 22
+      `FEATURES.yml` citations of these suites names a test that passed there. The parity gate, run
+      alone and against `main` as its base, its control suite, and the CI, OS-floor and release
+      policy checks all pass. Four mutants of this round's shell code were each run against the
+      live tests that should kill them, and all four are killed: "Try again" not telling reachable,
+      the late-answer guard removed, and a TV row that plays nothing were killed at once. A return
+      to the foreground not telling reachable survived until the unreachable-server test gained its
+      second return, which kills it. That test was re-run on both apps after the change and passed.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

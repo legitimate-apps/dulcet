@@ -17,7 +17,8 @@ import org.robolectric.annotation.Config
 
 /**
  * The phone app's library on the reader, end to end: the production activity, `LibrarySession` and
- * `AndroidLibraryReader` against the disposable server (spec §16.14–§16.20). One test per CONF id.
+ * `AndroidLibraryReader` against the disposable server (spec §16.14–§16.20). One test per CONF id,
+ * then the session's own reachability handling and album play, one test each.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, shadows = [HostCredentialCipher::class],
@@ -71,4 +72,12 @@ class AndroidProductionLibraryReaderAppConformanceTest {
 
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =
         scenarios.conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive()
+
+    @Test fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() =
+        scenarios.aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline()
+
+    @Test fun anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack() =
+        scenarios.anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack()
+
+    @Test fun aTrackTappedPlaysTheAlbumFromThatTrack() = scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {}
 }

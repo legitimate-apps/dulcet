@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
 import com.legitimateapps.dulcet.search.conformance.LibraryReaderScenarios
 import com.legitimateapps.dulcet.search.conformance.ProductionLibraryEnvironment
@@ -23,12 +24,16 @@ import org.junit.Test
 import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 /**
  * The Android TV app's library on the reader, end to end: the production activity, `LibraryEntry`'s
  * `LibrarySession` and `AndroidLibraryReader` against the disposable server. The same scenarios as
- * the phone's, driven through the TV's own screens; one test per CONF id.
+ * the phone's, driven through the TV's own screens; one test per CONF id, then the session's own
+ * reachability handling and album play, one test each.
  */
 @OptIn(ExperimentalTestApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -118,4 +123,19 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =
         scenarios.conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive()
+
+    @Test fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() =
+        scenarios.aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline()
+
+    @Test fun anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack() =
+        scenarios.anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack()
+
+    /** Selected with the remote, a track plays its album from there and opens the TV's Now Playing. */
+    @Test fun aTrackSelectedWithTheRemotePlaysTheAlbumFromThatTrackAndOpensNowPlaying() =
+        scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {
+            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now Playing was opened")
+            assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action)
+            val resolved = assertNotNull(compose.activity.packageManager.resolveActivity(started, 0)).activityInfo
+            assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "the TV's own Now Playing")
+        }
 }
