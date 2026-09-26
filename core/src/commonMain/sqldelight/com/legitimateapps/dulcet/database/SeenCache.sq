@@ -122,6 +122,14 @@ CREATE TABLE cache_playlist (
   issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
   last_access_wall INTEGER NOT NULL,
   gone INTEGER NOT NULL DEFAULT 0 CHECK (gone IN (0, 1)),
+  -- Added by migrations/6.sqm (schema 7) and appended last, so an upgraded table has the same
+  -- column order as a fresh one (spec §18.6). Nullable: a server that omits `readonly` has told us
+  -- nothing, which is not "editable". No CHECK: this project's SQLDelight dialect cannot parse one
+  -- on a column that ALTER TABLE adds, and a fresh table must be the upgraded one exactly; the
+  -- store writes only 0, 1 or NULL.
+  comment TEXT,
+  is_public INTEGER,
+  readonly INTEGER,
   PRIMARY KEY (server_id, raw_id)
 );
 
@@ -347,14 +355,15 @@ insertPlaylist:
 INSERT INTO cache_playlist(
   server_id, raw_id, name, song_count, duration_milliseconds, owner, artwork_key,
   detail_complete, detail_issue_seq, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall,
-  gone
+  gone, comment, is_public, readonly
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 0);
+VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, 0, ?, ?, ?);
 
 updatePlaylist:
 UPDATE cache_playlist SET
   name = :name, song_count = :song_count, duration_milliseconds = :duration_milliseconds,
-  owner = :owner, artwork_key = :artwork_key, fetched_at_wall = :fetched_at_wall,
+  owner = :owner, artwork_key = :artwork_key, comment = :comment, is_public = :is_public,
+  readonly = :readonly, fetched_at_wall = :fetched_at_wall,
   fetched_epoch = :fetched_epoch, issue_seq = :issue_seq, gone = 0
 WHERE server_id = :server_id AND raw_id = :raw_id AND issue_seq < :issue_seq;
 

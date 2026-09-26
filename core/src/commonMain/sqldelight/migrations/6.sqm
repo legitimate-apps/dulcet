@@ -1,0 +1,10 @@
+-- Playlist header fields in the seen-cache (spec §18.6): additive. Three nullable columns on
+-- cache_playlist, appended after every existing column, which is where the current .sq declares
+-- them, so an upgraded table and a fresh one have one column order. Nothing is seeded: a server
+-- that has not been read has told us nothing, and NULL is "unknown", never "editable" or "private".
+-- The next read of each playlist fills them. No CHECK constraint, here or in the .sq: this
+-- project's SQLDelight dialect cannot parse one on a column this statement adds.
+
+ALTER TABLE cache_playlist ADD COLUMN comment TEXT;
+ALTER TABLE cache_playlist ADD COLUMN is_public INTEGER;
+ALTER TABLE cache_playlist ADD COLUMN readonly INTEGER;

@@ -54,6 +54,9 @@ public fun playbackFailureOwner(error: DomainError): PlaybackFailureOwner = when
     // A code this client does not know, or a bare HTTP status from whatever answered: nothing
     // ties it to this item, so it is presented rather than guessed at.
     is DomainError.Server.Unknown -> PlaybackFailureOwner.Connection
+    // A bare HTTP status from the library's checked request path. Playback never produces it (it
+    // names a bare status Unknown), and like Unknown nothing ties it to this item.
+    is DomainError.Server.HttpStatus -> PlaybackFailureOwner.Connection
 
     DomainError.Auth.InvalidCredentials -> PlaybackFailureOwner.Connection
     DomainError.Auth.TokenAuthUnsupported -> PlaybackFailureOwner.Connection

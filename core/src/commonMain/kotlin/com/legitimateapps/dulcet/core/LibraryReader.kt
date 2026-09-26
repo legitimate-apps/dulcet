@@ -14,6 +14,11 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlin.time.ComparableTimeMark
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * The reader of spec §16.8–§16.20, one per account: live source, seen-cache, catalog epoch,
@@ -31,8 +36,9 @@ import kotlinx.coroutines.sync.withPermit
  *
  * **Hooks for other phases**, each a small interface with an inert default:
  * [LibraryMutationOverlay] (R1d: pending stars and ratings overlaid at publish time, §16.20),
- * [DownloadedTrackSource] (R4: playability and the downloaded-album recheck), and
- * [ReconnectOutboxes] (the outbox flush that comes first on reconnect, §16.14).
+ * [DownloadedTrackSource] (R4: playability and the downloaded-album recheck),
+ * [ReconnectOutboxes] (the outbox flush that comes first on reconnect, §16.14), and
+ * [LibraryPlaylistOverlay] (pending playlist edits overlaid on the playlist screens, §18.6).
  */
 internal class LibraryReader(
     internal val cache: BoundSeenCache,
@@ -42,6 +48,7 @@ internal class LibraryReader(
     internal val overlay: LibraryMutationOverlay = LibraryMutationOverlay.None,
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+    internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
 ) {
     private val owner = currentThreadIdentity()
 
@@ -125,7 +132,8 @@ internal class LibraryReader(
     suspend fun reconnect() {
         checkConfined()
         online = true
-        outboxes.flush()
+        // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
+        flushOutboxes()
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
         val epoch = readEpoch() ?: return
         visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
@@ -194,6 +202,32 @@ internal class LibraryReader(
         visibleHandles().filter { it.mentionsAny(rawIds) }.forEach { it.republish() }
     }
 
+    /**
+     * Playlist editing's hook (§18.6): a pending playlist edit must be in the next publication of
+     * the playlist list — which may not yet show the playlist at all (a create) — and of every screen
+     * mentioning [rawIds]. Synchronous, before any request.
+     */
+    fun republishPlaylists(rawIds: Set<String>) {
+        checkConfined()
+        visibleHandles().filter { it.query == LibraryQuery.Playlists || it.mentionsAny(rawIds) }.forEach { it.republish() }
+    }
+
+    /**
+     * Re-reads a one-response list live after the device itself changed it on the server (a
+     * playlist created or deleted), so the cached list and every open screen on it show the server's
+     * new answer: through an open handle when there is one — which shares the list's lock — else
+     * through a detached window that is never published.
+     */
+    internal suspend fun rereadList(query: LibraryQuery) {
+        val open = visibleHandles().filter { it.query == query }
+        if (open.isNotEmpty()) {
+            open.first().revalidate(RevalidateCause.Refresh)
+            open.drop(1).forEach { it.republish() }
+            return
+        }
+        ListWindow(this, query, ListRequestSpec.of(query)) { }.revalidate(RevalidateCause.Refresh)
+    }
+
     // ---- Opening ------------------------------------------------------------------------------------
 
     /**
@@ -248,15 +282,135 @@ internal class LibraryReader(
      * is ordered by when it went out, and its *before* is provably earlier than the request.
      */
     internal suspend fun send(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
-        permits.withPermit {
-            val seq = cache.issue()
-            val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
-            SentResponse(seq, before, transport.request(endpoint, parameters))
-        }
+        permits.withPermit { issue { transport.request(endpoint, parameters) } }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
         send(endpoint, parameters).requireOk(endpoint, parameters)
+
+    /** [sendChecked] for parameters that repeat a name, in order (playlist edits, §18.6). */
+    internal suspend fun sendRepeatedChecked(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): SentResponse = permits.withPermit {
+        issue { transport.requestRepeated(endpoint, parameters, formPost) }
+    }.requireOk(endpoint, emptyMap())
+
+    /**
+     * Runs [block] holding ONE slot of the per-server bound for its whole length: every request it
+     * sends through the [HeldSlot] goes out on that slot, one after another, and no other request of
+     * this reader is sent in between. Playlist editing holds one from its re-read to its write, so
+     * the moment in which another client's change can land unseen is one round trip (§18.6).
+     * [block] must send nothing any other way — with a bound of one, that would wait for ever.
+     */
+    internal suspend fun <T> withOneSlot(block: suspend (HeldSlot) -> T): T = permits.withPermit { block(HeldSlot()) }
+
+    /** Requests sent on a slot already held by [withOneSlot]. Valid only inside that block. */
+    internal inner class HeldSlot internal constructor() {
+        suspend fun send(endpoint: String, parameters: Map<String, String>): SentResponse =
+            issue { transport.request(endpoint, parameters) }
+
+        suspend fun sendRepeatedChecked(endpoint: String, parameters: List<Pair<String, String>>, formPost: Boolean): SentResponse =
+            issue { transport.requestRepeated(endpoint, parameters, formPost) }.requireOk(endpoint, emptyMap())
+    }
+
+    /**
+     * Takes the issue sequence and the *before* reading as the request goes out, on a held slot. A
+     * failure of the request itself is thrown as a [LibraryRequestFailure]; anything else thrown here
+     * — the device's own database failing — is not, so a caller never reports it as the server's.
+     */
+    private suspend fun issue(request: suspend () -> LibraryEndpointResponse): SentResponse {
+        val seq = cache.issue()
+        val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
+        val response = try {
+            request()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: LibraryRequestFailure) {
+            throw failure
+        } catch (failure: Throwable) {
+            throw LibraryRequestFailure(failure.asReaderError())
+        }
+        return SentResponse(seq, before, response)
+    }
+
+    /** When the current wait ends, on [LibraryReaderConfig.monotonic]; null when none holds. */
+    private var busyUntil: ComparableTimeMark? = null
+    private var busyRetry: Job? = null
+
+    /**
+     * The server asked for quiet (an HTTP 429) with [retryAfter], if it said, answering a request of
+     * the outbox whose run of 429s is [run]. Both outbox flushes then wait `max(Retry-After, floor)`,
+     * never more than [LIBRARY_BUSY_CAP]: the floor starts at [LIBRARY_BUSY_FLOOR] and doubles with
+     * each 429 of the run, so a server answering `Retry-After: 0` — or nothing — is not asked again
+     * at once. A wait already running is never shortened: the later end of the two stands, so a 429
+     * that another flush meets meanwhile cannot bring a server's longer `Retry-After` forward. Each
+     * flush checks the wait before it begins each change, so neither begins a change until the wait
+     * has passed, whatever triggers it — a change already under way when the wait begins is not
+     * recalled, and may finish its requests; then one flush of every outbox runs, as a reconnect's
+     * first step would, and a retry a later end replaced is cancelled. A 429 that does not [count] —
+     * its change was withdrawn or undone while the request was out, or is a create deleted here, so
+     * nothing of it is queued — still sets the wait, and its flush still counts it as met, so the run
+     * goes on; but it neither begins nor lengthens the run. Returns whether this 429 began the run:
+     * each outbox tells the person once per run, not once per retry.
+     */
+    internal fun noteBusy(run: BusyRun, retryAfter: Duration?, count: Boolean = true): Boolean {
+        val streak = if (count) run.met() else run.streak
+        val doublings = (streak - 1).coerceIn(0, BUSY_MAX_DOUBLINGS)
+        val floor = (LIBRARY_BUSY_FLOOR * (1 shl doublings)).coerceAtMost(LIBRARY_BUSY_CAP)
+        val wait = maxOf(retryAfter ?: Duration.ZERO, floor).coerceAtMost(LIBRARY_BUSY_CAP)
+        val until = config.monotonic.markNow() + wait
+        val current = busyUntil
+        if (current == null || until > current) {
+            busyUntil = until
+            // The retry of the shorter wait is replaced; a longer wait keeps its own retry.
+            busyRetry?.cancel()
+            busyRetry = scope.launch {
+                delay(wait)
+                if (online) flushOutboxes()
+            }
+        }
+        return count && streak == 1
+    }
+
+    /**
+     * One authenticated `ping` after a request was refused ACCESS (§18.6 "Failures"): null when it is
+     * answered — the refusal was that request's alone, a rule in front of one endpoint or one
+     * request, and the change fails on its own — else the ping's own failure, which speaks for the
+     * account and is what a flush stops with.
+     */
+    internal suspend fun pingAfterRefusal(): DomainError? = try {
+        sendChecked("ping")
+        null
+    } catch (thrown: LibraryRequestFailure) {
+        thrown.error
+    }
+
+    /**
+     * [busyFor] as the error a flush stops with. Typed as the supertype on purpose: OBSERVED, a
+     * Kotlin/Native build downcast a `DomainError?` variable initialised from a `Server.Busy?`
+     * expression inside the suspending flush, and threw when the variable later held another error.
+     */
+    internal fun busyError(): DomainError? = busyFor()?.let { DomainError.Server.Busy(it) }
+
+    /** How much longer the server asked outbox flushes to wait; null when they may send. */
+    internal fun busyFor(): Duration? {
+        val left = busyUntil?.let { -it.elapsedNow() } ?: return null
+        if (left.isPositive()) return left
+        busyUntil = null
+        return null
+    }
+
+    private suspend fun flushOutboxes() {
+        try {
+            outboxes.flush()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            uncaughtFailures += failure
+        }
+    }
 
     private val bounded = LibraryEndpointTransport { endpoint, parameters -> send(endpoint, parameters).response }
 
@@ -412,6 +566,8 @@ internal data class LibraryReaderConfig(
     val epochIntervalMillis: Long = 5 * 60_000,
     /** How often showing a list refreshes its rows' last access (LRU needs minutes, not frames). */
     val touchIntervalMillis: Long = 60_000,
+    /** The monotonic clock a `Retry-After` is measured on; a test passes its scheduler's. */
+    val monotonic: TimeSource.WithComparableMarks = TimeSource.Monotonic,
 ) {
     init {
         require(pageSize in 1..500)
@@ -619,6 +775,21 @@ internal sealed interface LibraryItem {
         val durationMilliseconds: Long?,
         val owner: String?,
         val artworkKey: String?,
+        val comment: String? = null,
+        /** Null when the server did not say; Navidrome omits a `false`. */
+        val isPublic: Boolean? = null,
+        /**
+         * Whether this account may edit it: the server said `readonly: false`, or — for a server that
+         * does not say — the account owns it, its [owner] compared ignoring case. Never true for
+         * another user's playlist (§18.6). REQUIREMENT on the shells, not yet met by any: show
+         * [owner], and present a playlist that is not editable as read-only — no edit affordance at
+         * all, never one that fails when used — so another user's playlist is recognisable as theirs.
+         */
+        val editable: Boolean = false,
+        /** Edits made on this device that the server has not yet confirmed are shown (§18.6). */
+        val pendingChanges: Boolean = false,
+        /** Created on this device and not yet on the server: its id is a local one, never sent. */
+        val local: Boolean = false,
     ) : LibraryItem
 
     data class Genre(override val rawId: String) : LibraryItem
@@ -680,6 +851,40 @@ internal fun interface LibraryMutationOverlay {
     }
 }
 
+/**
+ * Playlist editing (§18.6) implements this over `mutation_outbox`: pending creates, deletes, header
+ * and entry changes, overlaid on the playlist screens at publish time. Like [LibraryMutationOverlay]
+ * it is never written into the cache.
+ */
+internal interface LibraryPlaylistOverlay {
+    /** The id a playlist screen reads: a playlist created here resolves to its server id once known. */
+    fun resolve(rawId: String): String = rawId
+
+    /** Whether [rawId] names a playlist not yet created on the server — an id that is never sent. */
+    fun isLocal(rawId: String): Boolean = false
+
+    /** The playlist list with pending creates, deletes and header changes applied. */
+    fun overlayList(items: List<LibraryItem>): List<LibraryItem> = items
+
+    /**
+     * One playlist: its header and entries with pending changes applied. [entries] is null when the
+     * server's entries are not cached; the result's entries are null when still unknown.
+     */
+    fun overlayDetail(rawId: String, header: LibraryItem.Playlist?, entries: List<LibraryItem>?): PlaylistOverlayView =
+        PlaylistOverlayView(header, entries, deletedLocally = false)
+
+    companion object {
+        val None: LibraryPlaylistOverlay = object : LibraryPlaylistOverlay {}
+    }
+}
+
+internal data class PlaylistOverlayView(
+    val header: LibraryItem.Playlist?,
+    val entries: List<LibraryItem>?,
+    /** Deleted on this device: the screen says the playlist is gone before the server confirms it. */
+    val deletedLocally: Boolean,
+)
+
 /** R4 implements this over the `download` table: the tracks whose files are complete. */
 internal fun interface DownloadedTrackSource {
     fun downloadedTrackRawIds(serverId: String): Set<String>
@@ -706,6 +911,81 @@ internal fun Throwable.asReaderError(): DomainError = when (this) {
     is AuthenticatedEndpointFailure -> error
     else -> mapAccountConnectionFailure(this)
 }
+
+/**
+ * 401, 403 or 407 with no envelope: the server or a proxy in front of it refused ACCESS —
+ * credentials, a proxy's own authentication, or a block. Whether every other change would meet it
+ * too is not known from one request; [LibraryReader.pingAfterRefusal] asks.
+ */
+internal val DomainError.Server.HttpStatus.refusesAccess: Boolean get() = status == 401 || status == 403 || status == 407
+
+/**
+ * A refusal of ACCESS rather than of the change: credentials refused (envelope code 40 or 41, or a
+ * bare 401, which reads as `Auth.InvalidCredentials` whoever sent it), or a bare 403 or 407. Code 50
+ * (`Auth.Forbidden`) is not: it refuses this change for this user, and is a refusal.
+ */
+internal val DomainError.refusesAccess: Boolean
+    get() = (this is DomainError.Auth && this != DomainError.Auth.Forbidden) || (this is DomainError.Server.HttpStatus && refusesAccess)
+
+/**
+ * One outbox's run of 429s (§18.6 "Failures"). It begins with the first 429 that outbox meets for a
+ * change still queued — a 429 for one withdrawn or undone while its request was out begins nothing,
+ * though its flush met it and so it keeps a run going — and ends when a flush of that outbox sends
+ * something and meets no 429, when a flush finishes with nothing pending (defensive: every way a
+ * queue empties here already ends the run), or when the queue empties here ([end]) — never on one
+ * delivery, so a limiter that admits one request per window is one run: told once, its floor
+ * doubling throughout ([LibraryReader.noteBusy]).
+ */
+internal class BusyRun {
+    /** The 429s met in this run; 0 between runs. */
+    var streak: Int = 0
+        private set
+
+    fun met(): Int {
+        streak += 1
+        return streak
+    }
+
+    fun end() {
+        streak = 0
+    }
+
+    /** A flush of the outbox finished: [met429] this flush, having [sent] requests, with [pending] changes left. */
+    fun flushed(met429: Boolean, sent: Int, pending: Int) {
+        if (pending == 0 || (!met429 && sent > 0)) end()
+    }
+}
+
+/** The first wait after a 429, doubled for each further 429 of the run (§18.6 "Failures"). ASSUMED. */
+internal val LIBRARY_BUSY_FLOOR: Duration = 2.seconds
+
+/**
+ * The longest a flush waits after a 429, whatever `Retry-After` says (§18.6 "Failures"): a longer or
+ * absurd value is read as this. ASSUMED: asking again after five minutes costs one request.
+ */
+internal val LIBRARY_BUSY_CAP: Duration = 5.minutes
+
+/** The doublings after which the floor is past [LIBRARY_BUSY_CAP] anyway; bounds the shift. */
+private const val BUSY_MAX_DOUBLINGS = 16
+
+/** 413 or 414: the request was too large for the server or a proxy. The same request never fits. */
+internal val DomainError.Server.HttpStatus.tooLarge: Boolean get() = status == 413 || status == 414
+
+/**
+ * A gateway that could not reach the server — as unreachable as no answer at all: 502, 503 or 504,
+ * and the origin errors a CDN in front of the server answers with, 520 to 524 and 530 (OBSERVED
+ * 2026-09-24, each listed at
+ * https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/).
+ * Like any 5xx it proves nothing about whether the server applied the request ([provesNotApplied]).
+ */
+internal val DomainError.Server.HttpStatus.gatewayCannotReachServer: Boolean
+    get() = status in 502..504 || status in 520..524 || status == 530
+
+/**
+ * A 4xx refused the request before anything handled it; a 5xx may come from a gateway after the
+ * server applied it, so it proves nothing.
+ */
+internal val DomainError.Server.HttpStatus.provesNotApplied: Boolean get() = status in 400..499
 
 /** Subsonic code 70, "the requested data was not found". */
 internal fun DomainError.isNotFound(): Boolean =

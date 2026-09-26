@@ -265,6 +265,14 @@ internal data class CachePlaylistRecord(
     val durationMilliseconds: Long? = null,
     val owner: String? = null,
     val artworkKey: String? = null,
+    val comment: String? = null,
+    /** Navidrome omits `public` when it is false; null is "not stated". */
+    val isPublic: Boolean? = null,
+    /**
+     * The server's statement that this user may not edit the playlist (OpenSubsonic `readonly`).
+     * Null when the server did not say — never read as "editable" (spec §18.6).
+     */
+    val readonly: Boolean? = null,
 )
 
 /** Entities carried by one response, written with it in one transaction. */
@@ -582,6 +590,7 @@ internal class BoundSeenCache internal constructor(
                 serverId, playlist.rawId, playlist.name, playlist.songCount?.toLong(),
                 playlist.durationMilliseconds, playlist.owner, playlist.artworkKey,
                 stamp.fetchedAtWall, stamp.fetchedEpoch, stamp.issueSeq, now(),
+                playlist.comment, playlist.isPublic?.toLong(), playlist.readonly?.toLong(),
             )
             return true
         }
@@ -592,6 +601,9 @@ internal class BoundSeenCache internal constructor(
             duration_milliseconds = playlist.durationMilliseconds,
             owner = playlist.owner,
             artwork_key = playlist.artworkKey,
+            comment = playlist.comment,
+            is_public = playlist.isPublic?.toLong(),
+            readonly = playlist.readonly?.toLong(),
             fetched_at_wall = stamp.fetchedAtWall,
             fetched_epoch = stamp.fetchedEpoch,
             issue_seq = stamp.issueSeq,
@@ -1052,7 +1064,10 @@ internal class BoundSeenCache internal constructor(
     )
 
     private fun Cache_playlist.toCached() = CachedPlaylist(
-        CachePlaylistRecord(raw_id, name, song_count?.toInt(), duration_milliseconds, owner, artwork_key),
+        CachePlaylistRecord(
+            raw_id, name, song_count?.toInt(), duration_milliseconds, owner, artwork_key,
+            comment, is_public?.let { it == 1L }, readonly?.let { it == 1L },
+        ),
         CacheRowState(fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone == 1L),
         detailComplete = detail_complete == 1L,
     )
@@ -1164,4 +1179,6 @@ internal fun backfillSeenCacheNormalization(database: DulcetDatabase) {
 private fun SelectListAlbumRows.asTable() = Cache_album(server_id, raw_id, title, normalized_title, artist_name, artist_raw_id, year, genre, duration_milliseconds, song_count, artwork_key, starred, starred_at, user_rating, play_count, played, detail_complete, detail_issue_seq, detail_fetched_epoch, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone)
 private fun SelectListArtistRows.asTable() = Cache_artist(server_id, raw_id, name, normalized_name, album_count, artwork_key, starred, starred_at, user_rating, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone)
 private fun SelectListTrackRows.asTable() = Cache_track(server_id, raw_id, album_raw_id, album_ordinal, title, normalized_title, album_title, normalized_album_title, artist_name, artist_raw_id, disc_number, track_number, duration_milliseconds, source_container, artwork_key, starred, starred_at, user_rating, play_count, played, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone, metadata_missing)
-private fun SelectListPlaylistRows.asTable() = Cache_playlist(server_id, raw_id, name, song_count, duration_milliseconds, owner, artwork_key, detail_complete, detail_issue_seq, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone)
+private fun SelectListPlaylistRows.asTable() = Cache_playlist(server_id, raw_id, name, song_count, duration_milliseconds, owner, artwork_key, detail_complete, detail_issue_seq, fetched_at_wall, fetched_epoch, issue_seq, last_access_wall, gone, comment, is_public, readonly)
+
+private fun Boolean.toLong(): Long = if (this) 1L else 0L

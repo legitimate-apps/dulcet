@@ -11,8 +11,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlin.time.Duration
@@ -126,10 +126,27 @@ internal data class LibraryEndpointResponse(
      * it opportunistically as its total and never as its termination signal (spec §16.9, §16.12).
      */
     val totalCount: Int? = null,
+    /** The server's `Retry-After` header, raw; read only with an HTTP 429 (spec §18.6). */
+    val retryAfter: String? = null,
 )
 
 internal fun interface LibraryEndpointTransport {
     suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse
+
+    /**
+     * A request whose parameters may repeat a name, in order — playlist edits (spec §18.6). With
+     * [formPost] the parameters travel as a form body (the OpenSubsonic `formPost` extension). A
+     * transport that cannot repeat a parameter fails such a request; it never drops a value.
+     */
+    suspend fun requestRepeated(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): LibraryEndpointResponse {
+        val single = parameters.toMap()
+        check(single.size == parameters.size) { "this transport cannot repeat a request parameter" }
+        return request(endpoint, single)
+    }
 }
 
 /**
@@ -419,6 +436,21 @@ internal class KtorLibraryEndpointTransport(
             response.body.decodeToString(),
             response.redactedUrl,
             totalCount = response.headers.totalCount?.trim()?.toIntOrNull()?.takeIf { it >= 0 },
+            retryAfter = response.headers.retryAfter,
+        )
+    }
+
+    override suspend fun requestRepeated(
+        endpoint: String,
+        parameters: List<Pair<String, String>>,
+        formPost: Boolean,
+    ): LibraryEndpointResponse {
+        val response = client.requestRepeated(endpoint, parameters, formPost)
+        return LibraryEndpointResponse(
+            response.statusCode,
+            response.body.decodeToString(),
+            response.redactedUrl,
+            retryAfter = response.headers.retryAfter,
         )
     }
 
@@ -441,8 +473,21 @@ internal suspend fun LibraryEndpointTransport.checkedRequest(
     parameters: Map<String, String> = emptyMap(),
 ): String {
     val response = request(endpoint, parameters)
+    // A rate limit is named from the STATUS, whatever the body: the reference server's own limiter
+    // answers 429 with an envelope carrying only the generic code 0. Its `Retry-After` is honoured.
+    if (response.statusCode == 429) throw LibraryRequestFailure(DomainError.Server.Busy(parseRetryAfterSeconds(response.retryAfter)))
+    // An error status with no envelope is the server or a proxy refusing the HTTP request itself,
+    // and is named as such, never as a malformed answer (spec §18.6): a 401 as refused credentials,
+    // as playback names it; anything else — a 414 for a URL too long, a 502 from a gateway, a 403 or
+    // 407 from a proxy — by its status. An envelope, whatever the status, is judged as an envelope.
     val envelope = parseLibraryEnvelope(response.body)
-        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+        ?: throw LibraryRequestFailure(
+            when (response.statusCode) {
+                401 -> DomainError.Auth.InvalidCredentials
+                in 400..599 -> DomainError.Server.HttpStatus(response.statusCode)
+                else -> DomainError.Protocol.MalformedEnvelope
+            },
+        )
     if (envelope.status != "ok") {
         val error = envelope.payload["error"] as? JsonObject
         val code = error.int("code") ?: -1
@@ -796,7 +841,14 @@ private fun JsonObject.readerPlaylist(): CachePlaylistRecord = CachePlaylistReco
     durationMilliseconds = optionalDuration()?.inWholeMilliseconds,
     owner = string("owner"),
     artworkKey = optionalOpaqueId("coverArt"),
+    comment = string("comment"),
+    isPublic = readerBoolean("public"),
+    readonly = readerBoolean("readonly"),
 )
+
+/** A JSON boolean; a string or number spelling is not one (null: "not stated"). */
+private fun JsonObject.readerBoolean(name: String): Boolean? =
+    (get(name) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull
 
 private fun JsonObject.readerCredits(role: CreditRole): List<CacheCredit> =
     credit("reader", role).map { CacheCredit(it.role, it.name, it.id?.rawId) }

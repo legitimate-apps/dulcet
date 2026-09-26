@@ -203,6 +203,7 @@ internal fun DomainError.accountFailurePresentation(): AccountFailurePresentatio
     is DomainError.Server.Busy,
     is DomainError.Server.Known,
     is DomainError.Server.Unknown,
+    is DomainError.Server.HttpStatus,
     DomainError.Playback.NoPlayableSource,
     -> AccountFailurePresentation(
         R.string.error_server_title,

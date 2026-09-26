@@ -366,6 +366,7 @@ private fun allAccountPresentationErrors(): List<DomainError> = buildList {
     add(DomainError.Server.Busy(5.seconds))
     add(DomainError.Server.Known(40))
     add(DomainError.Server.Unknown(999))
+    add(DomainError.Server.HttpStatus(414))
     add(DomainError.Auth.InvalidCredentials)
     add(DomainError.Auth.TokenAuthUnsupported)
     add(DomainError.Auth.Forbidden)

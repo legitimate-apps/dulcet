@@ -162,6 +162,7 @@ private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentatio
     is DomainError.Server.Busy -> applePresentation("knownServerError")
     is DomainError.Server.Known -> applePresentation("knownServerError")
     is DomainError.Server.Unknown -> applePresentation("unknownServerError")
+    is DomainError.Server.HttpStatus -> applePresentation("unknownServerError")
     DomainError.Auth.InvalidCredentials -> applePresentation("invalidCredentials")
     DomainError.Auth.TokenAuthUnsupported -> applePresentation("tokenAuthenticationUnsupported")
     DomainError.Auth.Forbidden -> applePresentation("forbidden")
@@ -200,6 +201,7 @@ private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) 
     is DomainError.Server.Busy -> AppleAccountErrorKind.ServerKnown
     is DomainError.Server.Known -> AppleAccountErrorKind.ServerKnown
     is DomainError.Server.Unknown -> AppleAccountErrorKind.ServerUnknown
+    is DomainError.Server.HttpStatus -> AppleAccountErrorKind.ServerUnknown
     DomainError.Auth.InvalidCredentials -> AppleAccountErrorKind.AuthInvalidCredentials
     DomainError.Auth.TokenAuthUnsupported -> AppleAccountErrorKind.AuthTokenAuthUnsupported
     DomainError.Auth.Forbidden -> AppleAccountErrorKind.AuthForbidden

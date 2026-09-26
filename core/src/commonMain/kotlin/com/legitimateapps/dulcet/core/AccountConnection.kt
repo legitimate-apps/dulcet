@@ -189,6 +189,14 @@ public enum class CapabilityFeature {
     PlaybackStream,
     PlaybackScrobble,
     DownloadsOffline,
+
+    /**
+     * Writing a playlist's whole list — a reorder, an insert, or a mix of removals and additions
+     * (spec §18.6) — to a server that does not advertise `formPost`, when the one request it takes
+     * would not fit the query string a proxy can be assumed to accept. Appends and removals are sent
+     * in batches instead and never meet this.
+     */
+    PlaylistWholeListWrite,
 }
 
 /** Parsed protocol components retain no server-controlled source text. */
@@ -274,6 +282,26 @@ public sealed interface DomainError {
             val message: SuppressedServerText = SuppressedServerText,
             val redactedUrl: SuppressedServerUrl = SuppressedServerUrl,
         ) : Server
+
+        /**
+         * An HTTP error status (400–599) whose body is not a Subsonic envelope: the server or a proxy
+         * in front of it refused the HTTP request itself. 413 and 414 mean the request was too large;
+         * 502, 503 and 504 are a gateway that could not reach the server; 401, 403 and 407 refuse
+         * access (spec §18.6). Produced only by the library's one checked request path, which serves
+         * the library reader (browsing, playlists, favourites), the library sync, the catalog epoch's
+         * reads and the legacy browse alike; it names a bare 401 [Auth.InvalidCredentials] and any 429
+         * [Busy] instead, as playback does, and a 403 stays a status there, because [Auth.Forbidden]
+         * is envelope code 50 — this user may not make this change — which an edit treats as a
+         * refusal, not a hold.
+         *
+         * The other paths name a bare status their own way: playback maps 401, 403 and 429 to
+         * [Auth.InvalidCredentials], [Auth.Forbidden] and [Busy], and any other to [Unknown] with the
+         * status as its code; artwork reports a 404 as unavailable and any other as [Unknown];
+         * scrobble maps 429 to [Busy] and reports any other status with no envelope as
+         * `Protocol.MalformedEnvelope` — [Unknown] only for an envelope without an error code at an
+         * error status; search reports it as `Protocol.MalformedEnvelope`.
+         */
+        public data class HttpStatus(val status: Int) : Server
     }
 
     public sealed interface Auth : DomainError {
@@ -325,6 +353,7 @@ private val DomainError.diagnosticKind: String
         is DomainError.Server.Busy -> "Server.Busy"
         is DomainError.Server.Known -> "Server.Known"
         is DomainError.Server.Unknown -> "Server.Unknown"
+        is DomainError.Server.HttpStatus -> "Server.HttpStatus"
         DomainError.Auth.InvalidCredentials -> "Auth.InvalidCredentials"
         DomainError.Auth.TokenAuthUnsupported -> "Auth.TokenAuthUnsupported"
         DomainError.Auth.Forbidden -> "Auth.Forbidden"
@@ -355,6 +384,7 @@ public fun DomainError.toDiagnosticJson(): String {
             }
             is DomainError.Server.Known -> put("code", JsonPrimitive(error.code))
             is DomainError.Server.Unknown -> put("code", JsonPrimitive(error.code))
+            is DomainError.Server.HttpStatus -> put("status", JsonPrimitive(error.status))
             DomainError.Transport.Unreachable,
             DomainError.Transport.Timeout,
             DomainError.Transport.Cancelled,

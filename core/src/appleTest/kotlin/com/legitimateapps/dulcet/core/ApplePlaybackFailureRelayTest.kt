@@ -57,6 +57,19 @@ class ApplePlaybackFailureRelayTest {
         }
     }
 
+    /**
+     * A library path's bare HTTP status is spelled as playback spells one, Unknown with the status as
+     * its code, so its owner survives the round trip even though its case does not.
+     */
+    @Test
+    fun aBareHttpStatusRelaysAsPlaybacksOwnSpellingOfOne() {
+        val status = DomainError.Server.HttpStatus(502)
+        assertEquals("serverUnknown:502", status.applePlaybackErrorKind())
+        val back = swiftCoreName(status.applePlaybackErrorKind()).toClosedPlaybackDomainError()
+        assertEquals(DomainError.Server.Unknown(502), back)
+        assertEquals(playbackFailureOwner(status), playbackFailureOwner(back))
+    }
+
     /** Before this, every Server code and an unsupported capability read as "no playable source". */
     @Test
     fun aServerRefusalIsNoLongerRelayedAsTheTracksOwnFailure() {
@@ -205,6 +218,7 @@ class ApplePlaybackFailureRelayTest {
             DomainError.Server.Known(70),
             DomainError.Server.Unknown(0),
             DomainError.Server.Unknown(404),
+            DomainError.Server.HttpStatus(502),
             DomainError.Auth.InvalidCredentials,
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,
