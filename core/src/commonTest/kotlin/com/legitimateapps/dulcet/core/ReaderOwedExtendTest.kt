@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 /**
  * Owed extends — a "load more" the reader could not make — after the round-8 review (§16.14, §28
- * item 27). An owed extend leaves the owed list only once it is made or proven unneeded: never on a
+ * item 29). An owed extend leaves the owed list only once it is made or proven unneeded: never on a
  * failed read, never on a window this session has not yet read live. A reconnect that makes one ends
  * `live`. It is never made twice, never owed forever, and never made for a closed screen. The
  * reviewer's probes B1–B5, as tests.

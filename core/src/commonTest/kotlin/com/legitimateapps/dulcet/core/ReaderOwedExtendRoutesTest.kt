@@ -9,7 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Owed extends after the round-9 review (§16.14, §28 item 27): a screen never says `live` while a
+ * Owed extends after the round-9 review (§16.14, §28 item 29): a screen never says `live` while a
  * "load more" it owes is still to be made, whatever route left it owed. A page a rebase discarded
  * is read once more at once; each extend keeps its own failure; a person's own "load more" that
  * fails online is owed like one asked for offline; and a window whose stamp keeps moving costs no

@@ -58,8 +58,9 @@ internal class LibraryReader(
     internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
     /**
      * Observed endpoint health for this account (§10.4). The reader holds it because the reader
-     * owns [online], and the breaker is reset on the one offline-to-online transition, whichever
-     * entry point takes it ([setOnline] or [reconnect]).
+     * owns [online], and the breaker is reset on the one offline-to-online transition: a
+     * reconnect's, once its epoch read succeeds — whether the platform's [setOnline] requested it
+     * or [reconnect] was called.
      */
     internal val breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
 ) {
@@ -118,7 +119,8 @@ internal class LibraryReader(
     /**
      * The only way [online] changes. Coming back online resets [breaker]: failures observed before
      * the network went away say nothing about an endpoint after it came back (§10.4). The one
-     * offline-to-online transition is a reconnect's, whichever entry point requested it.
+     * offline-to-online transition is a reconnect's, whichever entry point requested it; a
+     * reconnect that fails leaves the reader offline and the breaker as it was.
      */
     private fun changeOnline(value: Boolean) {
         if (value && !connected) breaker.reset()
@@ -689,8 +691,8 @@ internal class LibraryReader(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
         maxBodyBytes: Int? = null,
-        issued: (Long) -> Unit = {},
         whileOffline: Boolean = false,
+        issued: (Long) -> Unit = {},
     ): SentResponse =
         permits.withPermit {
             issue(whileOffline, issued) {
@@ -707,7 +709,7 @@ internal class LibraryReader(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
         whileOffline: Boolean = false,
-    ): SentResponse = send(endpoint, parameters, whileOffline).requireOk(endpoint, parameters)
+    ): SentResponse = send(endpoint, parameters, whileOffline = whileOffline).requireOk(endpoint, parameters)
 
     /** [sendChecked] for parameters that repeat a name, in order (playlist edits, §18.6). */
     internal suspend fun sendRepeatedChecked(

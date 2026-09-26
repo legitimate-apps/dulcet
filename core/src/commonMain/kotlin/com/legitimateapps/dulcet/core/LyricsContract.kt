@@ -83,6 +83,11 @@ public class LyricsControlSession private constructor(
         lyrics.cached(LyricsTrack(trackRawId, null, null)).toControl(transport.sent.drop(before))
     }
 
+    /**
+     * The reachability report (§16.14). Unreachable takes the reader offline at once; reachable
+     * while offline requests a reconnect and returns without waiting for it — the reader is online
+     * again only once that reconnect has read the epoch, and those reads are not a lyrics call's.
+     */
     public suspend fun setOnline(reachable: Boolean): Unit = withContext(dispatcher) {
         session.setOnline(reachable)
     }
@@ -128,7 +133,12 @@ public class LyricsControlSession private constructor(
                     )
                     // This session reads lyrics and edits no playlist, so whether the server takes
                     // `formPost` is never consulted; false is the value that sends nothing new.
-                    val session = LibraryReaderSession(database.primary.database, cache, transport, scope, formPost = false)
+                    // It is not in the foreground, as the playlist contract's session is not: nothing
+                    // here is shown to a person, and in the background nothing reads on a timer
+                    // (§16.14), so every endpoint a call records is one that call caused.
+                    val session = LibraryReaderSession(
+                        database.primary.database, cache, transport, scope, formPost = false, foreground = false,
+                    )
                     val lyrics = session.lyrics(request.capabilities, request.preferredLanguages)
                     LyricsControlSession(database, dispatcher, scope, transport, session, lyrics)
                 }
