@@ -141,7 +141,7 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(24.dp))
                     TvProgress(state)
-                    if (state.error != null) Text("Playback failed. Check your connection and choose the song again.",
+                    if (state.error != null) Text("Playback failed. Check your connection, then press Play to try again.",
                         color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
                     Spacer(Modifier.height(24.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {

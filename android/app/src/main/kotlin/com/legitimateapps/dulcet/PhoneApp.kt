@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
@@ -107,9 +108,6 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     val showRequests by requests.show.collectAsState()
     LaunchedEffect(showRequests) { if (showRequests > 0) playerOpen = true }
 
-    BackHandler(enabled = playerOpen) { playerOpen = false }
-    BackHandler(enabled = !playerOpen && routes.isNotEmpty()) { routes.removeAt(routes.lastIndex) }
-
     val actions = PhoneActions(
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
@@ -119,7 +117,8 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     )
     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
 
-    PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it }, tabs = {
+    PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, tabs = {
         NavigationBar {
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
@@ -153,7 +152,9 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
 
 /**
  * The phone's frame: the page above the now-playing bar and the tabs, the full player over all of
- * them while [playerOpen], and the skip notice (spec §12.12 rule 5) on whichever is in front.
+ * them while [playerOpen] and there is playback to show, and the skip notice (spec §12.12 rule 5)
+ * on whichever is in front. Back closes the player while it covers the page, and otherwise goes
+ * [back] on the page, when the page has somewhere to go back to.
  */
 @Composable
 internal fun PhoneFrame(
@@ -162,16 +163,25 @@ internal fun PhoneFrame(
     playback: AndroidPlaybackController?,
     playerOpen: Boolean,
     setPlayerOpen: (Boolean) -> Unit,
+    back: (() -> Unit)? = null,
     tabs: @Composable () -> Unit,
     page: @Composable () -> Unit,
 ) {
+    // The player covers the page only when it is asked open and there is playback to show; a flag
+    // left open with none covers nothing, so Back must not be spent closing it.
     val covered = playerOpen && playback != null
+    BackHandler(enabled = !covered && back != null) { back?.invoke() }
+    BackHandler(enabled = covered) { setPlayerOpen(false) }
+    // The player is in front from the moment it is asked open until its exit slide has finished.
+    val player = remember { MutableTransitionState(covered) }.apply { targetState = covered }
+    val inFront = player.currentState || player.targetState
     Box(Modifier.fillMaxSize()) {
         Scaffold(
-            // While the full player covers them, a screen reader must reach nothing of the page,
-            // the now-playing bar or the tabs: an accessibility action bypasses touch hit testing,
-            // so a hidden row it reached would start a queue the person cannot see.
-            modifier = if (covered) Modifier.clearAndSetSemantics {} else Modifier,
+            // While the full player covers them -- entering, open, or sliding away -- a screen
+            // reader must reach nothing of the page, the now-playing bar or the tabs, so there is
+            // never a second layer to reach: an accessibility action bypasses touch hit testing,
+            // and a hidden row it reached would start a queue the person cannot see.
+            modifier = if (inFront) Modifier.clearAndSetSemantics {} else Modifier,
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
                 Column {
@@ -184,11 +194,11 @@ internal fun PhoneFrame(
                 page()
                 // Inside the content region, so it ends above the now-playing bar and the tabs and
                 // never covers them; the full player shows it itself while it is open.
-                PhoneSkipNotice(playbackState, visible = !playerOpen)
+                PhoneSkipNotice(playbackState, visible = !covered)
             }
         }
         AnimatedVisibility(
-            visible = covered,
+            visibleState = player,
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -59,6 +60,7 @@ import org.robolectric.annotation.GraphicsMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -259,6 +261,104 @@ class PhoneSkipNoticePlacementTest {
         assertEquals(1, beneath, "The control requires an accessibility click to reach the page once the player closes")
     }
 
+    /**
+     * Back closes the player only while it covers the page. A player flagged open with no playback
+     * to show covers nothing, so Back goes back on the page, or -- with nowhere to go back to there
+     * -- reaches the system, instead of being spent closing a player nobody can see.
+     */
+    @Test fun backClosesThePlayerOnlyWhileItCoversThePage() {
+        var open by mutableStateOf(true)
+        var playback by mutableStateOf<AndroidPlaybackController?>(null)
+        var pageHasBack by mutableStateOf(true)
+        val asked = mutableListOf<Boolean>()
+        var pageBacks = 0
+        var systemBacks = 0
+        // Registered before the frame composes, so the frame's handlers are consulted first.
+        compose.runOnUiThread {
+            compose.activity.onBackPressedDispatcher.addCallback(object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() { systemBacks++ }
+            })
+        }
+        compose.setContent {
+            MaterialTheme {
+                PhoneFrame(account, playing(), playback, open, { asked += it; open = it },
+                    back = if (pageHasBack) { { pageBacks++ } } else null,
+                    tabs = { Box(Modifier.fillMaxWidth().height(80.dp)) }) { Box(Modifier.fillMaxSize()) }
+            }
+        }
+        fun back() {
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+        }
+        compose.waitForIdle()
+        assertEquals(emptyList(), compose.onAllNodes(hasTestTag("player.full"), useUnmergedTree = true).fetchSemanticsNodes(),
+            "The control requires no player drawn: open is flagged, but there is no playback")
+        back()
+        assertEquals(1, pageBacks, "With no player covering it, Back goes back on the page")
+        assertEquals(emptyList(), asked, "Back must not be spent closing a player that covers nothing")
+        pageHasBack = false
+        compose.waitForIdle()
+        back()
+        assertEquals(1, systemBacks, "With nowhere to go back to on the page, Back reaches the system")
+        assertEquals(emptyList(), asked)
+
+        playback = controller
+        pageHasBack = true
+        compose.waitForIdle()
+        assertEquals(1, compose.onAllNodes(hasTestTag("player.full"), useUnmergedTree = true).fetchSemanticsNodes().size,
+            "The control requires the player drawn once there is playback")
+        back()
+        assertEquals(listOf(false), asked, "While the player covers the page, Back closes it")
+        assertEquals(1, pageBacks, "...and does not also go back on the page beneath")
+        assertEquals(1, systemBacks)
+    }
+
+    /**
+     * The page is hidden from a screen reader until the player's exit slide has finished: while the
+     * player is still on screen there is only one layer to reach. Once it has gone, the page is
+     * reachable again.
+     */
+    @Test fun thePageStaysHiddenFromAScreenReaderUntilThePlayerHasSlidAway() {
+        val manager = context.getSystemService(AccessibilityManager::class.java)
+        shadowOf(manager).setEnabled(true)
+        shadowOf(manager).setTouchExplorationEnabled(true)
+        var open by mutableStateOf(false)
+        compose.setContent {
+            MaterialTheme {
+                PhoneFrame(account, playing(), controller, open, { open = it },
+                    tabs = { Box(Modifier.fillMaxWidth().height(80.dp)) }) {
+                    Box(Modifier.fillMaxSize().testTag("page.row").semantics { contentDescription = "Library row" }
+                        .clickable { })
+                }
+            }
+        }
+        compose.waitForIdle()
+        val provider = composeView(compose.activity.window.decorView).accessibilityNodeProvider
+        val row = compose.onAllNodes(hasTestTag("page.row"), useUnmergedTree = true).fetchSemanticsNodes().single().id
+        fun reachable() = provider.createAccessibilityNodeInfo(row)?.isVisibleToUser == true
+        assertTrue(reachable(), "The control requires the row reachable while the player is closed")
+        open = true
+        compose.waitForIdle()
+        assertFalse(reachable(), "The control requires the row hidden while the player is open")
+
+        compose.mainClock.autoAdvance = false
+        open = false
+        val window = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        fun player() = compose.onAllNodes(hasTestTag("player.full"), useUnmergedTree = true).fetchSemanticsNodes().singleOrNull()
+        var frames = 0
+        while (frames < 60 && (player()?.boundsInRoot?.top ?: 0f) <= window.top) { compose.mainClock.advanceTimeByFrame(); frames++ }
+        val sliding = assertNotNull(player(), "The control requires the player still on screen, sliding away")
+        assertTrue(sliding.boundsInRoot.top > window.top && sliding.boundsInRoot.top < window.bottom,
+            "The control requires the player part way through its slide: ${sliding.boundsInRoot} after $frames frames")
+        assertFalse(reachable(), "While the player is still on screen the page beneath must not be reachable")
+
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(emptyList(), compose.onAllNodes(hasTestTag("player.full"), useUnmergedTree = true).fetchSemanticsNodes(),
+            "The control requires the slide finished")
+        assertTrue(reachable(), "Once the player has gone, the page is reachable again")
+    }
+
     private fun inside(node: SemanticsNode, tag: String) =
         generateSequence(node.parent) { it.parent }.any { it.config.getOrNull(SemanticsProperties.TestTag) == tag }
 
@@ -302,6 +402,36 @@ class SkipNoticeMeasuredTextTest {
         assertTrue(heights[1] > heights[0], "The control requires the text to grow up to the cap: $heights")
         assertEquals(heights[1], heights[2], "The text must stop growing at 1.5x, not reach 2x: $heights")
         assertEquals(heights[1], heights[3], "The text must stop growing at 1.5x, not reach 3x: $heights")
+    }
+
+    /**
+     * A region narrower than 240 dp keeps its width for the words: 8 dp margins instead of 16, and
+     * no glyph -- measured from where the card sits in a 200 dp and a 300 dp region side by side.
+     */
+    @Test fun aRegionNarrowerThan240DpTightensTheMargins() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            MaterialTheme {
+                Column {
+                    for ((tag, width) in listOf("region.narrow" to 200, "region.wide" to 300)) {
+                        SkipNoticeRegion(AndroidSkipNotice(1, "Unplayable Probe", now), true,
+                            MaterialTheme.colorScheme.inverseSurface, MaterialTheme.colorScheme.inverseOnSurface,
+                            MaterialTheme.typography.bodyMedium, Modifier.width(width.dp).height(300.dp).testTag(tag)) { now }
+                    }
+                }
+            }
+        }
+        compose.mainClock.advanceTimeByFrame(); compose.mainClock.advanceTimeByFrame()
+        val density = RuntimeEnvironment.getApplication().resources.displayMetrics.density
+        val cards = compose.onAllNodes(hasTestTag(SKIP_NOTICE_TAG)).fetchSemanticsNodes().map { it.boundsInRoot }
+        assertEquals(2, cards.size, "The control requires two notices")
+        val insets = listOf("region.narrow", "region.wide").mapIndexed { i, tag ->
+            val region = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(region.contains(cards[i]), "The control requires each card inside its own region")
+            listOf(cards[i].left - region.left, region.right - cards[i].right, region.bottom - cards[i].bottom).map { it / density }
+        }
+        insets[0].forEach { assertEquals(8f, it, 0.5f, "A region under 240 dp keeps 8 dp margins: ${insets[0]}") }
+        insets[1].forEach { assertEquals(16f, it, 0.5f, "The control requires 16 dp margins in a 300 dp region: ${insets[1]}") }
     }
 
     /** The sentence naming the track gives way when its card and margin would need more than a third of the region. */

@@ -204,14 +204,19 @@ public class AndroidPlaybackController internal constructor(
             val transition = queue.recordPlaybackEvent(event)
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
-            // The engine's attempt is over once it ends or the core moves on from it -- a natural
-            // end, or a skip past its failure -- and the controller drops its plan. While the next
-            // entry resolves, nothing then seeks or restarts that attempt: seeks from the app and
-            // the media session are refused, restart is not offered, Previous moves to the entry
-            // before instead of seeking a track that is over, and Play takes the branch for an
-            // entry still resolving, whose report begins the pass (spec §12.12 rule 3). Pause
-            // still reaches the engine, so it stops asking to play.
-            if (event is PlaybackEngineEvent.EndedNaturally || transition.startDirective != null) activePlan = null
+            // The engine's attempt is over once it ends, fails, or the core moves on from it, and
+            // the controller drops its plan. Nothing then seeks or restarts that attempt: seeks
+            // from the app and the media session are refused, restart is not offered, and
+            // Previous moves to the entry before instead of seeking a track that is over. While
+            // the next entry resolves, Play takes the branch for an entry still resolving, whose
+            // report begins the pass (spec §12.12 rule 3); Pause still reaches the engine, so it
+            // stops asking to play.
+            val failed = event is PlaybackEngineEvent.FailedBeforeStart || event is PlaybackEngineEvent.FailedAfterPartial
+            if (event is PlaybackEngineEvent.EndedNaturally || failed || transition.startDirective != null) activePlan = null
+            // A failure the core stops on -- a connection failure, not the track's own -- leaves
+            // the entry selected and not playing, so the app and the system offer Play, and Play
+            // begins a new attempt for it (a retry) instead of addressing the failed one.
+            if (failed && transition.startDirective == null) wantsPlay = false
             publish()
             if (event is PlaybackEngineEvent.Ready) {
                 pendingResume?.let { position ->
@@ -336,8 +341,8 @@ public class AndroidPlaybackController internal constructor(
             if (refuseForeignQueue()) return
             wantsPlay = true
             recordPlayRequested()
-            // The engine holds nothing -- after Stop, or once the queue has finished -- so Play
-            // restarts the selected entry. The Play reported above began a new pass; a finished
+            // The engine holds nothing live -- after Stop, after a failure the core stopped on, or
+            // once the queue has finished -- so Play restarts the selected entry as a new attempt. The Play reported above began a new pass; a finished
             // queue has no session to report it on, and its natural end already began one.
             transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
         } else { wantsPlay = true; recordPlayRequested(); command(PlaybackCommand.Play(id())) }
@@ -364,7 +369,10 @@ public class AndroidPlaybackController internal constructor(
         if (!live()) return
         if (wantsPlay && queue.snapshot().currentSession != null) pause() else play()
     }
-    /** Seeks the attempt in progress. With none -- one resolving, or one that is over -- there is nothing to seek. */
+    /**
+     * Seeks the attempt in progress. With none there is nothing to seek: an entry still resolving,
+     * or an attempt that is over -- ended, failed, or moved past by a skip.
+     */
     public fun seek(positionMilliseconds: Long) {
         if (!live() || activePlan == null) return
         command(PlaybackCommand.Seek(id(), positionMilliseconds.coerceAtLeast(0).milliseconds))
@@ -614,6 +622,8 @@ public class AndroidPlaybackController internal constructor(
             val transition = queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(directive.attemptId, error))
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
+            // Stopped on the entry, as for an engine's connection failure: Play retries it.
+            if (transition.startDirective == null) wantsPlay = false
             publish()
             transition.startDirective?.let { start(it) }
         } else publish()

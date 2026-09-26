@@ -414,6 +414,72 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * A connection failure stops on the entry; the attempt is over. Nothing seeks it, the app and
+     * the system both offer Play, and Play -- the app's, or the system's through Media3's
+     * play-button handling -- begins a new attempt for the same entry instead of leaving the
+     * player failed.
+     */
+    @Test fun afterAConnectionFailureNothingSeeksItAndPlayRetriesTheEntry() {
+        for (path in listOf("app", "system")) {
+            Fixture().use { f ->
+                f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                assertTrue(f.controller.state.value.playWhenReady, "$path: the control requires the entry asked to play")
+                f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+                val failed = f.controller.state.value
+                assertEquals(DomainError.Transport.Unreachable, failed.error, "$path: the control requires the failure line")
+                assertEquals(listOf("t1"), f.prepared.map { it.itemId.rawId }, "$path: the control requires no skip")
+                assertFalse(failed.playWhenReady, "$path: the app must offer Play, not Pause, once the attempt has failed")
+                assertFalse(failed.canRestart, "$path: a failed attempt has nothing to restart")
+                f.controller.seek(1_000)
+                f.controller.sessionPlayer.seekTo(2_000)
+                f.controller.sessionPlayer.seekToDefaultPosition()
+                assertEquals(emptyList(), f.probe.seekCommands, "$path: no seek may reach the failed attempt")
+                if (path == "app") f.controller.togglePlayPause()
+                else {
+                    assertTrue(androidx.media3.common.util.Util.shouldShowPlayButton(f.controller.sessionPlayer),
+                        "$path: the control requires the system to offer Play")
+                    assertTrue(androidx.media3.common.util.Util.handlePlayButtonAction(f.controller.sessionPlayer),
+                        "$path: the control requires Media3 to have acted on Play")
+                }
+                assertEquals(listOf("t1", "t1"), f.prepared.map { it.itemId.rawId }, "$path: Play begins a new attempt for the entry")
+                assertNotEquals(f.prepared[0].attemptId, f.prepared[1].attemptId, "$path: a new attempt, not the failed one")
+                val retried = f.controller.state.value
+                assertNull(retried.error, "$path: the player must not stay failed")
+                assertTrue(retried.playWhenReady, "$path: the retry plays")
+                assertEquals(0, retried.currentIndex, "$path: the same entry")
+                assertEquals(emptyList(), f.probe.seekCommands, "$path: the retry seeks nothing")
+            }
+        }
+    }
+
+    /**
+     * A connection failure while the entry is still being resolved, before the engine has it, stops
+     * on the entry as an engine's would: the app offers Play, and Play resolves the entry again.
+     */
+    @Test fun aConnectionFailureBeforeTheEngineHasTheEntryOffersPlayAndPlayRetriesIt() {
+        var attempts = 0
+        Fixture(resolve = { r ->
+            if (r.itemId.rawId == "t1" && attempts++ == 0) PlaybackResolutionResult.Failed(DomainError.Transport.Unreachable)
+            else resolved(r)
+        }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            val failed = f.controller.state.value
+            assertEquals(1, attempts, "The control requires the one failed resolution")
+            assertEquals(DomainError.Transport.Unreachable, failed.error, "The control requires the failure line")
+            assertEquals(emptyList(), f.prepared.map { it.itemId.rawId }, "The control requires nothing prepared and no skip")
+            assertEquals(0, failed.currentIndex)
+            assertFalse(failed.playWhenReady, "The app must offer Play, not Pause, once the start has failed")
+            f.controller.togglePlayPause()
+            assertEquals(2, attempts, "Play resolves the entry again")
+            assertEquals(listOf("t1"), f.prepared.map { it.itemId.rawId }, "Play begins a new attempt for the same entry")
+            assertNull(f.controller.state.value.error, "The player must not stay failed")
+            assertTrue(f.controller.state.value.playWhenReady, "The retry plays")
+        }
+    }
+
     @Test fun aResolutionFailureThatIsTheTracksOwnIsSkippedToo() {
         Fixture(resolve = { r ->
             if (r.itemId.rawId == "t1") PlaybackResolutionResult.Failed(DomainError.Server.Known(70)) else resolved(r)
@@ -655,6 +721,11 @@ class AndroidPlaybackControllerTest {
             f.probe.state = androidx.media3.common.Player.STATE_ENDED
             f.probe.events()
             assertNull(f.controller.state.value.playbackSessionId, "The control requires the queue to have ended")
+            // Media3 resumes a session through its media-item commands only when both are offered;
+            // with neither, its Play is the play-button handling below and nothing else.
+            val commands = f.controller.sessionPlayer.availableCommands
+            assertFalse(commands.contains(androidx.media3.common.Player.COMMAND_SET_MEDIA_ITEM))
+            assertFalse(commands.contains(androidx.media3.common.Player.COMMAND_CHANGE_MEDIA_ITEMS))
             assertTrue(androidx.media3.common.util.Util.shouldShowPlayButton(f.controller.sessionPlayer),
                 "The control requires the system to offer Play")
             assertTrue(androidx.media3.common.util.Util.handlePlayButtonAction(f.controller.sessionPlayer),

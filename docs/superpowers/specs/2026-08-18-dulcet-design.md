@@ -1933,7 +1933,8 @@ It now keeps the whole contract, as the Apple shell does:
   row, so a third of it is measured with the page's title and search field included, where Apple's
   is the height between the page's navigation bar and the now-playing bar; the notice is drawn at its
   bottom and can lie over the page's scrolling rows, as a snackbar does, never over the bar or the
-  tabs. **In the full player and on TV the region is the cover art**, and the notice lies along the
+  tabs. **In the full player and on TV the region is the cover art** -- in the phone's player, a cover
+  large enough to host it, and otherwise a banner beneath the player's header (below) -- and the notice lies along the
   cover's bottom edge, where Apple draws it along the player's own bottom edge. On Android that edge
   holds controls: **OBSERVED** (Robolectric native graphics, 2026-09-26) on a 360 × 640 dp phone the
   bottom-edge notice (y 564-624) covered Shuffle, Previous, Play/Pause and Next, and on TV with three
@@ -1944,27 +1945,65 @@ It now keeps the whole contract, as the Apple shell does:
   y 285-345 on the drawn cover, 129 dp above the nearest control; on TV at y 394-434 inside the
   cover (58-418 × 90-450), clear of the list at x 466. A region narrower than 240 dp -- a cover in a
   small or split-screen window -- draws the card with 8 dp margins, no glyph and 12/14 of the text
-  size, so the words keep the width.
+  size, so the words keep the width; so does the player's banner (below) at any width.
   **The full player fits the window it is given.** The phone app locks no orientation and runs in
   split screen. **OBSERVED** (Robolectric native graphics, 2026-09-26): the stacked layout measured
   its full-width cover first, so in a 640 × 360 or 1280 × 800 landscape window, a 360 × 320 split
-  and a 320 × 480 portrait window the transport row measured 0 × 0, and in landscape the notice on
-  the cover was drawn below the window. The player now lays itself out for its window: taller than
-  wide, stacked, with the controls beneath the cover measured first so the cover shrinks rather
-  than squeezing them (unchanged where the full-width cover fits); wider than tall, the cover beside
-  the title, scrubber and transport, or, when the side beside the cover is narrower than the
-  transport's compact 256 dp, the transport across the window beneath both. The transport is
-  compact (48 dp skips, a 64 dp Play) when its row is narrower than its full 304 dp. In every one
-  of those windows each control is whole and inside the window, none overlaps another or the
-  cover, and the notice lies whole on the drawn cover over no control.
+  and a 320 × 480 portrait window the transport row measured 0 × 0; a first repair still let the
+  title, artist and error card push the transport out at 640 × 360 with twice the text size and the
+  error card showing, shrank the cover to 36 dp under a notice taking more than half of it, and
+  left Repeat 36 dp wide in a 300 × 560 window. The player now shares its height in a fixed order:
+  the header and the controls -- scrubber and transport, which never shrink; the title's line; the
+  notice's banner, when the notice is not on the cover; the error card's first 72 dp; the cover, up
+  to 96 dp; the rest of the error card; the artist; and then the cover again, up to its width. The
+  title and artist, and the error card, each scroll in their own region when cut short. A cover
+  under 48 dp is not drawn and its height goes to the error card and the artist, so the cover is
+  absent only when the banner or the error card has taken its room. Taller than wide, the player is
+  stacked; wider than tall, the cover is beside the title, scrubber and transport, or, when the side
+  beside the cover is narrower than the transport's compact 256 dp or too short for the controls,
+  beside the title with the scrubber and transport across the window beneath both. The transport is
+  compact (48 dp skips, a 64 dp Play) when its row is narrower than its full 304 dp or the window is
+  shorter than 480 dp, and every control's touch target is at least 48 dp. The side padding of a
+  stacked player narrows from 28 dp to 8 dp so the compact transport fits a window 272 dp wide.
+  **The notice lies on the cover only when the cover is at least 160 dp and the card with its
+  margin takes at most the lower half of the cover as drawn** (`SkipNoticeCard`, the region's own measurement,
+  so the layout and the region cannot disagree). Otherwise it is a full-width banner directly
+  beneath the header and above the title, which takes its height from the cover, pushes the cover
+  and the title down rather than covering them, and covers no control; it is drawn dense -- no
+  glyph, 8 dp margins, 12/14 of the text size -- and names the track when that takes no more lines
+  than the shorter sentence. That is where Material Design places a banner: at the top of the
+  screen below the top app bar, pushing content down when it shares the content's elevation
+  (https://m2.material.io/components/banners); the player's header is its top bar. The choice is
+  made on the layout without the banner, so the height the banner takes cannot move the notice
+  back onto a cover it just shrank. **What is tested** (`PhonePlayerWindowSizesTest`): 20 windows
+  -- 360 × 640, 412 × 915, 480 × 800, 320 × 480, 300 × 560, 280 × 653, 800 × 1280, 673 × 841,
+  400 × 420, 411 × 440, 316 × 360, 640 × 360, 915 × 412, 841 × 673, 960 × 600, 1280 × 800,
+  1920 × 1080, 360 × 320, 568 × 320 and 1024 × 768 dp -- each at text scale 0.85 (Android's smallest), 1
+  and 2, each with and without the error card, 120 cells, paused with the notice showing. In every cell each control is
+  whole, inside the window and at least a 48 dp touch target (the scrubber at least 120 × 44 dp);
+  no two controls overlap and no text overlaps a control; the title's line and the position are
+  whole; the error card, when there is one, is shown, whole or in a region that scrolls; the cover
+  overlaps no control, is at least 48 dp, and is absent only when the banner or the error card has
+  taken its room; the cover is above the title in a window taller than wide and beside it in one
+  wider than tall; and the notice is whole, at least 32 × 120 dp, over no control and no text, and
+  either on a cover of at least 160 dp, the card and its margin taking at most the lower half of it
+  as drawn, or in the banner beneath
+  the header, above the title and clear of the cover, and a cover of 240 dp or more always hosts
+  it. Nothing is claimed for windows outside that grid, for text scales other than 0.85, 1 and 2, or for
+  a device's own non-linear font scaling (the test scales text linearly, the harsher case).
   The full player's root blocks touches from reaching the pages beneath it with a pointer handler
   rather than `clickable`, because a clickable merges its descendants: the notice was part of the
   player's one label, and a screen reader could not reach it on its own. **The pages beneath it are
-  hidden from a screen reader while it is open** (`clearAndSetSemantics` on the frame's scaffold):
+  hidden from a screen reader while it is in front** (`clearAndSetSemantics` on the frame's
+  scaffold) -- from the moment it is asked open until its exit slide has finished, so there is never
+  a second layer to reach:
   the old clickable root had covered them, and without it the accessibility layer still exposed the
   page's rows, the now-playing bar and the tabs beneath the player, and an accessibility click
-  activated a row the person could not see. A skip clears the failure line: the next entry's
-  preparing state follows.
+  activated a row the person could not see. The player covers the page only when it is asked open
+  and there is playback to show; Back closes it only then, and otherwise goes back on the page, or
+  reaches the system. Before, a player flagged open with no playback -- before the playback service
+  is bound -- spent Back closing a player nobody could see. A skip clears the failure line: the
+  next entry's preparing state follows.
 - **Whose failure it is** comes from the same `playbackFailureOwner`. Two Android mappings were
   wrong for it and are corrected: Media3's decoding failures (`ERROR_CODE_DECODING_FAILED`,
   `DECODER_INIT_FAILED`, `DECODING_FORMAT_UNSUPPORTED`, `DECODING_FORMAT_EXCEEDS_CAPABILITIES`) crossed
@@ -1995,7 +2034,12 @@ It now keeps the whole contract, as the Apple shell does:
   that attempt's plan, so while the next entry resolves Play takes the resolving branch, and a skip
   after a failure before the engine had the entry leaves the engine holding nothing too. A Play
   pressed then must begin the pass, or a later failure stops on an entry the skip should have
-  reached. With no plan nothing seeks or restarts the attempt that is over: a seek from the app or
+  reached. The plan is dropped too when the engine fails the attempt, and a failure the core stops
+  on -- a connection failure, not the track's own -- also drops the play intent, so the app and the
+  system offer Play, and Play, the app's or the system's, begins a new attempt for the same entry
+  (`restartCurrent`) rather than leaving the player failed; before, the app kept offering Pause, and
+  both Plays addressed the failed attempt and nothing started. With no plan nothing seeks or
+  restarts the attempt that is over: a seek from the app or
   the media session is refused, restart is not offered, and Previous moves to the entry before.
   Before the plan was dropped, a Previous in that window sought the attempt that was over and did
   nothing, and restart was offered for it; before seeks were gated on the plan, a seek still reached
@@ -2011,7 +2055,8 @@ It now keeps the whole contract, as the Apple shell does:
   end, which has begun a pass already, or with the engine's release, which closes the controller.
 - **Unreachable on Android, so neither reported nor tested there:** a gapless handover (the Media3
   engine refuses `PreloadNext`, so `AdvancedToPreloaded` never occurs); Try Again (there is no such
-  control; the failure line asks the person to choose the song again, which is a new queue); queue
+  control; after a connection failure Play begins a new attempt for the entry, and the failure line
+  says so); queue
   edits (no surface moves, removes or adds an entry); and a disconnect, sign-out or change of
   server (no Android surface offers one). The controller lives as long as its account's playback
   service, and closing it withdraws the notice. A skip while the TV's browse screens are in front is
@@ -2107,10 +2152,17 @@ provider exposes nothing of the page, the bar or the tabs beneath it and refuses
 click on a covered row, and exposes them again once it closes; the
 page shows the notice above the now-playing bar and the tabs until the player opens, and then only
 the player's own exists; the text stops growing at 1.5 ×; and the sentence naming the track gives
-way at a region three times its card), `PhonePlayerWindowSizesTest` (in 640 × 360 and 1280 × 800
-landscape windows, a 360 × 320 split, a 320 × 480 portrait window and an 800 × 1280 tablet, every
-control of the full player is whole and inside the window, none overlaps another or the cover, and
-the notice lies whole on the drawn cover over no control), and `TvSkipNoticePlacementTest` (with three and with eight
+way at a region three times its card), `PhonePlayerWindowSizesTest` (the 120-cell grid of rule 8,
+each cell's checks exactly as listed there), the frame's Back
+(`backClosesThePlayerOnlyWhileItCoversThePage`: flagged open with no playback, Back goes back on
+the page, or reaches the system; with the player covering the page it closes the player and
+nothing else) and its exit
+(`thePageStaysHiddenFromAScreenReaderUntilThePlayerHasSlidAway`: part way through the slide the
+accessibility node provider exposes nothing beneath; once it has gone, the page is reachable), the
+retry (`afterAConnectionFailureNothingSeeksItAndPlayRetriesTheEntry`: after a connection failure
+the app shows Play, restart is not offered, no seek from the app or the media session reaches the
+failed attempt, and the app's Play and the system's -- Media3's play-button handling -- each
+prepare a new attempt for the same entry, clear the failure line and play), and `TvSkipNoticePlacementTest` (with three and with eight
 Up Next entries the notice lies on the cover and overlaps no focusable node, with the transport,
 the list and its first three rows among those checked) beside `TvSkipNoticeTest` (the TV player
 announces it with no failure line; a connection failure shows the line and no notice), all
@@ -6157,8 +6209,28 @@ squeezed its transport to 0 × 0 in every landscape, split-screen and short wind
 lays itself out for its window (rule 8). "Nothing acts on the attempt that is over" was false for
 seek: a seek from the app or the media session, and the seek Media3 sends before Play on an ended
 player, still reached it; seeks are now gated on the plan. Pause in that window now reaches the
-engine at once. Each of those fixes has a test that failed first on the code before it. (Numbered after the highest revision on `main` when written; renumbers at
-merge.)
+engine at once. Each of those fixes has a test that failed first on the code before it. **Corrected in review,
+round 4:** the round-3 claim that the player fits its window held for five windows at the default
+text size with no error card; at 640 × 360 with twice the text size and the error card the title,
+artist and card pushed the transport out, the cover shrank to 36 dp under a notice taking more
+than half of it in 7 of the reviewer's 19 windows, and Repeat was 36 dp wide at 300 × 560. The
+player now shares its height in the order rule 8 gives, hosts the notice on the cover only above
+a minimum and otherwise in a banner beneath the header, gives every control a 48 dp touch target,
+and states exactly the 120-cell grid it is tested on; the grid failed first on the round-3 layout
+in all four of its text-scale 1 and 2 tests (touch targets in every cell; the transport outside the window or 0 dp
+tall; the notice on covers under 160 dp and over half of them). A mutation run then found two of the notice's
+rules that the grid could not tell apart from their absence: its half-cover check measured the
+card without the margin the layout counts, and no cell at text scale 1 or 2 has a cover under
+160 dp that the half rule alone would admit. The check now measures the card with its margin, and
+the grid gained Android's smallest text scale, 0.85. A seek still reached an attempt
+the engine had failed with a connection error, and after it the app offered Pause and both Plays
+addressed the failed attempt, so nothing started; the plan and the play intent are now dropped on
+such a failure and Play retries the entry. Back was spent closing a player flagged open with no
+playback, and the page became reachable to a screen reader while the player was still sliding
+away; both are now keyed on the player actually being in front. Each has a test that failed first
+-- the retry on the code before it, Back and the exit on the round-3 keying moved into the frame,
+since the round-3 handlers lived where no test composes them. (Numbered after the highest revision
+on `main` when written; renumbers at merge.)
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it

@@ -89,7 +89,7 @@
     <string name="now_playing">Now Playing</string>
     <string name="now_playing_loading">Loading…</string>
     <string name="now_playing_nothing">Nothing is playing</string>
-    <string name="now_playing_failed">Playback failed. Check your connection and choose the song again.</string>
+    <string name="now_playing_failed">Playback failed. Check your connection, then press Play to try again.</string>
     <string name="now_playing_unavailable">Connect an account before playing.</string>
     <string name="up_next_empty">The queue is empty.</string>
     <string name="up_next_playing">Playing</string>

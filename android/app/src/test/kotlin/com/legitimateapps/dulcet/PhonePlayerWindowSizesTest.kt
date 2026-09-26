@@ -2,17 +2,31 @@ package com.legitimateapps.dulcet
 
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidSkipNotice
+import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.SKIP_NOTICE_TAG
@@ -26,17 +40,31 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
- * The full player in every window shape the phone app can be given -- it locks no orientation and
- * runs in split screen -- with the skip notice showing (spec §12.12 rule 8). Native graphics, so
- * text is measured as a device measures it. Paused, so the cover is drawn at its smaller, settled
- * size, the tighter case for a notice that must lie on it.
+ * The full player across a grid of windows (spec §12.12 rule 8): the [WINDOWS] below, each at text
+ * scale 0.85 (Android's smallest), 1 and 2, each with and without the error card, with the skip notice showing and playback
+ * paused, so the cover is drawn at its smaller, settled size. The app locks no orientation and runs
+ * in split screen and on large screens, so these span phones in both orientations, foldables,
+ * tablets, a desktop-sized window, and the small windows split screen makes.
+ *
+ * In every cell: every control is whole, inside the window, and at least a 48 dp touch target; no
+ * two controls overlap, and no text overlaps a control; the title's line is whole; the error card,
+ * when there is one, is shown, whole or scrolling in its own region; the cover overlaps no control,
+ * is at least 48 dp, and is absent only when the notice's banner or the error card needs its room; the layout is stacked
+ * in a window taller than wide and side by side in one wider than tall; and
+ * the notice is whole, at least its minimum readable size, over no control and no text, and either
+ * on a cover of at least [NOTICE_MIN_COVER], the card and its margin taking at most the lower half of it as drawn, or in the banner
+ * beneath the header and above the title, clear of the cover. A cover of 240 dp or more always
+ * hosts it.
+ *
+ * One composition inside a window larger than any cell, resized per cell, so the grid runs in
+ * seconds rather than one Robolectric start per cell. Native graphics, so text is measured as a
+ * device measures it.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [35])
+@Config(sdk = [35], qualifiers = "w1920dp-h1280dp-land")
 class PhonePlayerWindowSizesTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
@@ -47,82 +75,166 @@ class PhonePlayerWindowSizesTest {
 
     @After fun close() { controller.close() }
 
-    @Test @Config(qualifiers = "w640dp-h360dp-land")
-    fun aPhoneInLandscapeShowsEveryControlAndTheNoticeOnTheCover() = check(640, 360)
+    @Test fun everyWindowAtSmallTextWithoutAnError() = grid(0.85f, error = false)
+    @Test fun everyWindowAtSmallTextWithTheErrorCard() = grid(0.85f, error = true)
+    @Test fun everyWindowAtDefaultTextWithoutAnError() = grid(1f, error = false)
+    @Test fun everyWindowAtDefaultTextWithTheErrorCard() = grid(1f, error = true)
+    @Test fun everyWindowAtDoubleTextWithoutAnError() = grid(2f, error = false)
+    @Test fun everyWindowAtDoubleTextWithTheErrorCard() = grid(2f, error = true)
 
-    @Test @Config(qualifiers = "w1280dp-h800dp-land")
-    fun aTabletInLandscapeShowsEveryControlAndTheNoticeOnTheCover() = check(1280, 800)
+    private class Cell(val width: Int, val height: Int, val fontScale: Float, val error: Boolean, val sequence: Long)
 
-    @Test @Config(qualifiers = "w360dp-h320dp-land")
-    fun aShortSplitScreenWindowShowsEveryControlAndTheNoticeOnTheCover() = check(360, 320)
-
-    @Test @Config(qualifiers = "w320dp-h480dp-port")
-    fun aSmallPortraitWindowShowsEveryControlAndTheNoticeOnTheCover() = check(320, 480)
-
-    @Test @Config(qualifiers = "w800dp-h1280dp-port")
-    fun aTabletInPortraitShowsEveryControlAndTheNoticeOnTheCover() = check(800, 1280)
-
-    private fun check(width: Int, height: Int) {
+    private fun grid(fontScale: Float, error: Boolean) {
         compose.mainClock.autoAdvance = false
-        val state = AndroidPlaybackState(title = "Playable After Skip", phase = "Preparing", playbackSessionId = "s",
-            artist = "Dulcet Fixtures", album = "Skip Probe", canGoNext = true, canGoPrevious = true,
-            positionMilliseconds = 12_000, durationMilliseconds = 40_000, seekable = true, playWhenReady = false,
-            skipNotice = AndroidSkipNotice(1, "Unplayable Probe", SystemClock.elapsedRealtime()))
-        compose.setContent { MaterialTheme { NowPlayingScreen(account, state, controller) {} } }
-        // Long enough for the cover to settle at its paused size.
-        repeat(90) { compose.mainClock.advanceTimeByFrame() }
-        val density = context.resources.displayMetrics.density
-        val root = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()
-        val window = root.boundsInRoot
-        assertEquals(width.toFloat(), window.width / density, 1f, "The control requires a $width dp wide window")
-        assertEquals(height.toFloat(), window.height / density, 1f, "The control requires a $height dp tall window")
-        fun node(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
-        fun dp(r: Rect) = "[%.0f,%.0f - %.0f,%.0f]".format(r.left / density, r.top / density, r.right / density, r.bottom / density)
-        // Every control is whole: drawn at its full size, none of it clipped away, inside the window,
-        // and large enough to touch. A control squeezed out of the layout measures 0 x 0.
-        val controls = listOf("player.close", "player.queue", "player.scrubber", "player.shuffle", "player.previous",
-            "player.playpause", "player.next", "player.repeat")
-        val broken = controls.map { it to node(it) }.filter { (_, n) ->
-            val shown = n.boundsInRoot
-            n.size.width < 40 * density || n.size.height < 24 * density ||
-                shown.width < n.size.width - 1 || shown.height < n.size.height - 1 || !window.holds(shown)
-        }.map { (tag, n) -> "$tag size=${n.size} shown=${dp(n.boundsInRoot)}" }
-        assertEquals(emptyList(), broken, "In $width x $height every control must be whole and inside the window")
-        for (tag in listOf("player.title", "player.position")) {
-            val n = node(tag)
-            assertTrue(n.size.height > 0 && window.holds(n.boundsInRoot), "In $width x $height $tag must be shown: ${dp(n.boundsInRoot)}")
+        var cell by mutableStateOf<Cell?>(null)
+        compose.setContent {
+            val c = cell ?: return@setContent
+            val base = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(base.density, c.fontScale)) {
+                MaterialTheme {
+                    Box(Modifier.requiredSize(c.width.dp, c.height.dp).testTag(WINDOW)) {
+                        key(c.sequence) { NowPlayingScreen(account, state(c), controller) {} }
+                    }
+                }
+            }
         }
-        val all = interactiveNodes(root)
-        assertTrue(all.map { it.tag() }.containsAll(controls), "The control requires every control among those checked")
-        val overlapping = all.flatMap { a -> all.filter { b -> a.id < b.id && a.boundsInRoot.overlaps(b.boundsInRoot) }.map { a to it } }
-            .filterNot { (a, b) -> a.isAncestorOf(b) || b.isAncestorOf(a) }
-            .map { (a, b) -> "${a.tag()}${dp(a.boundsInRoot)} / ${b.tag()}${dp(b.boundsInRoot)}" }
-        assertEquals(emptyList(), overlapping, "In $width x $height no two controls may overlap")
-        // The cover takes no input and overlaps none of the controls.
-        val cover = node("player.artwork").boundsInRoot
-        assertTrue(cover.width > 0 && window.holds(cover), "In $width x $height the cover must be inside the window: ${dp(cover)}")
-        assertEquals(emptyList(), all.filter { it.boundsInRoot.overlaps(cover) }.map { "${it.tag()}${dp(it.boundsInRoot)}" },
-            "In $width x $height the cover ${dp(cover)} overlaps these controls")
-        // The notice: whole, inside the window, on the cover as it is drawn, and over no control.
-        val notice = node(SKIP_NOTICE_TAG)
-        val area = notice.boundsInRoot
-        assertTrue(area.height > 0 && area.height >= notice.size.height - 1 && window.holds(area),
-            "In $width x $height the notice ${dp(area)} must be whole and inside the window ${dp(window)}")
-        val sleeve = cover.scaledAboutCenter(PAUSED_COVER_SCALE)
-        assertTrue(sleeve.holds(area), "In $width x $height the notice ${dp(area)} must lie on the drawn cover ${dp(sleeve)}")
-        assertTrue(area.height <= sleeve.height / 2 + 0.5f,
-            "In $width x $height the notice ${dp(area)} must leave most of the cover ${dp(sleeve)} in view")
-        val (_, covered) = interactiveNodesCoveredBy(root, notice)
-        assertEquals(emptyList(), covered.map { "${it.tag()}${dp(it.boundsInRoot)}" },
-            "In $width x $height the notice ${dp(area)} covers these controls")
-        println("PLAYER WINDOW $width x $height cover=${dp(cover)} notice=${dp(area)} " +
-            "drawn=\"${notice.config[SkipNoticeDrawnSentence]}\" transport=${
-                listOf("player.shuffle", "player.previous", "player.playpause", "player.next", "player.repeat")
-                    .joinToString(" ") { dp(node(it).boundsInRoot) }}")
+        val problems = mutableListOf<String>()
+        var hostedOnCover = 0
+        var hostedInBanner = 0
+        var sequence = 0L
+        for ((width, height) in WINDOWS) {
+            val next = Cell(width, height, fontScale, error, ++sequence)
+            compose.runOnUiThread { cell = next }
+            androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+            // Long enough for the notice to finish entering.
+            repeat(40) { compose.mainClock.advanceTimeByFrame() }
+            val where = "$width x $height at ${fontScale}x ${if (error) "with" else "without"} the error card"
+            val found = check(width, height, error, where)
+            problems += found.problems
+            if (found.onCover) hostedOnCover++ else hostedInBanner++
+        }
+        println("PLAYER GRID font=$fontScale error=$error cells=${WINDOWS.size} onCover=$hostedOnCover banner=$hostedInBanner")
+        assertEquals(emptyList(), problems, "Problems across the grid at ${fontScale}x, error=$error")
     }
 
-    private fun SemanticsNode.tag() = config.getOrNull(SemanticsProperties.TestTag)
-    private fun SemanticsNode.isAncestorOf(other: SemanticsNode) = generateSequence(other.parent) { it.parent }.any { it.id == id }
+    private fun state(c: Cell) = AndroidPlaybackState(title = "Playable After Skip", phase = "Preparing",
+        playbackSessionId = "s", artist = "Dulcet Fixtures", album = "Skip Probe", canGoNext = true, canGoPrevious = true,
+        positionMilliseconds = 12_000, durationMilliseconds = 40_000, seekable = true, playWhenReady = false,
+        error = if (c.error) DomainError.Transport.Unreachable else null,
+        skipNotice = AndroidSkipNotice(c.sequence, "Unplayable Probe", SystemClock.elapsedRealtime()))
+
+    private class Found(val problems: List<String>, val onCover: Boolean)
+
+    private fun check(width: Int, height: Int, error: Boolean, where: String): Found {
+        val problems = mutableListOf<String>()
+        val d = context.resources.displayMetrics.density
+        fun dp(r: Rect) = "[%.0f,%.0f - %.0f,%.0f]".format(r.left / d, r.top / d, r.right / d, r.bottom / d)
+        fun node(tag: String) = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
+        val root = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()
+        val window = node(WINDOW)!!.boundsInRoot
+        if (Math.abs(window.width / d - width) > 1 || Math.abs(window.height / d - height) > 1)
+            return Found(listOf("$where: the control requires a $width x $height window, got ${dp(window)}"), false)
+        fun SemanticsNode.whole() = boundsInRoot.width >= size.width - 1 && boundsInRoot.height >= size.height - 1
+        // Every control whole, inside the window, and at least a 48 dp touch target; the scrubber as wide as a thumb's travel needs.
+        val buttons = listOf("player.close", "player.queue", "player.shuffle", "player.previous", "player.playpause",
+            "player.next", "player.repeat")
+        for (tag in buttons + "player.scrubber") {
+            val n = node(tag) ?: run { problems += "$where: $tag is missing"; null } ?: continue
+            val minimum = if (tag == "player.scrubber") 120f to 44f else 48f to 48f
+            if (!n.whole() || !window.holds(n.boundsInRoot) || n.size.width < minimum.first * d - 0.5f ||
+                n.size.height < minimum.second * d - 0.5f)
+                problems += "$where: $tag is not whole, inside the window and large enough: size=${n.size.width / d}x${n.size.height / d} shown=${dp(n.boundsInRoot)}"
+        }
+        val all = interactiveNodes(root)
+        fun SemanticsNode.tag() = config.getOrNull(SemanticsProperties.TestTag)
+        fun SemanticsNode.isAncestorOf(other: SemanticsNode) = generateSequence(other.parent) { it.parent }.any { it.id == id }
+        all.forEach { a ->
+            all.filter { b -> a.id < b.id && a.boundsInRoot.overlaps(b.boundsInRoot) && !a.isAncestorOf(b) && !b.isAncestorOf(a) }
+                .forEach { b -> problems += "$where: ${a.tag()}${dp(a.boundsInRoot)} overlaps ${b.tag()}${dp(b.boundsInRoot)}" }
+        }
+        // The title's line is whole; the position is whole; the error card is shown, whole or scrolling in its own region.
+        val title = node("player.title")
+        for (tag in listOf("player.title", "player.position")) {
+            val n = node(tag)
+            if (n == null || !n.whole() || !window.holds(n.boundsInRoot) || n.size.height <= 0)
+                problems += "$where: $tag is not whole: ${n?.let { dp(it.boundsInRoot) }}"
+        }
+        val errorCard = node("player.error")
+        if (error) {
+            if (errorCard == null || errorCard.boundsInRoot.height <= 0 || !window.holds(errorCard.boundsInRoot))
+                problems += "$where: the error card is not shown: ${errorCard?.let { dp(it.boundsInRoot) }}"
+            else if (!errorCard.whole() && generateSequence(errorCard.parent) { it.parent }
+                    .none { SemanticsActions.ScrollBy in it.config })
+                problems += "$where: the error card is cut short ${dp(errorCard.boundsInRoot)} and cannot be scrolled into view"
+        } else if (errorCard != null) problems += "$where: the control requires no error card"
+        val texts = listOfNotNull(title, node("player.position"), errorCard)
+        for (text in texts) all.filter { it.boundsInRoot.overlaps(text.boundsInRoot) && !it.isAncestorOf(text) && !text.isAncestorOf(it) }
+            .forEach { problems += "$where: ${text.tag()}${dp(text.boundsInRoot)} overlaps ${it.tag()}${dp(it.boundsInRoot)}" }
+        // The cover: inside the window, over no control, and placed as the window's shape requires.
+        // It is absent only when the notice's banner or the error card needs its room, and is otherwise at least 48 dp.
+        val cover = node("player.artwork")!!.boundsInRoot
+        val bannerShown = node(PLAYER_NOTICE_BANNER_TAG)?.let { it.boundsInRoot.height > 0 } ?: false
+        if (cover.width <= 0) {
+            if (!bannerShown && (errorCard == null || errorCard.whole()))
+                problems += "$where: the cover is absent though neither the banner nor the error card needed its room"
+        } else if (!window.holds(cover) || cover.width < 48 * d - 0.5f) problems += "$where: the cover ${dp(cover)} is not inside the window and at least 48 dp"
+        all.filter { it.boundsInRoot.overlaps(cover) }.forEach { problems += "$where: the cover ${dp(cover)} overlaps ${it.tag()}" }
+        if (title != null && cover.width > 0) {
+            val t = title.boundsInRoot
+            if (width > height && cover.right > t.left + 0.5f)
+                problems += "$where: wider than tall, so the cover ${dp(cover)} must be beside the title ${dp(t)}"
+            if (width <= height && cover.bottom > t.top + 0.5f)
+                problems += "$where: taller than wide, so the cover ${dp(cover)} must be above the title ${dp(t)}"
+        }
+        // The notice: whole, readable, over no control and no text, and on a cover large enough or in the banner.
+        val notice = node(SKIP_NOTICE_TAG) ?: return Found(problems + "$where: the notice is missing", false)
+        val area = notice.boundsInRoot
+        val drawn = notice.config.getOrNull(SkipNoticeDrawnSentence).orEmpty()
+        if (!notice.whole() || !window.holds(area) || area.height < NOTICE_MIN_HEIGHT * d || area.width < NOTICE_MIN_WIDTH * d || drawn.isBlank())
+            problems += "$where: the notice ${dp(area)} is not whole and readable (\"$drawn\")"
+        val (_, covered) = interactiveNodesCoveredBy(root, notice)
+        covered.forEach { problems += "$where: the notice ${dp(area)} covers ${it.tag()}${dp(it.boundsInRoot)}" }
+        texts.filter { it.boundsInRoot.overlaps(area) }.forEach { problems += "$where: the notice ${dp(area)} covers ${it.tag()}" }
+        val onCover = cover.holds(area)
+        val sleeve = cover.scaledAboutCenter(PAUSED_COVER_SCALE)
+        if (onCover) {
+            if (cover.width < NOTICE_MIN_COVER.value * d - 0.5f)
+                problems += "$where: the notice is on a cover ${dp(cover)} smaller than ${NOTICE_MIN_COVER.value} dp"
+            if (!sleeve.holds(area)) problems += "$where: the notice ${dp(area)} is off the drawn cover ${dp(sleeve)}"
+            // The card and the margin beneath it: the lower half of the drawn cover at most.
+            if (sleeve.bottom - area.top > sleeve.height / 2 + 0.5f)
+                problems += "$where: the notice ${dp(area)} and its margin take more than the lower half of the cover ${dp(sleeve)}"
+        } else {
+            val banner = node(PLAYER_NOTICE_BANNER_TAG)
+            if (banner == null || !banner.boundsInRoot.holds(area)) problems += "$where: the notice ${dp(area)} is neither on the cover nor in the banner"
+            if (area.overlaps(cover)) problems += "$where: the banner ${dp(area)} overlaps the cover ${dp(cover)}"
+            if (title != null && area.bottom > title.boundsInRoot.top + 0.5f) problems += "$where: the banner ${dp(area)} is not above the title"
+            node("player.close")?.let { if (area.top < it.boundsInRoot.bottom - 0.5f) problems += "$where: the banner ${dp(area)} is not beneath the header" }
+            if (cover.width >= 240 * d) problems += "$where: a cover of ${cover.width / d} dp must host the notice"
+        }
+        println("PLAYER CELL $where cover=${dp(cover)} title=${title?.let { dp(it.boundsInRoot) }} notice=${dp(area)} " +
+            "on=${if (onCover) "cover" else "banner"} drawn=\"$drawn\" transport=${
+                listOf("player.shuffle", "player.previous", "player.playpause", "player.next", "player.repeat")
+                    .joinToString(" ") { t -> node(t)?.let { dp(it.boundsInRoot) } ?: "missing" }}")
+        return Found(problems, onCover)
+    }
+
+    companion object {
+        private const val WINDOW = "grid.window"
+        /** The notice's smallest readable card: one line of its capped text with its padding, and room for a few words. */
+        private const val NOTICE_MIN_HEIGHT = 32f
+        private const val NOTICE_MIN_WIDTH = 120f
+        /**
+         * Twenty windows. Phones portrait and landscape, a small phone, foldables inner and outer,
+         * a 7-inch and a 10-inch tablet both ways, a desktop-sized window, and split-screen halves
+         * and small windows down to the narrowest the transport is laid out for.
+         */
+        val WINDOWS = listOf(
+            360 to 640, 412 to 915, 480 to 800, 320 to 480, 300 to 560, 280 to 653, 800 to 1280, 673 to 841,
+            400 to 420, 411 to 440, 316 to 360,
+            640 to 360, 915 to 412, 841 to 673, 960 to 600, 1280 to 800, 1920 to 1080, 360 to 320, 568 to 320, 1024 to 768,
+        )
+    }
 }
 
 private fun Rect.holds(other: Rect) =
