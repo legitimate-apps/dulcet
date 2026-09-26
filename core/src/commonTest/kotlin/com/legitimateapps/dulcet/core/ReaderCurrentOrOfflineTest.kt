@@ -310,7 +310,172 @@ class ReaderCurrentOrOfflineTest {
         assertEquals(ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable), session.reader.connectReporting())
         runCurrent()
         assertEquals(emptyList(), env.server.endpoints().drop(mark), "connect read the server while offline")
-        session.setOnline(false) // ends the retry the failure scheduled
+    }
+
+    /** One request at a time to the server, so a read can be made to wait for the slot. */
+    private val oneSlot = LibraryReaderConfig(lookAheadMaxPerViewport = 0, serverConcurrency = 1, lookAheadInFlight = 1)
+
+    /**
+     * The reviewer's Q2. A fresh grid's refresh waits for the only slot when the platform reports
+     * the server unreachable, and the send gate refuses it. That read was not made, so it is owed,
+     * not failed: offline the grid says `offline`; after the reconnect it is read and says `live`,
+     * never `failed(unreachable)`. It used to keep that failure label on an online reader with
+     * fresh data, until the person scrolled or refreshed.
+     */
+    @Test
+    fun aListReadRefusedAtTheQueueIsOwedToTheReconnectNotFailed() = sessionTest { env ->
+        val session = env.session(config = oneSlot)
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val handle = session.reader.open(grid, pubs)
+        advanceUntilIdle()
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness, "fixture: live")
+        env.server.base.holdMatching = { it.endpoint == "getAlbum" && it.parameters["id"] == albumId(3) }
+        session.reader.open(LibraryQuery.Album(albumId(3))) {}
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: album 3 holds the only slot")
+        val lists = env.server.count("getAlbumList2")
+        handle.refresh()
+        advanceUntilIdle()
+        assertEquals(lists, env.server.count("getAlbumList2"), "fixture: the grid's read waits for the slot")
+        session.setOnline(false)
+        advanceUntilIdle()
+        val mark = env.server.log.size
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(emptyList(), env.server.endpoints().drop(mark), "fixture: nothing is sent offline")
+        assertEquals("cached(Offline)", pubs.last.freshness.label())
+        val pubMark = pubs.all.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertTrue(session.reader.online)
+        val labels = pubs.all.drop(pubMark).map { it.value.freshness.label() }
+        assertFalse(labels.any { it == "cached(Failed)" }, "a refused read left a failure: $labels")
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+        assertEquals(1, env.server.count("getAlbumList2") - lists, "the owed read was not made at the reconnect")
+    }
+
+    /** The reviewer's Q3: the same for a cached, fresh ALBUM screen refreshed behind the held slot. */
+    @Test
+    fun anAlbumReadRefusedAtTheQueueIsOwedToTheReconnectNotFailed() = sessionTest { env ->
+        val session = env.session(config = oneSlot)
+        session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        val album5 = session.reader.open(LibraryQuery.Album(albumId(5)), pubs)
+        advanceUntilIdle()
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness, "fixture: live")
+        env.server.base.holdMatching = { it.endpoint == "getAlbum" && it.parameters["id"] == albumId(3) }
+        session.reader.open(LibraryQuery.Album(albumId(3))) {}
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: album 3 holds the only slot")
+        val reads5 = env.server.log.count { it.endpoint == "getAlbum" && it.parameters["id"] == albumId(5) }
+        album5.refresh()
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        val mark = env.server.log.size
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(emptyList(), env.server.endpoints().drop(mark), "fixture: nothing is sent offline")
+        val pubMark = pubs.all.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertTrue(session.reader.online)
+        val labels = pubs.all.drop(pubMark).map { it.value.freshness.label() }
+        assertFalse(labels.any { it == "cached(Failed)" }, "a refused read left a failure: $labels")
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+        assertEquals(
+            1,
+            env.server.log.count { it.endpoint == "getAlbum" && it.parameters["id"] == albumId(5) } - reads5,
+            "the owed read was not made at the reconnect",
+        )
+    }
+
+    /**
+     * The reviewer's Q4. A `star` waits for the only slot when the platform reports the server
+     * unreachable. It is not sent after the report — the outbox's exemption holds only while the
+     * outbox may send — and it is kept: the reconnect's flush sends it first.
+     */
+    @Test
+    fun anOutboxSendQueuedAcrossTheUnreachableReportIsKeptNotSent() = sessionTest { env ->
+        val session = env.session(config = oneSlot)
+        session.reader.connect()
+        env.server.base.holdMatching = { it.endpoint == "getAlbum" && it.parameters["id"] == albumId(3) }
+        session.reader.open(LibraryQuery.Album(albumId(3))) {}
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: album 3 holds the only slot")
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Album, albumId(4)), true)
+        advanceUntilIdle()
+        assertEquals(0, env.server.count("star"), "fixture: the star waits for the slot")
+        session.setOnline(false)
+        advanceUntilIdle()
+        val mark = env.server.log.size
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(emptyList(), env.server.endpoints().drop(mark), "an outbox send went out after the unreachable report")
+        assertEquals(1L, session.favourites.pendingCount(), "the change was not kept")
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals("star", env.server.endpoints().drop(mark).first(), "the reconnect did not send it first")
+        assertEquals(0L, session.favourites.pendingCount())
+    }
+
+    // ---- The cadence completes what a failed reading owes (review NITs 1–3) -------------------------------
+
+    /**
+     * A cadence reading sees the epoch change, and its downloaded-album recheck throws. The next
+     * reading still sees the change and rechecks. Nothing has completed a sequence in this session,
+     * so this also pins the baseline taken before the reading is adopted.
+     */
+    @Test
+    fun aCadenceReadingWhoseRecheckFailsLeavesTheRecheckToTheNextReading() = sessionTest { env ->
+        var failing = false
+        var hookCalls = 0
+        val session = withDownloadedAlbum3(env, { failing }, { hookCalls += 1 })
+        env.server.base.lastScan = "2026-09-24T10:00:00Z"
+        failing = true
+        val calls = hookCalls
+        val thrown = try {
+            session.reader.refreshEpoch()
+            null
+        } catch (failure: IllegalStateException) {
+            failure
+        }
+        assertTrue(thrown != null && hookCalls > calls, "fixture: the recheck ran and threw")
+        failing = false
+        val mark = env.server.log.size
+        session.reader.refreshEpoch()
+        advanceUntilIdle()
+        assertEquals(
+            listOf(albumId(3)),
+            env.server.log.drop(mark).filter { it.endpoint == "getAlbum" }.map { it.parameters["id"] },
+            "the next reading did not run the recheck the failed one owed",
+        )
+    }
+
+    /**
+     * An epoch-changing reconnect that ran every step owes nothing: a cadence reading right after it
+     * reads only the epoch — no screen, no recheck.
+     */
+    @Test
+    fun aReadingRightAfterACompletedReconnectOwesNothing() = sessionTest { env ->
+        val session = withDownloadedAlbum3(env, { false }, {})
+        session.reader.open(grid) {}
+        advanceUntilIdle()
+        session.setOnline(false)
+        env.server.base.lastScan = "2026-09-24T10:00:00Z"
+        val rechecks = env.server.log.count { it.endpoint == "getAlbum" }
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertTrue(session.reader.online, "fixture")
+        assertEquals(1, env.server.log.count { it.endpoint == "getAlbum" } - rechecks, "fixture: the reconnect rechecked")
+        val mark = env.server.log.size
+        session.reader.refreshEpoch()
+        advanceUntilIdle()
+        assertEquals(listOf("getScanStatus", "getMusicFolders"), env.server.endpoints().drop(mark), "a completed reconnect's work was redone")
     }
 
     // ---- One failed reading never ends the cadence (S-5) --------------------------------------------------
@@ -343,128 +508,6 @@ class ReaderCurrentOrOfflineTest {
         session.reader.setForeground(false)
     }
 
-    // ---- A reachable reader retries an internal failure by itself (NIT 7) ---------------------------------
-
-    /**
-     * Offline, the platform reports the server reachable, and the reconnect fails internally. No
-     * further report comes — a stable network sends none — yet the reader retries after
-     * [LibraryReaderConfig.reconnectRetryInitialMillis], and not before.
-     */
-    @Test
-    fun anInternalFailureWhileReachableIsRetriedWithoutAnotherReport() = sessionTest { env ->
-        val session = env.session()
-        session.reader.connect()
-        session.reader.open(grid) {}
-        advanceUntilIdle()
-        session.setOnline(false)
-        env.server.base.lastScan = "2026-09-24T10:00:00Z"
-        env.driver.failWrite = storesTheEpoch
-        session.setOnline(true)
-        runCurrent()
-        env.driver.failWrite = null
-        assertFalse(session.reader.online, "fixture: the reconnect failed internally")
-        val readings = env.server.count("getMusicFolders")
-        val wait = session.reader.config.reconnectRetryInitialMillis
-        advanceTimeBy(wait - 1)
-        runCurrent()
-        assertEquals(readings, env.server.count("getMusicFolders"), "retried before the backoff")
-        assertFalse(session.reader.online)
-        advanceTimeBy(2)
-        runCurrent()
-        assertEquals(readings + 1, env.server.count("getMusicFolders"), "no retry without a new report")
-        assertTrue(session.reader.online)
-    }
-
-    /**
-     * A failure that persists: the retries come after 2, 4, 8, 16, 32 and then 60 s (the cap), and
-     * none after an unreachable report. A success resets the backoff, so the next internal failure
-     * is retried after the first wait again.
-     */
-    @Test
-    fun theRetryBacksOffDoublingToItsCapStopsWhenOfflineAndResetsOnSuccess() = sessionTest { env ->
-        val session = env.session()
-        session.reader.connect()
-        session.setOnline(false)
-        env.server.base.lastScan = "2026-09-24T10:00:00Z"
-        val readingTimes = mutableListOf<Long>()
-        env.server.base.beforeRespond = { if (it.endpoint == "getMusicFolders") readingTimes += currentTime }
-        env.driver.failWrite = storesTheEpoch
-        session.setOnline(true)
-        advanceTimeBy(200_000)
-        runCurrent()
-        assertFalse(session.reader.online, "fixture: every attempt failed")
-        assertEquals(listOf(2_000L, 4_000L, 8_000L, 16_000L, 32_000L, 60_000L, 60_000L), readingTimes.zipWithNext { a, b -> b - a })
-
-        session.setOnline(false)
-        val stopped = readingTimes.size
-        advanceTimeBy(600_000)
-        runCurrent()
-        assertEquals(stopped, readingTimes.size, "retried after an unreachable report")
-
-        env.driver.failWrite = null
-        session.setOnline(true)
-        runCurrent()
-        assertTrue(session.reader.online, "fixture: the reconnect succeeded")
-        session.setOnline(false)
-        env.server.base.lastScan = "2026-09-24T11:00:00Z"
-        env.driver.failWrite = storesTheEpoch
-        val start = currentTime
-        readingTimes.clear()
-        session.setOnline(true)
-        advanceTimeBy(2_001)
-        runCurrent()
-        assertEquals(listOf(start, start + 2_000L), readingTimes, "the backoff was not reset by the success")
-        session.setOnline(false)
-    }
-
-    /**
-     * An internal failure while the platform reports the server UNREACHABLE is not retried — the
-     * next reachable report runs the reconnect — and does not grow the backoff: the failure after
-     * that report is retried after the first wait.
-     */
-    @Test
-    fun anInternalFailureWhileUnreachableIsNotRetriedAndDoesNotGrowTheBackoff() = sessionTest { env ->
-        val session = env.session()
-        session.reader.connect()
-        session.setOnline(false)
-        env.server.base.lastScan = "2026-09-24T10:00:00Z"
-        val readingTimes = mutableListOf<Long>()
-        env.server.base.beforeRespond = { if (it.endpoint == "getMusicFolders") readingTimes += currentTime }
-        env.driver.failWrite = storesTheEpoch
-        assertEquals(ReaderConnectionOutcome.InternalFailure, session.reader.reconnect(), "fixture")
-        advanceTimeBy(600_000)
-        runCurrent()
-        assertEquals(1, readingTimes.size, "retried while the platform reports the server unreachable")
-        val start = currentTime
-        readingTimes.clear()
-        session.setOnline(true)
-        advanceTimeBy(session.reader.config.reconnectRetryInitialMillis + 1)
-        runCurrent()
-        assertEquals(listOf(start, start + session.reader.config.reconnectRetryInitialMillis), readingTimes, "the backoff grew while unreachable")
-        session.setOnline(false)
-    }
-
-    /** Closing the reader (its scope) stops a pending retry. */
-    @Test
-    fun closingTheReaderStopsTheRetry() = sessionTest { env ->
-        val readerScope = CoroutineScope(env.scope.coroutineContext + Job(env.scope.coroutineContext[Job]))
-        val session = LibraryReaderSession(
-            env.database.database, env.cache(), env.server, readerScope, LibraryReaderConfig(lookAheadMaxPerViewport = 0),
-        )
-        session.reader.connect()
-        session.setOnline(false)
-        env.server.base.lastScan = "2026-09-24T10:00:00Z"
-        env.driver.failWrite = storesTheEpoch
-        session.setOnline(true)
-        runCurrent()
-        assertFalse(session.reader.online, "fixture: the reconnect failed internally")
-        val readings = env.server.count("getMusicFolders")
-        readerScope.cancel()
-        advanceTimeBy(600_000)
-        runCurrent()
-        assertEquals(readings, env.server.count("getMusicFolders"), "a closed reader retried")
-    }
-
     // ---- The person's viewport wins over a re-anchor (NIT 8) ----------------------------------------------
 
     /**
@@ -493,6 +536,8 @@ class ReaderCurrentOrOfflineTest {
         advanceUntilIdle()
         assertEquals(listOf<Any?>(0, 100, albumId(0)), listOf(pubs.last.leadingOffset, pubs.last.items.size, pubs.last.items.first().rawId))
         assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+        // The shell is told to keep the PERSON's first visible row in place, not the pre-scroll one.
+        assertEquals(LibraryAnchor(albumId(0), 0), pubs.all.mapNotNull { it.value.anchor }.last())
     }
 
     // ---- A foreground reconnect republishes only on change (NIT 9) ----------------------------------------

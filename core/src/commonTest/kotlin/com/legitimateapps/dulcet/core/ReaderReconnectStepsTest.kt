@@ -288,7 +288,8 @@ class ReaderReconnectStepsTest {
 
     /**
      * Back online after less than the re-read interval, under the same epoch: a fresh window says
-     * `live` at the transition and nothing after it — never `revalidating` when no list is read.
+     * `live` once, when the reconnect has run every step, and nothing else — never `revalidating`
+     * when no list is read.
      */
     @Test
     fun aFreshWindowAtTheTransitionNeverSaysRevalidating() = sessionTest { env ->
@@ -304,6 +305,40 @@ class ReaderReconnectStepsTest {
         advanceUntilIdle()
         assertEquals(listOf("getScanStatus", "getMusicFolders"), env.server.endpoints().drop(mark), "fixture: no list is read")
         assertEquals(listOf("Live"), pubs.all.drop(from).map { it.value.freshness.label() })
+    }
+
+    /**
+     * A fresh grid while the reconnect is still running (a whole list's read is held). A star tapped
+     * on it then shows at once, in a frame that goes on saying `offline` — it claims no read for the
+     * grid, and does not say `live` before the reconnect has run every step — and the grid says
+     * `live` once, at the end. The frame used to say `revalidating`, with no read coming for it.
+     */
+    @Test
+    fun aFreshWindowTappedWhileTheReconnectRunsShowsTheTapAndClaimsNoRead() = sessionTest { env ->
+        val session = primed(env)
+        val pubs = Recorder<LibraryPublication>(env.server)
+        session.reader.open(grid, pubs)
+        session.reader.open(LibraryQuery.Artists()) {}
+        advanceUntilIdle()
+        session.setOnline(false)
+        advanceUntilIdle()
+        env.server.base.holdMatching = { it.endpoint == "getArtists" }
+        val from = pubs.all.size
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: the whole list's read holds the reconnect")
+        assertTrue(session.reader.online, "fixture: past the transition")
+        session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Album, albumId(4)), true)
+        assertEquals(true, pubs.last.album(albumId(4)).starred, "the tap did not show at once")
+        val duringTheReconnect = pubs.all.drop(from).map { it.value.freshness.label() }
+        assertEquals(listOf("cached(Offline)"), duringTheReconnect.distinct(), "while the reconnect runs: $duringTheReconnect")
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+        assertEquals(true, pubs.last.album(albumId(4)).starred)
+        val labels = pubs.all.drop(from).map { it.value.freshness.label() }
+        assertEquals(listOf("Live"), labels.drop(duringTheReconnect.size), "at the end: $labels")
     }
 
     /**

@@ -300,9 +300,10 @@ class ReaderReachabilityTest {
 
     /**
      * The visible screen is revalidated windows first, then the other surfaces (open searches): the
-     * window's re-read has landed before the search publishes anything. A search re-run publishes
-     * its device rows synchronously, so revalidating it first shows up as a search publication
-     * ahead of the window's live one.
+     * window's re-read has been answered before the search publishes anything. A search re-run
+     * publishes its device rows synchronously, so revalidating it first shows up as a search
+     * publication ahead of the window's read. (The window's `live` frame is no marker: since the
+     * round-5 review no screen says `live` until the whole reconnect has run, searches included.)
      */
     @Test
     fun reconnectRevalidatesTheWindowsBeforeTheSearches() = sessionTest { env ->
@@ -310,15 +311,16 @@ class ReaderReachabilityTest {
         env.clock.now += LibraryReaderConfig().revalidateWithinMillis + 1 // the grid is due a re-read
         session.setOnline(false)
         val events = mutableListOf<String>()
-        session.reader.open(grid) { if (it.freshness == LibraryFreshness.Live) events += "window live" }
+        session.reader.open(grid) {}
         session.openSearch(LibrarySearchConfig(debounceMillis = 0)) { events += "search" }.updateQuery("Album 002")
         advanceUntilIdle()
         events.clear()
+        env.server.base.beforeRespond = { if (it.endpoint == "getAlbumList2") events += "window read" }
 
         session.reader.reconnect()
         advanceUntilIdle()
-        assertTrue("window live" in events && "search" in events, "fixture: both were revalidated: $events")
-        assertEquals("window live", events.first(), "the search was revalidated before the window: $events")
+        assertTrue("window read" in events && "search" in events, "fixture: both were revalidated: $events")
+        assertEquals("window read", events.first(), "the search was revalidated before the window: $events")
     }
 
     // ---- A current search is not re-read ----------------------------------------------------------------

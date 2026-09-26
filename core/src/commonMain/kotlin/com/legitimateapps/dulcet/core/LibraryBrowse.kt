@@ -466,7 +466,7 @@ private fun LibraryBrowseRequest.endpointCredentials() = AuthenticatedEndpointCr
     allowLocalHttp = allowLocalHttp,
 )
 
-internal class LibraryRequestFailure(val error: DomainError) : Exception()
+internal open class LibraryRequestFailure(val error: DomainError) : Exception()
 
 internal suspend fun LibraryEndpointTransport.checkedRequest(
     endpoint: String,

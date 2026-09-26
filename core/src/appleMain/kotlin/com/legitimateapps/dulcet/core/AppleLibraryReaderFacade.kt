@@ -53,13 +53,18 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * it online throughout: its screens and searches keep reading, so a read can go out before the
  * flush's send, and a change made while connected can be overtaken (§18.3).
  * A reconnect whose epoch read fails says why in its completion, and nothing after that read runs:
- * the reader stays offline and no screen is revalidated or relabelled, though the outbox flush
- * before it may already have sent changes. A reconnect in which the reader itself fails completes
- * with `internalFailure`; if that happened after the reader came back online, it is offline again,
- * every screen saying so. A reader left offline either way runs the whole sequence again, every step
- * included, at the next report or reconnect — and after an internal failure while the platform still
- * reports the server reachable, by itself after a bounded backoff. A reader that was already online
- * stays online, and its next epoch reading runs what the failed reconnect still owed.
+ * the reader stays offline and no screen is revalidated, though the outbox flush before it may
+ * already have sent changes. A reconnect in which the reader itself fails completes with
+ * `internalFailure`; if that happened after the reader came back online, it is offline again. No
+ * screen says `live` until a reconnect has run every step. A reader left offline runs the whole
+ * sequence again, every step included: by itself, after a bounded backoff, when the epoch read
+ * failed transiently (a timeout, `unreachable`, a busy or unknown server error) while the app is in
+ * the foreground and the platform reports the server reachable; otherwise — authentication,
+ * security, an unrecognised server, the reader's own failure — at the next report, return to the
+ * foreground or reconnect, and meanwhile every screen says what the failure is rather than
+ * `offline`. A reader that was already online stays online, and its next epoch reading runs what the
+ * failed reconnect still owed. A read the reader went offline before sending is not a failure: the
+ * screen keeps saying `offline`, and the reconnect makes the read.
  */
 @OptIn(ExperimentalAtomicApi::class, DelicateCoroutinesApi::class)
 public class AppleLibraryReaderClient internal constructor(
@@ -229,7 +234,12 @@ public class AppleLibraryReaderClient internal constructor(
         onReader { composition?.session?.setOnline(reachable) }
     }
 
-    /** Foreground transitions; the epoch cadence while in the foreground is core policy (§16.11). */
+    /**
+     * Foreground transitions; call it on every change, the first included — nothing reads on a
+     * timer until the app is reported in the foreground. The epoch cadence and a reconnect's
+     * automatic retry run only in the foreground (core policy, §16.11 and §16.14), and a return to
+     * the foreground while offline and reported reachable starts a reconnect.
+     */
     public fun setForeground(foreground: Boolean) {
         onReader { composition?.session?.reader?.setForeground(foreground) }
     }
