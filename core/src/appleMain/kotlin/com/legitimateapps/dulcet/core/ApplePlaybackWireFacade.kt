@@ -424,6 +424,9 @@ internal fun DomainError.applePlaybackErrorKind(): String = when (this) {
     is DomainError.Server.Busy -> "serverBusy"
     is DomainError.Server.Known -> "$SERVER_KNOWN_KIND:$code"
     is DomainError.Server.Unknown -> "$SERVER_UNKNOWN_KIND:$code"
+    // Playback names a bare HTTP status Unknown with the status as its code, so a library path's
+    // HttpStatus is spelled the same way and round-trips to the same §12.12 owner.
+    is DomainError.Server.HttpStatus -> "$SERVER_UNKNOWN_KIND:$status"
     is DomainError.Protocol.UnexpectedContentType ->
         "$UNEXPECTED_CONTENT_TYPE_KIND:${actual.name}:${expected.name}"
     DomainError.Protocol.UnexpectedBinary -> UNEXPECTED_BINARY_KIND

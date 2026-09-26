@@ -52,6 +52,8 @@ class PlaybackAutoSkipTest {
             DomainError.Server.Unknown(70) to Owner.Connection,
             DomainError.Server.Unknown(404) to Owner.Connection,
             DomainError.Server.Unknown(502) to Owner.Connection,
+            DomainError.Server.HttpStatus(404) to Owner.Connection,
+            DomainError.Server.HttpStatus(502) to Owner.Connection,
             DomainError.Auth.InvalidCredentials to Owner.Connection,
             DomainError.Auth.TokenAuthUnsupported to Owner.Connection,
             DomainError.Auth.Forbidden to Owner.Connection,

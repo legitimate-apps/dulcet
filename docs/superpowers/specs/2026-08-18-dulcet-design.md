@@ -1786,7 +1786,7 @@ of the same error are classified alike.
 | owner | `DomainError` | the queue |
 |---|---|---|
 | the track | `Playback.NoPlayableSource`; `Protocol.UnexpectedContentType`; `Protocol.UnexpectedBinary`; `Server.Known` codes 70 and 0 | skips past it (rules 2-4) |
-| the connection, the server or the account | every `Transport.*` but `Cancelled`; every `Security.*`, `Auth.*` and `Input.*`; `Server.Busy` (already retried, §12.2); `Server.Unknown`; every other `Server.Known` code; `Protocol.MalformedEnvelope`, `Protocol.NotASubsonicServer`, `Protocol.Incompatible`; `CapabilityUnsupported` | stops and is presented (§3.1) |
+| the connection, the server or the account | every `Transport.*` but `Cancelled`; every `Security.*`, `Auth.*` and `Input.*`; `Server.Busy` (already retried, §12.2); `Server.Unknown`; `Server.HttpStatus` (the library path's bare status, which playback never produces); every other `Server.Known` code; `Protocol.MalformedEnvelope`, `Protocol.NotASubsonicServer`, `Protocol.Incompatible`; `CapabilityUnsupported` | stops and is presented (§3.1) |
 | nobody | `Transport.Cancelled` | a withdrawn request: neither presented nor skipped past |
 
 Three were decided rather than given:
