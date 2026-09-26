@@ -212,6 +212,7 @@ class ApplePlaybackFailureRelayTest {
             DomainError.Protocol.UnexpectedBinary,
             DomainError.Protocol.Incompatible(ProtocolVersionLevel(1, 16), null),
             DomainError.Protocol.NotASubsonicServer,
+            DomainError.Protocol.TooLarge,
             DomainError.Server.Busy(5.seconds),
             DomainError.Server.Known(0),
             DomainError.Server.Known(10),

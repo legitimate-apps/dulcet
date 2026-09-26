@@ -97,6 +97,12 @@ public enum DulcetAccountErrorPresenter {
                 "The address responded, but not as an OpenSubsonic server.",
                 "Enter the server base address rather than a web player or sign-in page."
             )
+        case .responseTooLarge:
+            (
+                "The server’s answer was too large",
+                "The server replied with more data than Dulcet reads for this request.",
+                "Try again. If it keeps happening, check what the server returns for this item."
+            )
         case .knownServerError:
             (
                 "The server rejected account setup",
@@ -152,6 +158,12 @@ public enum DulcetAccountErrorPresenter {
                 "The account could not be saved",
                 "The server accepted the account, but the system Keychain did not save it.",
                 "Review Keychain access for Dulcet, then connect again."
+            )
+        case .unrecognizedFailure:
+            (
+                "Account setup did not finish",
+                "Dulcet received a failure it does not recognize.",
+                "Try again. If it keeps happening, update Dulcet."
             )
         }
 

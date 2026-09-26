@@ -52,6 +52,12 @@ jobs:
         run: python3 tools/test-read-play-count
       - name: Prove the main-health reporter refuses rather than reporting nothing
         run: python3 tools/test-report-main-health
+      - name: Prove the lyrics language generator checks each table's own citation
+        run: python3 tools/test-lyrics-language-tables
+      - name: Check every generated migration fixture against its generator, on any SQLite build
+        run: python3 tools/generate_migration_fixture.py --all --check-semantic
+      - name: Prove the migration fixture check refuses a changed seed, row or schema
+        run: python3 tools/test-migration-fixture-generator
       - name: Prove transcode timeouts identify their phase and obey the wall-clock budget
         run: python3 tools/test-transcode-probe-timeout-diagnostic
       - name: Prove capture-soak summaries preserve probability and exit classification
@@ -62,7 +68,11 @@ jobs:
         run: python3 tools/test-run-gradle-exclusive
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
+      # Its own cap, so an overrun names this step rather than the job. MEASURED ~30 s in CI at
+      # d60f364a (job 108401807810) before round 2 added 5 cases and 9 recorded mutants; the checker
+      # mutants re-run cases per mutant, so the cost grows with both.
       - name: Prove self-hosted runners require workflow_dispatch isolation
+        timeout-minutes: 3
         run: python3 tools/test-verify-ci-policy
       - name: Verify CI policy
         run: python3 tools/verify_ci_policy.py

@@ -261,6 +261,14 @@ public sealed interface DomainError {
             val serverVersion: ProtocolVersionLevel?,
         ) : Protocol
         public data object NotASubsonicServer : Protocol
+
+        /**
+         * A successful answer larger than this client accepts for the request, refused whole and
+         * never stored: item-scoped, one pathological answer, so never counted against the
+         * endpoint (§10.4). Raised for a lyrics answer none of whose main layers fits the document
+         * caps on its own, or whose body exceeds the request's size limit (§18.4).
+         */
+        public data object TooLarge : Protocol
     }
 
     public sealed interface Server : DomainError {
@@ -350,6 +358,7 @@ private val DomainError.diagnosticKind: String
         DomainError.Protocol.UnexpectedBinary -> "Protocol.UnexpectedBinary"
         is DomainError.Protocol.Incompatible -> "Protocol.Incompatible"
         DomainError.Protocol.NotASubsonicServer -> "Protocol.NotASubsonicServer"
+        DomainError.Protocol.TooLarge -> "Protocol.TooLarge"
         is DomainError.Server.Busy -> "Server.Busy"
         is DomainError.Server.Known -> "Server.Known"
         is DomainError.Server.Unknown -> "Server.Unknown"
@@ -393,6 +402,7 @@ public fun DomainError.toDiagnosticJson(): String {
             is DomainError.Protocol.UnexpectedContentType,
             DomainError.Protocol.UnexpectedBinary,
             DomainError.Protocol.NotASubsonicServer,
+            DomainError.Protocol.TooLarge,
             DomainError.Auth.InvalidCredentials,
             DomainError.Auth.TokenAuthUnsupported,
             DomainError.Auth.Forbidden,

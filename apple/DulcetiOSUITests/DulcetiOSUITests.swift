@@ -942,12 +942,12 @@ final class DulcetiOSUITests: XCTestCase {
         guard let run = startSkipProbe(configuration: configuration) else { return }
         let app = run.app
         let notice = run.notice
-        let noticeLabel = notice.exists ? notice.label : "<none>"
+        let noticeLabel = run.sighting.label
         XCTAssertTrue(noticeLabel.contains("Unplayable Probe") && noticeLabel.contains("Skipped"),
                       "A skipped track must be named in a notice; notice=\(noticeLabel)")
         let noticeMarkers = waitForMarkers(after: run.markersBefore, ["skip-notice:1"], in: app, timeout: 5)
         XCTAssertEqual(noticeMarkers, ["skip-notice:1"], "The notice's own handler must run, once")
-        let placement = assertNoticeClearsNavigation(notice, in: app)
+        let placement = assertNoticeClearsNavigation(run.sighting)
         attachScreenshot(named: "skipped-track-notice", app: app)
 
         // The next track plays, and no failure line stays for the track that is not playing.
@@ -1014,9 +1014,9 @@ final class DulcetiOSUITests: XCTestCase {
             configuration: configuration,
             extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         ) else { return }
-        let notice = run.notice
+        let notice = run.sighting
         XCTAssertTrue(notice.label.contains("Unplayable Probe"), "notice=\(notice.label)")
-        let placement = assertNoticeClearsNavigation(notice, in: run.app)
+        let placement = assertNoticeClearsNavigation(notice)
         // The experiment is the one intended: at this size the sentence wraps, so the notice is
         // several lines tall rather than the one line of the default size.
         XCTAssertGreaterThan(notice.frame.height, 90, "The notice must be at an accessibility size; \(placement)")
@@ -1040,8 +1040,8 @@ final class DulcetiOSUITests: XCTestCase {
             probe: probe,
             extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         ) else { return }
-        let notice = run.notice
-        let placement = assertNoticeClearsNavigation(notice, in: run.app)
+        let notice = run.sighting
+        let placement = assertNoticeClearsNavigation(notice)
         XCTAssertEqual(notice.label, "Couldn\u{2019}t play a track. Skipped.",
                        "The notice must show the sentence without the title; \(placement)")
         XCTAssertFalse(notice.label.contains("Concerto"), "notice=\(notice.label)")
@@ -1051,8 +1051,71 @@ final class DulcetiOSUITests: XCTestCase {
 
     private struct SkipProbeRun {
         let app: XCUIApplication
+        /// The live element, for what happens after it was seen: that it goes away.
         let notice: XCUIElement
+        /// What the notice and the bars were at the instant it was seen, from one snapshot.
+        let sighting: NoticeSighting
         let markersBefore: [String]
+    }
+
+    /// The notice and everything its placement is judged against, read from ONE accessibility
+    /// snapshot of the whole app. The notice lives four seconds, and under a loaded CI host a
+    /// single XCUITest query has taken nearly eight (run 36224652690: the existence check that
+    /// found the notice returned after it had gone, and the next query found nothing). Reading
+    /// the label and each frame as separate queries would compare frames from different moments,
+    /// or find the notice gone; a snapshot is one instant.
+    private struct NoticeSighting {
+        let label: String
+        let frame: CGRect
+        let window: CGRect?
+        let navigationBar: CGRect?
+        let tabBar: CGRect?
+        let nowPlayingBar: CGRect?
+        let attempts: Int
+        let seconds: Double
+    }
+
+    /// Takes whole-app snapshots until one holds the notice. Fails, never skips: nil after
+    /// `timeout`, reporting how many snapshots were taken and what the notice's own handler
+    /// recorded, so a notice that was shown too briefly for the harness is told apart from one
+    /// that was never shown.
+    @MainActor
+    private func sightNotice(in app: XCUIApplication, markersBefore: [String], timeout: TimeInterval) -> NoticeSighting? {
+        let start = Date()
+        var attempts = 0
+        while Date().timeIntervalSince(start) < timeout {
+            attempts += 1
+            guard let root = try? app.snapshot() else { continue }
+            var notice: XCUIElementSnapshot?
+            var window: CGRect?
+            var navigationBar: CGRect?
+            var tabBar: CGRect?
+            var nowPlayingBar: CGRect?
+            var pending: [XCUIElementSnapshot] = [root]
+            // Depth-first, in document order, so each first match is the one `firstMatch` names.
+            while let element = pending.popLast() {
+                if notice == nil, element.identifier == "dulcet.playback.skipped-notice" { notice = element }
+                if window == nil, element.elementType == .window { window = element.frame }
+                if navigationBar == nil, element.elementType == .navigationBar { navigationBar = element.frame }
+                if tabBar == nil, element.elementType == .tabBar { tabBar = element.frame }
+                if nowPlayingBar == nil, element.identifier == "dulcet.mini-player.open" { nowPlayingBar = element.frame }
+                pending.append(contentsOf: element.children.reversed())
+            }
+            if let notice {
+                let seconds = Date().timeIntervalSince(start)
+                print("DULCET SKIP NOTICE SIGHTED attempts=\(attempts) seconds=\(String(format: "%.1f", seconds))")
+                return NoticeSighting(
+                    label: notice.label, frame: notice.frame, window: window, navigationBar: navigationBar,
+                    tabBar: tabBar, nowPlayingBar: nowPlayingBar, attempts: attempts, seconds: seconds
+                )
+            }
+        }
+        let recorded = proofMarkers(in: app)
+        let after = recorded.starts(with: markersBefore) ? Array(recorded.dropFirst(markersBefore.count)) : recorded
+        XCTFail("A skipped track must be named in a notice; no snapshot held one in \(attempts) attempt(s) "
+            + "over \(Int(timeout)) s. Markers recorded since the tap: \(after) -- a skip-notice marker "
+            + "means it was shown and outlived no snapshot. " + app.debugDescription)
+        return nil
     }
 
     /// An opt-in album `tools/seed-skip-probe` adds: an undecodable track, then a playable one.
@@ -1103,9 +1166,16 @@ final class DulcetiOSUITests: XCTestCase {
               openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
             return nil
         }
-        let album = app.buttons.matching(identifier: "dulcet.library.album")
-            .matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
-        guard album.waitForExistence(timeout: 30), scrollIntoView(album, in: app) else {
+        // The library's rows are realized as they scroll into view, and the probe albums sort
+        // after the default corpus, so on a phone "Skip Probe" is below the fold and does not exist
+        // until the list scrolls to it. Wait for the library to show albums at all, then scroll.
+        let albums = app.buttons.matching(identifier: "dulcet.library.album")
+        let album = albums.matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
+        guard albums.firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The library must list albums: " + app.debugDescription)
+            return nil
+        }
+        guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
             return nil
@@ -1124,33 +1194,32 @@ final class DulcetiOSUITests: XCTestCase {
         let markersBefore = proofMarkers(in: app)
         unplayableRow.tap()
         let notice = app.descendants(matching: .any)["dulcet.playback.skipped-notice"].firstMatch
-        guard notice.waitForExistence(timeout: 30) else {
-            XCTFail("A skipped track must be named in a notice; none appeared: " + app.debugDescription)
-            return nil
-        }
-        return SkipProbeRun(app: app, notice: notice, markersBefore: markersBefore)
+        guard let sighting = sightNotice(in: app, markersBefore: markersBefore, timeout: 30) else { return nil }
+        return SkipProbeRun(app: app, notice: notice, sighting: sighting, markersBefore: markersBefore)
     }
 
     /// The notice is drawn over no navigation control: not the navigation bar, not the tab bar,
     /// not the now-playing bar -- it sits above the last two -- and it stays inside the window's
-    /// side margins. Each bar must be on screen, so the comparison is against something real.
+    /// side margins. Each bar must be on screen, so the comparison is against something real. Every
+    /// frame comes from the one snapshot in which the notice was seen.
     @MainActor
     @discardableResult
-    private func assertNoticeClearsNavigation(_ notice: XCUIElement, in app: XCUIApplication) -> String {
-        let frame = notice.frame
-        let window = app.windows.firstMatch.frame
-        let navigationBar = app.navigationBars.firstMatch
-        let tabBar = app.tabBars.firstMatch
-        let nowPlayingBar = app.buttons["dulcet.mini-player.open"].firstMatch
-        let placement = "notice=\(frame) window=\(window) navigation=\(navigationBar.frame)"
-            + " tabs=\(tabBar.frame) now-playing=\(nowPlayingBar.frame)"
-        XCTAssertTrue(navigationBar.exists && tabBar.exists && nowPlayingBar.exists,
-                      "The navigation bar, tab bar and now-playing bar must all be on screen; \(placement)")
-        XCTAssertFalse(frame.intersects(navigationBar.frame), "The notice covers the navigation bar; \(placement)")
-        XCTAssertFalse(frame.intersects(tabBar.frame), "The notice covers the tab bar; \(placement)")
-        XCTAssertLessThanOrEqual(frame.maxY, nowPlayingBar.frame.minY,
+    private func assertNoticeClearsNavigation(_ sighting: NoticeSighting) -> String {
+        let frame = sighting.frame
+        let placement = "notice=\(frame) window=\(String(describing: sighting.window))"
+            + " navigation=\(String(describing: sighting.navigationBar)) tabs=\(String(describing: sighting.tabBar))"
+            + " now-playing=\(String(describing: sighting.nowPlayingBar))"
+            + " sighted-after=\(sighting.attempts) snapshot(s)"
+        guard let window = sighting.window, let navigationBar = sighting.navigationBar,
+              let tabBar = sighting.tabBar, let nowPlayingBar = sighting.nowPlayingBar else {
+            XCTFail("The window, navigation bar, tab bar and now-playing bar must all be on screen; \(placement)")
+            return placement
+        }
+        XCTAssertFalse(frame.intersects(navigationBar), "The notice covers the navigation bar; \(placement)")
+        XCTAssertFalse(frame.intersects(tabBar), "The notice covers the tab bar; \(placement)")
+        XCTAssertLessThanOrEqual(frame.maxY, nowPlayingBar.minY,
                                  "The notice must sit above the now-playing bar; \(placement)")
-        XCTAssertLessThanOrEqual(frame.maxY, tabBar.frame.minY, "The notice must sit above the tab bar; \(placement)")
+        XCTAssertLessThanOrEqual(frame.maxY, tabBar.minY, "The notice must sit above the tab bar; \(placement)")
         XCTAssertGreaterThanOrEqual(frame.minX - window.minX, 16, "The notice runs to the left edge; \(placement)")
         XCTAssertGreaterThanOrEqual(window.maxX - frame.maxX, 16, "The notice runs to the right edge; \(placement)")
         return placement

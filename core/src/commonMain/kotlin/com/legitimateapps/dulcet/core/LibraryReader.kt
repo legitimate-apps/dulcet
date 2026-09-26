@@ -49,11 +49,28 @@ internal class LibraryReader(
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
     internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
+    /**
+     * Observed endpoint health for this account (§10.4). The reader holds it because the reader
+     * owns [online], and the breaker is reset on the one offline-to-online transition, whichever
+     * entry point takes it ([setOnline] or [reconnect]).
+     */
+    internal val breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
 ) {
     private val owner = currentThreadIdentity()
 
     /** Failures that reached the backstop handler instead of a publication; empty when healthy. */
     internal val uncaughtFailures = mutableListOf<Throwable>()
+
+    /**
+     * This session's lyrics reads (§18.4): the verdicts on answers refused as too large, the
+     * requests that timed out, and the reads in flight that an automatic read of the same track
+     * joins. Held by the reader for the reason [breaker] is: state per lyrics object would start
+     * empty every time a shell asked for one. A reconnect keeps the verdicts — the size belongs to
+     * the file, not the network — and forgets the timeouts, which are stamped with the breaker's
+     * reset generation. After a reconnect no read joins a request admitted before it: flights are
+     * stamped with the same generation.
+     */
+    internal val lyricsReads: LyricsReads = LyricsReads()
 
     /**
      * The reader's own scope: the caller's dispatcher (the reader's thread), a supervisor so one
@@ -74,8 +91,19 @@ internal class LibraryReader(
     internal fun listLock(listKey: String): Mutex = listLocks.getOrPut(listKey) { Mutex() }
 
     /** Whether the server is reachable, as the platform reports it. Offline issues no request. */
-    var online: Boolean = true
-        private set
+    val online: Boolean get() = serverReachable
+
+    private var serverReachable = true
+
+    /**
+     * The only way [online] changes, for [setOnline] and [reconnect] alike. Coming back online
+     * resets [breaker]: failures observed before the network went away say nothing about an
+     * endpoint after it came back.
+     */
+    private fun changeOnline(value: Boolean) {
+        if (value && !serverReachable) breaker.reset()
+        serverReachable = value
+    }
 
     /** Low Data Mode or a metered connection: no speculative reads (§16.13). */
     var networkConstrained: Boolean = false
@@ -131,7 +159,7 @@ internal class LibraryReader(
      */
     suspend fun reconnect() {
         checkConfined()
-        online = true
+        changeOnline(true)
         // Step 1 never stops step 2: an outbox that fails is recorded, and the epoch is still read.
         flushOutboxes()
         val before = (sessionEpoch ?: cache.storedEpoch()?.let(CatalogEpoch::fromStored))?.key
@@ -182,7 +210,7 @@ internal class LibraryReader(
     fun setOnline(reachable: Boolean) {
         checkConfined()
         if (online == reachable) return
-        online = reachable
+        changeOnline(reachable)
         if (!reachable) lookAhead.cancelAll()
         visibleHandles().forEach { it.republish() }
     }
@@ -280,9 +308,25 @@ internal class LibraryReader(
      * sequence, and the epoch reading it is checked against (its *before*), are both taken once the
      * request holds a slot and is about to be SENT — never while it waits — so a request that waited
      * is ordered by when it went out, and its *before* is provably earlier than the request.
+     * [maxBodyBytes], when given, limits the response body (see [LibraryEndpointTransport.request]).
+     * [issued] learns the sequence as the request goes out, so a caller can order an answer the
+     * transport refused, which returns no [SentResponse].
      */
-    internal suspend fun send(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
-        permits.withPermit { issue { transport.request(endpoint, parameters) } }
+    internal suspend fun send(
+        endpoint: String,
+        parameters: Map<String, String> = emptyMap(),
+        maxBodyBytes: Int? = null,
+        issued: (Long) -> Unit = {},
+    ): SentResponse =
+        permits.withPermit {
+            issue(issued) {
+                if (maxBodyBytes == null) {
+                    transport.request(endpoint, parameters)
+                } else {
+                    transport.request(endpoint, parameters, maxBodyBytes)
+                }
+            }
+        }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(endpoint: String, parameters: Map<String, String> = emptyMap()): SentResponse =
@@ -320,8 +364,12 @@ internal class LibraryReader(
      * failure of the request itself is thrown as a [LibraryRequestFailure]; anything else thrown here
      * — the device's own database failing — is not, so a caller never reports it as the server's.
      */
-    private suspend fun issue(request: suspend () -> LibraryEndpointResponse): SentResponse {
+    private suspend fun issue(
+        issued: (Long) -> Unit = {},
+        request: suspend () -> LibraryEndpointResponse,
+    ): SentResponse {
         val seq = cache.issue()
+        issued(seq)
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
         val response = try {
             request()

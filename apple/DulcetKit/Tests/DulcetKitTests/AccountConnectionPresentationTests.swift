@@ -108,8 +108,14 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         .malformedEnvelope: .accountErrorProtocol,
         .incompatibleProtocol: .accountErrorProtocol,
         .notASubsonicServer: .accountErrorProtocol,
+        // An answer larger than this build reads is a fault in what came back, not in reaching the
+        // server or in the server's own verdict: a protocol error.
+        .responseTooLarge: .accountErrorProtocol,
         .knownServerError: .accountErrorServer,
         .unknownServerError: .accountErrorServer,
+        // A failure the core named but this build cannot: shown as the server's failure, with the
+        // advice to update, never as a wrong specific cause.
+        .unrecognizedFailure: .accountErrorServer,
         .invalidCredentials: .accountErrorAuthentication,
         .tokenAuthenticationUnsupported: .accountErrorAuthentication,
         .forbidden: .accountErrorAuthentication,
@@ -1477,6 +1483,53 @@ func accountDomainErrorsHaveATotalActionablePresentation() {
     #expect(crossOrigin?.recovery.localizedCaseInsensitiveContains("SSO") == true)
     #expect(crossOrigin?.message.contains("/") == false)
     #expect(crossOrigin?.message.contains("?") == false)
+}
+
+@Test
+func aKindTheCoreNamesIsReadSafelyAndNeverAsAMalformedServer() {
+    for kind in DulcetAccountFailureKind.allCases {
+        #expect(DulcetAccountFailureKind(coreKind: kind.rawValue) == kind)
+    }
+    #expect(DulcetAccountFailureKind(coreKind: "responseTooLarge") == .responseTooLarge)
+    #expect(DulcetAccountFailureKind(coreKind: "aKindThisBuildHasNeverSeen") == .unrecognizedFailure)
+    #expect(DulcetAccountFailureKind(coreKind: "") == .unrecognizedFailure)
+
+    func presentation(_ kind: DulcetAccountFailureKind) -> DulcetAccountFailurePresentation {
+        DulcetAccountErrorPresenter.presentation(
+            for: DulcetAccountErrorContext(kind: kind, serverName: "Music server")
+        )
+    }
+    let malformed = presentation(.malformedEnvelope)
+    // The control: the malformed kind really does say so, or the checks below prove nothing.
+    #expect(malformed.title.localizedCaseInsensitiveContains("malformed"))
+    for kind in [DulcetAccountFailureKind.responseTooLarge, .unrecognizedFailure] {
+        let shown = presentation(kind)
+        #expect(shown.kind == kind)
+        #expect(shown.title != malformed.title)
+        #expect(shown.message != malformed.message)
+        #expect(!shown.title.localizedCaseInsensitiveContains("malformed"))
+        #expect(!shown.message.localizedCaseInsensitiveContains("malformed"))
+        #expect(!shown.message.localizedCaseInsensitiveContains("envelope"))
+    }
+}
+
+@Test @MainActor
+func aLibraryOrSearchKindTheCoreNamesIsReadSafelyAndNeverAsAServerDulcetCouldNotRead() {
+    let known = ["timeout", "unreachable", "tlsUntrusted", "security", "authentication", "protocol", "server", "input", "capability"]
+    for raw in known {
+        #expect(DulcetLibraryFailureKind(coreKind: raw).rawValue == raw)
+        #expect(DulcetSearchFailureKind(coreKind: raw).rawValue == raw)
+    }
+    for raw in ["aKindThisBuildHasNeverSeen", ""] {
+        #expect(DulcetLibraryFailureKind(coreKind: raw) == .unrecognized)
+        #expect(DulcetSearchFailureKind(coreKind: raw) == .unrecognized)
+    }
+    // The control: the protocol kind really is explained as an unreadable response.
+    let unreadable = DulcetLibraryErrorView.message(for: DulcetLibraryFailure(kind: .protocol))
+    #expect(unreadable == DulcetStrings.libraryErrorProtocol)
+    let unknown = DulcetLibraryErrorView.message(for: DulcetLibraryFailure(kind: DulcetLibraryFailureKind(coreKind: "aKindThisBuildHasNeverSeen")))
+    #expect(unknown == DulcetStrings.libraryErrorGeneric)
+    #expect(unknown != unreadable)
 }
 
 @Test @MainActor

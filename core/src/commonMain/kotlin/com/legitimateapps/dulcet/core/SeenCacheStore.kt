@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The seen-cache of spec §16.10: normalized entities, list windows and pins, keyed by provider
@@ -124,13 +125,26 @@ internal data class SeenCacheCeilings(
     val tracks: Long,
     val artists: Long,
     val lists: Long,
+    /** Lyrics documents (§18.4); a document of a pinned track is never evicted. */
+    val lyrics: Long = 5_000,
+    /**
+     * The bytes the lyrics documents may hold together (§18.4), counted by [lyricsStoredBytes]:
+     * 32 MiB, an ASSUMED figure, chosen by the maintainer at the third review, because the
+     * document ceiling alone bounds the store at about 2 GiB of worst-case documents. Pinned
+     * tracks' documents are never evicted, nor the one just written, so together they can take
+     * the store past it. When the pinned documents alone exceed it — about 2,400 real songs, or
+     * about 80 documents at every cap — every write evicts every other unpinned document, so the
+     * unpinned part of the store keeps only the document just written; reads online are live, so
+     * this costs a request per track, not lyrics (fourth review).
+     */
+    val lyricsBytes: Long = 32L * 1_048_576,
 ) {
     init {
-        require(albums > 0 && tracks > 0 && artists > 0 && lists > 0)
+        require(albums > 0 && tracks > 0 && artists > 0 && lists > 0 && lyrics > 0 && lyricsBytes > 0)
     }
 
     companion object {
-        val DEFAULT = SeenCacheCeilings(albums = 50_000, tracks = 500_000, artists = 20_000, lists = 2_000)
+        val DEFAULT = SeenCacheCeilings(albums = 50_000, tracks = 500_000, artists = 20_000, lists = 2_000, lyrics = 5_000)
     }
 }
 
@@ -383,6 +397,59 @@ internal data class AlbumDetailWrite(
 )
 
 /** Seen-cache counts for the offline search label (spec §16.15). */
+/**
+ * One track's stored lyrics: the kept layers in the server's order, with when they were read, how
+ * many layers of the answer were dropped to fit the caps, and what the document's rows hold.
+ */
+internal data class CachedLyrics(
+    val source: LyricsSource,
+    val layers: List<LyricsLayer>,
+    val fetchedAtWall: Long,
+    val issueSeq: Long,
+    val droppedLayers: Int = 0,
+    val storedBytes: Long = 0,
+)
+
+/**
+ * What one lyrics document's rows hold, in bytes (§18.4): every string's UTF-8 length and eight
+ * bytes per integer, with the account and track keys counted twice in every row, because SQLite
+ * stores a rowid table's primary key again in its index. It is the budget's measure, not the file
+ * size, and it reads low: OBSERVED 2026-09-24 against SQLite files filled with the lyrics tables
+ * the way this store writes them (§18.4), it is 0.94 to 0.99 of the pages a document at every cap
+ * occupies, 0.92 to 0.98 for a 60-line song, and 0.87 for a one-line one.
+ */
+internal fun lyricsStoredBytes(
+    serverId: String,
+    trackRawId: String,
+    source: LyricsSource,
+    layers: List<LyricsLayer>,
+): Long {
+    val keys = 2 * (lyricsUtf8Length(serverId) + lyricsUtf8Length(trackRawId))
+    val header = keys + lyricsUtf8Length(source.cacheWireName()) + 5 * INTEGER_BYTES
+    return header + layers.sumOf { layer ->
+        val ordinal = 2 * INTEGER_BYTES
+        keys + ordinal + 2 * INTEGER_BYTES + lyricsUtf8Length(layer.language) + lyricsUtf8Length(layer.kind) +
+            lyricsUtf8Length(layer.displayArtist) + lyricsUtf8Length(layer.displayTitle) +
+            layer.lines.sumOf { line -> keys + 2 * ordinal + INTEGER_BYTES + lyricsUtf8Length(line.text) }
+    }
+}
+
+private const val INTEGER_BYTES = 8L
+
+/** How many eviction candidates one query reads (ASSUMED; any positive number is correct). */
+private const val LYRICS_EVICTION_BATCH = 64L
+
+internal fun LyricsSource.cacheWireName(): String = when (this) {
+    LyricsSource.SongLyricsExtension -> "songLyrics"
+    LyricsSource.LegacyGetLyrics -> "getLyrics"
+}
+
+internal fun lyricsSourceFromCacheWireName(value: String): LyricsSource = when (value) {
+    "songLyrics" -> LyricsSource.SongLyricsExtension
+    "getLyrics" -> LyricsSource.LegacyGetLyrics
+    else -> error("unknown cached lyrics source")
+}
+
 internal data class SeenCacheCounts(val artists: Long, val albums: Long, val tracks: Long)
 
 /**
@@ -978,6 +1045,9 @@ internal class BoundSeenCache internal constructor(
             candidates = { queries.selectEvictableTracks(serverId, it).executeAsList() },
             delete = { rawId ->
                 queries.deleteCredits(serverId, "track", rawId)
+                // A track's lyrics go with it: "seen" is defined per item (§16.13), and lyrics
+                // left behind would be reachable by nothing but a stale id.
+                database.lyricsCacheQueries.deleteLyrics(serverId, rawId)
                 queries.deleteTrack(serverId, rawId)
                 known.tracks -= 1
                 tracks += rawId
@@ -996,6 +1066,133 @@ internal class BoundSeenCache internal constructor(
             release = ::releaseOneList,
         )
         return EvictionReport(lists, albums, tracks, artists)
+    }
+
+    // ---- Lyrics (§18.4) -------------------------------------------------------------------------
+
+    /**
+     * The cached lyrics document of one track, or null when none was ever stored. A document with
+     * no layers is the stored fact "the server has no lyrics for this track". Reading does not
+     * touch; [touchLyrics] does, so a probe cannot reorder eviction.
+     */
+    fun lyrics(trackRawId: String): CachedLyrics? {
+        val lyricsQueries = database.lyricsCacheQueries
+        val header = lyricsQueries.selectLyricsHeader(serverId, trackRawId).executeAsOneOrNull() ?: return null
+        val lines = lyricsQueries.selectLyricsLines(serverId, trackRawId).executeAsList()
+            .groupBy { it.layer_ordinal }
+        val layers = lyricsQueries.selectLyricsLayers(serverId, trackRawId).executeAsList().map { layer ->
+            LyricsLayer(
+                language = layer.language,
+                synced = layer.synced == 1L,
+                offset = layer.offset_milliseconds.milliseconds,
+                lines = lines[layer.layer_ordinal].orEmpty().map { line ->
+                    LyricsLine(text = line.text, start = line.start_milliseconds?.milliseconds)
+                },
+                kind = layer.kind,
+                displayArtist = layer.display_artist,
+                displayTitle = layer.display_title,
+            )
+        }
+        return CachedLyrics(
+            source = lyricsSourceFromCacheWireName(header.source),
+            layers = layers,
+            fetchedAtWall = header.fetched_at_wall,
+            issueSeq = header.issue_seq,
+            droppedLayers = header.dropped_layers.toInt(),
+            storedBytes = header.stored_bytes,
+        )
+    }
+
+    /**
+     * Writes one track's lyrics document, replacing the stored one only when [issueSeq] is higher
+     * than the stored document's (a slow answer never overwrites a newer one). Returns whether it
+     * wrote. [droppedLayers] is how many layers of the answer did not fit the caps. Evicts the
+     * least recently accessed unpinned documents past the lyrics ceiling or the byte budget in the
+     * same transaction.
+     */
+    fun writeLyrics(
+        issueSeq: Long,
+        trackRawId: String,
+        source: LyricsSource,
+        layers: List<LyricsLayer>,
+        droppedLayers: Int = 0,
+    ): Boolean = database.transactionWithResult {
+        require(droppedLayers >= 0)
+        val lyricsQueries = database.lyricsCacheQueries
+        val stored = lyricsQueries.selectLyricsHeader(serverId, trackRawId).executeAsOneOrNull()
+        if (stored != null && stored.issue_seq >= issueSeq) return@transactionWithResult false
+        lyricsQueries.deleteLyrics(serverId, trackRawId)
+        val now = clock.nowEpochMilliseconds()
+        lyricsQueries.insertLyricsHeader(
+            serverId,
+            trackRawId,
+            source.cacheWireName(),
+            now,
+            issueSeq,
+            now,
+            droppedLayers.toLong(),
+            lyricsStoredBytes(serverId, trackRawId, source, layers),
+        )
+        layers.forEachIndexed { layerOrdinal, layer ->
+            lyricsQueries.insertLyricsLayer(
+                serverId,
+                trackRawId,
+                layerOrdinal.toLong(),
+                layer.language,
+                if (layer.synced) 1L else 0L,
+                layer.offset.inWholeMilliseconds,
+                layer.kind,
+                layer.displayArtist,
+                layer.displayTitle,
+            )
+            layer.lines.forEachIndexed { lineOrdinal, line ->
+                lyricsQueries.insertLyricsLine(
+                    serverId,
+                    trackRawId,
+                    layerOrdinal.toLong(),
+                    lineOrdinal.toLong(),
+                    line.start?.inWholeMilliseconds,
+                    line.text,
+                )
+            }
+        }
+        evictLyricsInTransaction(written = trackRawId)
+        true
+    }
+
+    fun touchLyrics(trackRawId: String) {
+        database.lyricsCacheQueries.touchLyrics(clock.nowEpochMilliseconds(), serverId, trackRawId)
+    }
+
+    /**
+     * Lyrics documents evicted past [SeenCacheCeilings.lyrics] or [SeenCacheCeilings.lyricsBytes],
+     * least recently accessed first, never a pinned track's and never the document just [written]
+     * (the read that wrote it publishes it next). Past either bound the store is brought one per
+     * cent below it, so a store at its bound does not evict on every write.
+     */
+    private fun evictLyricsInTransaction(written: String): List<String> {
+        val lyricsQueries = database.lyricsCacheQueries
+        var count = lyricsQueries.countLyrics(serverId).executeAsOne()
+        var bytes = lyricsQueries.sumLyricsBytes(serverId).executeAsOne()
+        if (count <= ceilings.lyrics && bytes <= ceilings.lyricsBytes) return emptyList()
+        val countTarget = if (count > ceilings.lyrics) ceilings.lyrics - maxOf(1L, ceilings.lyrics / 100) else count
+        val bytesTarget =
+            if (bytes > ceilings.lyricsBytes) ceilings.lyricsBytes - maxOf(1L, ceilings.lyricsBytes / 100) else bytes
+        val evicted = mutableListOf<String>()
+        while (count > countTarget || bytes > bytesTarget) {
+            // A bounded batch per query: every candidate read is either deleted or ends the loop,
+            // and a deleted one is not read again.
+            val batch = lyricsQueries.selectEvictableLyrics(serverId, written, LYRICS_EVICTION_BATCH).executeAsList()
+            if (batch.isEmpty()) break
+            for (candidate in batch) {
+                if (count <= countTarget && bytes <= bytesTarget) break
+                lyricsQueries.deleteLyrics(serverId, candidate.raw_id)
+                evicted += candidate.raw_id
+                count -= 1
+                bytes -= candidate.stored_bytes
+            }
+        }
+        return evicted
     }
 
     // ---- Mapping --------------------------------------------------------------------------------
