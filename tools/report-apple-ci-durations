@@ -34,25 +34,55 @@ def minutes(item):
             datetime.fromisoformat(item['started_at'].replace('Z', '+00:00'))).total_seconds() / 60
 
 
+AGGREGATOR = 'apple-ci'
+
+
+def legs_of(run_jobs):
+    """The jobs that carry steps worth timing in one run.
+
+    Before the split (spec §21.5) a run had one job, named apple-ci, holding every step. After
+    it, apple-ci is a short aggregator that only reads the legs' results, and the legs hold the
+    steps. A run with any other job is the split shape; a lone apple-ci job is the old shape.
+    """
+    others = [job for job in run_jobs if job['name'] != AGGREGATOR]
+    return others or run_jobs
+
+
 def aggregate(jobs):
+    runs = defaultdict(list)
+    for job in jobs:
+        runs[job['run_id']].append(job)
     raw = defaultdict(list)
     paired = defaultdict(list)
+    per_job = defaultdict(list)
     totals = []
-    for job in jobs:
-        if job['name'] != 'apple-ci' or job['conclusion'] != 'success':
+    walls = []
+    for run_jobs in runs.values():
+        legs = legs_of(run_jobs)
+        if any(job['conclusion'] != 'success' for job in legs):
             continue
-        totals.append(minutes(job))
-        for step in job['steps']:
-            if step['conclusion'] != 'success':
-                continue
-            raw[step['name']].append(minutes(step))
-            paired[ALIASES.get(step['name'], step['name'])].append(minutes(step))
+        for job in legs:
+            totals.append(minutes(job))
+            per_job[job['name']].append(minutes(job))
+            for step in job['steps']:
+                if step['conclusion'] != 'success':
+                    continue
+                raw[step['name']].append(minutes(step))
+                paired[ALIASES.get(step['name'], step['name'])].append(minutes(step))
+        # Wall time is first start to last completion across every job, aggregator included:
+        # the required check turns green only when the aggregator finishes.
+        walls.append(minutes(dict(
+            started_at=min(job['started_at'] for job in run_jobs),
+            completed_at=max(job['completed_at'] for job in run_jobs))))
     if not totals:
-        raise ValueError('sample contains no successful apple-ci jobs')
+        raise ValueError('sample contains no run whose Apple legs all succeeded')
     def rows(groups):
         return [dict(step=name, n=len(values), max_minutes=round(max(values), 2))
                 for name, values in sorted(groups.items(), key=lambda row: -max(row[1]))]
     return dict(job_max_minutes=round(max(totals), 2), jobs=len(totals),
+                run_wall_max_minutes=round(max(walls), 2), runs=len(walls),
+                per_job=[dict(job=name, n=len(values), max_minutes=round(max(values), 2))
+                         for name, values in sorted(per_job.items())],
                 raw_names=rows(raw), across_renames=rows(paired))
 
 

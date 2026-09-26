@@ -327,6 +327,18 @@ PURGE_DEFAULT_LIFETIME = (
     ("next-restart", "restart_navidrome_cold ios resequenced false"),
 )
 apple_code = [line.strip() for line in apple_workflow.splitlines() if not line.lstrip().startswith("#")]
+# `purge_default_pid` is a shell variable, so every line above must also run in ONE shell: one step
+# of one job. apple-ci is several jobs now, and file order alone would still read as correct if the
+# macOS leg moved to a different job or step than the server it needs. Number each code line with
+# the step it belongs to (a step starts at a six-space `- ` item; a job at a two-space key).
+apple_step_of = []
+apple_step = 0
+for line in apple_workflow.splitlines():
+    if line.lstrip().startswith("#"):
+        continue
+    if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line) or line.startswith("      - "):
+        apple_step += 1
+    apple_step_of.append(apple_step)
 lifetime_positions = []
 for event, text in PURGE_DEFAULT_LIFETIME:
     # A bare assignment must match whole lines, or it would also match `purge_default_pid=$!`.
@@ -342,8 +354,19 @@ for event, text in PURGE_DEFAULT_LIFETIME:
 if lifetime_positions != sorted(lifetime_positions):
     order = [event for _, event in sorted(zip(lifetime_positions, (e for e, _ in PURGE_DEFAULT_LIFETIME)))]
     raise AssertionError(f"apple-ci second-server lifetime is out of order: {order}")
-if 'kill "$purge_default_pid" >/dev/null 2>&1 || true' not in apple_code:
+lifetime_steps = {apple_step_of[position] for position in lifetime_positions}
+if len(lifetime_steps) != 1:
+    raise AssertionError(
+        "apple-ci second-server lifetime spans more than one step, so the pid cannot survive: "
+        + str([(event, apple_step_of[p]) for (event, _), p in zip(PURGE_DEFAULT_LIFETIME, lifetime_positions)])
+    )
+backstop = [
+    index for index, line in enumerate(apple_code) if line == 'kill "$purge_default_pid" >/dev/null 2>&1 || true'
+]
+if len(backstop) != 1:
     raise AssertionError("apple-ci cleanup lost its backstop kill of the second server")
+if apple_step_of[backstop[0]] not in lifetime_steps:
+    raise AssertionError("apple-ci cleanup's backstop kill is in a different step from the second server")
 
 for required_workflow in (
     'tools/conformance-env/reset-transcode-cache --root "$ROOT"',

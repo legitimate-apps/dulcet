@@ -1425,9 +1425,10 @@ fails with `CoreMediaErrorDomain -12881`; `segment1.aac` never reaches the deleg
 crosses the first boundary. The error is surfaced and asserted. The evidence does not say that the
 second segment escaped to another loader—it says playback failed before the second request.
 
-The result is recorded in `docs/COMPATIBILITY.md` and runs serially inside the branch-protection-
-required `apple-ci` job. The required job proves that an `all-routed` assertion rejects the observed
-first-only/error state, then records that exact state as the expected compatibility result. Therefore
+The result is recorded in `docs/COMPATIBILITY.md` and runs serially inside `apple-conformance`, a leg
+that the branch-protection-required `apple-ci` job needs and fails without (§21.5). That leg proves
+that an `all-routed` assertion rejects the observed first-only/error state, then records that exact
+state as the expected compatibility result. Therefore
 Apple **refuses `protocol: "hls"` playback plans and forces Path A to a progressive container**. This
 is the specified successful fallback outcome, not a failed spike. A future decision to attempt Apple
 HLS again requires new evidence and a spec revision.
@@ -4349,22 +4350,27 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
    `macos-<version>` when a toolchain pin demands it, §4.4) and never a larger-runner label. A CI lint
    step asserts this, because the failure mode is a silent bill rather than a broken build.
 2. **Hosted macOS concurrency is capped well below Linux**, so a wide Apple matrix **queues rather than
-   fans out** and a broad matrix makes CI slower, not faster. **There is one serial `apple-ci` job:** it
-   shares one framework build across the macOS, iOS/iPadOS-simulator, and tvOS destinations, then runs
-   every Apple-only measurement and the native Darwin conformance self-assertion in that same slot.
-   There is no Apple matrix and no second conformance or measurement job. Adding an Apple job or
-   matrix axis is a design decision that belongs in this section, not a workflow convenience.
+   fans out** and a broad matrix makes CI slower, not faster. **OBSERVED 2026-09-24** (GitHub Docs,
+   *Actions limits*, https://docs.github.com/en/actions/reference/limits): the maximum concurrent
+   macOS jobs on standard hosted runners is 5 on the Free, Pro and Team plans, against 20 to 60 jobs
+   in total, and the macOS figure is shared with larger runners. **`apple-ci` is two parallel
+   hosted-macOS legs behind one required aggregator job (§21.5):** `apple-platform` runs the macOS,
+   iOS/iPadOS-simulator and tvOS shells and their presentation, capture and compact-shell legs;
+   `apple-conformance` runs `macosArm64Test`, the §12.4 measurement and the native Darwin conformance
+   composite; the job named `apple-ci` runs on Linux and passes only when both legs succeed. There is
+   no Apple matrix. A third macOS leg, or any other Apple job or matrix axis, is a design decision
+   that belongs in §21.5, not a workflow convenience.
 
 | workflow | runner | contents |
 |---|---|---|
 | `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline; `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator downloads the Android-only JUnit artifact, resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase, then passes only when both upstream jobs report `success`. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `macos-26` | one serial job: the Phase-0 Kotlin/Native frameworks and `macosArm64Test`; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator; OS-floor assertion; the §12.4 resource-loader negative canary and strengthened measurement; then checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure, generated corpus, fail-loud conformance preconditions, and `core-conformance:macosArm64Test`. Future Apple-only measurements and tests join this job, never a second macOS job |
+| `apple-ci.yml` | pinned standard `macos-26` for the two legs; `ubuntu-latest` for the aggregator | two parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, and the app-host, download, playback and `core-conformance` legs on macOS, iOS/iPadOS and tvOS. `apple-ci`: resolves every Apple `FEATURES.yml` evidence identity against both legs' JUnit, then passes only when both legs report `success`. Future Apple-only measurements and tests join one of the two legs, never a third macOS job without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. The only workflow able to read signing secrets |
 
 **Note on the Linux-only claim:** GitHub Actions **service containers** require a Linux runner, so the
-`services:`-based Navidrome cannot run in the Apple job. That is a statement about the Actions feature,
+`services:`-based Navidrome cannot run in an Apple job. That is a statement about the Actions feature,
 and it is why the Apple leg runs Navidrome as a native pinned binary instead (§20.3).
 
 Every workflow carries:
@@ -4375,8 +4381,9 @@ concurrency:
   cancel-in-progress: true
 ```
 
-with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 since
-2026-09-06, with per-step caps on the heavy steps — see §21.5**), 5 `parity-gate`, 60
+with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
+2026-09-06, then per leg since the split — 80 `apple-platform`, 115 `apple-conformance`, 5 for the
+aggregator — with per-step caps on the heavy steps; see §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
 framework builds, macOS test, four Xcode shell builds, OS-floor assertions, both negative-control
@@ -4518,21 +4525,129 @@ freshly booted simulator (SUPPORTED, n=23).
    genuine host-wide stall in which the fixture answered 200 six seconds in and the client could not
    read it; a larger bound converts a named stall into an unnamed one.
 
+**The split — adopted 2026-09-24 (revision 111).** Until then, this section deferred splitting
+`apple-ci` into parallel hosted jobs with the condition: *adopt it if, after rules 1–4, pass rate is
+at or above 80% and median wall time is still above 75 minutes; if the pass rate is still low, adopt
+it regardless.* **MEASURED from the Actions API**, over every completed run created after rules 1–4
+merged (#136, 2026-09-23T05:50Z) up to and including run 36018294846: 12 green, 5 red, and 2
+cancelled by a newer push. The green runs' job durations were median **98.3** minutes, range
+54.2–108.0 (35824119417 95.5, 35826951912 98.4, 35850771153 98.2, 35946038237 102.8, 35953810801
+91.8, 35955374570 103.4, 35963317837 54.2, 35964758051 104.6, 35974194548 93.5, 35999801240 92.9,
+36010624442 100.5, 36018294846 108.0). Counting every red, the pass rate is 12 of 17 (70.6%), below
+80%, so the condition's second branch applies: adopt regardless. Four of the five reds were one
+branch's own defects, and the fifth was main's run 35824056719, a CONF-14a transcode-offset ratio
+assertion. Excluding the four branch defects gives 12 of 13 (92%); then the first branch applies,
+because the median is above 75 minutes. Either reading adopts the split.
+
+**Normative:**
+
+1. **Two legs on the pinned standard `macos-26` label and one required aggregator.**
+   `apple-platform` runs the macOS shell, its presentation and registered-pair contrast tests, the
+   deterministic capture and the shipping reference; the iPhone, iPadOS and tvOS shells with their
+   DulcetKit and Keychain tests; the compact shell; and the OS-floor assertion. `apple-conformance`
+   runs the Darwin closure, all five frameworks with `macosArm64Test`, the §12.4 measurement, and the
+   conformance composite with every app-host, download and playback proof and every
+   `core-conformance` suite that talks to the native fixtures. The job named **exactly** `apple-ci`
+   runs on `ubuntu-latest`. Branch protection matches it by name and `FEATURES.yml` cites it by job
+   id. It runs `if: always()` and `needs:` every leg, and it fails unless each leg's result equals
+   `success`: `failure`, `cancelled` (a timeout reports as cancelled) and `skipped` all fail it. It
+   downloads each leg's parity evidence and the `core-conformance` JUnit, then runs
+   `tools/verify-parity-evidence`, which resolves citations to the job it runs in. This is
+   `core-ci`'s aggregator pattern, so no `FEATURES.yml` citation changes.
+2. **Rules 1–4 hold per leg.** Rule 1: in the conformance leg, the Darwin closure install and its
+   drift check still run immediately after Xcode selection, before any build. The platform leg
+   installs no environment, and its source-policy controls keep their original positions. Rule 2:
+   in the conformance leg, `tools/ci/isolate-simulator` precedes every simulator phase that talks
+   to the fixtures. That now includes the three app-host library-sync proofs, which ran without it
+   before the split. Their devices are first booted there now, where the platform legs used to
+   boot them earlier in the same job. The platform leg talks to no fixture and keeps its
+   compact-shell call. Rule 3: linking still exits before any suite runs. Rule 4: each leg starts
+   and summarises its own host-pressure record, green or red, and uploads it with its failure
+   diagnostics.
+3. **Every step that existed before the split runs exactly once across the legs.** The only
+   exceptions are setup steps that each macOS leg needs: checkout, toolchain pins, host-pressure
+   start and summary, Xcode selection, Java, Gradle, and the failure-diagnostics inventory and
+   upload. Two kinds of step are new. The platform leg links the three frameworks its shells read,
+   and the conformance leg builds the three app schemes that its `test-without-building` legs used
+   to inherit from the platform legs. A change to this workflow proves the invariant mechanically:
+   compare the multiset of step names and `run` bodies before and after, never by reading a text
+   merge.
+4. **Artifacts carry the job id and the attempt, and the aggregator downloads each one by the
+   attempt that produced it**, which is a leg output. "Re-run failed jobs" re-runs a failed leg and
+   the aggregator, but not a green leg, so a name built from the aggregator's own attempt would ask
+   for evidence that was never uploaded. **OBSERVED 2026-09-25**, run 36188503621: attempt 1's
+   conformance leg failed and its platform leg passed. "Re-run failed jobs" re-ran only the
+   conformance leg and the aggregator. Attempt 2's aggregator downloaded
+   `dulcet-apple-parity-evidence-apple-platform-36188503621-1` alongside the conformance leg's
+   `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
+5. **Each leg's timeout is 1.5 times its measured maximum, rounded up to a multiple of 5:** 80
+   minutes for `apple-platform` (measured maximum 51.5, run 36196670168) and 115 for
+   `apple-conformance` (measured maximum 74.6, run 36205806012). The aggregator gets 5. The legs
+   were first sized the same way from projected maxima, 95 from 60.2 and 110 from 71.3; measured
+   history replaced the projection once the conformance leg exceeded its own. Each leg's cap must
+   also exceed every one of its step caps plus the rest of that leg as measured, or a healthy step
+   is killed by the job and reported against whichever step was active: the worst case is 74.1
+   for the platform leg and 103.5 for the conformance leg. The composite's own cap is 85 minutes,
+   raised from the single job's 67 after it measured 62.2 on a slow host. Every other per-step cap
+   is unchanged. Re-size from the legs' history as it grows.
+6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
+   aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
+   test each leg's result for `success` in an unconditional step. It must make exactly one direct
+   evidence-verification call, in an unconditional, blocking step that runs after every download,
+   and those downloads may not be optional either. No leg may verify evidence, and no Apple job may
+   set `continue-on-error`. There may be at most two macOS jobs. Runners must use standard labels only. Every job needs a timeout,
+   and every workflow needs `cancel-in-progress` concurrency.
+
+**Projection, ASSUMED until measured.** It sums the per-step timings of the 12 green runs above by
+leg. The platform leg projects to median 49.5 and max 58.7 minutes, with its framework link costed
+at the whole framework step. The conformance leg projects to median 61.5 and max 71.3, including 9
+minutes ASSUMED for the three app builds. Run wall time is the conformance leg plus about a minute
+for the aggregator: median ~62.5 and max ~72.3 minutes, against the single job's 98.3 median. The
+costs: each run holds 2 of the 5 hosted-macOS slots instead of 1. Runner-minutes rise by about
+16% (per-run median; range 13–22%), and they are free on this public repository (§21.1). Fail-fast across legs is lost, so
+a red leg no longer stops the other one. The red leg's own check run still turns red when it fails.
+
+**Measured on the adopting pull request, OBSERVED 2026-09-24..25** (standard `macos-26`). Every
+complete leg: `apple-platform` took 49.5 minutes in run 36178175847 and 44.0 in 36188503621;
+`apple-conformance` took 61.0 in 36036076261 and 44.6 in 36188503621 attempt 2. The three app
+builds the split added took 6.4 and 4.3 minutes in total, against the 9 assumed. The composite step
+alone took 42.4 and 30.7. The aggregator took 6 to 13 seconds. Both legs held a slot within 10
+seconds of the run starting, in every run. The partial reds, all outside the split: run 36036076261's
+platform leg hit the iPad destination failure ("Unable to find a device matching the provided
+destination specifier", zero concrete simulators listed). Run 36178175847's conformance leg stopped
+at minute 3 on a Homebrew `ca-certificates` pin drift (CLAUDE.md trap 36; rule 1 placed it there,
+where the single job used to reach it after its builds). Run 36188503621 attempt 1's conformance
+leg hit a 10-second loopback read timeout in `DarwinProxyAuthenticationConformanceTest` on
+iosSimulatorArm64, with one simulator booted and host pressure comparable to a green single-job run.
+That is rule 5's host-contention class. In 36036076261, the aggregator failed at its leg-result
+check, before reading any evidence. Two runs were green on their first attempt: 36196670168
+(platform 51.5, conformance 57.4, composite 42.0, wall 57.7 minutes) and 36201409613, the first on
+top of the reader conformance suite (CONF-70..75), which runs a second Navidrome around the
+macOS leg (platform 44.2, conformance 63.1, composite 47.0 of its then 67-minute cap, wall 63.4).
+That suite's macOS class passed 8 of 8 in 83.3 seconds, and the aggregator's evidence rose from
+`tests=55 reports=44` to `tests=55 reports=45`: one more JUnit report and no new citation. The app
+builds took 6.4 minutes in both. Run 36205806012, on top of the search-paging change that added
+three citations, was green on its first attempt too, with `tests=58 reports=45`. Its platform leg
+took 43.9 minutes, its conformance leg 74.6 and its wall time 74.9, and its composite took 62.2 of
+67 minutes. On the same 7 GiB, 3-CPU runner shape as 36201409613, 12 of the composite's 13
+host-pressure phases ran longer (one ran 12 seconds shorter), by 912 seconds in total, which is the
+whole 15.2-minute difference, and no single phase accounted for most of it: a slow host, not a
+stall. Rule 5's caps were re-sized from it. The run's wall time is the longer leg plus
+the aggregator, so two legs at these figures finish in 45–75 minutes, against the single job's
+92–108.
+
 **Considered and NOT adopted — with the condition under which each becomes right.**
 
-- **Splitting `apple-ci` into parallel hosted jobs** (platform legs | conformance composite, behind a
-  required `apple-ci` aggregator as `core-ci` already does). Estimated from the median step times of
-  26 green runs: wall time ~92 -> ~65 minutes (the composite and its own builds become the critical
-  path), at ~+25% runner-minutes because each job repeats the framework build and the conformance
-  job must build the app schemes its `test-without-building` legs reuse today. Runner-minutes are free
-  on this public repository (§21.1), but **hosted macOS concurrency is not**: each pull-request run
-  would hold two slots. Under strict up-to-date protection only the head pull request's run can lead
-  to a merge, so shorter head-of-queue latency is worth more than concurrency — which argues *for* the
-  split. It is deferred rather than rejected because rules 2–3 attack the same contention at no slot
-  cost, and their effect must be measured first (§21.5 soak, then 30 post-merge runs). **Adopt it if,
-  after rules 1–4, pass rate is at or above 80% and median wall time is still above 75 minutes**;
-  if the pass rate is still low, the split's isolation benefit is the stronger argument and it should
-  be adopted regardless. Either way it is a change to §21.1's "one serial job" and lands here first.
+- **A third macOS leg.** A third leg shortens the run only by what it removes from the conformance
+  leg, and nearly all of that leg is the composite step and work that must precede it in the same
+  job. MEASURED over the 12 green runs listed above: the composite step alone took median 42.4 and
+  max 48.5 minutes; its same-job prerequisites (isolated root, Darwin closure, framework build,
+  corpus, configuration) median 7.3; the app builds its `test-without-building` legs reuse are
+  ASSUMED at about 9. What a third leg could take is the conformance proves and the §12.4 recording,
+  median 2.2 minutes in total. That buys about 2 minutes for a third slot, and with `main`'s
+  post-merge run and the head pull request's run both in flight it would need 6 slots against the
+  documented cap of 5 (§21.1). **Not adopted.** It becomes worth measuring only if the composite
+  step itself is divided, which is a change to the conformance design (§20) and not a CI edit.
 - **Moving legs off the pull-request gate to a scheduled or dispatch-only soak.** Every leg except
   two carries `FEATURES.yml` evidence or a product assertion, and the corpus rule is that CI fails on
   an undeclared regression; moving those would let a regression merge. The two measurement-only
@@ -5144,6 +5259,49 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
+aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it
+was written. Another branch may take the same number first, so it may be renumbered at merge.
+
+1. **The deferral condition was met, and the split moved from "Considered and NOT adopted" into the
+   normative text of §21.5.** OBSERVED from the Actions API: every completed `apple-ci` run created
+   after rules 1–4 merged (#136), up to and including run 36018294846, gives 12 green, 5 red and 2
+   cancelled. The green job durations were median 98.3 minutes, range 54.2 (35963317837) to 108.0
+   (36018294846); §21.5 lists every run id. The pass rate was 12 of 17 (70.6%) counting every red,
+   so the "adopt regardless" branch applies. Four reds were one branch's own defects, and one was
+   main's run 35824056719, a CONF-14a ratio assertion. Excluding those four gives 12 of 13, and
+   then the 98.3 median meets the first branch. Either reading adopts it.
+2. **The layout.** `apple-platform` and `apple-conformance` run on `macos-26`, and `apple-ci` runs on
+   `ubuntu-latest`. It is `if: always()`, needs both legs, fails on any result other than
+   `success`, and holds the evidence verification the composite used to end with. The cut is the one
+   the deferred text named. A three-leg cut was costed from step timings and not adopted: it saves
+   about 2 minutes for a third slot (§21.5).
+3. **The projected wall time is ASSUMED until measured:** median ~62.5 and max ~72.3 minutes, against
+   the single job's median of 98.3. The previous estimate, "~92 -> ~65" from 26 older runs, is
+   consistent with it. The leg timeouts were first sized from the projection, 95 and 110; item 6
+   re-sizes them from measured leg history.
+4. **§21.1's "one serial `apple-ci` job" is replaced**, in the caveat, the table and the timeout list.
+   The hosted-macOS concurrency cap is now cited: 5 on every non-Enterprise plan, from GitHub's
+   *Actions limits* page, fetched 2026-09-24. §12.4's "runs serially inside the required `apple-ci`
+   job" now names the conformance leg.
+5. **Rule 2 now covers the app-host library-sync proofs.** The split moved their three devices'
+   first boot into the composite, and those proofs had no isolation call before. Each now starts
+   with one (§21.5).
+6. **Measured on the adopting pull request, OBSERVED** (§21.5 lists each run). The platform leg took
+   49.5 and 44.0 minutes; the conformance leg took 61.0 and 44.6. A partial "Re-run failed jobs"
+   kept the green leg's `attempt` output, and the aggregator verified that attempt's evidence
+   (run 36188503621). The projection's 9 assumed minutes of app builds measured 4.3 to 6.4.
+   Green first attempts took 57.7 minutes of wall time (36196670168) and 63.4 once the reader
+   conformance suite had landed (36201409613). Run 36205806012 was green on its first attempt on
+   top of the search-paging change: platform 43.9, conformance 74.6, composite 62.2 of its 67-minute
+   cap, wall 74.9, and `tests=58 reports=45`. Its conformance leg exceeded the 71.3-minute
+   projection, so the caps were re-sized from measurement, by rule 5's formula: `apple-platform`
+   95 -> 80 (measured maximum 51.5), `apple-conformance` 110 -> 115 (74.6). The composite's step cap
+   was raised 67 -> 85, a set value rather than the step rule's ceil(2 x 62.2) = 125, which no leg
+   cap sized by rule 5 could contain. Checked for each leg: its cap exceeds every step cap plus
+   the rest of the leg as measured (74.1 platform, 103.5 conformance). Wall time: longer leg plus a
+   few seconds.
 
 **Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
 count is raw, before anything is dropped or de-duplicated. The songs walk already counted that way; the

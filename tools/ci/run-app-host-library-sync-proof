@@ -57,10 +57,13 @@ proof() {
 
     # Reuse the products built earlier; the disposable server is live only here.
     #
-    # -project/-scheme, NOT -xctestrun. MEASURED 2026-09-07: those earlier steps use
-    # `xcodebuild test`, which does not leave a .xctestrun in Build/Products -- only
-    # `build-for-testing` does. An -xctestrun form failed the whole job with
-    # "no DulcetiOS_*.xctestrun under .../DulcetiOSDerivedData/Build/Products".
+    # -project/-scheme, NOT -xctestrun. MEASURED 2026-09-07: while these proofs shared one job
+    # with the platform legs, the products came from those legs' `xcodebuild test`, which does not
+    # leave a .xctestrun in Build/Products -- only `build-for-testing` does. An -xctestrun form
+    # failed the whole job with "no DulcetiOS_*.xctestrun under .../DulcetiOSDerivedData/Build/Products".
+    # Since the split (spec §21.5) the conformance job builds these products itself with
+    # `build-for-testing`, so a .xctestrun does exist now; -project/-scheme stays because it works
+    # with either producer, and the producer is a workflow detail this script should not assume.
     #
     # A simulator test process does not inherit this shell's environment. TEST_RUNNER_-prefixed
     # variables must be in XCODEBUILD's OWN environment; the prefix is stripped on the way into the
@@ -133,16 +136,26 @@ if [ "$mode" = macos ]; then
     exit 0
 fi
 
+# One simulator per proof (spec §21.5 rule 2). Each proof talks to the live loopback fixtures, and
+# nothing between them shut the previous device down, so the Apple TV proof ran with the iPhone and
+# the iPad still booted. Since the split these three devices are also FIRST booted here -- the
+# platform legs that used to boot them earlier in the same job now run on another machine -- and a
+# first boot is the heaviest one. isolate-simulator shuts every other device down, boots the one
+# the proof needs, and waits for boot completion before the proof starts its clocks. The iPhone and
+# the Apple TV are kept by name, newest runtime, which is the device `OS=latest` below selects.
+python3 tools/ci/isolate-simulator --phase library-sync-iphone --keep-name "iPhone 17 Pro"
 proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" DulcetiOS \
     DulcetKeychainIOSTests 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIOSSimulator \
     "$RUNNER_TEMP/dulcet-ios-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
 
+python3 tools/ci/isolate-simulator --phase library-sync-ipad --keep "$ipad_udid"
 proof ipados "$RUNNER_TEMP/DulcetiPadOSDerivedData" DulcetiOS \
     DulcetKeychainIOSTests "platform=iOS Simulator,id=$ipad_udid" \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnIPadOSSimulator \
     "$RUNNER_TEMP/dulcet-ipados-library-sync-junit/TEST-DulcetKeychainIOSTests.xml"
 
+python3 tools/ci/isolate-simulator --phase library-sync-tvos --keep-name "Apple TV 4K (3rd generation)"
 proof tvos "$RUNNER_TEMP/DulcetTVDerivedData" DulcetTV \
     DulcetKeychainTVOSTests 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator \
