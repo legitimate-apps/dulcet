@@ -47,6 +47,12 @@ func theTVOSPlayerDrawsNoGlow() {
 // renders take seconds over millions of pixels in a debug build, so they run off the main actor.
 // A scan held on it starves every other main-actor test in a parallel `swift test` run until
 // those tests' own deadlines expire.
+//
+// Off the main actor a scan still takes a thread of the pool every other test's tasks run on,
+// for seconds, and it is work no test is waiting on a deadline for. So the three tests run one
+// at a time, and their scans run below the priority of the tasks around them.
+@Suite(.serialized)
+struct PlayerTintRendering {}
 
 /// A render redrawn once into 8-bit sRGB, so every pixel is read from one buffer in one colour
 /// space rather than converted one `NSColor` at a time.
@@ -125,9 +131,10 @@ private func timedRender(_ label: String, _ render: () throws -> RenderedPixels)
     return pixels
 }
 
-/// Runs a pixel scan off the main actor and waits for it there.
+/// Runs a pixel scan off the main actor, below the priority of the tests around it, and waits
+/// for it there.
 private func scannedOffTheMainActor<T: Sendable>(_ scan: @escaping @Sendable () -> T) async -> T {
-    await Task.detached(priority: .userInitiated) { scan() }.value
+    await Task.detached(priority: .utility) { scan() }.value
 }
 
 /// The cover and its glow alone, through SwiftUI's own renderer: it draws the blur and the mask
@@ -186,29 +193,31 @@ private func scanGlow(glowing: RenderedPixels, reduced: RenderedPixels, cover: C
     return scan
 }
 
-/// Cover colour reaches no further than `reach` past the cover, the glow is really drawn inside
-/// that (so the confinement is not satisfied by an absent glow), and Reduce Transparency removes it.
-@Test @MainActor
-func theGlowStaysWithinItsReachAndReduceTransparencyRemovesIt() async throws {
-    let reach = DulcetArtworkGlow.reach
-    let margin = reach + 16
-    for size in [CGFloat(120), 360, 520] {
-        let cover = CGRect(x: margin, y: margin, width: size, height: size)
-        let glowing = try timedRender("glow \(size)") {
-            try renderGlow(size: size, margin: margin, reduceTransparency: false, palette: .emberRose)
+extension PlayerTintRendering {
+    /// Cover colour reaches no further than `reach` past the cover, the glow is really drawn inside
+    /// that (so the confinement is not satisfied by an absent glow), and Reduce Transparency removes it.
+    @Test @MainActor
+    func theGlowStaysWithinItsReachAndReduceTransparencyRemovesIt() async throws {
+        let reach = DulcetArtworkGlow.reach
+        let margin = reach + 16
+        for size in [CGFloat(120), 360, 520] {
+            let cover = CGRect(x: margin, y: margin, width: size, height: size)
+            let glowing = try timedRender("glow \(size)") {
+                try renderGlow(size: size, margin: margin, reduceTransparency: false, palette: .emberRose)
+            }
+            await Task.yield()
+            let reduced = try timedRender("glow \(size) reduce-transparency") {
+                try renderGlow(size: size, margin: margin, reduceTransparency: true, palette: .emberRose)
+            }
+            let scan = await scannedOffTheMainActor {
+                scanGlow(glowing: glowing, reduced: reduced, cover: cover, reach: reach)
+            }
+            print("DULCET TINT GLOW size=\(size) reach=\(reach) beyond-reach=\(scan.beyondReach)"
+                + " glow-in-ring=\(scan.glowInRing) reduce-transparency-outside-cover=\(scan.reducedOutsideCover)")
+            #expect(scan.beyondReach == 0, "cover colour \(scan.beyondReach) px past the reach at size \(size)")
+            #expect(scan.glowInRing > 0, "the glow must be drawn within its reach at size \(size)")
+            #expect(scan.reducedOutsideCover == 0, "Reduce Transparency left \(scan.reducedOutsideCover) px of glow at size \(size)")
         }
-        await Task.yield()
-        let reduced = try timedRender("glow \(size) reduce-transparency") {
-            try renderGlow(size: size, margin: margin, reduceTransparency: true, palette: .emberRose)
-        }
-        let scan = await scannedOffTheMainActor {
-            scanGlow(glowing: glowing, reduced: reduced, cover: cover, reach: reach)
-        }
-        print("DULCET TINT GLOW size=\(size) reach=\(reach) beyond-reach=\(scan.beyondReach)"
-            + " glow-in-ring=\(scan.glowInRing) reduce-transparency-outside-cover=\(scan.reducedOutsideCover)")
-        #expect(scan.beyondReach == 0, "cover colour \(scan.beyondReach) px past the reach at size \(size)")
-        #expect(scan.glowInRing > 0, "the glow must be drawn within its reach at size \(size)")
-        #expect(scan.reducedOutsideCover == 0, "Reduce Transparency left \(scan.reducedOutsideCover) px of glow at size \(size)")
     }
 }
 
@@ -260,59 +269,63 @@ private func scanCoverGlow(glowing: RenderedPixels, reduced: RenderedPixels, cov
     return scan
 }
 
-/// The largest share of the playing glow's area the paused glow may cover; see below.
-private let pausedGlowAreaLimit = 0.85
+/// The share of the playing glow's area the paused glow may cover; see below.
+private let pausedGlowAreaShare = 0.72...0.85
 
-/// A presented player's cover shrinks while paused, and its glow shrinks with it: the glow reaches
-/// no further than `reach` × the cover's scale past the cover as drawn -- 12 points playing, 10.8
-/// paused, the figure the spec states -- so paused it ends further inside the cover's layout frame
-/// than it does playing, and every gap to text measured above still holds.
-///
-/// That bound alone does not catch a glow sized to the full reach around the drawn cover: the
-/// glow fades out before its clip, so drawn at 12 around a paused cover it is measured at 10.75,
-/// inside 10.8. Nor, with a real margin, does its farthest pixel: the playing glow's farthest,
-/// 11.25 × 0.9, plus one pixel, is 10.625, and the regression reaches 10.75 -- a quarter of a
-/// pixel, which a renderer that feathers the edge a little differently would erase. So the paused
-/// glow is held to its AREA instead. A glow that shrinks with the cover covers about 0.9² = 0.81
-/// of the playing glow's pixels (measured 0.81 at 120 points and 0.80 at 360); the regression,
-/// whose blur and fade keep their playing size, covers about 0.9 (measured 0.89 and 0.90). The
-/// check allows 0.85, some 5% from each.
-/// The glow is isolated as the difference between the render with it and the render under Reduce
-/// Transparency, which share everything else, the shadow included.
-@Test @MainActor
-func thePausedCoversGlowShrinksWithTheCover() async throws {
-    let reach = DulcetArtworkGlow.reach
-    let margin = reach + 40
-    for size in [CGFloat(120), 360] {
-        var playingArea: Int?
-        for scale in [CGFloat(1), DulcetPlayerCover.pausedScale] {
-            let glowing = try timedRender("cover \(size)x\(scale)") {
-                try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: false)
-            }
-            await Task.yield()
-            let reduced = try timedRender("cover \(size)x\(scale) reduce-transparency") {
-                try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: true)
-            }
-            let drawn = size * scale
-            let inset = (size - drawn) / 2
-            let cover = CGRect(x: margin + inset, y: margin + inset, width: drawn, height: drawn)
-            // The glow scales with the cover it surrounds: its bound is the reach at that scale.
-            let bound = reach * scale
-            let scan = await scannedOffTheMainActor {
-                scanCoverGlow(glowing: glowing, reduced: reduced, cover: cover, reach: bound)
-            }
-            print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) bound=\(bound) farthest-glow=\(scan.farthest)"
-                + " beyond-bound=\(scan.beyondReach) glow-near=\(scan.glowNear)")
-            #expect(scan.beyondReach == 0, "glow \(scan.beyondReach) px past \(bound) pt from the drawn cover, size \(size) scale \(scale)")
-            #expect(scan.glowNear > 0, "the glow must be drawn at all, size \(size) scale \(scale)")
-            if scale == 1 {
-                playingArea = scan.glowNear
-            } else {
-                let playing = try #require(playingArea, "the playing render comes first")
-                let ratio = Double(scan.glowNear) / Double(playing)
-                print("DULCET TINT COVER size=\(size) paused-to-playing-glow-area=\(ratio)")
-                #expect(ratio <= pausedGlowAreaLimit,
-                        "paused glow covers \(ratio) of the playing glow's area, over \(pausedGlowAreaLimit); size \(size)")
+extension PlayerTintRendering {
+    /// A presented player's cover shrinks while paused, and its glow shrinks with it: the glow reaches
+    /// no further than `reach` × the cover's scale past the cover as drawn -- 12 points playing, 10.8
+    /// paused, the figure the spec states -- so paused it ends further inside the cover's layout frame
+    /// than it does playing, and every gap to text measured above still holds.
+    ///
+    /// That bound alone does not catch a glow sized to the full reach around the drawn cover: the
+    /// glow fades out before its clip, so drawn at 12 around a paused cover it is measured at 10.75,
+    /// inside 10.8. Nor, with a real margin, does its farthest pixel: the playing glow's farthest,
+    /// 11.25 × 0.9, plus one pixel, is 10.625, and the regression reaches 10.75 -- a quarter of a
+    /// pixel, which a renderer that feathers the edge a little differently would erase. So the paused
+    /// glow is held to its AREA instead. A glow that shrinks with the cover covers about 0.9² = 0.81
+    /// of the playing glow's pixels (measured 0.81 at 120 points and 0.80 at 360); the regression,
+    /// whose blur and fade keep their playing size, covers about 0.9 (measured 0.89 and 0.90). The
+    /// check allows 0.85, some 5% from each. It is bounded below as well, at 0.72: a glow shrunk twice
+    /// -- the scale applied to the glow and again to the cover it surrounds -- covers about 0.81² =
+    /// 0.66, and would pass an upper bound alone as well as the reach bound.
+    /// The glow is isolated as the difference between the render with it and the render under Reduce
+    /// Transparency, which share everything else, the shadow included.
+    @Test @MainActor
+    func thePausedCoversGlowShrinksWithTheCover() async throws {
+        let reach = DulcetArtworkGlow.reach
+        let margin = reach + 40
+        for size in [CGFloat(120), 360] {
+            var playingArea: Int?
+            for scale in [CGFloat(1), DulcetPlayerCover.pausedScale] {
+                let glowing = try timedRender("cover \(size)x\(scale)") {
+                    try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: false)
+                }
+                await Task.yield()
+                let reduced = try timedRender("cover \(size)x\(scale) reduce-transparency") {
+                    try renderCover(size: size, margin: margin, scale: scale, reduceTransparency: true)
+                }
+                let drawn = size * scale
+                let inset = (size - drawn) / 2
+                let cover = CGRect(x: margin + inset, y: margin + inset, width: drawn, height: drawn)
+                // The glow scales with the cover it surrounds: its bound is the reach at that scale.
+                let bound = reach * scale
+                let scan = await scannedOffTheMainActor {
+                    scanCoverGlow(glowing: glowing, reduced: reduced, cover: cover, reach: bound)
+                }
+                print("DULCET TINT COVER size=\(size) scale=\(scale) reach=\(reach) bound=\(bound) farthest-glow=\(scan.farthest)"
+                    + " beyond-bound=\(scan.beyondReach) glow-near=\(scan.glowNear)")
+                #expect(scan.beyondReach == 0, "glow \(scan.beyondReach) px past \(bound) pt from the drawn cover, size \(size) scale \(scale)")
+                #expect(scan.glowNear > 0, "the glow must be drawn at all, size \(size) scale \(scale)")
+                if scale == 1 {
+                    playingArea = scan.glowNear
+                } else {
+                    let playing = try #require(playingArea, "the playing render comes first")
+                    let ratio = Double(scan.glowNear) / Double(playing)
+                    print("DULCET TINT COVER size=\(size) paused-to-playing-glow-area=\(ratio)")
+                    #expect(pausedGlowAreaShare.contains(ratio),
+                            "paused glow covers \(ratio) of the playing glow's area, outside \(pausedGlowAreaShare); size \(size)")
+                }
             }
         }
     }
@@ -430,44 +443,46 @@ private func scanNearestDrawn(_ render: RenderedPixels, cover: CGRect) -> Neares
     return found
 }
 
-/// Nothing on the real player -- no text, no control -- is drawn within the glow's reach of the
-/// cover, in the one-column and the side-by-side layouts. The cover is found as the pixels that
-/// change with its palette, and its size is checked against the layout, so a render that lost
-/// the cover cannot pass by finding nothing near it.
-@Test @MainActor
-func nothingOnThePlayerIsDrawnWithinTheGlowsReachOfTheCover() async throws {
-    let reach = DulcetArtworkGlow.reach
-    let layouts: [(name: String, size: CGSize, cover: CGFloat)] = [
-        ("one-column", CGSize(width: 430, height: 900), 360),
-        ("side-by-side", CGSize(width: 1_180, height: 820),
-         DulcetNowPlayingView.sideBySideArtworkSize(height: 820)),
-    ]
-    var observedPairs: Set<DulcetRegisteredContrastPair> = []
-    for layout in layouts {
-        let first = try timedRender("player \(layout.name)") {
-            try renderPlayer(palette: .emberRose, size: layout.size, observedPairs: &observedPairs)
-        }
-        await Task.yield()
-        let second = try timedRender("player \(layout.name) second palette") {
-            try renderPlayer(palette: .oceanMint, size: layout.size, observedPairs: &observedPairs)
-        }
-        let found = await scannedOffTheMainActor { scanCoverBounds(first, second) }
-        let cover = try #require(found, "\(layout.name): the cover must be drawn")
-        // The experiment is the one intended: the cover found is the size the layout gives it.
-        #expect(abs(cover.width - layout.cover) <= 1 && abs(cover.height - layout.cover) <= 1,
-                "\(layout.name): found a \(cover.size) cover, expected \(layout.cover)")
+extension PlayerTintRendering {
+    /// Nothing on the real player -- no text, no control -- is drawn within the glow's reach of the
+    /// cover, in the one-column and the side-by-side layouts. The cover is found as the pixels that
+    /// change with its palette, and its size is checked against the layout, so a render that lost
+    /// the cover cannot pass by finding nothing near it.
+    @Test @MainActor
+    func nothingOnThePlayerIsDrawnWithinTheGlowsReachOfTheCover() async throws {
+        let reach = DulcetArtworkGlow.reach
+        let layouts: [(name: String, size: CGSize, cover: CGFloat)] = [
+            ("one-column", CGSize(width: 430, height: 900), 360),
+            ("side-by-side", CGSize(width: 1_180, height: 820),
+             DulcetNowPlayingView.sideBySideArtworkSize(height: 820)),
+        ]
+        var observedPairs: Set<DulcetRegisteredContrastPair> = []
+        for layout in layouts {
+            let first = try timedRender("player \(layout.name)") {
+                try renderPlayer(palette: .emberRose, size: layout.size, observedPairs: &observedPairs)
+            }
+            await Task.yield()
+            let second = try timedRender("player \(layout.name) second palette") {
+                try renderPlayer(palette: .oceanMint, size: layout.size, observedPairs: &observedPairs)
+            }
+            let found = await scannedOffTheMainActor { scanCoverBounds(first, second) }
+            let cover = try #require(found, "\(layout.name): the cover must be drawn")
+            // The experiment is the one intended: the cover found is the size the layout gives it.
+            #expect(abs(cover.width - layout.cover) <= 1 && abs(cover.height - layout.cover) <= 1,
+                    "\(layout.name): found a \(cover.size) cover, expected \(layout.cover)")
 
-        let drawn = await scannedOffTheMainActor { scanNearestDrawn(first, cover: cover) }
-        print("DULCET TINT LAYOUT layout=\(layout.name) cover=\(cover) reach=\(reach)"
-            + " nearest-drawn=\(drawn.nearest) below=\(drawn.below) beside=\(drawn.beside)")
-        #expect(drawn.nearest > reach, "\(layout.name): something is drawn \(drawn.nearest) pt from the cover, within its \(reach) pt glow")
-        // The instrument sees text at all: the title sits one spacing step under the cover.
-        #expect(drawn.below <= DulcetNowPlayingView.coverToTitleSpacing + 16,
-                "\(layout.name): the title must be found under the cover; nearest below is \(drawn.below)")
+            let drawn = await scannedOffTheMainActor { scanNearestDrawn(first, cover: cover) }
+            print("DULCET TINT LAYOUT layout=\(layout.name) cover=\(cover) reach=\(reach)"
+                + " nearest-drawn=\(drawn.nearest) below=\(drawn.below) beside=\(drawn.beside)")
+            #expect(drawn.nearest > reach, "\(layout.name): something is drawn \(drawn.nearest) pt from the cover, within its \(reach) pt glow")
+            // The instrument sees text at all: the title sits one spacing step under the cover.
+            #expect(drawn.below <= DulcetNowPlayingView.coverToTitleSpacing + 16,
+                    "\(layout.name): the title must be found under the cover; nearest below is \(drawn.below)")
+        }
+        // Every pair the player registered is measured against the window (and the fills drawn on
+        // it), never against artwork: the registry has no pair for text on cover colour.
+        print("DULCET TINT REGISTERED PAIRS \(observedPairs.map(\.rawValue).sorted())")
+        #expect(observedPairs.contains(.primaryTextOnWindow), "the player's title must register its pair")
     }
-    // Every pair the player registered is measured against the window (and the fills drawn on
-    // it), never against artwork: the registry has no pair for text on cover colour.
-    print("DULCET TINT REGISTERED PAIRS \(observedPairs.map(\.rawValue).sorted())")
-    #expect(observedPairs.contains(.primaryTextOnWindow), "the player's title must register its pair")
 }
 #endif

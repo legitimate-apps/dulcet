@@ -509,15 +509,46 @@ class PlaybackAutoSkipTest {
             c
         },
         ResetRow("natural end") { rig, c -> rig.started(rig.playToTheEnd(c)) },
+        // The end is held for the preload, which is then discarded: the discard starts d, and the
+        // pass the natural end began must already be in place.
+        ResetRow("natural end held for a preload that is discarded") { rig, c ->
+            rig.play(c, from = 0, to = 180)
+            val preload = assertNotNull(rig.apply(rig.controller.preloadNext(c.playbackSessionId)).preloadDirective)
+            val held = rig.apply(rig.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(c.attemptId, DURATION)))
+            assertNull(held.startDirective, "the end is held for the preload")
+            rig.started(rig.controller.discardPreload(preload.attemptId))
+        },
         ResetRow("gapless handover") { rig, c -> rig.handOverGaplessly(c) },
-        // Neither can carry an old pass, so these rows pass with or without their clear: a relaunch
-        // builds a new controller, and a new queue's entries have new identities.
+        // An engine teardown ends the session in the same process, and ends neither the queue nor
+        // the pass; Play and a catalog restore then find no session.
+        ResetRow("Play after an engine teardown") { rig, c ->
+            rig.tearDownTheEngine(c)
+            rig.started(rig.controller.startCurrent())
+        },
+        ResetRow("restore after an engine teardown") { rig, c ->
+            rig.tearDownTheEngine(c)
+            rig.started(rig.controller.restoreCurrentPaused())
+        },
+        // These two pass with or without their clear: a relaunch builds a new controller, and a new
+        // queue's entries have new identities, which no earlier pass can hold.
         ResetRow("restore after a relaunch") { rig, _ ->
             rig.relaunch()
             rig.started(rig.controller.restoreCurrentPaused())
         },
         ResetRow("replace the queue") { rig, _ -> rig.started(rig.controller.replaceAndStart(rig.request(2))) },
     )
+
+    private fun Rig.tearDownTheEngine(directive: PlaybackQueueStartDirective) {
+        apply(
+            controller.recordPlaybackEvent(
+                PlaybackEngineEvent.EngineTornDown(directive.attemptId, PlaybackEngineTeardownReason.SystemReclaimed),
+            ),
+        )
+        val after = controller.snapshot()
+        assertNull(after.currentSession, "the teardown ends the session")
+        val selected = assertNotNull(after.currentIndex, "and keeps the queue's selection")
+        assertEquals(directive.queueEntryId, after.entries[selected].queueEntryId)
+    }
 
     private fun Rig.started(transition: PlaybackQueueTransition): PlaybackQueueStartDirective =
         assertNotNull(apply(transition).startDirective, "the action must start an entry")

@@ -52,7 +52,7 @@ PROJECT = APPLE / "Dulcet.xcodeproj" / "project.pbxproj"
 VERSIONS = REPO / "gradle" / "libs.versions.toml"
 
 # Modules that ship inside the platform SDK, so a standalone -typecheck resolves them.
-SYSTEM_MODULES = {"XCTest", "Foundation", "UIKit", "AppKit", "SwiftUI", "CoreGraphics", "Security"}
+SYSTEM_MODULES = {"XCTest", "Foundation", "UIKit", "AppKit", "SwiftUI", "CoreGraphics", "Security", "CryptoKit"}
 
 SWIFT_VERSION = re.compile(r"SWIFT_VERSION = ([0-9]+)(?:\.[0-9]+)*;")
 IMPORT = re.compile(r"^\s*(?:@testable\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*)", re.M)
