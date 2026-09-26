@@ -160,13 +160,15 @@ class PlaylistEditingSeventhReviewTest {
     }
 
     /**
-     * No id is dropped by the restore. "Other" is made by another client after the first send and is
-     * listed by the lookup that leads to the re-send, so it is not what the first send made; renamed
-     * "Road" by that client while the re-send is out, it must stay out of the candidates, or the first
-     * send's lone late playlist is no longer adopted and the person is asked about both.
+     * The restore keeps the FIRST send's listing only (eighth review round, reversing this round's
+     * first form). "Other" is made by another client after the first send and listed by the lookup
+     * that leads to the re-send; renamed "Road" by that client while the re-send is out, it is a
+     * candidate beside the first send's late playlist, and the person is asked about both. The lookup
+     * matches by name, so its listing cannot prove a playlist is not the first send's: a question is
+     * the safe answer, a silent duplicate is not (see the eighth round's p4).
      */
     @Test
-    fun theRestoreKeepsWhatTheLookupBeforeTheResendListed() = hooked { env ->
+    fun aPlaylistListedBeforeTheResendAndRenamedInIsAskedAboutNotExcluded() = hooked { env ->
         val session = timed(env)
         var creates = 0
         var localId: String? = null
@@ -203,8 +205,10 @@ class PlaylistEditingSeventhReviewTest {
         runCurrent()
         advanceUntilIdle()
         assertEquals(2, creates, "sent a third time: ${env.outcomes}")
-        assertTrue(env.outcomes.none { it is PlaylistEditOutcome.PossibleDuplicate }, "Other, listed before the re-send, became a candidate: ${env.outcomes}")
-        assertEquals(assertNotNull(late).id, session.reader.playlistOverlay.resolve(localId!!), "${env.outcomes}")
+        val asked = env.outcomes.filterIsInstance<PlaylistEditOutcome.PossibleDuplicate>()
+        assertEquals(1, asked.size, "the person was not asked: ${env.outcomes}")
+        assertEquals(setOf(assertNotNull(other).id, assertNotNull(late).id), asked.single().candidates.toSet(), "${env.outcomes}")
+        assertEquals(localId, session.reader.playlistOverlay.resolve(localId!!), "adopted without asking: ${env.outcomes}")
     }
 
     /**

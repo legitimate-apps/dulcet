@@ -1260,11 +1260,14 @@ internal class PlaylistEditor(
                 thrown.error
             }
             if (failure == null) continue
-            // A create the person deleted here: a refusal of it is nothing to tell them, since what
-            // they asked for — no such playlist — is what the server holds (§18.6).
+            // A send of a create the person deleted while it was out, refused: nothing to tell them.
+            // The refusal proves that send made nothing, and either the tombstone went with it (no
+            // earlier send in doubt) or it survives and the next flush looks for what an earlier send
+            // made (§18.6). Never the tombstone's OWN failure: its lookup failing leaves a playlist
+            // that send may have made unnamed, so that is told (eighth review round).
             val deletedHere = row is PendingPlaylistRow.Create && (
                 tombstonesProvenUnsent.remove(row.key) ||
-                    (outbox.find(row.playlistId, row.kind) as? PendingPlaylistRow.Create)?.cancelled == true
+                    (!row.cancelled && (outbox.find(row.playlistId, row.kind) as? PendingPlaylistRow.Create)?.cancelled == true)
                 )
             // A refusal of access holds every change only when the ACCOUNT is refused: one ping asks,
             // once per flush. Answered, it was this request's own refusal, and fails like one.
@@ -1294,12 +1297,13 @@ internal class PlaylistEditor(
                     val current = outbox.current(row)
                     val failures = (current?.failures ?: row.failures) + 1
                     if (current != null && failures >= MAX_FAILURES) {
+                        // Always told. [deletedHere] cannot hold here: a row still current is either not
+                        // deleted (a delete writes its tombstone as a new change) or the tombstone
+                        // itself, whose own failure is told.
                         outbox.removeIfUnchanged(current)
                         changed(setOf(row.playlistId))
-                        if (!deletedHere) {
-                            tally.refused += 1
-                            emit(PlaylistEditOutcome.NotSaved(row.playlistId, row.kind, error))
-                        }
+                        tally.refused += 1
+                        emit(PlaylistEditOutcome.NotSaved(row.playlistId, row.kind, error))
                     } else {
                         current?.let { outbox.rewrite(it.withFailures(failures)) }
                         tally.deferred += row.key
@@ -1963,10 +1967,10 @@ internal class PlaylistEditor(
      * values this send added to each field's attempted set — never one an earlier send left in doubt
      * — and a create what this send recorded, when no earlier send of it is in doubt; a create
      * deleted here meanwhile is then gone, since the send made nothing. When an earlier send IS in
-     * doubt, the create or its tombstone takes back that send's name and songs, keeping every id
-     * recorded, so a late commit of it is still recognised (§18.6, seventh review round). A list
-     * change edited while its send was out keeps its mark: the list it was sent onto travels with the
-     * edit. Whether the row changed.
+     * doubt, the create or its tombstone takes back that send's name, songs and pre-send listing, as
+     * an unchanged row does, so a late commit of it is still recognised (§18.6, seventh and eighth
+     * review rounds). A list change edited while its send was out keeps its mark: the list it was
+     * sent onto travels with the edit. Whether the row changed.
      */
     private fun unmarkUnapplied(marked: PendingPlaylistRow): Boolean = database.transactionWithResult {
         val prior = beforeMark[marked.key] ?: return@transactionWithResult false
@@ -2000,14 +2004,16 @@ internal class PlaylistEditor(
             current is PendingPlaylistRow.Create && prior is PendingPlaylistRow.Create -> {
                 // An earlier send is in doubt, and it is the only one that may have made anything: the
                 // create — or its tombstone — is looked for again as THAT send, by the name and songs it
-                // carried. Kept as the re-send, a first send committed late would be sought under a
-                // later name or songs and the create sent again: a silent duplicate (§18.6). No id
-                // recorded is dropped: what was listed before the first send, and what the lookup that
-                // led to this re-send listed — none of which that lookup found to be the first send's
-                // — with every id recorded since.
+                // carried, and against what was listed before it — the unchanged row's restore above,
+                // exactly. Kept as the re-send, a first send committed late would be sought under a
+                // later name or songs and the create sent again: a silent duplicate (§18.6). The
+                // re-send's listing is NOT kept: the lookup matches by name, so a first-send playlist
+                // another client had renamed was listed there unrecognised, and excluding it would
+                // send the create again once it is renamed back. Whatever that listing held is at
+                // worst named to the person as a candidate: a question, never a duplicate.
                 val restored = current.copy(
                     sentName = prior.sentName, sentSongs = prior.sentSongs,
-                    seenBeforeSend = prior.seenBeforeSend?.let { (it + current.seenBeforeSend.orEmpty()).distinct() },
+                    seenBeforeSend = prior.seenBeforeSend,
                 )
                 if (restored == current) return@transactionWithResult false
                 outbox.rewrite(restored)
