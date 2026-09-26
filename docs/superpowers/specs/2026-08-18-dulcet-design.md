@@ -3773,10 +3773,20 @@ the round-5 review). A stable network sends no further report, so a reader left 
 platform reports the server reachable must not wait for one — but only a failure that can pass by
 itself is retried by itself:
 
-- **Transient: retried automatically, in the foreground only.** The epoch read timed out, failed as
-  `unreachable` while the platform reports the server reachable, met a busy server, or met an
-  unknown server error. The reconnect runs again after 2 s, the wait doubling to a cap of 60 s (both
-  figures ASSUMED); a busy server's `Retry-After` is the floor under the wait (CLAUDE.md trap 24).
+- **Transient: retried automatically, in the foreground only.** The epoch read goes through the
+  library's one checked request path (§18.6), which names what the server, or a proxy in front of it,
+  answered. Transient are exactly these (item 27, round 7):
+  - a timeout, or `unreachable` while the platform reports the server reachable;
+  - HTTP 429, named `busy` from the STATUS whatever the body says. The reference server's limiter
+    answers it with an envelope carrying only the generic code 0 (CLAUDE.md trap 24). Its
+    `Retry-After` is the floor under the wait, read as at most 5 minutes, as an outbox reads it
+    (§18.6);
+  - a gateway status with no envelope: 502, 503 or 504, or a CDN's origin error (520–524, 530).
+    This is typically a reverse proxy's own page while the server behind it restarts. It is named by
+    its status, never as a malformed envelope or "not a Subsonic server";
+  - an error code the protocol does not define.
+
+  The reconnect runs again after 2 s, the wait doubling to a cap of 60 s (both figures ASSUMED).
   The wait is measured by the monotonic clock and never persisted (CLAUDE.md trap 20). The retry runs
   only while the app is in the foreground and the platform reports the server reachable: a move to
   the background, an unreachable report or closing the reader stops it, and a reconnect that reads
@@ -3784,12 +3794,16 @@ itself is retried by itself:
   is in the foreground when it constructs the reader — a required argument with no default, because
   either default fails silently: `false` disables the retry for a shell that forgot, `true` reads
   in the background — and reports every change after that (item 27, round 7).
-- **Anything else: never retried on a timer.** Authentication, security, not a Subsonic server, an
-  incompatible protocol, and the reader's own failure — its database, a hook, such as the downloaded-
-  album recheck throwing. A timer would repeat a failing login, or a defect, for ever. These wait for
-  the next reachability report, the next return to the foreground, or a reconnect the person asks
-  for, and until then every screen says what the failure is — `failed(<kind>)` or `internalFailure`,
-  not `offline`. An unreachable report makes them say `offline` again.
+- **Anything else: never retried on a timer.** Authentication (a bare 401 included), security, not a
+  Subsonic server, an incompatible protocol, every other status with no envelope (403 and 407 refuse
+  access, 413 and 414 say the request is too large, and a bare 500), an error envelope with a defined
+  code, and the reader's own failure — its database, a hook, such as the downloaded-album recheck
+  throwing. The generic code 0 at HTTP 200 is among them: it is the server's answer, not a capacity
+  signal, and a 429 is recognised by its status. A timer would repeat a failing login, or a defect,
+  for ever. These wait for the next reachability report, the next return to the foreground, or a
+  reconnect the person asks for, and until then every screen says what the failure is —
+  `failed(<kind>)` or `internalFailure`, not `offline`. An unreachable report makes them say
+  `offline` again.
 
 A return to the foreground while the reader is offline and the platform reports the server reachable
 starts a fresh reconnect at once, the wait reset, whatever ended the last one.
@@ -7781,6 +7795,14 @@ fresh disposable server before landing; items 11–14 are what that review chang
       nothing required a shell to say otherwise, so a shell that reported only changes never retried.
       The foreground state is now a required argument of `LibraryReaderSession` and of the Apple
       client's public constructor (§16.14).
+    - *"A busy server's `Retry-After` is the floor under the wait"* was true only of a failure that
+      no production path produced for a reader request. The reader's transport kept no
+      `Retry-After`, and its checked path never looked at the status. So the reference server's 429
+      read as its envelope's code 0, and a reverse proxy's 503 page read as a malformed envelope.
+      Neither was retried, and a server restarting behind a proxy left an app in the foreground
+      offline until the person acted. Item 21's checked request path now names a 429 `busy` from its
+      status, with its `Retry-After`, and names a status with no envelope by that status. The retry
+      treats a 429 and a gateway status as transient, and §16.14 lists exactly what is retried.
 
     `ReaderCurrentOrOfflineTest`, `ReaderReconnectRetryTest` and `ReaderReconnectStepsTest` pin every
     one of these; see item 31.
@@ -7982,7 +8004,10 @@ fresh disposable server before landing; items 11–14 are what that review chang
       - a retry scheduled and fired in the background; backgrounding that neither cancels a retry nor
         stops it firing; a return to the foreground that starts no attempt, or keeps the backoff;
       - an authentication failure retried; a timeout not retried; the reader's own failure retried;
-        `Retry-After` not a floor; a non-transient failure shown as `offline`;
+        `Retry-After` not a floor (**corrected after the round-6 review:** killed only through a fixture
+        that threw `Busy` directly — no production path then produced `Busy` for a reader request, so
+        a real 429 read as code 0 and was never retried; round 7 kills it through the checked
+        request path); a non-transient failure shown as `offline`;
       - `live` before the sequence completes; repeated frames while it completes; a screen with no
         read coming saying `revalidating`;
       - no doubling, no cap, no reset; an unreachable report that keeps the retry and lets it fire;

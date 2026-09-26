@@ -43,6 +43,13 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     /** The `Retry-After` header sent with every [failWithStatus] answer. */
     var retryAfter: String? = null
 
+    /**
+     * Answers a request with its response instead of the server's, whenever it returns one: the exact
+     * status, body and headers a server or a proxy sends, for the reader's checked request path to
+     * classify. Nothing is applied.
+     */
+    var answerInstead: (endpoint: String) -> LibraryEndpointResponse? = { null }
+
     /** Endpoint -> an HTTP status answered with no envelope AFTER the change was applied (a gateway timing out). */
     val applyThenStatus = mutableMapOf<String, Int>()
 
@@ -84,6 +91,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
         failWithError[endpoint]?.let { throw LibraryRequestFailure(it) }
         failWithCode[endpoint]?.let { return envelope(""""error":{"code":$it,"message":"refused"}""") }
         failWithStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>refused</html>", "http://fixture.invalid/rest", retryAfter = retryAfter) }
+        answerInstead(endpoint)?.let { return it }
         if (endpoint in holdBeforeApply) hold()
         val response = when (endpoint) {
             "ping" -> envelope(null)

@@ -165,21 +165,184 @@ class ReaderReconnectRetryTest {
         session.reader.setForeground(false)
     }
 
-    /** A busy server's `Retry-After` is the floor of the wait (CLAUDE.md trap 24). */
-    @Test
-    fun aBusyServersRetryAfterIsTheFloorOfTheWait() = sessionTest { env ->
+    // ---- What the server actually answers, through the checked request path (round-6 review, R6-1) ----
+
+    /** The reference server's own busy answer (CLAUDE.md trap 24): HTTP 429, `Retry-After`, and a code-0 envelope. */
+    private fun busy(retryAfter: String) = LibraryEndpointResponse(
+        429,
+        """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}""",
+        "http://fixture.invalid/rest",
+        retryAfter = retryAfter,
+    )
+
+    /** A status with a page and no envelope: the server or a reverse proxy in front of it answering for itself. */
+    private fun page(status: Int) =
+        LibraryEndpointResponse(status, "<html><body><h1>$status</h1></body></html>", "http://fixture.invalid/rest")
+
+    /**
+     * Every `getScanStatus` by virtual time, answered with [answer]'s response while it returns one:
+     * the exact bytes a server or proxy sends, which the reader's checked request path classifies.
+     */
+    private fun TestScope.answering(env: SessionEnv, answer: () -> LibraryEndpointResponse?): MutableList<Long> {
+        val times = mutableListOf<Long>()
+        env.server.answerInstead = { endpoint ->
+            if (endpoint == "getScanStatus") {
+                times += currentTime
+                answer()
+            } else {
+                null
+            }
+        }
+        return times
+    }
+
+    /** Offline in the foreground with the grid open: the state every case below starts from. */
+    private suspend fun TestScope.offlineInTheForeground(env: SessionEnv): Pair<LibraryReaderSession, Recorder<LibraryPublication>> {
         val session = env.session()
         session.reader.connect()
+        val pubs = Recorder<LibraryPublication>(env.server)
+        session.reader.open(grid, pubs)
+        advanceUntilIdle()
         session.reader.setForeground(true)
         session.setOnline(false)
         runCurrent()
-        val readings = readings(env)
-        readings.failure = DomainError.Server.Busy(10.seconds)
+        return session to pubs
+    }
+
+    /**
+     * The reference server's busy answer — HTTP 429 with only the generic code 0 in its envelope —
+     * is `busy` from its STATUS, and its `Retry-After` is the floor of the wait (CLAUDE.md trap 24).
+     * Until round 7 this test threw `Server.Busy` from the fixture, which no production path
+     * produced: the real answer read as code 0, a failure no timer retries.
+     */
+    @Test
+    fun aBusyServersRetryAfterIsTheFloorOfTheWait() = sessionTest { env ->
+        val (session, pubs) = offlineInTheForeground(env)
+        var answer: LibraryEndpointResponse? = busy("10")
+        val times = answering(env) { answer }
         session.setOnline(true)
+        runCurrent()
+        assertEquals(1, times.size, "fixture: the report's reconnect read once")
+        assertEquals("cached(Offline)", pubs.last.freshness.label(), "a busy server was shown as a failure the person must clear")
         advanceTimeBy(20_001)
         runCurrent()
-        assertEquals(listOf(10_000L, 10_000L), readings.times.zipWithNext { a, b -> b - a })
-        session.setOnline(false)
+        assertEquals(listOf(10_000L, 10_000L), times.zipWithNext { a, b -> b - a }, "the wait did not follow Retry-After")
+        answer = null
+        advanceTimeBy(20_001)
+        runCurrent()
+        assertTrue(session.reader.online, "the reader did not come back once the server had capacity")
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * A `Retry-After` past the busy cap is read as the cap (§18.6), as an outbox reads it: a server
+     * asking for a day does not leave the reader offline for one.
+     */
+    @Test
+    fun aRetryAfterPastTheCapWaitsTheCap() = sessionTest { env ->
+        val (session, _) = offlineInTheForeground(env)
+        val times = answering(env) { busy("86400") }
+        session.setOnline(true)
+        runCurrent()
+        assertEquals(1, times.size, "fixture: the report's reconnect read once")
+        val cap = LIBRARY_BUSY_CAP.inWholeMilliseconds
+        advanceTimeBy(cap - 1)
+        runCurrent()
+        assertEquals(1, times.size, "retried before the cap")
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(2, times.size, "a Retry-After past the cap was waited out in full")
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * A reverse proxy's 503 page while the server restarts is transient: retried on the backoff,
+     * never shown as a malformed envelope or "not a Subsonic server", and the reader is live once
+     * the server is back — with no report, as on a stable network.
+     */
+    @Test
+    fun aProxysGatewayPageDuringARestartIsRetriedAndTheReaderIsLiveAfterward() = sessionTest { env ->
+        val (session, pubs) = offlineInTheForeground(env)
+        var restarting = true
+        val times = answering(env) { if (restarting) page(503) else null }
+        session.setOnline(true)
+        runCurrent()
+        assertEquals(1, times.size, "fixture: the report's reconnect read once")
+        assertFalse(session.reader.online, "fixture: the proxy answered")
+        assertEquals("cached(Offline)", pubs.last.freshness.label(), "a restart behind a proxy was shown as a failure the person must clear")
+        advanceTimeBy(2_001)
+        runCurrent()
+        advanceTimeBy(4_001)
+        runCurrent()
+        assertEquals(listOf(2_000L, 4_000L), times.zipWithNext { a, b -> b - a }, "not retried on the backoff")
+        restarting = false
+        advanceTimeBy(8_001)
+        runCurrent()
+        assertEquals(4, times.size, "fixture: the retry after the restart read")
+        assertTrue(session.reader.online, "the reader stayed offline after the server came back")
+        assertEquals(LibraryFreshness.Live, pubs.last.freshness, "the grid is not live after the server came back")
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * 502 and 504 are the same gateway failure as 503, and each is retried. (The backoff carries over
+     * from one to the next, so each is given the longest wait.)
+     */
+    @Test
+    fun everyGatewayStatusIsRetried() = sessionTest { env ->
+        val (session, _) = offlineInTheForeground(env)
+        for (status in listOf(502, 504)) {
+            session.setOnline(false)
+            runCurrent()
+            val times = answering(env) { page(status) }
+            session.setOnline(true)
+            runCurrent()
+            advanceTimeBy(session.reader.config.reconnectRetryMaxMillis + 1)
+            runCurrent()
+            assertTrue(times.size > 1, "HTTP $status was not retried: ${times.size} read")
+        }
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * A status refusing access (401, 403, 407) or a request too large (413, 414) is not transient: one
+     * read over ten foreground minutes, and every screen says what failed. 401 reads as refused
+     * credentials, as playback names it.
+     */
+    @Test
+    fun aRefusingStatusIsNeverRetriedOnATimer() = sessionTest { env ->
+        val (session, pubs) = offlineInTheForeground(env)
+        for ((status, shown) in listOf(
+            401 to "cached(Failed(InvalidCredentials))",
+            403 to "cached(Failed(HttpStatus))",
+            407 to "cached(Failed(HttpStatus))",
+            413 to "cached(Failed(HttpStatus))",
+            414 to "cached(Failed(HttpStatus))",
+        )) {
+            session.setOnline(false)
+            runCurrent()
+            val times = answering(env) { page(status) }
+            session.setOnline(true)
+            repeat(20) { advanceTimeBy(30_000); runCurrent() }
+            assertEquals(1, times.size, "HTTP $status was retried on a timer")
+            assertEquals(shown, pubs.last.freshness.label(), "HTTP $status")
+        }
+        session.reader.setForeground(false)
+    }
+
+    /**
+     * A code-0 envelope at HTTP 200 is the server's answer, not a capacity signal: never retried on a
+     * timer. The busy test above is this test's positive control — the same instrument, observing a
+     * retry.
+     */
+    @Test
+    fun aCodeZeroEnvelopeAtHttp200IsNotRetried() = sessionTest { env ->
+        val (session, pubs) = offlineInTheForeground(env)
+        val times = answering(env) { busy("10").copy(statusCode = 200, retryAfter = null) }
+        session.setOnline(true)
+        repeat(20) { advanceTimeBy(30_000); runCurrent() }
+        assertEquals(1, times.size, "a code-0 answer was retried on a timer")
+        assertEquals("cached(Failed(Known))", pubs.last.freshness.label())
         session.reader.setForeground(false)
     }
 
