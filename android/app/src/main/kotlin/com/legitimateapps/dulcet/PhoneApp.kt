@@ -155,6 +155,9 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
                         playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
                     }
                 }
+                // Inside the content region, so it ends above the now-playing bar and the tabs and
+                // never covers them; the full player shows it itself while it is open.
+                PhoneSkipNotice(playbackState, visible = !playerOpen)
             }
         }
         AnimatedVisibility(

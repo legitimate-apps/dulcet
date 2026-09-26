@@ -21,6 +21,16 @@ unplayable track, for the notice's largest-text-size proof: a sentence naming th
 tall for the notice's share of a phone's page, so the notice must show its shorter sentence. It is
 an album of its own so that neither proof's queue runs on into the other's tracks.
 
+A third album, "No Audio Skip Probe", holds a first track that is an ID3v2.4 tag followed by plain
+text: no MPEG frame at all. It exists because "Unplayable Probe" is undecodable only to some
+decoders: on an API 34 Android emulator the platform's software MP3 decoder rendered all 380 of its
+frames as sound and reported no error, so on Android that track plays and nothing is skipped. The
+no-audio track fails before any decoder sees it: its leading tag satisfies the client's MP3
+signature check, and then no Media3 extractor recognises a format in it
+(`UnrecognizedInputFormatException`), which crosses as `Protocol.UnexpectedBinary`, the track's own
+failure. So the Android proof uses this album; no Apple proof uses it. Its second track is the
+same 40-second tone.
+
 It is deliberately NOT part of tools/seed-corpus. The default corpus is counted exactly: the health
 check requires its 314 files, and the conformance suites count its albums. An extra album there would
 change what those assert. So it is opt-in, and it goes into a server that has already passed the
@@ -29,7 +39,7 @@ health check:
     tools/seed-skip-probe --music <the server's music folder> --runtime native --ffmpeg <ffmpeg> \\
         --base-url <the server's base URL>
 
-With --base-url it asks the server to rescan and waits until both tracks are listed on the album, so
+With --base-url it asks the server to rescan and waits until every track is listed on its album, so
 the UI harness can start as soon as it returns. Only the disposable conformance server's canary
 account is used; never point it at a personal or production server.
 
@@ -65,6 +75,9 @@ class ProbeAlbum:
     unplayable_title: str
     playable_title: str
     unplayable_sha256: str
+    # "undecodable": well-formed MP3 frame headers over pseudo-random payloads.
+    # "no-audio": no frame at all, only text after the tag.
+    kind: str = "undecodable"
 
 
 PROBES = (
@@ -81,11 +94,22 @@ PROBES = (
         playable_title="Playable After Long Title",
         unplayable_sha256="cf21a183d7815b53ca088e9aabdead13afd7707460a610709ca73690d6c871be",
     ),
+    ProbeAlbum(
+        album="No Audio Skip Probe",
+        unplayable_title="No Audio Probe",
+        playable_title="Playable After No Audio",
+        unplayable_sha256="1086979011407a4cd53179199c077915bdd11010ad0f27b5675c058de981b311",
+        kind="no-audio",
+    ),
 )
+
+# The no-audio track's body: text, so that no byte pair after the tag can be read as an MP3 sync.
+NO_AUDIO_BODY = b"This file carries no audio. " * 1_200
 
 
 def unplayable_bytes(probe: ProbeAlbum) -> bytes:
-    """The undecodable track: the same frames DulcetKit's engine test decodes to `decodeFailed`."""
+    """The unplayable track. Undecodable: the same frames DulcetKit's engine test decodes to
+    `decodeFailed`. No audio: the tag, then text."""
     tag = seed_corpus.id3v24_text_tag({
         "TIT2": probe.unplayable_title,
         "TPE1": ARTIST,
@@ -94,6 +118,10 @@ def unplayable_bytes(probe: ProbeAlbum) -> bytes:
         "TRCK": "1",
         "TDRC": "2026",
     })
+    if probe.kind == "no-audio":
+        return tag + NO_AUDIO_BODY
+    if probe.kind != "undecodable":
+        raise SystemExit(f"unknown probe kind {probe.kind!r}")
     frames = bytearray()
     state = 12_345
     for _ in range(FRAME_COUNT):

@@ -53,6 +53,7 @@ import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.SkipNoticeRegion
 import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -109,7 +110,7 @@ class TvPlaybackActivity : ComponentActivity() {
 }
 
 @Composable
-private fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
+internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(playback != null) { if (playback != null) runCatching { playFocus.requestFocus() } }
     Surface(Modifier.fillMaxSize()) {
@@ -163,6 +164,10 @@ private fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, p
                     }
                 }
             }
+            // Along the player's own bottom edge, clear of the transport row above it.
+            SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
+                MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
+                Modifier.fillMaxSize().padding(bottom = 24.dp), maxCardWidth = 720.dp)
         }
     }
 }

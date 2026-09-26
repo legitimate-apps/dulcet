@@ -49,9 +49,22 @@ public data class AndroidPlaybackState(
     val canGoPrevious: Boolean = false,
     /** Previous would restart the current song: it is seekable and past the restart threshold. */
     val canRestart: Boolean = false,
+    /**
+     * The latest entry the queue moved past because its failure was the track's own (spec §12.12
+     * rule 5). It is kept until another skip replaces it or the controller closes; how long it is
+     * shown is the surface's decision, measured from [AndroidSkipNotice.postedAtElapsedMillis].
+     */
+    val skipNotice: AndroidSkipNotice? = null,
 ) {
     val hasSession: Boolean get() = playbackSessionId != null
 }
+
+/**
+ * One automatic skip past a track that could not play. [sequence] tells two skips of the same
+ * track apart; [title] is null when the skipped entry's title is not known, and the surface then
+ * says "a track". [postedAtElapsedMillis] is on the monotonic clock and is never persisted.
+ */
+public data class AndroidSkipNotice(val sequence: Long, val title: String?, val postedAtElapsedMillis: Long)
 
 /** Display metadata for one selectable song. Identity is the opaque pair; the rest is presentation. */
 public data class AndroidTrack(
@@ -114,6 +127,8 @@ public class AndroidPlaybackController internal constructor(
     private val artwork: AndroidArtworkRepository? =
         if (boundaries == null) AndroidArtworkRepository(context, account) else boundaries.artwork
     private var failure: DomainError? = null
+    private var skipNotice: AndroidSkipNotice? = null
+    private var skipNoticeSequence = 0L
     private var consumed = AtomicLong()
     private val mutableState = MutableStateFlow(AndroidPlaybackState())
     public val state: StateFlow<AndroidPlaybackState> = mutableState
@@ -188,6 +203,7 @@ public class AndroidPlaybackController internal constructor(
             if (event is PlaybackEngineEvent.FailedAfterPartial) failure = event.error
             val transition = queue.recordPlaybackEvent(event)
             capture(transition.effects)
+            noteSkippedAfterFailure(transition)
             if (event is PlaybackEngineEvent.EndedNaturally && transition.startDirective == null) activePlan = null
             publish()
             if (event is PlaybackEngineEvent.Ready) {
@@ -307,11 +323,27 @@ public class AndroidPlaybackController internal constructor(
     public fun play() {
         if (!live()) return
         if (activePlan == null) {
-            if (resolution?.isActive == true || startJob?.isActive == true) { wantsPlay = true; return }
+            if (resolution?.isActive == true || startJob?.isActive == true) {
+                wantsPlay = true; recordPlayRequested(); return
+            }
             if (refuseForeignQueue()) return
             wantsPlay = true
+            recordPlayRequested()
+            // The engine holds nothing -- after Stop, or once the queue has finished -- so Play
+            // restarts the selected entry. The Play reported above began a new pass; a finished
+            // queue has no session to report it on, and its natural end already began one.
             transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
-        } else { wantsPlay = true; command(PlaybackCommand.Play(id())) }
+        } else { wantsPlay = true; recordPlayRequested(); command(PlaybackCommand.Play(id())) }
+    }
+
+    /**
+     * Tells the core the person pressed Play (spec §12.12 rules 3 and 4), before the engine hears
+     * it and whatever its readiness: it begins a new pass, and it lets a skip past a restored
+     * entry that fails before Ready play on instead of staying paused.
+     */
+    private fun recordPlayRequested() {
+        val session = queue.snapshot().currentSession ?: return
+        capture(queue.recordPlayRequested(session.playbackSessionId).effects)
     }
     public fun pause() {
         if (!live()) return
@@ -411,6 +443,13 @@ public class AndroidPlaybackController internal constructor(
     private suspend fun loadSong(rawId: String): Song {
         val response = boundaries?.loadSong?.invoke(rawId) ?: requests.request("getSong", mapOf("id" to rawId))
         val envelope = parseLibraryEnvelope(response.body.decodeToString())
+        if (response.statusCode in 200..299 && envelope != null && envelope.status == "failed") {
+            // The server's own answer names whose failure it is: code 70 is a song it no longer
+            // has, which is the track's (spec §12.12); an unknown code is not guessed at.
+            val error = envelope.payload["error"] as? JsonObject
+            val code = (error?.get("code") as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: -1
+            throw AndroidPlaybackIOException(AccountConnectionContract.mapSubsonicError(code, "", response.redactedUrl))
+        }
         if (response.statusCode !in 200..299 || envelope?.status != "ok")
             throw AndroidPlaybackIOException(DomainError.Protocol.MalformedEnvelope)
         val song = envelope.payload["song"] as? JsonObject
@@ -511,6 +550,10 @@ public class AndroidPlaybackController internal constructor(
         if (directive.itemId.providerInstanceId != account.providerInstanceId) {
             failure = DomainError.Auth.Forbidden; publish(); return
         }
+        // A new attempt is under way, so the failure line belongs to one that is over: the
+        // entry's preparing state replaces it (spec §12.12 rule 5). It is never left on screen
+        // for a track that is not playing.
+        failure = null
         val session = directive.playbackSessionId
         val generation = requestGeneration
         startJob?.cancel()
@@ -527,7 +570,7 @@ public class AndroidPlaybackController internal constructor(
                 val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 when (result) {
-                    is PlaybackResolutionResult.Failed -> { failure = result.error; publish() }
+                    is PlaybackResolutionResult.Failed -> failBeforeStart(directive, result.error)
                     is PlaybackResolutionResult.Resolved -> {
                         command(PlaybackCommand.Stop(id()))
                         activePlan = result.plan
@@ -538,9 +581,40 @@ public class AndroidPlaybackController internal constructor(
                     }
                 }
             } catch (_: CancellationException) { throw CancellationException() }
-            catch (error: AndroidPlaybackIOException) { failure = error.error; publish() }
-            catch (_: Exception) { failure = DomainError.Transport.Unreachable; publish() }
+            catch (error: AndroidPlaybackIOException) { failBeforeStart(directive, error.error, generation) }
+            catch (_: Exception) { failBeforeStart(directive, DomainError.Transport.Unreachable, generation) }
         }
+    }
+
+    /**
+     * A start that failed before the engine had it: the song could not be read or resolved. It is
+     * the entry's failure as much as an engine's would be, so the core hears it the same way and
+     * may skip past it (spec §12.12); otherwise it is presented. The recursion through [start] is
+     * bounded by the core's chain guard and its one pass.
+     */
+    private fun failBeforeStart(directive: PlaybackQueueStartDirective, error: DomainError, generation: Long = requestGeneration) {
+        failure = error
+        if (generation == requestGeneration && !closed &&
+            queue.snapshot().currentSession?.currentAttempt?.attemptId == directive.attemptId) {
+            val transition = queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(directive.attemptId, error))
+            capture(transition.effects)
+            noteSkippedAfterFailure(transition)
+            publish()
+            transition.startDirective?.let { start(it) }
+        } else publish()
+    }
+
+    /**
+     * The core moved past a track whose failure was its own (spec §12.12 rule 5): say which, once.
+     * The failure line goes here, not only when [start] begins the next entry: the notice is
+     * published before that start, and a surface draws every publication it is handed.
+     */
+    private fun noteSkippedAfterFailure(transition: PlaybackQueueTransition) {
+        val skipped = transition.skippedAfterFailure ?: return
+        val entry = transition.snapshot.entries.firstOrNull { it.queueEntryId == skipped }
+        val title = entry?.let { metadata[it.itemId]?.title }?.takeIf { it.isNotBlank() }
+        failure = null
+        skipNotice = AndroidSkipNotice(++skipNoticeSequence, title, SystemClock.elapsedRealtime())
     }
 
     private fun capture(effects: List<PlaybackCoreEffect>) {
@@ -608,7 +682,8 @@ public class AndroidPlaybackController internal constructor(
             canGoPrevious = session != null && queueHasPrevious(),
             canRestart = session != null && activePlan != null &&
                 engine.seekability == PlaybackSeekability.Seekable &&
-                exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS)
+                exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS,
+            skipNotice = skipNotice)
     }
 
     override fun close() {
@@ -616,6 +691,10 @@ public class AndroidPlaybackController internal constructor(
         checkMain()
         command(PlaybackCommand.Release(id()))
         closed = true
+        // The notice names a track of this account's queue, which goes with the controller: a
+        // surface still holding this state must not show it for whatever comes next.
+        skipNotice = null
+        mutableState.value = mutableState.value.copy(skipNotice = null)
         resolution?.cancel(); startJob?.cancel(); retryDelivery?.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
         deliveries.close(); scope.cancel()
         sender.close(); requests.close(); wire.close(); store.close()

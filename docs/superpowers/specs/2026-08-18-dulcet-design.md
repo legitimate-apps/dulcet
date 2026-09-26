@@ -1914,8 +1914,60 @@ afresh, and a failure then follows this contract.
 one album at a time, so an entry from an album nobody has opened since launch is unread -- says
 nothing about the item. It crosses as a transport failure and stops, as before this revision, and
 never sends the queue skipping past tracks that play. An item the server gave no playable container
-crosses as the item's own. **Android does not adopt this yet:** it does not share this controller,
-and `FEATURES.yml` claims nothing for it. The classification is a pure core function so that it can.
+crosses as the item's own.
+
+**8. Android adopts the rule** (revision 112). Revision 106 said Android did not, but
+`AndroidPlaybackController` drives the same `PlaybackQueueController`, so from #142 on Android skipped
+past a track's own failure silently and left the failure line on screen while the next entry played.
+It now keeps the whole contract, as the Apple shell does:
+
+- **The notice** (rule 5) is `SkipNoticeRegion` in the shared Android module, with Apple's two
+  sentences as string resources. It is one semantics node whose content description is the sentence
+  naming the track, a polite live region, so TalkBack reads it once as one sentence; it draws no
+  pointer handling, so taps pass through. It shows for four seconds, or the longer time the person
+  has asked Android to give content that disappears, measured from the skip on the monotonic clock,
+  so a surface that appears later shows only what is left. Its text stops growing at 1.5 × the
+  default size, it wraps rather than truncates, and it draws the shorter sentence when the one
+  naming the track would take more than a third of its region's height. On the phone the region ends
+  above the now-playing bar and the tab row, and in the full player above the system navigation bar;
+  on TV it is drawn along the player's bottom edge, at most 720 dp wide. A skip clears the failure
+  line: the next entry's preparing state follows.
+- **Whose failure it is** comes from the same `playbackFailureOwner`. Two Android mappings were
+  wrong for it and are corrected: Media3's decoding failures (`ERROR_CODE_DECODING_FAILED`,
+  `DECODER_INIT_FAILED`, `DECODING_FORMAT_UNSUPPORTED`, `DECODING_FORMAT_EXCEEDS_CAPABILITIES`) crossed
+  as `Transport.Unreachable` and now cross as `Playback.NoPlayableSource`, Apple's `undecodable`; and a
+  `getSong` answered with a failed envelope crossed as `Protocol.MalformedEnvelope` whatever its code,
+  and now crosses as the code's own `DomainError` (code 70 is `Server.Known(70)`, the track's).
+  Container parse failures already crossed as `Protocol.UnexpectedBinary`. **OBSERVED** on an API 34
+  arm64 emulator (2026-09-26): the Skip Probe's undecodable MP3, which AVFoundation fails with
+  `decodeFailed`, is not a failure on Android at all -- the platform's software MP3 decoder
+  (`c2.android.mp3.decoder`) rendered all 380 frames (437,760 samples per channel) and Media3
+  reported no error, so the track plays as sound and nothing is skipped. Which items fail is the
+  engine's to say (rule 1's known gap); the Android proof therefore uses a file with a tag and no
+  MP3 frame, in which no Media3 extractor recognises a format (`UnrecognizedInputFormatException`,
+  `Protocol.UnexpectedBinary`). A failure while the shell
+  resolves an entry, before the engine is asked, reaches the core as `FailedBeforeStart` for that
+  attempt, as Apple's `recordStartFailure` does; before, it was presented and never reported, so the
+  queue stopped whoever owned it.
+- **Rules 3 and 4 hold because Android reports what they read.** The person's Play reaches the core
+  as it is pressed (`recordPlayRequested`), whatever the engine's readiness -- while the entry is
+  being resolved, while the engine holds it, and after Stop, which on Android reports the attempt
+  `Skipped` and keeps the session, so Play then restarts the entry (`restartCurrent`, which begins
+  no pass itself). Skip (`next`), Previous (`previous`), a pick from a list (a new queue), a pick in
+  Up Next (`jumpTo`), shuffle and repeat call the core functions that begin a pass. The engine
+  reports a natural end (`EndedNaturally`, from Media3's `STATE_ENDED`). The core's
+  Play-with-no-session reset is not reached: Android's session ends only with the queue's natural
+  end, which has begun a pass already, or with the engine's release, which closes the controller.
+- **Unreachable on Android, so neither reported nor tested there:** a gapless handover (the Media3
+  engine refuses `PreloadNext`, so `AdvancedToPreloaded` never occurs); Try Again (there is no such
+  control; the failure line asks the person to choose the song again, which is a new queue); queue
+  edits (no surface moves, removes or adds an entry); and a disconnect, sign-out or change of
+  server (no Android surface offers one). The controller lives as long as its account's playback
+  service, and closing it withdraws the notice. **A divergence:** Android's Previous, past three
+  seconds into a seekable track, restarts it by seeking, as a music player's back button does, rather
+  than moving; it begins no pass, because it reaches no entry. Apple's Previous always moves.
+- **Not changed:** the first song of a pick is read with `getSong` before any queue exists, so a
+  failure there is presented and skips nothing; and Android's failure line keeps its own copy.
 
 **Evidence.** Core: `PlaybackAutoSkipTest` (every `DomainError` case, direction, repeat, both guard
 conditions, identity, preload, a paused restore, a restored queue the person then plays, a
@@ -1970,6 +2022,32 @@ run them on 2026-09-25. Until they run, the notice's position, its containment a
 the third that makes the fallback engage there are ASSUMED from `ShellLayoutTests` on macOS and the
 arithmetic in rule 5.
 
+**Android evidence** (revision 112). Core, in `AndroidPlaybackControllerTest` against the real core
+queue and a scripted Media3 player: an entry Media3 cannot decode is skipped with a notice naming it
+and no failure line in any publication, a second skip gives a new notice, and closing the controller
+withdraws it; a connection failure still stops and presents, and the person's Next then clears it; a failure resolving an entry, and a `getSong` answered
+with code 70, are skipped past; and the pass holds on Android -- a repeat-all queue whose second entry
+plays and then fails stops at the entry already skipped, and the person's Play -- after Pause, after
+Stop, or while the entry is still resolving -- lets the skip reach it again. `AndroidMedia3EngineTest` pins the decode codes as the track's and a network
+code as the connection's. The notice: `PhoneSkipNoticeTest` (one node, one announced sentence, a
+polite live region, four seconds from the skip, withdrawn at once, not shown late, the shorter
+sentence in a region too short for the long one while TalkBack still hears the long one, taps passing
+through, and the phone surface showing the controller's notice) and `TvSkipNoticeTest` (the TV player
+announces it with no failure line; a connection failure shows the line and no notice), both
+Robolectric in `core-ci`. **Each new core test failed on the code before the change**; the notice is
+new, so its tests are held to mutants instead, and every rule but one equivalent branch has a mutant
+a named test kills (revision 112). **OBSERVED locally, 2026-09-26, on API 34 arm64 emulators against the disposable
+reference server with the "No Audio Skip Probe" album; not run by CI**
+(`AndroidEmulatorAutoSkipProofTest`, `AndroidTvEmulatorAutoSkipProofTest`, opt-in with
+`dulcetSkipProbe=true`): the production controller, started on the album's first track, skipped it;
+the notice naming it was in the accessibility tree as one node with no children and a polite live
+region; the queue moved to the next track with no failure line and its media time advanced; the
+notice went; and the server's play count rose for the next track and not for the skipped one. On the
+phone the notice ended above the now-playing bar and the tabs with a margin from both sides; on TV it
+sat in the lower half and clear of the title. The proofs bound how long the notice stayed only from
+above (within 20 seconds); its four seconds are the Robolectric test's. TalkBack itself did not run:
+that it reads the node is ASSUMED from the node's semantics.
+
 **Follow-ups, not done here.**
 
 - Run the Skip Probe UI proofs in CI. They need the album added after the health check and an iPhone
@@ -1978,7 +2056,8 @@ arithmetic in rule 5.
   progresses nor fails, and skip it if it does.
 - Measure the requests an automatic skip costs (the resolve step plus the resource loader's ranges),
   which rule 3's reasoning depends on and nothing counts.
-- Android adopts the rule (rule 7).
+- Run the Android Skip Probe proofs in `core-ci`'s emulator legs. They are opt-in
+  (`dulcetSkipProbe=true`) because the legs' server is not seeded with the Skip Probe album.
 
 ---
 
@@ -5932,6 +6011,41 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**Revision 112 (2026-09-26)** — Android adopts §12.12. Revision 106 said "Android does not adopt this yet: it
+does not share this controller"; that was wrong. `AndroidPlaybackController` drives the same
+`PlaybackQueueController`, so once revision 106 merged Android skipped past a track's own failure
+with no notice and left the failure line on screen while the next entry played. §12.12 rule 7's
+sentence is replaced by rule 8, which says what Android now does, what it reports so that rules 3
+and 4 hold, which pass-beginning actions are unreachable there (a gapless handover, Try Again, queue
+edits, disconnect, sign-out and a change of server), and one divergence (Previous past three seconds
+restarts by seeking and begins no pass). Two Android mappings that kept the rule from ever applying
+are corrected: Media3's decoding failures crossed as `Transport.Unreachable`, and a failed `getSong`
+envelope crossed as `Protocol.MalformedEnvelope` whatever its code. A resolution failure now reaches
+the core as `FailedBeforeStart`. Measured on the way, and recorded in rule 8: the Skip Probe's
+undecodable MP3 plays on Android, because its software decoder renders the frames AVFoundation
+refuses, so `tools/seed-skip-probe` gains a third album, "No Audio Skip Probe", for the Android proof.
+**Before the change:** with the controller and engine as they were and only the notice's type
+added so the tests compile, all 7 new core tests fail -- 1 of 10 in `AndroidMedia3EngineTest`, 6 of
+30 in `AndroidPlaybackControllerTest`. The connection test's first half, a connection failure still
+stopping, passes there, as behaviour Android already had; its second half found that the failure
+line outlived the person's Next on `main` as well, since nothing cleared it when a new attempt began.
+Before the change, too, Android did skip a track whose container Media3 could not parse
+(`Protocol.UnexpectedBinary`), silently and leaving the failure line; a decode failure stopped the
+queue. **Mutants, core, each killed by a named test:** decode codes crossing as the connection's;
+Play not reported in any branch, after Stop, or with the engine holding the entry; the failure line
+kept when a skip is noted, which the emulator caught first -- the notice is published before the
+next entry starts, so for that one publication the notice and the failure line showed together, and
+the test now checks every publication, not the last; the line kept when `start` begins an attempt;
+`close` keeping the notice; a `getSong` code ignored; a resolution failure not reported. One
+survives and is equivalent on Android: Play not reported while nothing has reached the engine yet.
+That branch is reached only while a restored entry, or one Play restarted after Stop, is resolving;
+the first holds an empty pass, the second's pass was just cleared by that Play, and the attempt's
+restore mark decides nothing on Android, whose shell decides play or pause itself. **Mutants,
+notice, each killed:** the phone surface and the TV surface drawing nothing, no live region, a
+notice that never expires, no shorter-sentence fallback, a notice that takes taps, and the drawn
+sentence announced instead of the whole one. (Numbered after the highest revision on `main` when written; renumbers at
+merge.)
 
 **Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it

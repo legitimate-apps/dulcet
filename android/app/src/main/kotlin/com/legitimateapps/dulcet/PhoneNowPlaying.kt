@@ -68,6 +68,7 @@ import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.SkipNoticeRegion
 
 /** Persistent transport above the tab bar whenever a session exists. */
 @Composable
@@ -194,8 +195,17 @@ internal fun NowPlayingScreen(
             }
             Spacer(Modifier.weight(0.4f))
         }
+        // The player has no now-playing bar, so the notice runs along its own bottom edge.
+        PhoneSkipNotice(state, visible = true, Modifier.navigationBarsPadding())
     }
     if (showQueue) UpNextSheet(account, state, playback) { showQueue = false }
+}
+
+/** The skip notice (spec §12.12 rule 5) in the phone's colours, at the bottom of the region it fills. */
+@Composable
+internal fun PhoneSkipNotice(state: AndroidPlaybackState, visible: Boolean, modifier: Modifier = Modifier) {
+    SkipNoticeRegion(state.skipNotice, visible, MaterialTheme.colorScheme.inverseSurface,
+        MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.bodyMedium, modifier.fillMaxSize())
 }
 
 @Composable

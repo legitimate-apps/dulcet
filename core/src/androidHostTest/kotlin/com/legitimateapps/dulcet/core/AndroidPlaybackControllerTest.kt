@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.core
 
 import android.os.Looper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -355,6 +356,165 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun aTrackThatCannotBeDecodedIsSkippedWithANoticeAndLeavesNoFailureLine() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            // Every publication, not only the last: a surface draws each one it is handed, and the
+            // one carrying the notice is published before the next entry starts.
+            val published = mutableListOf<AndroidPlaybackState>()
+            val watcher = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
+                f.controller.state.collect { published += it }
+            }
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            watcher.cancel()
+            assertTrue(published.any { it.skipNotice != null }, "The control requires the watcher to see the notice published")
+            assertEquals(emptyList(), published.filter { it.skipNotice != null && it.error != null }.map { it.error },
+                "No publication may show the notice and the failure line together")
+            val skipped = f.controller.state.value
+            assertEquals(listOf("t1", "t2"), f.prepared.map { it.itemId.rawId }, "The queue must move on past the track")
+            assertEquals(1, skipped.currentIndex)
+            assertEquals("Title t2", skipped.title)
+            assertNull(skipped.error, "The failure line must not stay on screen for a track that is not playing")
+            val notice = assertNotNull(skipped.skipNotice, "The person must be told which track was skipped")
+            assertEquals("Title t1", notice.title)
+            assertTrue(skipped.playWhenReady)
+            assertTrue(f.probe.requested, "The next entry must be asked to play, not left paused")
+
+            // A second skip is a second notice, even of a different track; the first is replaced.
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            val again = assertNotNull(f.controller.state.value.skipNotice)
+            assertEquals("Title t2", again.title)
+            assertTrue(again.sequence > notice.sequence)
+            assertEquals(listOf("t1", "t2", "t3"), f.prepared.map { it.itemId.rawId })
+
+            // Closing the controller withdraws the notice with the queue it names.
+            f.controller.close()
+            assertNull(f.controller.state.value.skipNotice, "A closed controller must not keep a notice")
+        }
+    }
+
+    @Test fun aConnectionFailureStillStopsAndPresentsTheFailureLine() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+            val stopped = f.controller.state.value
+            assertEquals(listOf("t1"), f.prepared.map { it.itemId.rawId }, "Skipping would only repeat the failure")
+            assertEquals(0, stopped.currentIndex)
+            assertEquals(DomainError.Transport.Unreachable, stopped.error)
+            assertNull(stopped.skipNotice)
+
+            // The person moves on, and the line belongs to an attempt that is over (rule 5).
+            f.controller.next()
+            assertEquals(listOf("t1", "t2"), f.prepared.map { it.itemId.rawId }, "The control requires Next to start t2")
+            assertNull(f.controller.state.value.error, "The failure line must not stay for a track that is not playing")
+        }
+    }
+
+    @Test fun aResolutionFailureThatIsTheTracksOwnIsSkippedToo() {
+        Fixture(resolve = { r ->
+            if (r.itemId.rawId == "t1") PlaybackResolutionResult.Failed(DomainError.Server.Known(70)) else resolved(r)
+        }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            val state = f.controller.state.value
+            assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId }, "The core must hear a failure before the engine had it")
+            assertEquals(1, state.currentIndex)
+            assertNull(state.error)
+            assertEquals("Title t1", state.skipNotice?.title)
+        }
+    }
+
+    @Test fun aSongTheServerNoLongerHasIsTheTracksOwnFailure() {
+        Fixture(loadSong = { id -> if (id == "t2") missingSong() else song(id) }).use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.state = androidx.media3.common.Player.STATE_ENDED
+            f.probe.events()
+            val state = f.controller.state.value
+            assertEquals(listOf("t1", "t3"), f.prepared.map { it.itemId.rawId }, "Code 70 names the song, not the server")
+            assertEquals(2, state.currentIndex)
+            assertNull(state.error)
+            assertEquals("Title t2", state.skipNotice?.title)
+        }
+    }
+
+    @Test fun anAutomaticSkipGetsOnePassUnlessThePersonPresses() {
+        // Play reaches the core on both of its paths: with the engine holding the entry, and after
+        // Stop, which leaves the engine nothing, so Play restarts the entry. Both begin a new pass.
+        for (press in listOf("nothing", "pause-then-play", "stop-then-play")) Fixture().use { f ->
+            val pressesPlay = press != "nothing"
+            f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.controller.cycleRepeatMode()
+            assertEquals(AndroidRepeatMode.All, f.controller.state.value.repeatMode)
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            assertEquals(listOf("a", "b"), f.prepared.map { it.itemId.rawId }, "The control requires a skip past a")
+            // b plays a moment, which ends the chain but not the pass (spec §12.12 rule 3).
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 1_000
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+            assertEquals("Progressing", f.controller.state.value.phase, "The control requires b to have progressed")
+            when (press) {
+                "pause-then-play" -> { f.controller.pause(); f.controller.play() }
+                "stop-then-play" -> {
+                    f.controller.stop()
+                    f.controller.play()
+                    assertEquals(listOf("a", "b", "b"), f.prepared.map { it.itemId.rawId }, "Play after Stop starts b again")
+                    f.probe.state = androidx.media3.common.Player.STATE_READY
+                    f.probe.events()
+                }
+            }
+            f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+            val state = f.controller.state.value
+            if (pressesPlay) {
+                assertEquals(if (press == "stop-then-play") listOf("a", "b", "b", "a") else listOf("a", "b", "a"),
+                    f.prepared.map { it.itemId.rawId }, "The person's Play ($press) begins a new pass, so the skip may reach a again")
+                assertNull(state.error)
+                assertEquals("Title b", state.skipNotice?.title)
+            } else {
+                assertEquals(listOf("a", "b"), f.prepared.map { it.itemId.rawId },
+                    "a was skipped past in this pass, so the queue stops on b instead of looping")
+                assertEquals(DomainError.Playback.NoPlayableSource, state.error)
+                assertEquals("Title a", state.skipNotice?.title, "The earlier notice is not replaced by a stop")
+            }
+        }
+    }
+
+    @Test fun aPlayPressedWhileTheNextEntryIsStillResolvingBeginsANewPass() {
+        for (pressesPlay in listOf(false, true)) {
+            var pending: Continuation<PlaybackResolutionResult>? = null
+            var request: PlaybackResolveRequest? = null
+            Fixture(resolve = { r ->
+                if (r.itemId.rawId == "b" && request == null) { request = r; suspendCoroutine { pending = it } } else resolved(r)
+            }).use { f ->
+                f.controller.playQueue(album("a", "b"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                f.controller.cycleRepeatMode()
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+                val held = assertNotNull(pending, "The control requires the skip to b to be resolving")
+                assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+                if (pressesPlay) f.controller.play()
+                held.resume(resolved(assertNotNull(request)))
+                assertEquals(listOf("a", "b"), f.prepared.map { it.itemId.rawId }, "The control requires b to reach the engine")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                f.probe.position = 1_000
+                shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+                assertEquals("Progressing", f.controller.state.value.phase, "The control requires b to have progressed")
+                f.probe.fail(androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED)
+                assertEquals(if (pressesPlay) listOf("a", "b", "a") else listOf("a", "b"), f.prepared.map { it.itemId.rawId },
+                    "A Play pressed while b was still resolving begins a new pass; without it a stays skipped")
+            }
+        }
+    }
+
     @Test fun everySystemSeekVerbGoesThroughTheController() {
         Fixture().use { f ->
             f.controller.playQueue(album("a"), 0, AndroidQueueSource.Album, "Album", "album-id")
@@ -621,6 +781,11 @@ class AndroidPlaybackControllerTest {
             r.playbackSessionId, r.attemptId, r.itemId, PlaybackDeliveryPath.Legacy, PlaybackDeliveryProtocol.HttpProgressive,
             r.sourceContainer, PlaybackWireTranscodeDecision.LegacyHint(null, null), endpoint = "stream",
             parameters = mapOf("id" to r.itemId.rawId), resolutionRequest = r))
+        private fun missingSong() = AuthenticatedEndpointResponse(200,
+            """{"subsonic-response":{"status":"failed","error":{"code":70,"message":"data not found"}}}""".toByteArray(),
+            "<redacted-url>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
+            RequestTrace.observed("getSong", "GET", "<redacted-url>", AuthenticationLocation.None,
+                emptySet(), emptySet(), emptySet(), AccountConnectionContract.protocolVersion, null))
         private fun song(id: String, suffix: String = "wav") = AuthenticatedEndpointResponse(200,
             """{"subsonic-response":{"status":"ok","song":{"id":"$id","suffix":"$suffix","duration":40}}}""".toByteArray(),
             "<redacted-url>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
