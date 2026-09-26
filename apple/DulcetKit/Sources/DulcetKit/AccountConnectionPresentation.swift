@@ -1542,7 +1542,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// Called only from a FINAL publication, so the cadence measures time since the library was
     /// last read in full — never time since a preview painted the grid.
     private func scheduleLibraryRefresh() {
-        guard case .connected = currentSnapshot.accountConnection else { return }
+        // The reader keeps its own windows fresh (§16.8); no library sync is scheduled beside it.
+        guard !readerOwnsLibrary, case .connected = currentSnapshot.accountConnection else { return }
         libraryRefreshOperation = libraryRefreshScheduler.schedule(
             after: libraryRefreshCadence
         ) { [weak self] in
@@ -1582,6 +1583,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// album list alone, so an album arrives here with `areTracksLoaded == false` and an empty
     /// `tracks` — the detail view shows its own loading row until this completes.
     private func presentAlbum(_ id: DulcetProviderItemID, loadingTracks: Bool) {
+        // Album pages belong to the reader while it holds the account (`showReaderPage`).
+        guard !readerOwnsLibrary else { return }
         cancelAlbumTracks()
         selectedAlbumTracksFailure = nil
         guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
@@ -1786,7 +1789,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         // openSearch()'s fast path is different: it can run before the switch to .search has
         // published anything at all, so it passes the destination it is switching TO instead of
         // reading a snapshot that has not caught up yet.
-        guard destination == .search,
+        // The reader's search surface subscribes itself (§16.15); a second server search here
+        // would read the same query twice.
+        guard !readerOwnsLibrary,
+              destination == .search,
               case .connected = currentSnapshot.accountConnection,
               searchQuery.trimmedForSearch.count >= 2 else { return }
         searchResults = []
@@ -1812,7 +1818,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     private func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {
-        guard currentSnapshot.selectedDestination == .search,
+        guard !readerOwnsLibrary,
+              currentSnapshot.selectedDestination == .search,
               searchHasMoreKinds.contains(kind),
               activeSearchOperation == nil,
               searchDebounceTask == nil else { return }

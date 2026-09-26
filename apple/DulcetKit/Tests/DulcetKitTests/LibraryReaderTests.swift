@@ -227,6 +227,25 @@ private final class ForbiddenBrowseOperation: DulcetLibraryBrowseOperation {
     func cancel() {}
 }
 
+/// Counts every server search the legacy search screen would make.
+@MainActor
+private final class ForbiddenServerSearch: DulcetServerSearching {
+    private(set) var searches = 0
+
+    func search(
+        _ request: DulcetSearchPageRequest,
+        completion: @escaping @MainActor (DulcetSearchPageOutcome) -> Void
+    ) -> any DulcetSearchOperation {
+        searches += 1
+        return ForbiddenSearchOperation()
+    }
+}
+
+@MainActor
+private final class ForbiddenSearchOperation: DulcetSearchOperation {
+    func cancel() {}
+}
+
 private let readerAccount = DulcetLibraryReaderAccount(
     providerInstanceID: "provider-reader",
     normalizedServerURL: "https://music.example.invalid",
@@ -531,6 +550,7 @@ private func readerModeStore(
     factory: RecordingReaderFactory,
     connector: ReaderTestConnector = ReaderTestConnector(),
     browser: ForbiddenLibraryBrowser = ForbiddenLibraryBrowser(),
+    serverSearch: ForbiddenServerSearch? = nil,
     credentials: ReaderTestCredentials? = nil
 ) -> (DulcetPresentationStore, DulcetLibrarySession, ReaderTestCredentials) {
     let session = DulcetLibrarySession(factory: factory)
@@ -539,6 +559,7 @@ private func readerModeStore(
         connector: connector,
         credentialStore: store,
         libraryBrowser: browser,
+        serverSearch: serverSearch,
         providerInstanceIDFactory: { "provider-new" },
         librarySession: session
     ))
@@ -571,6 +592,45 @@ func theAppOpensStraightIntoTheLibraryItHasSeenAndSendsNothing() throws {
     #expect(store.snapshot.state == .libraryBrowse, "the reader's library, not the Reconnect wall")
     #expect(connector.requests.isEmpty, "CONF-10b: nothing is sent until Reconnect")
     #expect(browser.browses == 0, "the library sync is not a UI path in reader mode")
+}
+
+@Test @MainActor
+func theLegacySearchAndAlbumReadsStaySilentWhileTheReaderHoldsTheAccount() async throws {
+    let factory = RecordingReaderFactory()
+    let connector = ReaderTestConnector()
+    let browser = ForbiddenLibraryBrowser()
+    let search = ForbiddenServerSearch()
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let (store, session, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: factory,
+        connector: connector, browser: browser, serverSearch: search)
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Navidrome", normalizedServerURL: "https://music.example.invalid")))
+    #expect(session.mode == .connected, "connected: the legacy paths would now be able to send")
+
+    store.navigate(to: .search)
+    store.searchQuery = "Threshold"
+    // Actions only the legacy search and album screens send. A stale control, a restored scene
+    // or a keyboard command can still deliver one; none may start a second read of the server.
+    store.retrySearch()
+    store.loadMoreSearchResults(.album)
+    #expect(store.snapshot.state == .searchIdle, "a legacy search would publish searchLoading here")
+    // The legacy search is sent from a task, so give it every chance to run before looking:
+    // leaving the screen straight away would cancel it and the count would prove nothing.
+    for _ in 0..<50 { await Task.yield() }
+    #expect(search.searches == 0, "the reader's search surface is the only search in reader mode")
+    store.navigate(to: .library)
+    store.selectAlbum(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-1"))
+    store.retryAlbumTracks()
+
+    #expect(browser.browses == 0)
+    #expect(store.snapshot.state == .libraryBrowse)
 }
 
 @Test @MainActor
