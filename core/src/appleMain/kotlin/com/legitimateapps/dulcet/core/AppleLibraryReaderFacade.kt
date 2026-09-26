@@ -184,7 +184,10 @@ public class AppleLibraryReaderClient internal constructor(
         return change(kind, rawId, MutationField.Rating) { favourites, target -> favourites.setRating(target, rating) }
     }
 
-    /** How each favourite or rating change ended: `saved`, `notSaved`, `superseded` or `notRecorded`. */
+    /**
+     * How each favourite or rating change ended, or why it is waiting: `saved`, `notSaved`, `held`,
+     * `superseded` or `notRecorded` ([AppleLibraryFavouriteOutcome]).
+     */
     public fun subscribeFavouriteOutcomes(
         listener: AppleLibraryFavouriteOutcomeListener,
     ): AppleLibraryFavouriteOutcomeSubscription {
@@ -194,12 +197,13 @@ public class AppleLibraryReaderClient internal constructor(
     }
 
     /**
-     * The changes that have not reached the server, for the sign-out offer (§14.7). A count the
-     * core cannot read completes with a null count and `internalFailure`, never a zero.
+     * The changes that have not reached the server, for the sign-out offer (§14.7): favourites and
+     * ratings, and playlist edits. A count the core cannot read — either outbox — completes with a
+     * null count and `internalFailure`, never a zero or a partial sum.
      */
     public fun pendingChangeCount(completion: (AppleLibraryPendingChanges) -> Unit): AppleLibraryReaderOperation =
         operation(completion, failed = { kind -> AppleLibraryPendingChanges(null, kind) }) { session ->
-            val count = session.favourites.pendingCount()
+            val count = session.pendingChangeCount()
             AppleLibraryPendingChanges(count, if (count == null) "internalFailure" else null)
         }
 

@@ -2540,11 +2540,13 @@ One transactional operation with a defined order, resumable if the app dies part
 Undo is available only before step 3. If the app dies mid-removal, the `removing` flag resumes the
 sequence at launch.
 
-**The offer of step 2, stated for the reader (R1d).** The count offered is the outbox's pending
-changes — including a queued change this build cannot decode, which is never sent and is lost just
-the same (§28 revision 104 item 30). Online, "submit" is a flush, and a change the server refuses is told like any refusal.
-**Offline, nothing can be submitted**, so the choice is stated as it is: "N favourite and rating
-changes haven't reached your server. Signing out now discards them." — with **Stay signed in** as
+**The offer of step 2, stated for the reader (R1d).** The count offered is the pending changes of
+both outboxes, favourites and ratings and playlist edits (§18.6), and it is unknown, never zero,
+when either cannot be read — including a queued change this build cannot decode, which is never
+sent and is lost just the same (§28 revision 104 item 30; playlist edits counted since R2a round 8).
+Online, "submit" is a flush, and a change the server refuses is told like any refusal.
+**Offline, nothing can be submitted**, so the choice is stated as it is: "N changes haven't reached
+your server. Signing out now discards them." — with **Stay signed in** as
 the default and **Sign out and discard** as the other; the removal does not proceed until one is
 chosen, and it never waits silently for a connection.
 
@@ -3780,7 +3782,12 @@ itself is retried by itself:
   - HTTP 429, named `busy` from the STATUS whatever the body says. The reference server's limiter
     answers it with an envelope carrying only the generic code 0 (CLAUDE.md trap 24). Its
     `Retry-After` is the floor under the wait, read as at most 5 minutes, as an outbox reads it
-    (§18.6);
+    (§18.6). The reconnect and the outboxes keep separate waits, each honouring the `Retry-After`
+    of the 429 it met: a 429 on the reconnect's epoch read does not delay an outbox flush, and an
+    outbox's 429 does not delay the reconnect's epoch read. Both are capped at the same 5 minutes;
+    a reconnect whose first step meets an outbox still waiting sends none of its changes, and goes
+    on to read the epoch (ASSUMED from reading the code in round 8; no test isolates the two
+    waits);
   - a gateway status with no envelope: 502, 503 or 504, or a CDN's origin error (520–524, 530).
     This is typically a reverse proxy's own page while the server behind it restarts. It is named by
     its status, never as a malformed envelope or "not a Subsonic server";
@@ -7790,7 +7797,11 @@ fresh disposable server before landing; items 11–14 are what that review chang
       refused unsent at the queue was dropped. So was one asked for while offline, which returned
       without effect. The grid then said `live` at 100 of 250 rows and loaded no more until the
       person scrolled away and back. Every owed extend is now made by the reconnect after the
-      screen's revalidation, and the screen is not `live` until it has been.
+      screen's revalidation, and the screen is not `live` until it has been. **After the round-7
+      review (round 8):** the revalidation took the owed extends before it read, so one that then
+      failed inside the reader lost them; the screen said `internalFailure`, and its next
+      revalidation re-read the viewport only. An extend not yet made when the revalidation fails
+      stays owed, and the next revalidation makes it.
     - The retry "only in the foreground" started out told the app was in the background, and
       nothing required a shell to say otherwise, so a shell that reported only changes never retried.
       The foreground state is now a required argument of `LibraryReaderSession` and of the Apple
@@ -7813,11 +7824,19 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - A reachable report requests a reconnect, and its step 1 flushes both outboxes. The item-21
       tests that flushed straight after `setOnline(true)` now take the reconnect's flush as that
       flush, and set their failures and hooks before the report, where the flush meets them.
+      **Corrected in place after the round-7 review (round 8):** three of them were not adapted and
+      still flushed explicitly after the report, so the create went out twice under its first name
+      before the test renamed it. Their re-send never differed from the first send, so the
+      restore that rebuilds a tombstone from the first send was never reached, and the mutant that
+      skips it for tombstones survived. They now take the reconnect's flush as the first send and
+      assert the NAME of each send, not only the count.
+    - The favourites' pending count no longer counts playlist changes, which share its table. The
+      sign-out offer's count is the session's, which adds the two outboxes' counts and is unknown
+      when either cannot be read (round 8; it had read the favourites' count alone).
     - Every request an outbox flush makes is an outbox request, sent while `canSend` holds. That
       covers the flush's own changes, the read it makes to decide a create in doubt, and its `ping`
       after a refusal. The flush marks its coroutine rather than each call, so no helper can forget
       to pass the mark on.
-    - The favourites' pending count no longer counts playlist changes, which share its table.
     - The playlist tests' fake server now keeps a song's star. The reconnect re-reads the open
       screen after its flush, and a server that answered `star` without keeping it showed the song
       unstarred where a real one shows it starred.
@@ -8091,6 +8110,42 @@ fresh disposable server before landing; items 11–14 are what that review chang
       created its account, then stopped at its ffmpeg pin, because the local ffmpeg is one patch
       release behind. Neither CONF touches transcoding.
 
+    **After the round-7 review (round 8).** OBSERVED 2026-09-26 on macOS arm64, counted from the
+    JUnit XML with every task forced to execute (`--rerun-tasks`, 67 of 67 tasks executed):
+    `jvmTest` ran 764 tests, `macosArm64Test` 816 and `testAndroidHostTest` 863, each with 0
+    failures. The seven compiles passed, and the macOS debug framework linked.
+    - **The blocker: three item-21 tests that no longer reached their condition** (item 27,
+      corrected in place). They flushed explicitly after `setOnline(true)`, so the reconnect's flush
+      and theirs sent the create twice as "Road" before the test renamed it. Their fixtures asserted
+      only that two creates went out, which still held. The re-send never differed from the first
+      send, so the restore that rebuilds a tombstone from the first send's listing was never needed,
+      and the #146 review's mutant M7 (the restore skips tombstones) was killed by none of this
+      branch's tests, where it was killed on `main`. The three tests now take the reconnect's flush
+      as the first send and assert each send's NAME: "Road", then "Trip". Two of them name the
+      playlist the first send made late, and one adopts the first send's playlist. The review
+      traced the writes of every test in the playlist and favourites-outbox classes against `main`;
+      its 15 differing tests were re-derived from its traces, and these three were the only ones
+      unexplained.
+    - **Mutation, against the playlist and favourites-outbox classes** (293 tests, the two new
+      sign-out tests failing on the baseline because the code was not yet fixed). M7 is now killed
+      by the seventh round's tombstone test and by the eighth round's p2. The union restored (N3)
+      and the re-send's listing only (N4) are still killed by p4, and by the seventh round's listing
+      test. The source was byte-identical after each mutant.
+    - **The sign-out count now includes playlist edits.** The session's `pendingChangeCount` adds
+      both outboxes' counts, and is null when either cannot be read. The playlist outbox's count
+      said 0 when its read failed. It is now null, and it counts a queued row it cannot decode. The
+      Apple client's `pendingChangeCount` reads the session's count. **Red first:** the two core
+      tests failed, the first with 1 where 2 were pending, and the second with 0 where the count
+      was unreadable. The facade test failed with `[1, null]` where `[2, null]` was expected.
+    - **An owed "load more" survives a revalidation that fails inside the reader.** **Red first:**
+      against the reviewed `LibraryWindow.kt`, both new tests failed: the next revalidation read
+      offset 0 and never 100. One fails the rebase's write, the other the extend's own write. A
+      mutant that drops each extend from the owed list before making it is killed by the second
+      test.
+    - **Documentation.** The favourite outcome subscription names `held`. The held error kinds add
+      `forbidden`, `protocol` and `notFound`. §16.14 states that the reconnect and the outboxes
+      keep separate busy waits. §14.7 counts both outboxes.
+
     **A retention that is not the reviewed leak.** The release test first required all forty closed
     search subscriptions to be collected, and it failed intermittently. A diagnostic ran its steps 200
     times, each on a fresh database. In 13 of those rounds exactly one closed subscription stayed
@@ -8124,7 +8179,9 @@ fresh disposable server before landing; items 11–14 are what that review chang
     facade's other hunks are documentation: the constructor, `setForeground`, the window
     subscription's `refresh`, and the favourite outcome's new `held` kind. Every other hunk of that
     diff came with the rebase: item 21's playlist and `HttpStatus` declarations, and the playback
-    work merged before it.
+    work merged before it. After the round-7 review, against that review's header, it is three
+    documentation comments: the held error kinds, the sign-out count, and the outcome
+    subscription's kinds. No declaration was added, removed or changed.
 
     **Not reached.**
     - No Swift compiles against the header yet.

@@ -201,6 +201,41 @@ class MutationOutboxReviewTest {
         assertEquals(1L, session.favourites.pendingCount(), "the change is still pending once the read succeeds")
     }
 
+    /**
+     * The sign-out offer counts every change the person would lose: a favourite AND a playlist edit.
+     * The two outboxes share one table, and the favourites' count leaves playlist rows to their own
+     * outbox, so a count read from the favourites alone says 1 here where 2 would be lost.
+     */
+    @Test
+    fun theSignOutCountIncludesAPendingPlaylistEdit() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        assertEquals(PlaylistEditRecord.Pending, session.playlists.create("Road").record, "fixture: the create is queued")
+        assertEquals(1L, session.favourites.pendingCount(), "fixture: the favourites' own count is favourites only")
+        assertEquals(1L, session.playlists.pendingCount(), "fixture: one playlist change is pending")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "a pending playlist edit was left out of the sign-out count")
+    }
+
+    /** Either outbox unreadable makes the sign-out count unknown, never a partial sum or zero. */
+    @Test
+    fun theSignOutCountIsUnknownWhenThePlaylistOutboxCannotBeRead() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.playlists.create("Road")
+        assertEquals(1L, session.playlists.pendingCount(), "fixture: one playlist change is pending")
+
+        env.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) }
+        val playlists = session.playlists.pendingCount()
+        val total = session.pendingChangeCount()
+        env.driver.failRead = null
+
+        assertTrue(env.driver.failedReads > 0, "the injected read failure never fired; the test measured nothing")
+        assertEquals<Long?>(null, playlists, "an unreadable playlist count was reported as a number")
+        assertEquals<Long?>(null, total, "an unreadable sign-out count was reported as a number")
+        assertEquals<Long?>(1L, session.pendingChangeCount(), "the change is still pending once the read succeeds")
+    }
+
     // ---- S1 -----------------------------------------------------------------------------------------
 
     @Test

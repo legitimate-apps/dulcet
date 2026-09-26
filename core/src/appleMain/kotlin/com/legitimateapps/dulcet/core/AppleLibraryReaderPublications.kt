@@ -171,8 +171,11 @@ public class AppleLibrarySearchPublication internal constructor(
  * - [targetKind]: `artist`, `album` or `track`. [field]: `favourite` or `rating`.
  * - [value]: for `saved`, the value now on the server — `1`/`0` for a favourite, `0...5` for a
  *   rating (`0` removes it). [serverValue]: for `superseded`, the server's value.
- * - [errorKind]: for `notSaved`, and for `held` why it is held — `invalidCredentials` or
- *   `authentication`, `server` (a proxy refusing access), or `serverBusy`.
+ * - [errorKind]: for `notSaved`, and for `held` why it is held. A 429 holds with `serverBusy`. A
+ *   refusal of access holds with whatever the `ping` that follows it failed with, unless that was
+ *   a network failure: `invalidCredentials`, `authentication`, `forbidden` (code 50), `protocol`
+ *   (an answer that is not the server's, such as a login page), `server` (a proxy's refusing
+ *   status, or an error code) or `notFound` (code 70).
  */
 public class AppleLibraryFavouriteOutcome internal constructor(
     public val kind: String,

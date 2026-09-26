@@ -605,6 +605,24 @@ class AppleLibraryReaderFacadeTest {
         assertEquals(listOf<Any?>(1L, null), listOf(readable.load()?.count, readable.load()?.errorKind))
     }
 
+    /**
+     * The sign-out offer counts a pending playlist edit too. No facade entry point edits playlists
+     * yet, so the edit is queued on the session directly — the day a shell can queue one, the count
+     * the person is shown must already include it.
+     */
+    @Test
+    fun aPendingPlaylistEditIsCountedForSignOut() = facadeTest { h ->
+        val c = h.client()
+        c.client.setOnline(false)
+        assertTrue(c.client.setFavourite("album", albumId(4), true))
+        val queued = c.onReader { h.sessions.last().playlists.create("Road").record }
+        assertEquals(PlaylistEditRecord.Pending, queued, "fixture: the playlist create is queued")
+        val pending = AtomicReference<AppleLibraryPendingChanges?>(null)
+        c.client.pendingChangeCount { pending.store(it) }
+        pumpUntil("the pending count") { pending.load() != null }
+        assertEquals(listOf<Any?>(2L, null), listOf(pending.load()?.count, pending.load()?.errorKind), "a pending playlist edit was not counted")
+    }
+
     // ---- Search (CONF-79, facade leg) --------------------------------------------------------------------------------
 
     @Test

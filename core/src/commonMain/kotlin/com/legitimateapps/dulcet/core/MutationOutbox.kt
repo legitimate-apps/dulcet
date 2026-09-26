@@ -913,6 +913,18 @@ internal class LibraryReaderSession(
 
     private val searches = mutableListOf<LibrarySearchSession>()
 
+    /**
+     * For the sign-out offer of §14.7: every change of this account that has not reached the
+     * server — favourites and ratings, and playlist edits — or null when either outbox cannot be
+     * read. Never a partial sum or a guessed zero: either tells the person less will be lost than
+     * will be.
+     */
+    fun pendingChangeCount(): Long? {
+        val favourites = favourites.pendingCount() ?: return null
+        val playlists = playlists.pendingCount() ?: return null
+        return favourites + playlists
+    }
+
     private suspend fun flushRecordingFailure(flush: suspend () -> Unit) {
         try {
             flush()

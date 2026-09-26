@@ -550,9 +550,21 @@ internal class ListWindow(
     override suspend fun performRevalidate(requested: RevalidateCause) {
         if (closed || !reader.online) return
         val cause = takeOwed(requested)
-        // Owed extends are made after the revalidation, whether or not it reads anything.
-        val extends = owedExtends.toList()
+        // Owed extends are made after the revalidation, whether or not it reads anything. Taken
+        // here, so one re-owed meanwhile is made by the next revalidation; and one not yet made when
+        // this one throws is owed again, never lost with the failure (round-7 review).
+        val extends = owedExtends.toMutableList()
         owedExtends.clear()
+        try {
+            revalidateThenExtend(cause, extends)
+        } catch (thrown: Throwable) {
+            owedExtends += extends
+            throw thrown
+        }
+    }
+
+    /** [performRevalidate]'s body; [extends] holds the owed extends not yet made. */
+    private suspend fun revalidateThenExtend(cause: RevalidateCause, extends: MutableList<PageMode>) {
         if (!readComing(cause)) {
             // Fresh: nothing is read, so nothing says `revalidating` — and nothing is republished,
             // unless a `revalidating` this handle already published must be taken back.
@@ -591,15 +603,16 @@ internal class ListWindow(
         if (extends.isNotEmpty()) makeOwedExtends(extends) else emitSnapshot()
     }
 
-    /** Makes the extends that were owed; one refused again is owed again. */
-    private suspend fun makeOwedExtends(extends: List<PageMode>) {
-        for (mode in extends) {
+    /**
+     * Makes the extends that were owed; one refused again is owed again. Each leaves [extends] only
+     * once made, so an extend that throws stays in it for [performRevalidate] to owe again.
+     */
+    private suspend fun makeOwedExtends(extends: MutableList<PageMode>) {
+        while (extends.isNotEmpty()) {
             if (closed) return
-            if (!reader.online) {
-                owedExtends += mode
-                continue
-            }
-            extend(mode, confirming = false)
+            val mode = extends.first()
+            if (reader.online) extend(mode, confirming = false) else owedExtends += mode
+            extends.removeAt(0)
         }
         // An extend that found nothing to read (the window complete, or the viewport moved away)
         // leaves nothing coming: a `revalidating` published at the transition is taken back.
