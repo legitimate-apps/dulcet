@@ -131,8 +131,9 @@ private func timedRender(_ label: String, _ render: () throws -> RenderedPixels)
     return pixels
 }
 
-/// Runs a pixel scan off the main actor, below the priority of the tests around it, and waits
-/// for it there.
+/// Runs a pixel scan off the main actor and waits for it there. The scan is requested at utility
+/// priority, but awaiting its value can raise it to the awaiting test's priority, so the priority is
+/// not what keeps these scans from contending with other tests: the serialized suite is.
 private func scannedOffTheMainActor<T: Sendable>(_ scan: @escaping @Sendable () -> T) async -> T {
     await Task.detached(priority: .utility) { scan() }.value
 }
