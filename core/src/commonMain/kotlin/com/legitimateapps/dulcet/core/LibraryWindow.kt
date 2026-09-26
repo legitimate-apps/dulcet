@@ -397,6 +397,12 @@ internal class ListWindow(
      */
     private var viewport: IntRange = 0..0
 
+    /**
+     * Bumped by every viewport the shell sets. A rebase's re-anchor moves [viewport] only if this is
+     * unchanged since the rebase began: a viewport the person set meanwhile wins.
+     */
+    private var viewportSerial = 0
+
     /** Positions of the last publication's items, parallel to [published]. */
     private var publishedPositions: List<Int> = emptyList()
 
@@ -553,6 +559,7 @@ internal class ListWindow(
     private suspend fun rebase(epoch: CatalogEpoch, attempt: Int, anchorBefore: AnchorSource? = firstVisibleAnchorSource()) {
         generation += 1
         val gen = generation
+        val serial = viewportSerial
         val offsets = viewportPageOffsets()
         val reads = coroutineScope { offsets.map { offset -> async { readPage(offset) } }.awaitAll() }
         if (gen != generation || closed) return
@@ -595,9 +602,18 @@ internal class ListWindow(
             // exists, so no stored row at or beyond the total the server just reported is kept,
             // shown or labelled live. With no total to go by (or one that contradicts the empty
             // page), on the top. Each re-anchor reads a page strictly before this one, so it ends.
+            // Offline, it stops here: nothing is sent (§16.14), and the window stays as stored.
+            if (!reader.online) return
+            val next = if (moved) latest else epoch
+            if (viewportSerial != serial) {
+                // The person set a viewport while this rebase read: theirs wins, and the window is
+                // rebased around it instead. Bounded by the viewports the shell sends meanwhile.
+                rebase(next, attempt, firstVisibleAnchorSource())
+                return
+            }
             val lastExisting = if (total != null && total in 1..first) total - 1 else 0
             viewport = lastExisting..lastExisting
-            rebase(if (moved) latest else epoch, attempt, anchorBefore)
+            rebase(next, attempt, anchorBefore)
             return
         }
         val complete = coverage == CacheCoverage.Open && first == 0 &&
@@ -627,9 +643,14 @@ internal class ListWindow(
      * One page read and its *after* reading. The *before* is the reading that was current when the
      * page request was SENT ([LibraryReader.send]); every successful *after* becomes the session's
      * reading, and so the next page's *before*.
+     *
+     * Offline, it sends nothing (§16.14) and returns null WITHOUT recording a failure — the screen
+     * says offline, not that a read failed: no page request once the reader is offline, and for a
+     * page answered after the unreachable report, no *after* reading, so the page is not used.
      */
     private suspend fun readPage(offset: Int): PageRead? {
         val sizeParameter = spec.sizeParameter ?: return null
+        if (!reader.online) return null
         val parameters = spec.parameters + (sizeParameter to pageSize.toString()) + ("offset" to offset.toString())
         val sent = try {
             reader.sendChecked(spec.endpoint, parameters)
@@ -646,6 +667,7 @@ internal class ListWindow(
             return null
         }
         // The *after* reading is issued only once the page's response has arrived (§16.12).
+        if (!reader.online) return null
         var afterError: DomainError? = null
         val after = try {
             reader.epochReader.readScanStatus()
@@ -800,6 +822,7 @@ internal class ListWindow(
         val from = firstIndex.coerceIn(0, publishedPositions.lastIndex)
         val to = lastIndex.coerceIn(from, publishedPositions.lastIndex)
         viewport = publishedPositions[from]..publishedPositions[to]
+        viewportSerial += 1
         if (query is LibraryQuery.AlbumList && published.isNotEmpty()) {
             val itemsFrom = firstIndex.coerceIn(0, published.lastIndex)
             val itemsTo = lastIndex.coerceIn(itemsFrom, published.lastIndex)
@@ -976,10 +999,13 @@ internal class AlbumDetailWindow(
         if (closed || !reader.online) return
         val cached = cache.album(album.rawId)
         // A detail read live under the current epoch within the interval is not re-read — which is
-        // what lets a looked-ahead album open with zero requests (CONF-87).
+        // what lets a looked-ahead album open with zero requests (CONF-87). Nothing is read, so
+        // nothing is republished either — unless a `revalidating` it published must be taken back.
         if (cause != RevalidateCause.Refresh && cached != null && fresh(cached)) {
-            revalidationPending = false
-            emitSnapshot()
+            if (revalidationPending) {
+                revalidationPending = false
+                emitSnapshot()
+            }
             return
         }
         reader.lookAhead.cancel(album.rawId)

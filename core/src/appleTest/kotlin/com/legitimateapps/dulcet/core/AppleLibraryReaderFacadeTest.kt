@@ -348,8 +348,40 @@ class AppleLibraryReaderFacadeTest {
         c.client.subscribeLibraryWindow(request("albumList", listType = "frequent"), loading)
         pumpUntil("the loading frame") { loading.any() }
         assertEquals(listOf("loading", "loading"), listOf(loading.last.freshness.kind, loading.last.itemsState))
+        // The list read is sent from a child of the launched read, one queue turn after the loading
+        // frame: a release before it is held releases nothing, and the read is then held for ever.
+        waitOnReader(c, "the frequent read held") { c.onReader { h.server.base.heldCount } == 1 }
         c.onReader { h.server.base.release() }
         pumpUntil("the list read to land") { loading.last.freshness.kind == "live" }
+    }
+
+    /**
+     * A viewport queued for a window before that window's close does nothing once the close has
+     * returned — and that matters beyond the closed window: a viewport change takes the detail
+     * look-ahead over from whichever window held it, and the close then cancels it. Here window A's
+     * look-ahead must run untouched: the viewport's ten albums and the next ten (§16.13).
+     */
+    @Test
+    fun aViewportQueuedBeforeItsWindowClosesLeavesAnotherWindowsLookAheadAlone() = facadeTest { h ->
+        val c = h.client(config = LibraryReaderConfig(lookAheadMaxPerViewport = 24, lookAheadSettleMillis = 300))
+        val a = WindowRecorder()
+        val subA = c.client.subscribeLibraryWindow(GRID, a)
+        pumpUntil("a live A") { a.any { it.freshness.kind == "live" } }
+        val b = WindowRecorder()
+        val subB = c.client.subscribeLibraryWindow(request("albumList", listType = "newest"), b)
+        pumpUntil("a live B") { b.any { it.freshness.kind == "live" } }
+        pumpFor(600.milliseconds)
+        val mark = c.onReader { h.server.log.size }
+        fun lookAheadReads() = c.onReader { h.server.log.drop(mark).count { it.endpoint == "getAlbum" } }
+        val release = c.holdReader()
+        subA.setViewport(0, 9)
+        subB.setViewport(0, 9)
+        subB.close()
+        release()
+        waitOnReader(c, "A's look-ahead") { lookAheadReads() >= 20 }
+        pumpFor(600.milliseconds)
+        assertEquals(20, lookAheadReads(), "getAlbum reads by A's look-ahead after B's queued viewport and close")
+        subA.close()
     }
 
     @Test

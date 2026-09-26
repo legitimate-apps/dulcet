@@ -717,7 +717,8 @@ internal class LibraryFavourites(
                     // Only a failure of the request is the server's; the device's own database failing
                     // propagates, with every change kept.
                     val failure = try {
-                        reader.sendChecked(change.endpoint(), change.parameters())
+                        // One of the two kinds of request an offline reader sends: gated by canSend.
+                        reader.sendChecked(change.endpoint(), change.parameters(), whileOffline = true)
                         null
                     } catch (thrown: LibraryRequestFailure) {
                         thrown.error
