@@ -893,6 +893,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     private fun openHomeAlbum(title: String) {
         val row = hasTestTag("library.home.0.items")
+        // Each return from an album composes the home afresh, so its rows open new windows, and a
+        // row draws nothing below its title until its first publication arrives. That publication
+        // is built on the reader's thread, which no idling waits for: a finder run straight after
+        // the return could see the row empty. Wait for the row's items (a finder, so the main
+        // looper is idled as the wait polls; CLAUDE.md trap 44).
+        await("the first home row's items on screen") { compose.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(row).performScrollToNode(hasText(title))
         compose.onAllNodes(hasText(title) and hasAnyAncestor(row)).onFirst().performClick()
         compose.waitForIdle()

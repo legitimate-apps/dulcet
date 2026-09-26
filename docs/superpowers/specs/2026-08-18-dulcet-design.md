@@ -7887,7 +7887,8 @@ fresh disposable server before landing; items 11–14 are what that review chang
       the gate its §14.7 step 6 must wait on, and today only tests call it.
     - **One unexplained failure.** In one mutation run the TV's CONF-76 test failed under a mutant
       that, run again, left it green; its failure detail was not kept. It passed in that rerun and
-      in every unmutated baseline. It is recorded, not explained.
+      in every unmutated baseline. It is recorded, not explained. (It may be the race item 36
+      found and fixed in the scenario; its detail was not kept, so that cannot be confirmed.)
     - **The TV's album screen lists tracks but does not play them.** Playing from a TV album is not
       built. The TV library had no album screen before R3. Item 35 builds it.
 35. **R3 on the core's fourth and fifth rounds.** R3 was rebased onto the reader core that sends
@@ -8144,12 +8145,44 @@ fresh disposable server before landing; items 11–14 are what that review chang
       screen says `offline` or the list is ordered on the device. Under a failure that stands, a
       cached paged list therefore does not say the rest needs a connection. It omits the line
       rather than saying anything false.
-    - **Found and left: one intermittent failure of CONF-76 on the TV.** Once, after the
-      never-opened album was closed offline, the finder for the first home row's items found no
-      node in the merged semantics tree, while the unmerged tree held one. That was 1 of this
-      round's 5 TV runs of the whole live suite; the other 4 passed. The mechanism is not
-      established, and nothing was changed for it. Item 34's unexplained TV CONF-76 failure under a
-      mutant, whose detail was not kept, may be the same one.
+    - **The intermittent CONF-76 failure on the TV was the test acting on a home that had not
+      published yet.** It failed in 1 of this round's first 5 TV live-suite runs: the finder for
+      the first home row's items found nothing, while Compose's own hint said the unmerged tree
+      held one (ASSUMED: the hint comes from a second, later read that waits for idle again, by
+      when the publication had arrived; run 6 below fits that). The failure is in the Robolectric host test (`:android:tv:testDebugUnitTest`, run
+      by `core-ci`'s `conformance-env-linux` job), not on an emulator: no emulator job runs the
+      reader scenarios. Mechanism, OBSERVED:
+      - Both screens replace the home with the album screen and compose it afresh on the way
+        back, so the home's rows open new reader windows. A row draws nothing below its title
+        until its first publication arrives, and that publication is built on the reader's own
+        thread and delivered through the main looper. Compose's idling does not wait for the
+        reader's thread, for which no idling resource is registered, so the scenario's `openHomeAlbum`, called straight after a return, could
+        run its finder before the rebuilt row had published. The two calls made straight after a
+        return are the only ones exposed; every other call follows a wait on a home publication or a
+        check that the first row is drawn (from reading the call sites).
+      - Soaked alone, the TV test passed 30 of 30. Inside the full TV live suite, run 30 times in
+        one test process, it failed 2 of 30 (runs 6 and 9, one at each post-return call) and
+        every other test passed all 30. A failure-path dump in run 9 showed the first home row
+        holding only its title: no freshness line and no items, so no publication. Its recorded
+        `home.0` publications fit that: one from each earlier home window and none from the one
+        built after the last return. In run 6 the items were there when read again just after the
+        failure. It was seen only inside the suite, but 0 of 30 alone against 2 of 30 there does
+        not establish a difference (ASSUMED, if real: a busier reader thread later in the process).
+      - A temporary core amplifier, a 300 ms sleep on the reader's thread before each home row's
+        window opens, made it deterministic: 10 of 10 failed on the TV and 10 of 10 on the phone,
+        with the same finder failure at the first call after a return; the amplifier never reached
+        the second, which only the natural run 9 exercised. So the phone shares the race; it had not been seen to fail.
+
+      The fix is in the scenario, not a longer wait: `openHomeAlbum` now waits for the first home
+      row's items to be on screen, through a finder so the main looper is idled as it polls
+      (CLAUDE.md trap 44), before scrolling to the album. With it, and the amplifier still in,
+      10 of 10 passed on each app. Without the amplifier, the TV suite soak passed 30 of 30 (360
+      tests) and the test alone 30 of 30. At the measured base rate, 30 clean suite runs would
+      still happen about one time in eight if nothing had changed, so the amplifier's 10 of 10
+      each way is the evidence that discriminates, and the soak is the check that nothing else
+      broke. The app behaviour it exposed — a row with nothing below its title for the moment
+      after a return — is left as it is. Item 34's unexplained TV CONF-76 failure under a mutant,
+      whose detail was not kept, may be this; it cannot be confirmed.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

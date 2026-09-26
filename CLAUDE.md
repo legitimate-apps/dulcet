@@ -468,6 +468,13 @@ They are deliberately not reproduced in this repository.**
     ➡️ The converse trap: a finder on an activity moved to `CREATED` fails at once with "No compose
     hierarchies found", not with the state you wanted. Take any counts read through the screen
     before stopping the activity; while stopped, count at the forwarder and idle the looper directly.
+    ➡️ And what no idling reaches: work on the reader's own thread. A screen composed afresh
+    (the home, on every return from an album) has rows that draw nothing below their titles until
+    their first publication, which that thread builds; a finder straight after the return can run
+    first and find nothing. Wait for the content through a finder before acting on it. OBSERVED:
+    CONF-76 failed 2 of 30 inside the TV suite, and 10 of 10 on each app with the reader's thread
+    slowed; with the wait, 0 of 10 failed on each app with it still slowed, and 0 of 360 tests
+    over 30 unslowed TV suite runs (spec §28 revision 104 item 36).
 
 ## Review and delegation
 
