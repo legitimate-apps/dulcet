@@ -4525,7 +4525,7 @@ freshly booted simulator (SUPPORTED, n=23).
    genuine host-wide stall in which the fixture answered 200 six seconds in and the client could not
    read it; a larger bound converts a named stall into an unnamed one.
 
-**The split — adopted 2026-09-24 (revision 107).** Until then, this section deferred splitting
+**The split — adopted 2026-09-24 (revision 111).** Until then, this section deferred splitting
 `apple-ci` into parallel hosted jobs with the condition: *adopt it if, after rules 1–4, pass rate is
 at or above 80% and median wall time is still above 75 minutes; if the pass rate is still low, adopt
 it regardless.* **MEASURED from the Actions API**, over every completed run created after rules 1–4
@@ -4615,8 +4615,14 @@ where the single job used to reach it after its builds). Run 36188503621 attempt
 leg hit a 10-second loopback read timeout in `DarwinProxyAuthenticationConformanceTest` on
 iosSimulatorArm64, with one simulator booted and host pressure comparable to a green single-job run.
 That is rule 5's host-contention class. In 36036076261, the aggregator failed at its leg-result
-check, before reading any evidence. The run's wall time is the longer leg plus the aggregator, so
-two legs at these figures finish in 45–62 minutes, against the single job's 92–108.
+check, before reading any evidence. Two runs were green on their first attempt: 36196670168
+(platform 51.5, conformance 57.4, composite 42.0, wall 57.7 minutes) and 36201409613, the first on
+top of the reader conformance suite (CONF-70..75), which runs a second Navidrome around the
+macOS leg (platform 44.2, conformance 63.1, composite 47.0 of its 67-minute cap, wall 63.4). That
+suite's macOS class passed 8 of 8 in 83.3 seconds, and the aggregator's evidence rose from
+`tests=55 reports=44` to `tests=55 reports=45`: one more JUnit report and no new citation. The app
+builds took 6.4 minutes in both. The run's wall time is the longer leg plus the aggregator, so two
+legs at these figures finish in 45–64 minutes, against the single job's 92–108.
 
 **Considered and NOT adopted — with the condition under which each becomes right.**
 
@@ -5242,7 +5248,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**Revision 107 (2026-09-24)** — `apple-ci` is split into parallel hosted legs behind a required
+**Revision 111 (2026-09-25)** — written 2026-09-24. `apple-ci` is split into parallel hosted legs behind a required
 aggregator (§21.1, §21.5, §12.4). This is numbered one above the highest revision on `main` when it
 was written. Another branch may take the same number first, so it may be renumbered at merge.
 
@@ -5273,8 +5279,9 @@ was written. Another branch may take the same number first, so it may be renumbe
 6. **Measured on the adopting pull request, OBSERVED** (§21.5 lists each run). The platform leg took
    49.5 and 44.0 minutes; the conformance leg took 61.0 and 44.6. A partial "Re-run failed jobs"
    kept the green leg's `attempt` output, and the aggregator verified that attempt's evidence
-   (run 36188503621). The projection's 9 assumed minutes of app builds measured 6.4 and 4.3.
-   Wall time: longer leg plus a few seconds. Leg timeouts stay at 95 and 110 until the legs have a
+   (run 36188503621). The projection's 9 assumed minutes of app builds measured 4.3 to 6.4.
+   Green first attempts took 57.7 minutes of wall time (36196670168) and 63.4 once the reader
+   conformance suite had landed (36201409613). Wall time: longer leg plus a few seconds. Leg timeouts stay at 95 and 110 until the legs have a
    history rather than two samples.
 
 **Revision 110 (2026-09-25)** — §16's walk rule ("advances by what the server returned") now says the
