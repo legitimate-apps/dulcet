@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 class ReaderSeparateBusyWaitsTest {
     /** B6. An outbox's 429 in the reconnect's flush sets the outboxes' wait and does not delay the reconnect's epoch read. */
     @Test
-    fun b6_anOutbox429DoesNotDelayTheReconnectsEpochRead() = sessionTest { env ->
+    fun b6_anOutbox429DoesNotDelayTheReconnectsEpochRead() = cappedSessionTest { env ->
         val session = env.session()
         session.reader.connect()
         runCurrent()
@@ -37,7 +37,7 @@ class ReaderSeparateBusyWaitsTest {
 
     /** B7. A 429 on the reconnect's epoch read does not set the outboxes' wait: an outbox flush sends at once. */
     @Test
-    fun b7_aReconnect429DoesNotDelayAnOutboxFlush() = sessionTest { env ->
+    fun b7_aReconnect429DoesNotDelayAnOutboxFlush() = cappedSessionTest { env ->
         val session = env.session()
         session.reader.connect()
         runCurrent()
@@ -61,7 +61,7 @@ class ReaderSeparateBusyWaitsTest {
 
     /** B8. A reconnect meeting an outbox still waiting sends none of its changes, and goes on to read the epoch. */
     @Test
-    fun b8_aReconnectMeetingAWaitingOutboxSendsNothingAndReadsTheEpoch() = sessionTest { env ->
+    fun b8_aReconnectMeetingAWaitingOutboxSendsNothingAndReadsTheEpoch() = cappedSessionTest { env ->
         val session = env.session()
         session.reader.connect()
         runCurrent()

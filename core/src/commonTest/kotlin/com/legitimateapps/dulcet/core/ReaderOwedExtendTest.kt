@@ -35,7 +35,7 @@ class ReaderOwedExtendTest {
      * refresh. The next reconnect makes it.
      */
     @Test
-    fun b1_anOwedLoadMoreWhoseWindowsFirstLiveReadFailsIsOwedNotDropped() = sessionTest { env ->
+    fun b1_anOwedLoadMoreWhoseWindowsFirstLiveReadFailsIsOwedNotDropped() = cappedSessionTest { env ->
         val first = env.session()
         first.reader.connect()
         first.reader.open(grid) {}.also { advanceUntilIdle() }.close()
@@ -77,7 +77,7 @@ class ReaderOwedExtendTest {
      * the window and stop, so the person's "load more" did nothing.
      */
     @Test
-    fun aLoadMoreOnAWindowNotYetReadLiveReadsItThenExtends() = sessionTest { env ->
+    fun aLoadMoreOnAWindowNotYetReadLiveReadsItThenExtends() = cappedSessionTest { env ->
         val first = env.session()
         first.reader.connect()
         first.reader.open(grid) {}.also { advanceUntilIdle() }.close()
@@ -110,7 +110,7 @@ class ReaderOwedExtendTest {
      * again. The next revalidation reads on from the page that landed and never fetches it twice.
      */
     @Test
-    fun b2_aReOwedExtendWhosePageLandedIsNotFetchedTwice() = sessionTest { env ->
+    fun b2_aReOwedExtendWhosePageLandedIsNotFetchedTwice() = cappedSessionTest { env ->
         env.server.base.sendTotalCount = false
         val session = env.session()
         session.reader.connect()
@@ -156,7 +156,7 @@ class ReaderOwedExtendTest {
 
     /** B3. A screen closed while it owes an extend: nothing is read for it, now or at a later reconnect. */
     @Test
-    fun b3_aClosedScreenOwesNothing() = sessionTest { env ->
+    fun b3_aClosedScreenOwesNothing() = cappedSessionTest { env ->
         val session = env.session()
         session.reader.connect()
         val handle = session.reader.open(grid) {}
@@ -185,7 +185,7 @@ class ReaderOwedExtendTest {
      * write landing is the screen's success; it used to end `cached(internalFailure)` at 200 rows.
      */
     @Test
-    fun b4_theReconnectThatMakesAReOwedExtendEndsLive() = sessionTest { env ->
+    fun b4_theReconnectThatMakesAReOwedExtendEndsLive() = cappedSessionTest { env ->
         val session = env.session()
         session.reader.connect()
         val pubs = Recorder<LibraryPublication>(env.server)
@@ -221,7 +221,7 @@ class ReaderOwedExtendTest {
 
     /** B5. An extend owed on a complete window is dropped, not owed forever: no read, and no `revalidating` for it. */
     @Test
-    fun b5_anOwedExtendPastTheEndIsNotOwedForever() = sessionTest { env ->
+    fun b5_anOwedExtendPastTheEndIsNotOwedForever() = cappedSessionTest { env ->
         val session = env.session()
         session.reader.connect()
         val pubs = Recorder<LibraryPublication>(env.server)

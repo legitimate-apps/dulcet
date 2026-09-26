@@ -1210,6 +1210,13 @@ internal sealed interface LibraryCachedReason {
     data class Failed(val error: DomainError) : LibraryCachedReason
     data object Stale : LibraryCachedReason
 
+    /**
+     * Read live, but a read this screen owes beyond its own pages — a "load more" or "load before"
+     * not yet made, with no failure recorded for it — is still to be made; the next revalidation
+     * makes it (§16.14). Never `live` while one is owed.
+     */
+    data object Owed : LibraryCachedReason
+
     /** The reader itself failed while building or refreshing this screen (a defect, not the server). */
     data object InternalFailure : LibraryCachedReason
 }
@@ -1322,12 +1329,17 @@ internal sealed interface LibraryItem {
 internal interface LibraryWindowHandle {
     val query: LibraryQuery
 
-    /** Reads the next page of a paged list, at most one page beyond the viewport. */
+    /**
+     * Reads the next page of a paged list, at most one page beyond the viewport. One not made —
+     * offline, failed, or discarded by a rebase — is owed: the screen says `failed` or `owed`,
+     * never `live`, and the next revalidation ([refresh], or a reconnect) makes it (§16.14).
+     */
     fun loadMore()
 
     /**
      * Reads the page before a window that does not start at the top (after a rebase), at most one
-     * page before the viewport — the other half of "open on both sides" (§16.12).
+     * page before the viewport — the other half of "open on both sides" (§16.12). Owed when not
+     * made, as [loadMore] is.
      */
     fun loadBefore()
 
@@ -1338,8 +1350,9 @@ internal interface LibraryWindowHandle {
     fun setViewport(firstIndex: Int, lastIndex: Int)
 
     /**
-     * An explicit refresh: re-reads the visible pages whatever their age. It does nothing while the
-     * reader is offline; a "Try again" for an offline screen must call reconnect instead (§16.14).
+     * An explicit refresh: re-reads the visible pages whatever their age, then makes any
+     * [loadMore] or [loadBefore] still owed. It does nothing while the reader is offline; a
+     * "Try again" for an offline screen must call reconnect instead (§16.14).
      */
     fun refresh()
 

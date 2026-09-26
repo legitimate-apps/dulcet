@@ -138,10 +138,17 @@ internal abstract class ReaderHandle(
     }
 
     /**
-     * Whether a read beyond the screen's own pages is owed — a "load more" refused unsent because
-     * the reader went offline, made by the next reconnect after the screen's revalidation.
+     * Whether a read beyond the screen's own pages is owed — a "load more" not made: asked for or
+     * refused unsent while offline, failed, or discarded by a rebase — made by the next revalidation
+     * after the screen's own read. While one is owed the screen is not `live` ([cachedFreshness]).
      */
     protected open fun owesMore(): Boolean = false
+
+    /**
+     * Why an owed read beyond the screen's own pages failed, when one did: the failure of the
+     * first such read still owed. Null when none failed, or none is owed.
+     */
+    protected open fun owedFailure(): DomainError? = null
 
     /** Builds the publication from the cache as it stands now. */
     protected abstract fun snapshot(): LibraryPublication
@@ -281,7 +288,7 @@ internal abstract class ReaderHandle(
 
     /** Freshness of content that exists in the cache (§16.14). */
     protected fun cachedFreshness(asOfWall: Long?, liveUnderCurrentEpoch: Boolean): LibraryFreshness {
-        val error = failure
+        val error = failure ?: owedFailure()
         return when {
             !reader.online -> LibraryFreshness.Cached(asOfWall, offlineReason())
             // The label follows the read: a read in flight says so, quiet or not.
@@ -291,6 +298,9 @@ internal abstract class ReaderHandle(
             reader.completingReconnect -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Revalidating)
             internalFailure -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.InternalFailure)
             error != null -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Failed(error))
+            // A screen does not say `live` while a read it owes is still to be made (§16.14,
+            // round-6 decision 3), whatever route left it owed (round-9 review, S9-1).
+            liveUnderCurrentEpoch && owesMore() -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Owed)
             liveUnderCurrentEpoch -> LibraryFreshness.Live
             else -> LibraryFreshness.Cached(asOfWall, LibraryCachedReason.Stale)
         }
@@ -298,7 +308,7 @@ internal abstract class ReaderHandle(
 
     /** Freshness when nothing is cached. A read in flight or coming says so, as [cachedFreshness] does. */
     protected fun emptyFreshness(): LibraryFreshness {
-        val error = failure
+        val error = failure ?: owedFailure()
         return when {
             !reader.online -> LibraryFreshness.Unavailable(
                 when (val standstill = reader.standstill) {
@@ -461,11 +471,13 @@ private enum class PageMode { Append, Replace, Prepend }
 
 /**
  * What one extend did. [NotNeeded] is a proof that nothing is owed: the window is complete at that
- * end, or the viewport is more than a page away from it. [NotMade] is everything else — offline, a
- * failed read, a page discarded by a rebase, a window that must first be read live — and an owed
- * extend that ends so is owed again.
+ * end, or the viewport is more than a page away from it. [Discarded]: the page was read, but its
+ * stamp had moved, and the rebase that followed left the window settled under one stamp — so one
+ * more read of the page is worth making at once. [NotMade] is everything else — offline, a failed
+ * read, a page discarded by a rebase whose stamp kept moving, a window that must first be read
+ * live. An extend that ends [Discarded] or [NotMade] is owed.
  */
-private enum class ExtendResult { Made, NotNeeded, NotMade }
+private enum class ExtendResult { Made, NotNeeded, Discarded, NotMade }
 
 /** One list screen: a paged window, or a single response. */
 internal class ListWindow(
@@ -506,6 +518,15 @@ internal class ListWindow(
     private val owedExtends = mutableSetOf<PageMode>()
 
     override fun owesMore(): Boolean = owedExtends.isNotEmpty()
+
+    /**
+     * Each extend's own failure, kept apart from the window's [failure]: an operation that succeeds
+     * clears only its own (round-9 review, S9-1). A page landing for one end never erases a failure
+     * the other end is still owed for.
+     */
+    private val extendFailures = mutableMapOf<PageMode, DomainError>()
+
+    override fun owedFailure(): DomainError? = owedExtends.firstNotNullOfOrNull { extendFailures[it] }
 
     private var pendingAnchor: LibraryAnchor? = null
 
@@ -558,21 +579,15 @@ internal class ListWindow(
     override suspend fun performRevalidate(requested: RevalidateCause) {
         if (closed || !reader.online) return
         val cause = takeOwed(requested)
-        // Owed extends are made after the revalidation, whether or not it reads anything. Taken
-        // here, so one re-owed meanwhile is made by the next revalidation; and one not yet made when
-        // this one throws is owed again, never lost with the failure (round-7 review).
-        val extends = owedExtends.toMutableList()
-        owedExtends.clear()
-        try {
-            revalidateThenExtend(cause, extends)
-        } catch (thrown: Throwable) {
-            owedExtends += extends
-            throw thrown
-        }
+        // Owed extends are made after the revalidation, whether or not it reads anything: the ones
+        // owed now, so one owed meanwhile is made by the next revalidation. Each stays owed until it
+        // is made or proven unneeded, so one not yet made when this revalidation throws is still
+        // owed (round-7 review), and the screen is never `live` while it is (round-9 review).
+        revalidateThenExtend(cause, owedExtends.toList())
     }
 
-    /** [performRevalidate]'s body; [extends] holds the owed extends not yet made. */
-    private suspend fun revalidateThenExtend(cause: RevalidateCause, extends: MutableList<PageMode>) {
+    /** [performRevalidate]'s body; [extends] holds the extends owed when it began. */
+    private suspend fun revalidateThenExtend(cause: RevalidateCause, extends: List<PageMode>) {
         if (!readComing(cause)) {
             // Fresh: nothing is read, so nothing says `revalidating` — and nothing is republished,
             // unless a `revalidating` this handle already published must be taken back.
@@ -606,26 +621,33 @@ internal class ListWindow(
             val torn = state == null || mustRebase(state, epoch)
             // The 60-second rule spares a fresh window a re-read; it never spares a torn one.
             if (!torn && state != null && cause != RevalidateCause.Refresh && readRecently(state, epoch)) return@live
-            if (torn || state == null) rebase(epoch, attempt = 0) else revalidateViewport(epoch)
+            if (torn || state == null) {
+                rebase(epoch, attempt = 0) // settled or not, what it read is this screen's read
+            } else {
+                revalidateViewport(epoch)
+            }
+            Unit
         }
         if (extends.isNotEmpty()) makeOwedExtends(extends) else emitSnapshot()
     }
 
     /**
-     * Makes the extends that were owed. One that is not made — offline, refused, failed, discarded,
-     * or on a window this session has not yet read live — is owed again, for the next revalidation;
-     * one proven unneeded ([ExtendResult.NotNeeded]) is dropped. Each leaves [extends] only once its
-     * outcome is known, so an extend that throws stays in it for [performRevalidate] to owe again.
+     * Makes the extends that were owed ([makeExtend]). One that is not made — offline, refused,
+     * failed, discarded, or on a window this session has not yet read live — stays owed, for the
+     * next revalidation; one proven unneeded ([ExtendResult.NotNeeded]) is dropped. None is read on
+     * a window whose stamp kept moving through this revalidation's rebase
+     * (`unverified(changing)`): the page would only be discarded by another rebase, doubling what a
+     * revalidation costs while the server's stamp keeps moving (round-9 review). It stays owed, and
+     * the revalidation that finds the stamp still ([awaitsQuietEpoch]) makes it.
      */
-    private suspend fun makeOwedExtends(extends: MutableList<PageMode>) {
-        while (extends.isNotEmpty()) {
+    private suspend fun makeOwedExtends(extends: List<PageMode>) {
+        for (mode in extends) {
             if (closed) return
-            val mode = extends.first()
+            if (!reader.online) break
+            if (cache.listState(spec.listKey)?.coverage == CacheCoverage.UnverifiedChanging) break
             // The revalidation just made is this screen's read: a window it left unread live is not
-            // read again here, back to back — the extend is owed to the next one (round-8 review).
-            val result = if (reader.online) extend(mode, confirming = false, readFirstIfUnread = false) else ExtendResult.NotMade
-            if (result == ExtendResult.NotMade) owedExtends += mode
-            extends.removeAt(0)
+            // read again here, back to back — the extend stays owed to the next one (round-8 review).
+            makeExtend(mode, readFirstIfUnread = false, retryDiscarded = true)
         }
         // An extend that found nothing to read (the window complete, or the viewport moved away)
         // leaves nothing coming: a `revalidating` published at the transition is taken back.
@@ -696,26 +718,28 @@ internal class ListWindow(
      * reading, up to [LibraryReaderConfig.maxTearRetries] times. If the stamp is still moving after
      * that with no scan reported, the window is written as `unverified(changing)` — an honest label,
      * not "scanning" — and the next revalidation rebases it again.
+     *
+     * Returns whether it settled: the window was written under a stamp that held still across its
+     * reads. False when nothing was written, or the stamp kept moving.
      */
-    private suspend fun rebase(epoch: CatalogEpoch, attempt: Int, anchorBefore: AnchorSource? = firstVisibleAnchorSource()) {
+    private suspend fun rebase(epoch: CatalogEpoch, attempt: Int, anchorBefore: AnchorSource? = firstVisibleAnchorSource()): Boolean {
         generation += 1
         val gen = generation
         val serial = viewportSerial
         val offsets = viewportPageOffsets()
         val reads = coroutineScope { offsets.map { offset -> async { readPage(offset) } }.awaitAll() }
-        if (gen != generation || closed) return
+        if (gen != generation || closed) return false
         val pages = reads.filterNotNull().sortedBy { it.offset }
-        if (pages.size != reads.size) return
+        if (pages.size != reads.size) return false
         val checks = pages.map { checkPage(epoch.stamp, it.before, it.after) }
         if (PageCheck.Unread in checks) {
             failure = pages[checks.indexOf(PageCheck.Unread)].afterError
-            return
+            return false
         }
         val moved = PageCheck.Fired in checks || PageCheck.ScanEnded in checks
         val latest = reader.sessionEpoch ?: epoch
         if (moved && attempt < reader.config.maxTearRetries) {
-            rebase(latest, attempt + 1, anchorBefore)
-            return
+            return rebase(latest, attempt + 1, anchorBefore)
         }
         val coverage = when {
             PageCheck.Scanning in checks -> CacheCoverage.UnverifiedScanning
@@ -744,18 +768,16 @@ internal class ListWindow(
             // shown or labelled live. With no total to go by (or one that contradicts the empty
             // page), on the top. Each re-anchor reads a page strictly before this one, so it ends.
             // Offline, it stops here: nothing is sent (§16.14), and the window stays as stored.
-            if (!reader.online) return
+            if (!reader.online) return false
             val next = if (moved) latest else epoch
             if (viewportSerial != serial) {
                 // The person set a viewport while this rebase read: theirs wins, and the window is
                 // rebased around it instead. Bounded by the viewports the shell sends meanwhile.
-                rebase(next, attempt, firstVisibleAnchorSource())
-                return
+                return rebase(next, attempt, firstVisibleAnchorSource())
             }
             val lastExisting = if (total != null && total in 1..first) total - 1 else 0
             viewport = lastExisting..lastExisting
-            rebase(next, attempt, anchorBefore)
-            return
+            return rebase(next, attempt, anchorBefore)
         }
         val complete = coverage == CacheCoverage.Open && first == 0 &&
             (lastRows == 0 || (total != null && end >= total))
@@ -778,6 +800,7 @@ internal class ListWindow(
         cache.evictIfNeeded()
         markLive()
         pendingAnchor = anchorAfterRebase(anchorBefore)
+        return !moved
     }
 
     /**
@@ -791,7 +814,11 @@ internal class ListWindow(
      * ([ReaderSendRefused]), and for a page answered after the unreachable report, no *after*
      * reading, so the page is not used.
      */
-    private suspend fun readPage(offset: Int, owe: () -> Unit = { readOwed = true }): PageRead? {
+    private suspend fun readPage(
+        offset: Int,
+        owe: () -> Unit = { readOwed = true },
+        fail: (DomainError) -> Unit = { failure = it },
+    ): PageRead? {
         val sizeParameter = spec.sizeParameter ?: return null
         if (!reader.online) {
             owe()
@@ -803,13 +830,13 @@ internal class ListWindow(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (thrown: Throwable) {
-            if (thrown is ReaderSendRefused) owe() else readFailed(thrown)
+            if (thrown is ReaderSendRefused) owe() else fail(thrown.asReaderError())
             return null
         }
         val parsed = try {
             spec.parse(sent.response.body)
         } catch (thrown: LibraryRequestFailure) {
-            failure = thrown.error
+            fail(thrown.error)
             return null
         }
         // The *after* reading is issued only once the page's response has arrived (§16.12).
@@ -887,16 +914,22 @@ internal class ListWindow(
 
     // ---- Paging -------------------------------------------------------------------------------------
 
+    /**
+     * "Load more". Offline, it is owed and made by the next reconnect (§16.14). Online, it is made
+     * now; one not made is owed exactly as if it had been asked for offline, so the revalidation
+     * that "Try again" runs makes it (round-9 review, S9-2).
+     */
     override fun loadMore() {
         reader.checkConfined()
         if (closed || !spec.paged) return
         if (!reader.online) {
-            owedExtends += PageMode.Append // made by the next reconnect (§16.14)
+            owedExtends += PageMode.Append
             return
         }
-        launchRead { extend(PageMode.Append, confirming = false, readFirstIfUnread = true) }
+        launchRead { makeExtend(PageMode.Append, readFirstIfUnread = true, retryDiscarded = false) }
     }
 
+    /** "Load before", as [loadMore]. */
     override fun loadBefore() {
         reader.checkConfined()
         if (closed || !spec.paged) return
@@ -904,7 +937,33 @@ internal class ListWindow(
             owedExtends += PageMode.Prepend
             return
         }
-        launchRead { extend(PageMode.Prepend, confirming = false, readFirstIfUnread = true) }
+        launchRead { makeExtend(PageMode.Prepend, readFirstIfUnread = true, retryDiscarded = false) }
+    }
+
+    /**
+     * Makes one extend, the person's own or an owed one, settles whether it is still owed, and
+     * publishes the result. Made, or proven unneeded, the extend is no longer owed and its own
+     * failure is cleared — only its own. Otherwise it is owed, with its failure, if it failed, for
+     * the screen to show (round-9 review, S9-1 and S9-2).
+     *
+     * With [retryDiscarded] — an owed extend, made by a revalidation — a page discarded by a rebase
+     * that settled the window is read once more at once, and only once, so a scan ending mid-extend
+     * does not leave the extend to a later trigger (S9-1). A person's own "load more" is not retried:
+     * the rebased window is what they see, and the extend is owed to the next revalidation (CONF-82).
+     */
+    private suspend fun makeExtend(mode: PageMode, readFirstIfUnread: Boolean, retryDiscarded: Boolean) {
+        var result = extend(mode, confirming = false, readFirstIfUnread = readFirstIfUnread)
+        if (retryDiscarded && result == ExtendResult.Discarded && !closed && reader.online) {
+            result = extend(mode, confirming = false, readFirstIfUnread = false)
+        }
+        when (result) {
+            ExtendResult.Made, ExtendResult.NotNeeded -> {
+                owedExtends -= mode
+                extendFailures -= mode
+            }
+            ExtendResult.Discarded, ExtendResult.NotMade -> owedExtends += mode
+        }
+        emitSnapshot()
     }
 
     /**
@@ -944,27 +1003,27 @@ internal class ListWindow(
         }
         val result = live {
             val gen = generation
-            val read = readPage(offset) { owedExtends += mode } ?: return@live ExtendResult.NotMade
+            // The extend's own failure is its own ([extendFailures]), never the window's.
+            val read = readPage(offset, owe = { owedExtends += mode }, fail = { extendFailures[mode] = it })
+                ?: return@live ExtendResult.NotMade
             if (gen != generation || closed) return@live ExtendResult.NotMade
             val unguardedWindow = state.coverage != CacheCoverage.Open && state.coverage != CacheCoverage.Complete
             when (checkPage(windowStamp(state), read.before, read.after)) {
                 PageCheck.Unread -> {
-                    failure = read.afterError
+                    read.afterError?.let { extendFailures[mode] = it }
                     ExtendResult.NotMade
                 }
-                PageCheck.Fired, PageCheck.ScanEnded -> {
-                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
-                    ExtendResult.NotMade
-                }
+                PageCheck.Fired, PageCheck.ScanEnded ->
+                    // The page is discarded; a rebase that settled the window makes one more read
+                    // of it worth making ([makeExtend]).
+                    if (rebase(reader.sessionEpoch ?: epoch, attempt = 1)) ExtendResult.Discarded else ExtendResult.NotMade
                 PageCheck.Scanning -> madeBy { writePage(read, CacheCoverage.UnverifiedScanning, epoch, mode) }
                 PageCheck.NoEpoch -> madeBy { writePage(read, CacheCoverage.UnverifiedNoEpoch, epoch, mode) }
                 PageCheck.Guarded -> if (unguardedWindow) {
                     // The window holds unguarded pages and the server is now idle under one stamp:
                     // that is the reading that ends scanning mode, so the window is rebased.
-                    rebase(reader.sessionEpoch ?: epoch, attempt = 1)
-                    ExtendResult.NotMade
+                    if (rebase(reader.sessionEpoch ?: epoch, attempt = 1)) ExtendResult.Discarded else ExtendResult.NotMade
                 } else {
-                    failure = null
                     madeBy { writePage(read, CacheCoverage.Open, epoch, mode) }
                     val rows = read.parsed.members.size
                     val after = cache.listState(spec.listKey)
@@ -981,7 +1040,6 @@ internal class ListWindow(
                 }
             }
         }
-        emitSnapshot()
         return result
     }
 

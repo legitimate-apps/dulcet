@@ -3691,7 +3691,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | freshness | meaning | presented as |
 |---|---|---|
 | `live` | read from the server in this session under the current epoch | nothing extra |
-| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), or `stale` (the epoch moved and no live read has landed yet) | the content plus one line: "Showing what you last saw 3 days ago — you're offline", or with no `asOf`, "Showing what this device had saved — age unknown" |
+| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line: "Showing what you last saw 3 days ago — you're offline", or with no `asOf`, "Showing what this device had saved — age unknown" |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
@@ -3853,7 +3853,24 @@ unreachable report sends neither its *after* reading nor a rebase's re-anchor re
 server: the screen records no failure and keeps saying `offline`, and the read is OWED — the next
 reconnect's step 3 makes it, whatever the screen's age, as a refresh would. The same holds for a
 "load more" (or "load before") beyond the screen's own pages, whether it was refused this way or
-asked for while offline: nothing is sent, and step 3 makes it after the screen's revalidation. A
+asked for while offline: nothing is sent, and step 3 makes it after the screen's revalidation.
+**An extend stays owed until it is made** (item 27, round 10). A "load more" asked for online is
+made at once, and one that is not — its page failed, its *after* reading failed, or a rebase
+discarded it — is owed exactly as one asked for offline: the next revalidation, which is what
+"Try again" runs (a screen's `refresh()` while online, `reconnect` otherwise), makes it after the
+screen's own read. The same button retries the same read whether or not the person was offline when
+they asked. An owed extend is dropped only once made or proven unneeded — the window complete at that
+end, or the viewport more than a page away. Each extend keeps its own failure: the screen's own read
+clears only the screen's failure, and a page landing for one end never clears another end's. A page
+discarded because the stamp moved while it was read is read once more at once, and only once, when
+the rebase that followed settled the window under one stamp. On a window whose stamp kept moving
+through that rebase (`unverified(changing)`) the extend is not read at all — another rebase would
+only discard it — and it stays owed until a revalidation finds the stamp still. While an extend is
+owed the screen says `failed(<kind>)` if that extend failed, or `owed`, never `live`. A trigger
+attempts each owed extend at most twice — once, and once more after a rebase that settled — and
+nothing reads without a trigger.
+OBSERVED in round 10 by `ReaderOwedExtendRoutesTest` (the round-9 review's probes B9, B10, B12, B13
+and B16, and two more). A
 refused outbox send keeps its change for the reconnect's flush. An epoch
 change seen by the foreground cadence (§16.11 policy 3) revalidates the open searches as well as the
 windows, and one cadence reading that throws is recorded and never ends the cadence.
@@ -7812,8 +7829,16 @@ fresh disposable server before landing; items 11–14 are what that review chang
       reconnect read of the grid met a bare 500 re-read offset 0 at once, dropped the extend, and
       ended `live` at 100 of 250 rows, never reading offset 100, even after a refresh. An owed extend
       now leaves the list only once it is made or proven unneeded (the window complete at that end,
-      or the viewport more than a page away); otherwise it is owed again, the screen says what
-      failed, and the next revalidation makes it. The owed extend of a window left unread live is
+      or the viewport more than a page away); otherwise it is owed again, and the next
+      revalidation makes it. **Corrected in place after the round-9 review (round 10):** this
+      sentence, and round 9's commit message, also said the screen then "says what failed". It did
+      not always. A page discarded by a rebase recorded no failure, because nothing had failed, and
+      the extend stayed owed behind a `live` label; and a page landing for one end cleared the failure of the other end's extend, still
+      owed. Either way the reconnect ended `live` at 100 of 250 rows with the extend outstanding —
+      this item's founding symptom, now reached with the extend owed rather than lost. Now each
+      extend keeps its own failure, a page discarded by a rebase that settled is read once more at
+      once, and a screen owing an extend says `failed(<kind>)` for it, or `owed`, never `live`
+      (§16.14). The owed extend of a window left unread live is
       not read again back to back. A person's "load more" on such a window, online, reads the
       window and then extends it; it used to read the window and stop. A reconnect that makes a
       re-owed extend ends `live`: the page landing clears an internal failure recorded earlier
@@ -8212,9 +8237,64 @@ fresh disposable server before landing; items 11–14 are what that review chang
       timeout, so a looping mutant can hold a worker until the run's own timeout; two tests
       reported `UncompletedCoroutinesError` first. It was killed, but by a hang, so the correctly
       written R8d was run as well.
-    - **Deliberately not owed:** a person's own "load more" that fails online is shown as
-      failed, and is not owed. The person can ask again. Only an extend that was already owed, or
-      refused unsent, is owed.
+    - **Corrected in place after the round-9 review (round 10):** this bullet said a person's own
+      "load more" that fails online was deliberately not owed, because the person could ask again.
+      Nothing in the core let them. "Try again" runs a revalidation, which re-read the viewport
+      only, so the same `cached(failed)` screen retried the page or not depending on whether the
+      person had been offline when they asked. A shell would also have had to call `loadMore()`
+      again, and one keyed on a last row appearing does not fire while that row stays on screen. It
+      is now owed like any other extend (§16.14).
+
+    **After the round-9 review (round 10).** OBSERVED 2026-09-26 on macOS arm64, counted from the
+    JUnit XML with every task forced to execute (`--rerun-tasks`, 67 of 67 tasks executed): `jvmTest` ran 782
+    tests, `macosArm64Test` 834 and `testAndroidHostTest` 881, each with 0 failures. The seven
+    compiles passed, and the macOS debug framework linked. The facade's header gained no member: its diff against round 9's is documentation only — the `owed` reason on the freshness, and what `loadMore`, `loadBefore` and `refresh` now do about an owed extend.
+    - **A screen never says `live` while an extend is owed** (item 27, corrected in place;
+      §16.14). `ReaderOwedExtendRoutesTest` holds the review's probes B9, B10, B12, B13 and B16 as
+      tests, with one more for a page discarded twice and one for an *after* reading that fails.
+      Every test in it and in `ReaderOwedExtendTest` and `ReaderSeparateBusyWaitsTest` now runs
+      under `cappedSessionTest`: a 45-second `runTest` timeout and a cap of 400 requests, asserted
+      after the body, so a looping mutant fails instead of holding a worker. **Red first**,
+      against the round-9 `LibraryWindow.kt`, five failed on their stated assertions:
+      - B9: the reconnect read `[100, 0]` and stopped, where the rebase that discarded the page had
+        settled and the extend must be read once more (`[100, 0, 100]`, ending `live` at 200);
+      - the page discarded twice: the retry was never made (one read of the page, not two);
+      - B10: the landed prepend erased the failed append's failure, ending `live` at 200 rows;
+      - B12: 16 requests per refresh, not 8;
+      - B16: "Try again" read `[0]`, not `[0, 100]`.
+
+      B13 and the *after*-reading test pin behaviour round 9 already had. Run against round 10,
+      the reviewer's own probe file passes 7 of its 8 probes. B9 fails its fixture assertion — that
+      a later refresh makes the extend — because the reconnect has already made it: `[100, 0, 100]`,
+      ending `live` at 200 rows.
+    - **The cost of a window that tears every time is back to the parent's**: 10 requests per
+      reconnect and 8 per refresh (B12), against round 9's 10 and 16, with none over an idle
+      virtual hour. The owed extend is not read on a window whose rebase in the same revalidation
+      ended `unverified(changing)`; it stays owed, the screen says `owed`, and a refresh once the
+      stamp holds still makes it.
+    - **A person's own "load more" is not retried at once when a rebase discards its page.** The
+      rebased window is what they see (CONF-82's tests pin exactly that); the extend is owed, and
+      the next revalidation makes it with the one retry. Only an owed extend, made by a
+      revalidation, is retried within the pass.
+    - **`owed` is a new `cached` reason** on the Apple facade's freshness, for a screen read live
+      that owes an extend with no failure recorded for it.
+    - **Mutation** over the classes of round 9's filter, plus `ReaderOwedExtendRoutesTest`,
+      `LibraryWindowTest` and `LibraryReaderTest`: 367 tests, green at baseline. Every source file
+      was byte-identical after each mutant. Twelve were killed, each by the test named:
+      - no retry of a discarded extend (by B9 and the page discarded twice);
+      - a retry repeated while discarded, not made once (by the page discarded twice);
+      - a retry after a rebase whose stamp kept moving (by B12);
+      - a page landing clearing every extend's failure (by B10);
+      - the label's owed check removed (by B12 and the page discarded twice);
+      - the extend read on a window left `unverified(changing)` (by B12, 16 requests per refresh);
+      - a failed online "load more" not owed, round 9's behaviour (by B16);
+      - the review's R9a, a page discarded by a rebase reported made (by B9, B12 and the page
+        discarded twice);
+      - R9c, a viewport more than a page away reported not made (by B13);
+      - R9d, a failed *after* reading reported made (by the *after*-reading test);
+      - round 9's two, restated for this code: an extend not made dropped (by seven tests, B1
+        among them), and an extend leaving the owed list before it is made (by B4 and
+        `anOwedLoadMoreWhoseOwnWriteFailsIsOwedAgain`).
 
     **A retention that is not the reviewed leak.** The release test first required all forty closed
     search subscriptions to be collected, and it failed intermittently. A diagnostic ran its steps 200
