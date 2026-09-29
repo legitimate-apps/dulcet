@@ -5,14 +5,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -33,6 +37,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -43,13 +49,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
+import androidx.tv.material3.Border
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
@@ -66,6 +76,7 @@ import com.legitimateapps.dulcet.search.SearchPresenter
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
+import com.legitimateapps.dulcet.ui.DulcetIcons
 
 class TvSearchActivity : ComponentActivity() {
     private val searchDependencies: SearchHostDependencies by lazy {
@@ -79,7 +90,8 @@ class TvSearchActivity : ComponentActivity() {
         // credential when this model is created (spec §14.7).
         val accountModel = ViewModelProvider(this)[TvAccountModel::class.java]
         setContent {
-            MaterialTheme {
+            // A 10-foot app is dark: the room's display is the couch's, day or night.
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 var account by remember { mutableStateOf(loadAccount()) }
                 val signedOut by accountModel.signedOut.collectAsStateWithLifecycle()
                 LaunchedEffect(signedOut) { if (signedOut > 0) account = loadAccount() }
@@ -94,7 +106,7 @@ class TvSearchActivity : ComponentActivity() {
                     } else {
                         val presenter = rememberSearchPresenter(current, searchDependencies)
                         TvLibraryEntry(current) { navigator ->
-                            TvSearchScreen(presenter, rememberSearchActivation(navigator))
+                            TvSearchScreen(presenter, rememberSearchActivation(navigator), account = current)
                         }
                     }
                 }
@@ -136,6 +148,8 @@ private fun rememberSearchActivation(navigator: TvNavigator): (SearchResultItem)
 internal fun TvSearchScreen(
     presenter: SearchPresenter,
     onActivate: (SearchResultItem) -> Unit,
+    /** Rows show cover art when the account is known; tests without one draw the placeholder. */
+    account: SearchAccount? = null,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val resources = libraryResources()
@@ -164,6 +178,7 @@ internal fun TvSearchScreen(
     LaunchedEffect(editing) {
         if (editing) { withFrameNanos { }; keyboard?.show() }
     }
+    var fieldFocused by remember { mutableStateOf(false) }
     EnterRoute()
     val route = LocalTvRouteFocus.current
     LaunchedEffect(Unit) {
@@ -179,7 +194,10 @@ internal fun TvSearchScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                    .border(2.dp,
+                        if (fieldFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        RoundedCornerShape(8.dp))
                     .padding(horizontal = 20.dp, vertical = 16.dp),
             ) {
                 BasicTextField(
@@ -203,7 +221,7 @@ internal fun TvSearchScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(queryFocus)
-                        .onFocusChanged { if (!it.isFocused) editing = false }
+                        .onFocusChanged { fieldFocused = it.isFocused; if (!it.isFocused) editing = false }
                         // A tap selects it too (the pointer's down, before the field's own gestures).
                         .pointerInput(Unit) {
                             awaitEachGesture {
@@ -252,6 +270,7 @@ internal fun TvSearchScreen(
                     TvSearchResult(
                         result = result,
                         note = listOfNotNull(
+                            result.credits.joinToString { it.name }.takeIf { it.isNotBlank() },
                             resources.getString(SharedR.string.search_row_device_only).takeIf {
                                 row.source == AndroidLibrarySearchRowSource.Device &&
                                     rowsScope == AndroidLibrarySearchScope.ServerAndDevice
@@ -260,6 +279,7 @@ internal fun TvSearchScreen(
                                 .takeIf { row.playability == AndroidLibraryPlayability.UnavailableOffline },
                         ).joinToString(" · ").ifEmpty { null },
                         index = index,
+                        account = account,
                         focusRequester = resultFocus[index],
                         queryFocusRequester = queryFocus.takeIf { index == 0 },
                         onActivate = { onActivate(result) },
@@ -275,6 +295,7 @@ private fun TvSearchResult(
     result: SearchResultItem,
     note: String?,
     index: Int,
+    account: SearchAccount?,
     focusRequester: FocusRequester,
     /** The query field, above the first result only: UP from there goes to it. */
     queryFocusRequester: FocusRequester?,
@@ -308,13 +329,26 @@ private fun TvSearchResult(
                 }
             }
             .tvFocus("search.result.$index"),
+        // The same obvious focus as the library's cards: a touch of growth and a ring.
+        scale = CardDefaults.scale(focusedScale = 1.02f),
+        border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary))),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(result.title, style = MaterialTheme.typography.titleLarge)
-            Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
+            TvArtwork(account, result.artworkKey, 72, when (result.type) {
+                SearchResultType.Artist -> DulcetIcons.Person
+                SearchResultType.Album -> DulcetIcons.Album
+                SearchResultType.Track -> DulcetIcons.MusicNote
+            })
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(result.title, style = MaterialTheme.typography.titleLarge, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
