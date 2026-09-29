@@ -11,24 +11,36 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     private let fixtureUsername = "dulcet-admin"
     private let fixturePassword = "dulcet-ci-canary-password"
 
+    /// Search as the shipping app does it: through the library reader (spec §16.15, §18.1), over
+    /// the production facade and a database of its own, rendered by the production root view.
+    /// The legacy server search is not wired, so a row can only have come from the reader.
     func searchQueryRanksAndActivatesTrackThroughHostedAppUI() async throws {
+        let environment = ProcessInfo.processInfo.environment
         let baseURL = try XCTUnwrap(
-            ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
-            "apple-ci must supply the live conformance fixture URL"
+            environment["DULCET_CONFORMANCE_BASE_URL"],
+            "The live conformance fixture URL must be supplied"
         )
-        let disposable = ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_DISPOSABLE"]
-        guard baseURL == "http://127.0.0.1:4533", disposable == "true" else {
-            XCTFail("Search fixture refused: baseURL=\(baseURL.debugDescription), disposable=\(String(describing: disposable)); expected disposable loopback http://127.0.0.1:4533")
+        let components = URLComponents(string: baseURL)
+        guard components?.scheme == "http", components?.host == "127.0.0.1",
+              environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true" else {
+            XCTFail("Search fixture refused: \(baseURL.debugDescription) is not a disposable loopback server")
             throw SearchHostedAppTestError.invalidFixture
         }
 
         let playback = SearchIntentPlaybackController()
+        // A database of its own: the reader has seen nothing, so every row is the server's.
+        let session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(
+            databaseName: "dulcet-search-hosted-\(UUID().uuidString).db"
+        ))
+        // One id for the whole run: a factory minting a new one per call would give the
+        // connection and the reader different accounts.
+        let providerInstanceID = "macos-search-ui-\(UUID().uuidString)"
         let source = DulcetAccountDataSource(
             connector: DulcetCoreAccountConnector(),
-            credentialStore: SearchMemoryCredentialStore(),
-            serverSearch: DulcetCoreServerSearch(),
+            credentialStore: ReaderHostedCredentialStore(),
             playbackController: playback,
-            providerInstanceIDFactory: { "macos-search-ui-fixture" }
+            providerInstanceIDFactory: { providerInstanceID },
+            librarySession: session
         )
         let store = DulcetPresentationStore(source: source)
         store.accountServerURL = baseURL
@@ -38,10 +50,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         store.submitAccountConnection()
         try await waitUntil(
             timeout: .seconds(20),
-            failureMessage: "Disposable account connected=\(store.snapshot.accountConnected) state=\(store.snapshot.state)"
+            failureMessage: "Disposable account connected=\(store.snapshot.accountConnected) state=\(store.snapshot.state) mode=\(session.mode)"
         ) {
-            store.snapshot.accountConnected
+            store.snapshot.accountConnected && session.mode == .connected && session.reader != nil
         }
+        XCTAssertTrue(store.readerOwnsLibrary, "The connected account's search must be the reader's")
 
         // SwiftUI materializes its accessibility nodes only when accessibility is requested.
         // Restore the application-wide flag so this control does not affect sibling tests.
@@ -94,33 +107,21 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             "dulcet.search.field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
         // A query matching exactly one row cannot separate rank from arity: with a single result,
         // "rank zero" and "the only row" are the same assertion, and so are "activate the row that
-        // was pressed" and "activate results[0]". This query matches four rows and places the
-        // canary at a non-zero rank, so both distinctions become observable.
+        // was pressed" and "activate results[0]". This query matches four rows, and the canary
+        // must render at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryRank = 2
-        // The rendered order is a product contract, not a server one: results are ranked by match
-        // quality first, then by kind with tracks ahead of albums, then by the order the server
-        // returned them. The server lists the matching album ahead of every track; the app does
-        // not. Asserting the whole order makes any drift in either fail here, naming what it
-        // observed, rather than silently relocating the canary.
-        let rankedLabels = [
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        // The reader ranks what the device holds once and lets the server's answer replace rows
+        // in place and append the rest (§16.15), so the order depends on what the device held
+        // when the query landed. The contract asserted here is the row SET, one row per rank,
+        // and that the pressed rank is the one that plays.
+        let expectedLabels: Set<String> = [
             "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
             "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track",
+            canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
-        let rankedTitles = [
-            "Thirty One Seconds",
-            "Twenty Nine Seconds",
-            "UI Playback Canary",
-            "Threshold Boundary",
-        ]
-        // Only tracks are playable, so the activated queue is the ranked list without its album
-        // row. The canary's position in that queue and its rendered rank are separate facts and
-        // are asserted separately.
-        let queueTitles = ["Thirty One Seconds", "Twenty Nine Seconds", "UI Playback Canary"]
-        let canaryQueueIndex = 2
         // Apply the constrained frame while search is idle. Applying this same frame after
         // loading retains already-measured rows and misses the minimum-height regression.
         window.setFrame(NSRect(x: 0, y: 60, width: 1024, height: 677), display: true)
@@ -139,17 +140,26 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             "dulcet.search.field AX value after NSApp.sendEvent"
         )
 
+        // An independent subscription to the same reader: what the search answers, read beside
+        // the screen rather than from it.
+        let readerSearch = DulcetReaderSearchModel()
+        readerSearch.open(in: session, query: query)
+        defer { readerSearch.close() }
         try await waitUntil(
             timeout: .seconds(20),
-            failureMessage: "Search state=\(store.snapshot.state) resultCount=\(store.snapshot.searchResults.count) titles=\(store.snapshot.searchResults.map(\.title)); expected \(rankedTitles)"
+            failureMessage: "Reader search rows=\(readerSearch.current?.rows.map(\.result.title) ?? []) scope=\(String(describing: readerSearch.current?.scope))"
         ) {
-            store.snapshot.state == .searchResults
-                && store.snapshot.searchResults.map(\.title) == rankedTitles
+            readerSearch.current?.rows.count == expectedLabels.count
         }
-        XCTAssertEqual(store.snapshot.searchResults.map(\.title), rankedTitles,
-            "Rendered search rank order")
-        XCTAssertEqual(store.snapshot.searchResults.count, rankedTitles.count,
-            "Exact fixture query result count")
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "Rendered search rows: \(renderedSearchLabels(in: hostingView))"
+        ) {
+            hostingView.layoutSubtreeIfNeeded()
+            return Set(renderedSearchLabels(in: hostingView)) == expectedLabels
+        }
+        XCTAssertTrue(store.snapshot.searchResults.isEmpty,
+            "Every row must come from the reader; the legacy search published \(store.snapshot.searchResults.map(\.title))")
         hostingView.layoutSubtreeIfNeeded()
         reportSearchRealization(root: hostingView, phase: "results-without-recovery")
         let navigationSplit = try XCTUnwrap(
@@ -165,37 +175,38 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // there. A view that stamped one constant identifier on every row would satisfy rank zero
         // and then fail to produce rank one at all.
         var rankedElements: [Any] = []
-        for rank in rankedLabels.indices {
+        var observedLabels: [String] = []
+        for rank in 0..<expectedLabels.count {
             let element = try await accessibilityElement(
                 identifiedBy: "dulcet.search.result.\(rank)",
                 in: hostingView,
                 timeout: .seconds(5)
             )
-            XCTAssertEqual(
-                accessibilityLabel(element),
-                rankedLabels[rank],
-                "dulcet.search.result.\(rank) rendered accessibility text (title, credits, album, kind)"
-            )
+            let label = accessibilityLabel(element) ?? ""
+            XCTAssertTrue(expectedLabels.contains(label),
+                "dulcet.search.result.\(rank) rendered accessibility text (title, credits, album, kind): \(label.debugDescription)")
             rankedElements.append(element)
+            observedLabels.append(label)
         }
-        XCTAssertNotEqual(
-            accessibilityLabel(rankedElements[0]),
-            rankedLabels[canaryRank],
-            "The canary must not render at rank zero, or this proof cannot tell rank from arity"
+        XCTAssertEqual(Set(observedLabels), expectedLabels, "Every matching row must render once, at its own rank")
+        let canaryRank = try XCTUnwrap(observedLabels.firstIndex(of: canaryLabel),
+            "The canary is not rendered: \(observedLabels)")
+        XCTAssertNotEqual(canaryRank, 0,
+            "The canary must not render at rank zero, or this proof cannot tell rank from arity: \(observedLabels)")
+        // Only tracks are playable, so the activated queue is the rendered list without its album
+        // row. The canary's position in that queue and its rendered rank are separate facts.
+        let queueTitles = observedLabels
+            .filter { $0.hasSuffix(", Track") }
+            .map { String($0.prefix { $0 != "," }) }
+        let canaryQueueIndex = try XCTUnwrap(queueTitles.firstIndex(of: canaryTitle))
+        let canaryID = try XCTUnwrap(
+            readerSearch.current?.rows.first { $0.result.title == canaryTitle }?.id,
+            "The reader's own answer must hold the canary"
         )
-
-        let canaryResult = try XCTUnwrap(
-            store.snapshot.searchResults.indices.contains(canaryRank)
-                ? store.snapshot.searchResults[canaryRank]
-                : nil,
-            "Search titles=\(store.snapshot.searchResults.map(\.title)); missing rank \(canaryRank)"
-        )
-        XCTAssertEqual(canaryResult.title, canaryTitle, "Rank \(canaryRank) identity")
-        let canaryID = canaryResult.id
         XCTAssertEqual(playback.queueReplacementCount, 0,
             "Rendering the search results must not start a queue before activation")
         let resultTable = try selectAccessibilityTableRow(rankedElements[canaryRank], in: window)
-        XCTAssertEqual(resultTable.numberOfRows, rankedTitles.count, "Rendered search table row count")
+        XCTAssertEqual(resultTable.numberOfRows, expectedLabels.count, "Rendered search table row count")
         XCTAssertEqual(resultTable.selectedRow, canaryRank,
             "Selecting dulcet.search.result.\(canaryRank) must select that rank's row, not another")
         XCTAssertTrue(window.makeFirstResponder(resultTable),
@@ -210,7 +221,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // Playing leaves the results showing; the docked now-playing bar says what is playing.
         XCTAssertEqual(store.snapshot.selectedDestination, .search,
             "Return on a result must play it without navigating away from the results")
-        XCTAssertEqual(store.snapshot.state, .searchResults, "Results stay on screen while playing")
+        XCTAssertEqual(Set(renderedSearchLabels(in: hostingView)), expectedLabels,
+            "Results stay on screen while playing")
 
         XCTAssertEqual(playback.queueReplacementCount, 1,
             "Return on rank \(canaryRank) must replace/play exactly one queue")
@@ -262,7 +274,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         XCTAssertEqual(accessibilityLabel(nowPlayingTitle), canaryTitle, "dulcet.now-playing.title rendered text")
         print(
-            "MACOS SEARCH UI OBSERVED query=typed ranks=\(rankedTitles)"
+            "MACOS SEARCH UI OBSERVED source=reader query=typed ranks=\(observedLabels)"
                 + " result-count=\(resultTable.numberOfRows) activated-rank=\(canaryRank) activation=return"
                 + " queue=\(intent.tracks.map(\.title)) start-index=\(startIndex)"
                 + " queue-replacements=\(playback.queueReplacementCount) source=search now-playing=\(canaryTitle)"
@@ -898,6 +910,185 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         return "[" + entries + "]"
     }
 
+    /// The production reader, through the production Kotlin facade, against the disposable
+    /// server: a connected launch paints the library live and renders it; a relaunch with the
+    /// account saved paints the same library from what this device saw, before any loading state
+    /// and with nothing sent (CONF-76, CONF-10b); Reconnect then brings it live in place.
+    ///
+    /// The credential store is in memory -- an ad-hoc signed host cannot reach the data-protection
+    /// Keychain -- so what this proves starts at the store boundary: everything after it is the
+    /// shipping reader, database and facade.
+    func readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL = try XCTUnwrap(
+            environment["DULCET_CONFORMANCE_BASE_URL"],
+            "The live conformance fixture URL must be supplied"
+        )
+        let components = URLComponents(string: baseURL)
+        guard components?.scheme == "http", components?.host == "127.0.0.1",
+              environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true" else {
+            XCTFail("Reader fixture refused: \(baseURL.debugDescription) is not a disposable loopback server")
+            throw SearchHostedAppTestError.invalidFixture
+        }
+        let databaseName = "dulcet-reader-hosted-\(UUID().uuidString).db"
+        let providerInstanceID = "macos-reader-\(UUID().uuidString)"
+        let credentials = ReaderHostedCredentialStore()
+        func makeStore() -> (DulcetPresentationStore, DulcetLibrarySession) {
+            let session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName))
+            let source = DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(),
+                credentialStore: credentials,
+                playbackController: SearchIntentPlaybackController(),
+                providerInstanceIDFactory: { providerInstanceID },
+                librarySession: session
+            )
+            return (DulcetPresentationStore(source: source), session)
+        }
+        let fixtureAlbums: Set<String> = ["Double Lines", "Threshold Boundary"]
+
+        // 1. First launch: connect, then read the albums live.
+        let (first, firstSession) = makeStore()
+        XCTAssertFalse(first.readerOwnsLibrary, "Nothing is saved yet, so nothing is read")
+        first.accountServerURL = baseURL
+        first.accountUsername = fixtureUsername
+        first.accountPassword = fixturePassword
+        first.accountAllowLocalHTTP = true
+        first.submitAccountConnection()
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "connect: state=\(first.snapshot.state) mode=\(firstSession.mode)"
+        ) {
+            first.snapshot.accountConnected && firstSession.mode == .connected && firstSession.reader != nil
+        }
+        XCTAssertTrue(first.readerOwnsLibrary, "A connected account's library is the reader's")
+        var livePublications: [DulcetLibraryWindow] = []
+        let liveAlbums = try XCTUnwrap(firstSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
+            livePublications.append($0)
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "live albums: \(livePublications.map { ($0.freshness, $0.items.map(\.displayTitle)) })"
+        ) {
+            guard let last = livePublications.last, last.freshness == .live else { return false }
+            return fixtureAlbums.isSubset(of: Set(last.items.map(\.displayTitle)))
+        }
+        let liveTitles = livePublications.last?.items.map(\.displayTitle) ?? []
+        let doubleLines = try XCTUnwrap(livePublications.last?.items.first { $0.displayTitle == "Double Lines" })
+        var liveAlbumPage: DulcetLibraryWindow?
+        let albumPage = try XCTUnwrap(firstSession.reader).subscribeWindow(.album(rawID: doubleLines.id.rawID)) {
+            liveAlbumPage = $0
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "live album page: \(String(describing: liveAlbumPage?.freshness))"
+        ) {
+            liveAlbumPage?.freshness == .live && liveAlbumPage?.items.isEmpty == false
+        }
+        let liveTrackTitles = liveAlbumPage?.items.map(\.displayTitle) ?? []
+
+        // The production root renders the reader's library: album tiles, by the identifier the
+        // established proofs use, labelled with what the reader published.
+        first.selectDestination(.library)
+        let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
+        NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
+        defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
+        let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: first))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        let tile = try await accessibilityElement(
+            identifiedBy: "dulcet.library.album",
+            in: hostingView,
+            timeout: .seconds(20)
+        )
+        let tileLabel = accessibilityLabel(tile) ?? ""
+        XCTAssertTrue(
+            liveTitles.contains { tileLabel.hasPrefix($0) },
+            "A rendered album tile must be one the reader published; label=\(tileLabel.debugDescription)"
+        )
+        liveAlbums.close()
+        albumPage.close()
+        window.orderOut(nil)
+        await withCheckedContinuation { continuation in
+            firstSession.close { continuation.resume() }
+        }
+        XCTAssertNotNil(try credentials.load(), "The account stays saved across the relaunch")
+
+        // 2. Relaunch with the account saved: the library paints from this device, sending nothing.
+        let (second, secondSession) = makeStore()
+        XCTAssertEqual(second.snapshot.state, .libraryBrowse, "A saved account opens straight into its library")
+        XCTAssertEqual(second.selectedDestination, .library)
+        XCTAssertEqual(secondSession.mode, .deviceOnly, "Nothing is sent until Reconnect is chosen")
+        var cachedPublications: [DulcetLibraryWindow] = []
+        let cachedAlbums = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
+            cachedPublications.append($0)
+        }
+        var cachedAlbumPage: [DulcetLibraryWindow] = []
+        let cachedPage = try XCTUnwrap(secondSession.reader).subscribeWindow(.album(rawID: doubleLines.id.rawID)) {
+            cachedAlbumPage.append($0)
+        }
+        try await waitUntil(
+            timeout: .seconds(10),
+            failureMessage: "cached publications: albums=\(cachedPublications.count) page=\(cachedAlbumPage.count)"
+        ) {
+            !cachedPublications.isEmpty && !cachedAlbumPage.isEmpty
+        }
+        let firstCached = try XCTUnwrap(cachedPublications.first)
+        // Offline, not revalidating: a reader told it may send would revalidate this same cache.
+        guard case .cached(.offline, _) = firstCached.freshness else {
+            XCTFail("The first publication must be what this device saw, offline, not \(firstCached.freshness)")
+            return
+        }
+        XCTAssertEqual(firstCached.items.map(\.displayTitle), liveTitles,
+            "The relaunch paints the albums this device saw, in the order it saw them")
+        XCTAssertFalse(cachedPublications.contains { $0.freshness == .loading },
+            "A cached open never shows a loading state")
+        guard case .cached = cachedAlbumPage[0].freshness else {
+            XCTFail("The album page's first publication must be cached, not \(cachedAlbumPage[0].freshness)")
+            return
+        }
+        XCTAssertEqual(cachedAlbumPage[0].items.map(\.displayTitle), liveTrackTitles,
+            "The album page paints the tracks this device saw")
+
+        // 3. Reconnect, as the library's own button does: in place, and live again.
+        dulcetReaderRetry(second)
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "reconnect: mode=\(secondSession.mode) state=\(second.snapshot.state)"
+        ) {
+            secondSession.mode == .connected && second.snapshot.accountConnected
+        }
+        XCTAssertEqual(second.selectedDestination, .library, "Reconnect keeps the person in their library")
+        cachedAlbums.close()
+        cachedPage.close()
+        var reconnected: DulcetLibraryWindow?
+        let liveAgain = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
+            reconnected = $0
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "after reconnect: \(String(describing: reconnected?.freshness))"
+        ) {
+            reconnected?.freshness == .live
+        }
+        XCTAssertEqual(reconnected?.items.map(\.displayTitle), liveTitles)
+        liveAgain.close()
+        await withCheckedContinuation { continuation in
+            secondSession.close { continuation.resume() }
+        }
+        print("DULCET MAC READER PASS albums=\(liveTitles.count) tracks=\(liveTrackTitles.count)"
+            + " first-cached=\(firstCached.freshness) tile=\(tileLabel.debugDescription)")
+    }
+
     private func waitUntil(
         timeout: Duration,
         failureMessage: @autoclosure () -> String,
@@ -1094,6 +1285,17 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
     }
 
+    /// The accessibility labels of every rendered search row, in rank order.
+    private func renderedSearchLabels(in root: NSView) -> [String] {
+        let rows = accessibilityDescendants(in: root).compactMap { element -> (Int, String)? in
+            guard let identifier = accessibilityIdentifier(element),
+                  identifier.hasPrefix("dulcet.search.result."),
+                  let rank = Int(identifier.dropFirst("dulcet.search.result.".count)) else { return nil }
+            return (rank, accessibilityLabel(element) ?? "")
+        }
+        return rows.sorted { $0.0 < $1.0 }.map(\.1)
+    }
+
     private func accessibilityDescendants(in root: Any) -> [Any] {
         var result: [Any] = []
         var visited = Set<ObjectIdentifier>()
@@ -1177,21 +1379,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 private enum SearchHostedAppTestError: Error {
     case invalidFixture
     case missingAccessibilityElement(String)
-}
-
-@MainActor
-private final class SearchMemoryCredentialStore: DulcetCredentialStoring {
-    private(set) var credentialGeneration: Int64 = 0
-
-    func load() throws -> DulcetAccountConnectRequest? { nil }
-
-    func save(_ request: DulcetAccountConnectRequest) throws {
-        credentialGeneration += 1
-    }
-
-    func delete() throws {
-        credentialGeneration = 0
-    }
 }
 
 @MainActor
@@ -1460,4 +1647,27 @@ private final class SingleFireMonotonicLibraryRefreshScheduler: DulcetLibraryRef
 @MainActor
 private final class InertLibraryRefreshOperation: DulcetLibraryRefreshOperation {
     func cancel() {}
+}
+
+/// An in-memory credential store that remembers the provider instance, as the Keychain store does.
+private final class ReaderHostedCredentialStore: DulcetProviderInstanceCredentialStoring {
+    private var persisted: DulcetAccountConnectRequest?
+    private(set) var providerInstanceID: String?
+    private(set) var credentialGeneration: Int64 = 0
+
+    func load() throws -> DulcetAccountConnectRequest? { persisted }
+    func save(_ request: DulcetAccountConnectRequest) throws {
+        persisted = request
+        credentialGeneration += 1
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        persisted = request
+        self.providerInstanceID = providerInstanceID
+        credentialGeneration += 1
+    }
+    func delete() throws {
+        persisted = nil
+        providerInstanceID = nil
+        credentialGeneration += 1
+    }
 }

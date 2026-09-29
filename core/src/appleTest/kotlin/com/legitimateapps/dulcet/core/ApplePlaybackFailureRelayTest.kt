@@ -149,7 +149,7 @@ class ApplePlaybackFailureRelayTest {
     }
 
     /**
-     * CLAUDE.md trap 17: no Kotlin exception may cross into Swift. A name, a reason or a position
+     * docs/TRAPS.md trap 17: no Kotlin exception may cross into Swift. A name, a reason or a position
      * the core cannot read is refused inside the facade's closed boundary, as `input`, and the
      * session it named is left as it was.
      */

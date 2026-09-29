@@ -579,7 +579,7 @@ class PlaylistEditingThirdReviewTest {
         assertEquals(1, env.server.count("createPlaylist"))
         assertEquals(1, env.outcomes.count { it is PlaylistEditOutcome.PossibleDuplicate }, "told once, not every flush")
         val waiting = session.playlists.pendingChanges().single()
-        assertEquals(PendingPlaylistChange(localId, PlaylistRowKind.Create, inDoubt = true, failures = 0, candidates = listOf(ids.first, ids.second)), waiting)
+        assertEquals(PendingPlaylistChange(localId, PlaylistRowKind.Create, inDoubt = true, failures = 0, candidates = listOf(ids.first, ids.second), name = "Once"), waiting)
     }
 
     @Test

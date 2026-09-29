@@ -308,6 +308,8 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             currentSnapshot = fixture.snapshot(for: .accountRemoving)
         case .dismissAccountRemovalFailure:
             currentSnapshot = fixture.snapshot(for: .accountConnected)
+        case .playTracks:
+            return
         }
         if playing != nil || failed != nil {
             currentSnapshot = currentSnapshot.replacingPlayback(presentation)

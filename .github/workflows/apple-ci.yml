@@ -67,6 +67,13 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Xcode builds the committed project, so a hand edit to it or to a generated scheme or plist
+      # is a route into a PROD build that project.yml never shows (spec §22.3, §22.6). This
+      # regenerates with the pinned, digest-checked XcodeGen and fails on any difference, then
+      # proves it fails on three such edits. Seconds; here because XcodeGen needs macOS.
+      - name: Require every generated Apple project file to be the pinned XcodeGen's output
+        timeout-minutes: 3
+        run: python3 tools/verify_xcodegen_regeneration --self-test
       - name: Require partial promotion conditions to resolve or declare a block
         run: python3 tools/verify_promotion_conditions.py
       - name: Prove account-removal recovery rejects stale cleanup
@@ -725,7 +732,7 @@ jobs:
         run: python3 tools/test-darwin-live-shape-advisory
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
-      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (CLAUDE.md
+      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (docs/TRAPS.md
       # trap 36), and this step used to sit behind ~55 minutes of platform builds and UI tests: run
       # 35796413810 on main (2026-09-22) spent 55.6 minutes of a hosted macOS slot before this
       # step reported six drifted formulae in 49 seconds. Nothing between Xcode selection and the
@@ -1524,6 +1531,55 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
+          # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
+          # renames it from its page and reads the new name back from the server, then deletes it:
+          # playlists are not media, so the counted corpus the phases after this read is unchanged.
+          # The lyrics proof plays the corpus's embedded synced lyrics and waits for a lit line.
+          python3 tools/ci/isolate-simulator --phase playlist-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-playlist.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          python3 tools/ci/isolate-simulator --phase lyrics-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheLyricsPanelShowsTheSyncedLineThatIsPlaying 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-lyrics.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheLyricsPanelShowsTheSyncedLineThatIsPlaying
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-lyrics-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           # The automatic-skip proofs on iPhone (spec §12.12): an undecodable track is skipped with a
           # notice and the next one plays, and the server counts a play for the next track and never
           # for the skipped one; at the largest text size the notice clears navigation, and for a
@@ -1791,6 +1847,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-search-junit" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-junit" \
+            "$RUNNER_TEMP/dulcet-ios-lyrics-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \

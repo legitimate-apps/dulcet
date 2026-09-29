@@ -10,7 +10,7 @@ package com.legitimateapps.dulcet.core
  * core adds later fails this file's compilation instead of reaching a shell as a guess.
  *
  * Nothing here can carry a URL, a query string or server error text: an error is a [DomainError],
- * which has no field that can hold one (CORPUS §4 line 5, CLAUDE.md trap 12). Titles and names are
+ * which has no field that can hold one (CORPUS §4 line 5, docs/TRAPS.md trap 12). Titles and names are
  * the server's catalog text, which is what they are for.
  *
  * These are plain Kotlin values, consumed by the Android shell only. The shell turns them into a

@@ -42,7 +42,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *
  * **Credentials.** The account is held only to build the transport; nothing this facade publishes
  * has a field that can carry a URL, a query string, server error text or an exception message:
- * errors cross as a closed kind (CORPUS §4 line 5, CLAUDE.md trap 12).
+ * errors cross as a closed kind (CORPUS §4 line 5, docs/TRAPS.md trap 12).
  *
  * **Reachability — the one supported pattern.** Call [setOnline] on EVERY reachability change the
  * platform reports, and [reconnect] when the app returns to the foreground online. Nothing else is
@@ -357,6 +357,23 @@ public class AppleLibraryReaderClient internal constructor(
         }
     }
 
+    /**
+     * The composition hook for the playlist and lyrics facades ([AppleLibraryPlaylistClient],
+     * [AppleLibraryLyricsClient]): runs [block] on the reader's thread with this client's session,
+     * after every call made before it, or does nothing once the client is closed or when the
+     * session could not be built. [block] must not throw.
+     */
+    internal fun onSession(block: (LibraryReaderSession) -> Unit): Boolean = onReader {
+        val session = composition?.session ?: return@onReader
+        try {
+            block(session)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            uncaughtFailures += failure
+        }
+    }
+
     internal fun register(subscription: AppleLibraryWindowSubscription) {
         windows += subscription
     }
@@ -417,7 +434,7 @@ public class AppleLibraryReaderClient internal constructor(
      * §7.2's operation: returns a handle at once and completes exactly once, on the main thread —
      * with the result, or with [failed] of `cancelled`, `closed` or `internalFailure`.
      */
-    private fun <T> operation(
+    internal fun <T> operation(
         completion: (T) -> Unit,
         failed: (String) -> T,
         work: suspend (LibraryReaderSession) -> T,
@@ -521,9 +538,9 @@ private fun productionComposer(
         AppleLibraryReaderComposition(
             // No download source: downloads join the reader in phase R4, and tvOS has none (§14.5),
             // so no Apple platform can publish `downloaded` until then.
-            // No playlist editing reaches this facade yet, and the account does not carry the
-            // server's extensions, so `formPost` is off: without it an edit is batched within the
-            // parameter budget (§18.6), never refused for want of it.
+            // Playlist editing reaches the shells through [AppleLibraryPlaylistClient]. The account
+            // does not carry the server's extensions, so `formPost` is off: without it an edit is
+            // batched within the parameter budget (§18.6), never refused for want of it.
             session = LibraryReaderSession(opened.database, cache, live, scope, formPost = false, foreground = foreground),
             release = {
                 live.close()

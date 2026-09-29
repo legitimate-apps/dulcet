@@ -78,6 +78,20 @@ public class AppleLibraryReaderItem internal constructor(
     public val detailComplete: Boolean,
     /** A track known only by id (a playlist entry whose metadata was never read). */
     public val metadataMissing: Boolean,
+    /**
+     * A playlist only (§18.6): this account may edit it — the server said `readonly: false`, or,
+     * for a server that does not say, the account owns it. False for every other kind, and for
+     * another user's playlist, which a shell presents read-only with its [owner] shown.
+     */
+    public val editable: Boolean = false,
+    /** A playlist only: edits made on this device that the server has not confirmed are shown. */
+    public val pendingChanges: Boolean = false,
+    /** A playlist only: created on this device and not yet on the server; its id is local. */
+    public val local: Boolean = false,
+    /** A playlist's comment, as the server (or a pending edit) has it. */
+    public val comment: String? = null,
+    /** A playlist's visibility; null when the server did not say. */
+    public val isPublic: Boolean? = null,
 )
 
 /**
@@ -375,6 +389,7 @@ internal fun LibraryItem.toApple(providerInstanceId: String): AppleLibraryReader
         albumCount = null, discNumber = null, trackNumber = null, sourceContainer = null,
         artworkKey = artworkKey, owner = owner, favourite = null, rating = null,
         playCount = null, playability = null, detailComplete = false, metadataMissing = false,
+        editable = editable, pendingChanges = pendingChanges, local = local, comment = comment, isPublic = isPublic,
     )
     is LibraryItem.Genre -> AppleLibraryReaderItem(
         kind = "genre", providerInstanceId = providerInstanceId, rawId = rawId, title = rawId,

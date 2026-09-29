@@ -1,5 +1,6 @@
 #!/bin/bash
-# Regenerate the AppIcon asset catalogs (production and DEV) from tools/icon/dulcet.svg.
+# Regenerate the macOS AppIcon asset catalogs (production and DEV) from tools/icon/dulcet.svg.
+# The iOS PROD, tvOS and Android icon sets come from tools/icon/build-platform-icons.
 # The PNGs are committed so the build never depends on cairosvg being installed.
 # NOTE: the Mac App Store requires an ASSET CATALOG — a bare .icns is rejected with
 # ITMS-90546 "Missing asset catalog", which is exactly how build 1 failed.

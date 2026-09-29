@@ -513,6 +513,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let libraryRefreshCadence: Duration
     private let libraryRefreshScheduler: any DulcetLibraryRefreshScheduling
     private let providerInstanceIDFactory: @MainActor () -> String
+    /// The library reader for the account, when this app reads its library through one (§16.18).
+    /// While it holds an account, Library and Search are drawn from it and nothing here reads
+    /// or syncs the library.
+    public let librarySession: DulcetLibrarySession?
+    /// Tracks already handed to queue restoration from reader screens.
+    private var restorationTrackIDs = Set<DulcetProviderItemID>()
     private var snapshotHandler: (@MainActor (DulcetSnapshot) -> Void)?
     private var activeOperation: (any DulcetAccountConnectOperation)?
     private var activeLibraryOperation: (any DulcetLibraryBrowseOperation)?
@@ -587,9 +593,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             DulcetMonotonicLibraryRefreshScheduler(),
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString },
         playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault,
-        localNetworkAccess: (any DulcetLocalNetworkAccessProbing)? = nil
+        localNetworkAccess: (any DulcetLocalNetworkAccessProbing)? = nil,
+        librarySession: DulcetLibrarySession? = nil
     ) {
         self.connector = connector
+        self.librarySession = librarySession
         self.localNetworkAccess = localNetworkAccess
         self.playbackStartNavigation = playbackStartNavigation
         latestPlaybackPresentation = playbackController?.currentPresentation ?? .unavailable
@@ -606,15 +614,28 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         self.providerInstanceIDFactory = providerInstanceIDFactory
         providerInstanceID = (credentialStore as? any DulcetProviderInstanceCredentialStoring)?
             .providerInstanceID
+        var restoredForReader: DulcetAccountConnectRequest?
         do {
             if let restoredRequest = try credentialStore?.load() {
+                restoredForReader = restoredRequest
                 let serverName = Self.savedServerName(for: restoredRequest.serverURL)
                 savedServerName = serverName
-                currentSnapshot = Self.snapshot(
-                    state: .accountSavedDisconnected,
-                    form: restoredRequest,
-                    status: .saved(serverName: serverName)
-                )
+                if librarySession?.isAvailable == true, providerInstanceID != nil {
+                    // The app opens straight into the library this device has seen; Reconnect
+                    // is offered there, and nothing is sent until it is chosen (CONF-10b).
+                    currentSnapshot = Self.snapshot(
+                        state: .libraryBrowse,
+                        destination: .library,
+                        form: restoredRequest,
+                        status: .saved(serverName: serverName)
+                    )
+                } else {
+                    currentSnapshot = Self.snapshot(
+                        state: .accountSavedDisconnected,
+                        form: restoredRequest,
+                        status: .saved(serverName: serverName)
+                    )
+                }
             } else {
                 savedServerName = nil
                 currentSnapshot = Self.snapshot(
@@ -637,6 +658,21 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         playbackController?.setPresentationHandler { [weak self] presentation in
             self?.receivePlaybackPresentation(presentation)
+        }
+        if let librarySession, let providerInstanceID, let restored = restoredForReader {
+            // The saved account's library paints at once from what this device has seen, and
+            // nothing is sent until the person chooses Reconnect (CONF-10b).
+            librarySession.open(
+                account: Self.readerAccount(
+                    request: restored,
+                    normalizedServerURL: restored.serverURL,
+                    providerInstanceID: providerInstanceID
+                ),
+                mode: .deviceOnly
+            )
+        }
+        librarySession?.onTracksSeen = { [weak self] tracks in
+            self?.restoreQueue(from: tracks)
         }
         downloadController?.setStatusHandler { [weak self] id, state in
             self?.receiveDownloadState(state, for: id)
@@ -761,13 +797,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             accountFormEdited(form)
         case let .submitAccountConnection(request):
             localNetworkRetryUsed = false
-            submit(request)
+            // Reconnect pressed on a library or search screen the reader is already drawing
+            // connects where the person is: the screens keep their rows and go live in place.
+            let destination = currentSnapshot.selectedDestination
+            submit(request, inPlace: readerOwnsLibrary && (destination == .library || destination == .search))
         case .cancelAccountConnection:
             cancelActiveSubmission()
         case .removeAccount:
             removeAccount()
         case .dismissAccountRemovalFailure:
             dismissAccountRemovalFailure()
+        case let .playTracks(intent):
+            guard !intent.tracks.isEmpty else { return }
+            beginPlayback(intent)
         }
     }
 
@@ -821,17 +863,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             case let .connected(account):
                 do {
                     let instanceID = self.providerInstanceID ?? self.providerInstanceIDFactory()
+                    let saved = request.savingServerURL(account.normalizedServerURL)
                     if let credentialStore = self.credentialStore
                         as? any DulcetProviderInstanceCredentialStoring {
-                        try credentialStore.save(request, providerInstanceID: instanceID)
+                        try credentialStore.save(saved, providerInstanceID: instanceID)
                     } else {
-                        try self.credentialStore?.save(request)
+                        try self.credentialStore?.save(saved)
                     }
                     if self.credentialStore != nil {
                         self.savedServerName = account.serverName
                     }
                     self.providerInstanceID = instanceID
                     self.configurePlayback(account: account, request: request)
+                    self.openConnectedReader(account: account, request: request)
                     self.publish(
                         state: .accountConnected,
                         destination: .settings,
@@ -895,16 +939,18 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .connected(account):
             do {
                 let instanceID = providerInstanceID ?? providerInstanceIDFactory()
+                let saved = request.savingServerURL(account.normalizedServerURL)
                 if let credentialStore = credentialStore as? any DulcetProviderInstanceCredentialStoring {
-                    try credentialStore.save(request, providerInstanceID: instanceID)
+                    try credentialStore.save(saved, providerInstanceID: instanceID)
                 } else {
-                    try credentialStore?.save(request)
+                    try credentialStore?.save(saved)
                 }
                 if credentialStore != nil {
                     savedServerName = account.serverName
                 }
                 providerInstanceID = instanceID
                 configurePlayback(account: account, request: request)
+                openConnectedReader(account: account, request: request)
                 publishInPlace(status: .connected(account), form: request)
                 switch currentSnapshot.selectedDestination {
                 case .library:
@@ -1191,6 +1237,18 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         reason: DulcetLibraryOpenReason,
         selecting selection: DulcetLibrarySelection? = nil
     ) {
+        if readerOwnsLibrary {
+            // The reader draws the library and the store owns its pages; nothing is read here.
+            cancelLibraryBrowse()
+            cancelLibraryRefresh()
+            publish(
+                state: .libraryBrowse,
+                destination: .library,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection
+            )
+            return
+        }
         if reason == .entered, currentSnapshot.accountConnection.isConnected {
             // Deliberately before the cancels below: the refresh cadence measures time since the
             // last full read and must keep running across navigation, and a read that is still
@@ -1496,7 +1554,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// Called only from a FINAL publication, so the cadence measures time since the library was
     /// last read in full — never time since a preview painted the grid.
     private func scheduleLibraryRefresh() {
-        guard case .connected = currentSnapshot.accountConnection else { return }
+        // The reader keeps its own windows fresh (§16.8); no library sync is scheduled beside it.
+        guard !readerOwnsLibrary, case .connected = currentSnapshot.accountConnection else { return }
         libraryRefreshOperation = libraryRefreshScheduler.schedule(
             after: libraryRefreshCadence
         ) { [weak self] in
@@ -1536,6 +1595,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// album list alone, so an album arrives here with `areTracksLoaded == false` and an empty
     /// `tracks` — the detail view shows its own loading row until this completes.
     private func presentAlbum(_ id: DulcetProviderItemID, loadingTracks: Bool) {
+        // Album pages belong to the reader while it holds the account (`showReaderPage`).
+        guard !readerOwnsLibrary else { return }
         cancelAlbumTracks()
         selectedAlbumTracksFailure = nil
         guard let album = libraryAlbums.first(where: { $0.id == id }) else { return }
@@ -1657,6 +1718,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     private func openSearch() {
+        if readerOwnsLibrary {
+            // The reader searches what this device has seen from the first character, and the
+            // server alongside it when it can (§16.15): the search surface subscribes itself.
+            publish(
+                state: .searchIdle,
+                destination: .search,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection
+            )
+            return
+        }
         guard case .connected = currentSnapshot.accountConnection else {
             publish(
                 state: .searchIdle,
@@ -1699,6 +1771,15 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         searchFailure = nil
         cancelSearchRequest()
         guard currentSnapshot.selectedDestination == .search else { return }
+        if readerOwnsLibrary {
+            publish(
+                state: .searchIdle,
+                destination: .search,
+                form: currentSnapshot.accountForm,
+                status: currentSnapshot.accountConnection
+            )
+            return
+        }
         guard query.trimmedForSearch.count >= 2 else {
             publish(
                 state: .searchIdle,
@@ -1720,7 +1801,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         // openSearch()'s fast path is different: it can run before the switch to .search has
         // published anything at all, so it passes the destination it is switching TO instead of
         // reading a snapshot that has not caught up yet.
-        guard destination == .search,
+        // The reader's search surface subscribes itself (§16.15); a second server search here
+        // would read the same query twice.
+        guard !readerOwnsLibrary,
+              destination == .search,
               case .connected = currentSnapshot.accountConnection,
               searchQuery.trimmedForSearch.count >= 2 else { return }
         searchResults = []
@@ -1746,7 +1830,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     private func loadMoreSearchResults(_ kind: DulcetSearchResultKind) {
-        guard currentSnapshot.selectedDestination == .search,
+        guard !readerOwnsLibrary,
+              currentSnapshot.selectedDestination == .search,
               searchHasMoreKinds.contains(kind),
               activeSearchOperation == nil,
               searchDebounceTask == nil else { return }
@@ -1935,6 +2020,14 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 }
                 guard self?.accountRemovalID == removalID else { return }
                 guard let self else { return }
+                // The reader stops before anything of the account's is deleted, so nothing it is
+                // still writing outlives the sign-out (§14.7 step 6).
+                if let session = self.librarySession {
+                    await withCheckedContinuation { continuation in
+                        session.close { continuation.resume() }
+                    }
+                    guard self.accountRemovalID == removalID else { return }
+                }
                 // Delete the credential only after downloads report success and the artwork
                 // adapter returns. Artwork deletion is best effort: its Void adapter swallows
                 // filesystem errors, so return does not verify that cached files were erased.
@@ -1983,6 +2076,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             self.configureDownloads(account: account, request: self.currentSnapshot.accountForm)
         }
         accountRemovalStatus = .failed
+        // The reader may have been closed on the way to deleting the credential that is still
+        // saved: the account stays, so its library does.
+        if case let .connected(account) = currentSnapshot.accountConnection {
+            openConnectedReader(account: account, request: currentSnapshot.accountForm)
+        }
         publishAccountRemovalState(
             state: .accountRemovalError,
             status: currentSnapshot.accountConnection
@@ -1996,6 +2094,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         accountRemovalTask = nil
         providerInstanceID = nil
         savedServerName = nil
+        restorationTrackIDs = []
         playbackController?.disconnect()
         libraryMusicFolders = []
         libraryArtists = []
@@ -2161,6 +2260,10 @@ extension DulcetAccountDataSource: DulcetLibraryNavigating {
     /// offered only for an artist the library already lists, so following it cannot start a read
     /// that ends on an error page.
     public func libraryArtistID(for credit: DulcetCredit) -> DulcetProviderItemID? {
+        if readerOwnsLibrary {
+            // The reader opens any artist the server names, seen or not.
+            return credit.id
+        }
         if let id = credit.id, libraryArtists.contains(where: { $0.id == id }) {
             return id
         }
@@ -2173,6 +2276,9 @@ extension DulcetAccountDataSource: DulcetLibraryNavigating {
     /// title — narrowed by shared artist names when titles repeat. "Greatest Hits" by two artists
     /// resolves to neither rather than to the wrong one.
     public func libraryAlbumID(for track: DulcetTrack) -> DulcetProviderItemID? {
+        if readerOwnsLibrary, let albumID = track.albumID {
+            return albumID
+        }
         if let holding = libraryAlbums.first(where: { album in
             album.tracks.contains(where: { $0.id == track.id })
         }) {
@@ -2330,5 +2436,85 @@ private extension DulcetAccountErrorFamily {
         case .capability: .accountErrorCapability
         case .persistence: .accountErrorPersistence
         }
+    }
+}
+
+// MARK: - The library reader
+
+extension DulcetAccountDataSource: DulcetLibrarySessionProviding {
+    /// Whether Library and Search are drawn from the reader rather than from this source.
+    var readerOwnsLibrary: Bool {
+        guard let librarySession else { return false }
+        return librarySession.mode != .none
+    }
+
+    static func readerAccount(
+        request: DulcetAccountConnectRequest,
+        normalizedServerURL: String,
+        providerInstanceID: String
+    ) -> DulcetLibraryReaderAccount {
+        DulcetLibraryReaderAccount(
+            providerInstanceID: providerInstanceID,
+            normalizedServerURL: normalizedServerURL,
+            username: request.username,
+            password: request.password,
+            allowLocalHTTP: request.allowLocalHTTP
+        )
+    }
+
+    /// The connection landed: the reader may read the server now. The saved account's reader is
+    /// kept when it is the same account, so the screens keep their rows through the reconnect.
+    func openConnectedReader(
+        account: DulcetConnectedAccountSummary,
+        request: DulcetAccountConnectRequest
+    ) {
+        guard let librarySession, let providerInstanceID else { return }
+        restorationTrackIDs = []
+        librarySession.open(
+            account: Self.readerAccount(
+                request: request,
+                normalizedServerURL: account.normalizedServerURL,
+                providerInstanceID: providerInstanceID
+            ),
+            mode: .connected
+        )
+        restoreQueueFromCommittedLibrary(providerInstanceID: providerInstanceID)
+    }
+
+    /// A queue saved before this device read its library through the reader names tracks the
+    /// previous library copy holds. That copy is local and sends nothing, so it is read once
+    /// per connection as a restoration catalog, and only for that.
+    private func restoreQueueFromCommittedLibrary(providerInstanceID: String) {
+        guard let committed = libraryBrowser as? any DulcetCommittedLibraryBrowsing else { return }
+        _ = committed.browseCommitted(providerInstanceID: providerInstanceID) { [weak self] outcome in
+            guard case let .loaded(_, _, albums) = outcome else { return }
+            self?.restoreQueue(from: albums.flatMap(\.tracks))
+        }
+    }
+
+    /// Hands tracks a screen was shown to queue restoration. The catalog is never whole in
+    /// reader mode -- a screen shows a window, not the library -- so it is always `.partial`,
+    /// which cannot clear a saved queue for want of a track nobody has looked at.
+    func restoreQueue(from tracks: [DulcetTrack]) {
+        guard currentSnapshot.accountConnection.isConnected, let providerInstanceID else { return }
+        let fresh = tracks.filter {
+            $0.id.providerInstanceID == providerInstanceID && restorationTrackIDs.insert($0.id).inserted
+        }
+        guard !fresh.isEmpty else { return }
+        playbackController?.restorePersistedQueue(with: fresh, catalogCoverage: .partial)
+    }
+}
+
+extension DulcetAccountConnectRequest {
+    /// The request as saved: with the address the server was actually reached at, so the next
+    /// launch opens the same cache namespace without having to reach the server first.
+    func savingServerURL(_ normalizedServerURL: String) -> DulcetAccountConnectRequest {
+        guard !normalizedServerURL.isEmpty else { return self }
+        return DulcetAccountConnectRequest(
+            serverURL: normalizedServerURL,
+            username: username,
+            password: password,
+            allowLocalHTTP: allowLocalHTTP
+        )
     }
 }

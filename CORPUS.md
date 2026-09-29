@@ -106,11 +106,13 @@ Binding. A violation is a stop-work, not a style note.
     this repository does not have?* If so, the rule stays and the justification gets rewritten to stand
     on public evidence. This has already gone wrong twice; see spec §28, revision 5.
 14. **DEV and PROD are separate channels with separate bundle identifiers.** DEV
-    (`com.legitimateapps.dulcet.dev`, "Dulcet DEV") ships automatically on every merge to `main` to
-    TestFlight *internal* testers — no Beta App Review, expected to break. PROD
-    (`com.legitimateapps.dulcet`, "Dulcet") ships from a hand-cut `vX.Y.Z` tag to an *external* group
-    through Beta App Review, only when CI is green, conformance passes, and `FEATURES.yml` shows no
-    undeclared regression. **The `.dev` record must NEVER be submitted for App Store release, ever.**
+    (`com.legitimateapps.dulcet.dev`, "Dulcet DEV") is dispatched by hand on a significant merge to
+    `main`, never on every merge, to TestFlight *internal* testers — no Beta App Review, expected to
+    break. PROD (`com.legitimateapps.dulcet`, "Dulcet") ships from a hand-cut `vX.Y.Z` tag and a
+    dispatch of that commit to an *external* group through Beta App Review, only when CI is green,
+    conformance passes, and `FEATURES.yml` shows no undeclared regression. Both are dispatches of one
+    approval-gated workflow; nothing publishes a build automatically. **The `.dev` record must NEVER
+    be submitted for App Store release, ever.**
     **PROD ships no preconfigured server** — a hardcoded internal address in a published binary leaks a
     private address to every downloader and is wrong for everyone else; the build config must make it
     structurally impossible, not a thing someone remembers. And the dogfooding line is **automation,
@@ -120,7 +122,9 @@ Binding. A violation is a stop-work, not a style note.
 15. **The repo is public, so CI is entirely GitHub-hosted** — Apple on standard `macos-latest`,
     everything else on `ubuntu-latest`. Standard runners are free on public repositories, so the
     global "never hosted macOS, 10x multiplier" policy does not apply here; it is scoped to private
-    repos. **No self-hosted runner exists in this project.** Two things still bind: never request a
+    repos. **No self-hosted runner builds or tests this project.** The one admitted exception (spec
+    §21.3.1) is a repository-scoped, ephemeral runner with a physical device attached that accepts
+    `workflow_dispatch` on `main` only — never `pull_request`, never `push`. Two things still bind: never request a
     *larger* runner label (those are billed even on public repos), and keep the Apple matrix narrow
     because hosted macOS concurrency is capped and a wide matrix queues rather than fans out. Every
     workflow keeps `concurrency: cancel-in-progress` and `timeout-minutes`, now for queue hygiene.
@@ -202,7 +206,8 @@ that must argue against the recorded rationale, not a blank to fill in.
 1. **Licence: Apache-2.0.** Patent grant, permissive, App Store compatible subject to the dependency
    licence audit that stays a Phase-0 deliverable.
 2. **OS floors: macOS 14 / iOS 17 / tvOS 17**, Apple Silicon only.
-3. **CI: GitHub-hosted standard runners.** No self-hosted runner exists in this project (see line 14).
+3. **CI: GitHub-hosted standard runners.** No self-hosted runner builds or tests this project; the
+   single device-attached, dispatch-only exception is spec §21.3.1 (see §4 line 15).
 4. **App Review demo server: a small public Navidrome on Railway**, seeded with royalty-free audio,
    existing only to give App Review working credentials. **Never a private or personal server.** Needed
    at first-submission time, not Phase 0.
