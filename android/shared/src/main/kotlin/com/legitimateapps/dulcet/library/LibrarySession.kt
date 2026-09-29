@@ -136,8 +136,8 @@ public class LibrarySession internal constructor(
     private val latestPlaylistOutcomes = MutableStateFlow<Map<String, AndroidPlaylistOutcome>>(emptyMap())
 
     /**
-     * The latest playlist outcome for each playlist (§18.6), keyed by the playlist it concerns — a
-     * create in doubt by its local id — for the line on that playlist's page or the list. A screen
+     * The latest playlist outcome for each playlist (§18.6), keyed by the playlist it concerns, for
+     * the line on that playlist's page; a create in doubt is in [playlistQuestions]. A screen
      * clears one with [dismissPlaylistOutcome] once it has said it.
      */
     public val playlistOutcomes: StateFlow<Map<String, AndroidPlaylistOutcome>> = latestPlaylistOutcomes.asStateFlow()
@@ -154,15 +154,25 @@ public class LibrarySession internal constructor(
      */
     public val createdPlaylists: StateFlow<Map<String, String>> = createdIds.asStateFlow()
 
+    /**
+     * The creates in doubt waiting for the person (§18.6), rebuilt from the core's outbox when this
+     * session starts, so a rotation or a relaunch never loses one. A create in doubt is asked here,
+     * never through [playlistOutcomes].
+     */
+    public val playlistQuestions: PlaylistQuestions = PlaylistQuestions(reader.playlists.asQuestionEditor())
+
     private val playlistRegistration: AndroidPlaylistOutcomeRegistration =
         reader.playlists.addOutcomeListener { outcome ->
             if (outcome is AndroidPlaylistOutcome.Created) createdIds.update { it + (outcome.localId to outcome.playlistId) }
-            // Saved needs no words; every other outcome is said on the playlist's page or the list.
-            if (outcome !is AndroidPlaylistOutcome.Saved && outcome !is AndroidPlaylistOutcome.Created) {
+            // Saved needs no words; a create in doubt is a question; every other outcome is said on
+            // the playlist's page.
+            if (outcome !is AndroidPlaylistOutcome.Saved && outcome !is AndroidPlaylistOutcome.Created &&
+                outcome !is AndroidPlaylistOutcome.PossibleDuplicate && outcome !is AndroidPlaylistOutcome.PossiblyCreated) {
                 latestPlaylistOutcomes.update { it + (outcome.playlistId to outcome) }
             }
+            playlistQuestions.receive(outcome)
             observationState.update { it.copy(playlistOutcomes = (it.playlistOutcomes + outcome).takeLast(MAX_FRAMES)) }
-        }
+        }.also { playlistQuestions.refresh() }
 
     /**
      * Playlist editing (§18.6) on the process's reader: every edit through the core's editor, which
@@ -421,6 +431,7 @@ public class LibrarySession internal constructor(
         closed = true
         outcomeRegistration.close()
         playlistRegistration.close()
+        playlistQuestions.close()
         collections.toList().forEach(AutoCloseable::close)
         collections.clear()
         watches.toList().forEach(AutoCloseable::close)

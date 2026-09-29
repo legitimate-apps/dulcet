@@ -28,6 +28,8 @@ import com.legitimateapps.dulcet.library.playlistOutcomeLine
 import com.legitimateapps.dulcet.library.playlistOwnerLine
 import com.legitimateapps.dulcet.library.playlistPendingLine
 import com.legitimateapps.dulcet.library.playlistQueue
+import com.legitimateapps.dulcet.library.playlistQuestionLine
+import com.legitimateapps.dulcet.library.PlaylistQuestion
 import com.legitimateapps.dulcet.library.playlistView
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -126,8 +128,14 @@ class PlaylistAndLyricsPresentationTest {
             resources.playlistOutcomeLine(AndroidPlaylistOutcome.NotSaved("pl-1", AndroidPlaylistChange.Details, DomainError.Server.Known(0))))
         assertEquals("That change isn't sent yet — your server is busy. It will be sent later.",
             resources.playlistOutcomeLine(AndroidPlaylistOutcome.Held("pl-1", AndroidPlaylistChange.Entries, DomainError.Server.Busy(null))))
-        assertEquals("“Road” may already be on your server. Keep it as it is, or make another?",
+        assertEquals("“Road” may already be on your server. Is the one there yours?",
             resources.playlistOutcomeLine(AndroidPlaylistOutcome.PossibleDuplicate("local-1", "Road", listOf("pl-2"))))
+        // Several namesakes cannot be told apart here: the words never ask which is theirs.
+        assertEquals("2 playlists named “Road” are on your server, and this one may be one of them. " +
+            "They can't be told apart here — look in Playlists before you decide.",
+            resources.playlistOutcomeLine(AndroidPlaylistOutcome.PossibleDuplicate("local-1", "Road", listOf("pl-2", "pl-3"))))
+        assertEquals("This playlist may already be on your server. Is the one there yours?",
+            resources.playlistQuestionLine(PlaylistQuestion(PlaylistQuestion.Kind.WhichIsYours, "local-1", null, listOf("pl-2")), null))
     }
 
     // ---- Lyrics --------------------------------------------------------------------------------------

@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -63,8 +65,9 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditRecord
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditResult
-import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
 import com.legitimateapps.dulcet.library.LibraryObservation
+import com.legitimateapps.dulcet.library.PlaylistQuestion
+import com.legitimateapps.dulcet.library.PlaylistQuestions
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.libraryResources
@@ -72,6 +75,7 @@ import com.legitimateapps.dulcet.library.playlistEditLine
 import com.legitimateapps.dulcet.library.playlistOutcomeLine
 import com.legitimateapps.dulcet.library.playlistOwnerLine
 import com.legitimateapps.dulcet.library.playlistPendingLine
+import com.legitimateapps.dulcet.library.playlistQuestionLine
 import com.legitimateapps.dulcet.library.playlistView
 import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.library.unavailableLine
@@ -111,7 +115,7 @@ internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, acti
     val resources = libraryResources()
     var naming by rememberSaveable { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
-    val outcomes by session.playlistOutcomes.collectAsState()
+    val questions by session.playlistQuestions.asking.collectAsState()
     val playlists = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Playlist>()
     LazyColumn(Modifier.fillMaxSize().testTag("library.playlists")) {
         item {
@@ -140,9 +144,12 @@ internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, acti
                     }
                 }
                 note?.let { StatementText(it, "library.playlists.note") }
-                // A create in doubt is about a playlist that may not be in this list: it is said here.
-                outcomes.values.filter { it is AndroidPlaylistOutcome.PossiblyCreated || it is AndroidPlaylistOutcome.PossibleDuplicate }
-                    .forEach { outcome -> CreateInDoubt(session, outcome, "library.playlists.outcome.${outcome.playlistId}") }
+                // A create in doubt is about a playlist that may not be in this list: every one waiting is asked here.
+                questions.forEach { question ->
+                    CreateInDoubt(session.playlistQuestions, question,
+                        question.name ?: playlists.firstOrNull { it.rawId == question.localId }?.name,
+                        "library.playlists.question.${question.localId}")
+                }
             }
         }
         itemsIndexed(playlists, key = { _, playlist -> playlist.rawId }) { position, playlist ->
@@ -185,6 +192,8 @@ internal fun PlaylistScreen(
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     val outcomes by session.playlistOutcomes.collectAsState()
+    val questions by session.playlistQuestions.asking.collectAsState()
+    val awaitingChoice by session.playlistQuestions.awaitingChoice.collectAsState()
     val resources = libraryResources()
     var editing by rememberSaveable(rawId) { mutableStateOf(false) }
     var renaming by rememberSaveable(rawId) { mutableStateOf(false) }
@@ -242,17 +251,28 @@ internal fun PlaylistScreen(
                     (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
                         StatementText(resources.unavailableLine(unavailable.reason, LibrarySubject.List), "playlist.unavailable")
                     }
+                    val question = questions.firstOrNull { it.localId == rawId && it.kind == PlaylistQuestion.Kind.WhichIsYours }
+                    if (question != null) {
+                        CreateInDoubt(session.playlistQuestions, question, question.name ?: playlist?.name, "playlist.question")
+                    } else if (rawId in awaitingChoice) {
+                        // Deferred: the page keeps saying so, and asks again on request.
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(resources.getString(SharedR.string.playlist_question_waiting),
+                                Modifier.weight(1f).padding(vertical = 8.dp).testTag("playlist.question.waiting"),
+                                style = MaterialTheme.typography.bodyMedium)
+                            TextButton(onClick = { session.playlistQuestions.reask(rawId) },
+                                modifier = Modifier.testTag("playlist.question.choose")) {
+                                Text(resources.getString(SharedR.string.playlist_question_choose))
+                            }
+                        }
+                    }
                     outcomes[rawId]?.let { outcome ->
-                        if (outcome is AndroidPlaylistOutcome.PossibleDuplicate || outcome is AndroidPlaylistOutcome.PossiblyCreated) {
-                            CreateInDoubt(session, outcome, "playlist.outcome")
-                        } else {
-                            resources.playlistOutcomeLine(outcome)?.let { line ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(line, Modifier.weight(1f).padding(vertical = 8.dp).testTag("playlist.outcome"),
-                                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                                    TextButton(onClick = { session.dismissPlaylistOutcome(rawId) }) {
-                                        Text(resources.getString(SharedR.string.library_dismiss))
-                                    }
+                        resources.playlistOutcomeLine(outcome)?.let { line ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(line, Modifier.weight(1f).padding(vertical = 8.dp).testTag("playlist.outcome"),
+                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                                TextButton(onClick = { session.dismissPlaylistOutcome(rawId) }) {
+                                    Text(resources.getString(SharedR.string.library_dismiss))
                                 }
                             }
                         }
@@ -377,30 +397,46 @@ private fun EditableEntry(track: AndroidLibraryItem.Track, position: Int, count:
 }
 
 /**
- * A create whose answer was lost (§18.6): the person decides, never an inference. A possible
- * duplicate asks whether to use the playlist already on the server or make another; a create deleted
- * here that may have been made says so, and the person can look.
+ * A create whose answer was lost (§18.6): the person decides, never an inference. A lone candidate
+ * can be adopted ("Yes, use that one"); several cannot be told apart here, so none is offered and the
+ * person creates it anyway or decides later. A create deleted here that may have been made says so.
+ * The question stays until the core has recorded the answer; an answer it refuses is said under it.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CreateInDoubt(session: LibrarySession, outcome: AndroidPlaylistOutcome, tag: String) {
+internal fun CreateInDoubt(questions: PlaylistQuestions, question: PlaylistQuestion, name: String?, tag: String) {
     val resources = libraryResources()
-    val line = resources.playlistOutcomeLine(outcome) ?: return
+    val busy by questions.inFlight.collectAsState()
+    var note by remember(question) { mutableStateOf<String?>(null) }
+    val enabled = question.localId !in busy
+    fun answered(result: AndroidPlaylistEditResult) {
+        note = resources.playlistEditLine(result)
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Text(line, Modifier.testTag(tag), style = MaterialTheme.typography.bodyMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (outcome is AndroidPlaylistOutcome.PossibleDuplicate) {
-                TextButton(onClick = {
-                    session.playlists.chooseCreated(outcome.localId, outcome.candidates.first())
-                    session.dismissPlaylistOutcome(outcome.playlistId)
-                }, modifier = Modifier.testTag("$tag.keep")) { Text(resources.getString(SharedR.string.playlist_keep_existing)) }
-                TextButton(onClick = {
-                    session.playlists.chooseCreated(outcome.localId, null)
-                    session.dismissPlaylistOutcome(outcome.playlistId)
-                }, modifier = Modifier.testTag("$tag.another")) { Text(resources.getString(SharedR.string.playlist_make_another)) }
-            } else {
-                TextButton(onClick = { session.dismissPlaylistOutcome(outcome.playlistId) }) {
-                    Text(resources.getString(SharedR.string.library_dismiss))
+        Text(resources.playlistQuestionLine(question, name), Modifier.testTag(tag), style = MaterialTheme.typography.bodyMedium)
+        note?.let { Text(it, Modifier.testTag("$tag.note"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (question.kind) {
+                PlaylistQuestion.Kind.WhichIsYours -> {
+                    question.loneCandidate?.let { candidate ->
+                        TextButton(onClick = { questions.answer(question, candidate, ::answered) }, enabled = enabled,
+                            modifier = Modifier.testTag("$tag.keep")) {
+                            Text(resources.getString(SharedR.string.playlist_keep_existing))
+                        }
+                    }
+                    TextButton(onClick = { questions.answer(question, null, ::answered) }, enabled = enabled,
+                        modifier = Modifier.testTag("$tag.another")) {
+                        Text(resources.getString(if (question.loneCandidate != null) SharedR.string.playlist_create_lone
+                            else SharedR.string.playlist_create_many))
+                    }
+                    TextButton(onClick = { questions.defer(question) }, enabled = enabled, modifier = Modifier.testTag("$tag.later")) {
+                        Text(resources.getString(SharedR.string.playlist_decide_later))
+                    }
                 }
+                PlaylistQuestion.Kind.MaybeCreated ->
+                    TextButton(onClick = { questions.defer(question) }, modifier = Modifier.testTag("$tag.dismiss")) {
+                        Text(resources.getString(SharedR.string.library_dismiss))
+                    }
             }
         }
     }

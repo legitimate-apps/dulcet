@@ -60,7 +60,27 @@ public fun Resources.playlistOutcomeLine(outcome: AndroidPlaylistOutcome?): Stri
     is AndroidPlaylistOutcome.Superseded -> getString(R.string.playlist_outcome_superseded)
     is AndroidPlaylistOutcome.NotRecorded -> getString(R.string.playlist_edit_not_recorded)
     is AndroidPlaylistOutcome.PossiblyCreated -> getString(R.string.playlist_outcome_possibly_created, outcome.name)
-    is AndroidPlaylistOutcome.PossibleDuplicate -> getString(R.string.playlist_outcome_possible_duplicate, outcome.name)
+    is AndroidPlaylistOutcome.PossibleDuplicate -> playlistQuestionLine(
+        PlaylistQuestion(PlaylistQuestion.Kind.WhichIsYours, outcome.localId, outcome.name, outcome.candidates), outcome.name,
+    )
+}
+
+/**
+ * What a create in doubt asks (§18.6), naming it [name] — the sent name, or the name of the playlist
+ * shown under its local id — or not at all when neither is known. Only a lone candidate is offered as
+ * the person's; with several, the words say they cannot be told apart here.
+ */
+public fun Resources.playlistQuestionLine(question: PlaylistQuestion, name: String?): String = when (question.kind) {
+    PlaylistQuestion.Kind.MaybeCreated -> getString(R.string.playlist_outcome_possibly_created, name ?: question.name.orEmpty())
+    PlaylistQuestion.Kind.WhichIsYours -> {
+        val count = question.candidates.size
+        when {
+            question.loneCandidate != null && name != null -> getString(R.string.playlist_question_lone, name)
+            question.loneCandidate != null -> getString(R.string.playlist_question_lone_unnamed)
+            name != null -> getQuantityString(R.plurals.playlist_question_many, count, count, name)
+            else -> getQuantityString(R.plurals.playlist_question_many_unnamed, count, count)
+        }
+    }
 }
 
 /** The line under a playlist's name: its owner when it is someone else's, and read-only then (§18.6). */

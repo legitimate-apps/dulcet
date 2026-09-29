@@ -125,9 +125,22 @@
     <string name="playlist_outcome_held">A change to this playlist isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>
     <string name="playlist_outcome_superseded">Renamed on another device — showing your server\'s name.</string>
     <string name="playlist_outcome_possibly_created">“%1$s” may already have been made on your server. Check your playlists.</string>
-    <string name="playlist_outcome_possible_duplicate">“%1$s” may already be on your server. Keep it as it is, or make another?</string>
-    <string name="playlist_keep_existing">Use the one on the server</string>
-    <string name="playlist_make_another">Make another</string>
+    <string name="playlist_question_lone">“%1$s” may already be on your server. Is the one there yours?</string>
+    <string name="playlist_question_lone_unnamed">This playlist may already be on your server. Is the one there yours?</string>
+    <plurals name="playlist_question_many">
+        <item quantity="one">%1$d playlist named “%2$s” is on your server, and this one may be it. Look in Playlists before you decide.</item>
+        <item quantity="other">%1$d playlists named “%2$s” are on your server, and this one may be one of them. They can\'t be told apart here — look in Playlists before you decide.</item>
+    </plurals>
+    <plurals name="playlist_question_many_unnamed">
+        <item quantity="one">%1$d playlist with this name is on your server, and this one may be it. Look in Playlists before you decide.</item>
+        <item quantity="other">%1$d playlists with this name are on your server, and this one may be one of them. They can\'t be told apart here — look in Playlists before you decide.</item>
+    </plurals>
+    <string name="playlist_keep_existing">Yes, use that one</string>
+    <string name="playlist_create_lone">Not mine — create it</string>
+    <string name="playlist_create_many">None of these — create it</string>
+    <string name="playlist_decide_later">Decide later</string>
+    <string name="playlist_question_waiting">Not on your server yet — waiting for you to say whether it\'s already there.</string>
+    <string name="playlist_question_choose">Choose…</string>
     <string name="playlists_empty">No playlists yet.</string>
     <!-- Lyrics (spec §18.4) -->
     <string name="lyrics_none">No lyrics for this song.</string>
