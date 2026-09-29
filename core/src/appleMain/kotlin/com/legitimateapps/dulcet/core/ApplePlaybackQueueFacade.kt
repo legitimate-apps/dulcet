@@ -368,8 +368,9 @@ public class ApplePlaybackQueueClient private constructor(
 
     /**
      * Try Again on the selected entry. The core decides what that is (§12.1): the same session
-     * with a new attempt after a failure before start, a new play after a failure after partial
-     * playback, the selected entry's start when no session exists, and nothing otherwise.
+     * with a new attempt after a failure before start, and after a partial failure a further
+     * attempt inside the same session, resuming from where it stopped with the accumulator
+     * carried across; the selected entry's start when no session exists; and nothing otherwise.
      */
     public fun retryCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().retryCurrent()

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The notice for a track the queue moved past because it could not be played (spec §12.12
+         rule 5). Each is one whole sentence, the same copy the Apple apps use, so it can be
+         translated as written and read aloud in one piece. -->
+    <string name="playback_skipped">Couldn’t play a track. Skipped.</string>
+    <string name="playback_skipped_track">Couldn’t play “%1$s”. Skipped.</string>
+</resources>
