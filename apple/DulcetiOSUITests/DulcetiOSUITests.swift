@@ -3,6 +3,18 @@ import UIKit
 import XCTest
 
 final class DulcetiOSUITests: XCTestCase {
+    /// Server cleanup a test registers once it has made something on the disposable server; run
+    /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
+    /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
+    private var afterTest: [() -> Void] = []
+
+    override func tearDown() {
+        let cleanups = afterTest
+        afterTest = []
+        cleanups.reversed().forEach { $0() }
+        super.tearDown()
+    }
+
     /// A missing launch-screen declaration opts into the legacy 320-by-480 canvas.
     /// Compare the actual window with the display, independently of device resolution.
     @MainActor
@@ -1583,7 +1595,7 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The run's playlist could not be made on the disposable server")
             return
         }
-        addTeardownBlock { [configuration] in
+        afterTest.append { [configuration] in
             _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlistID)], configuration: configuration)
         }
 

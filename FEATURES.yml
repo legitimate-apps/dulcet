@@ -1019,6 +1019,7 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "promotion_condition": {"status": "blocked", "blocked_on": "mac-playlist-ui-proof", "reason": "The core and conformance links are executed. What is missing is a test that drives the Mac app's playlist UI against the disposable reference server: open, play, create, rename, add, remove, reorder and delete, with the server read back. No such workflow, job or test exists yet, so none can be named."},
           "evidence": [
             {"conformance": "CONF-88", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"},
             {"conformance": "CONF-89", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"},
@@ -1030,6 +1031,7 @@
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {"status": "blocked", "blocked_on": "iphone-playlist-edit-ui-proof", "reason": "An iPhone UI proof covers open, play in order and rename. Promotion needs the remaining edits driven through the app with the server read back: create, Add to Playlist, removal, reorder, delete, and the pending and failed states. No such test exists yet, so none can be named."},
           "evidence": [
             {"conformance": "CONF-88", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"},
             {"conformance": "CONF-89", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"},
@@ -1042,6 +1044,7 @@
         },
         "ipados": {
           "status": "partial",
+          "promotion_condition": {"status": "blocked", "blocked_on": "ipad-playlist-ui-proof", "reason": "No test drives the iPad app's playlist UI; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run of the playlist page and its edits against the disposable reference server. No such test exists yet, so none can be named."},
           "evidence": [
             {"conformance": "CONF-88", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"},
             {"conformance": "CONF-89", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"},
@@ -1065,6 +1068,7 @@
       "platforms": {
         "macos": {
           "status": "partial",
+          "promotion_condition": {"status": "blocked", "blocked_on": "mac-lyrics-ui-proof", "reason": "No test drives the Mac app's lyrics panel. Promotion needs a Mac UI run that plays a track with synced lyrics from the disposable reference server and observes the lit line. No such test exists yet, so none can be named."},
           "evidence": [
             {"conformance": "CONF-42", "workflow": "apple-ci", "job": "apple-ci", "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"},
             {"observes": "the lyrics panel asks the core's cursor for the lit line at the playback position in whole milliseconds, and an unsynced document lights nothing", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitTests/theCurrentLineIsTheCoresCursorInWholeMillisecondsAndNoneWhenUnsynced"}
@@ -1073,6 +1077,7 @@
         },
         "ios": {
           "status": "partial",
+          "promotion_condition": {"status": "blocked", "blocked_on": "iphone-lyrics-states-ui-proof", "reason": "The iPhone proof observes synced lyrics lighting a line. Plain lyrics, no lyrics and a failed read are presentation values only; promotion needs them rendered through the app. No such test exists yet, so none can be named."},
           "evidence": [
             {"conformance": "CONF-42", "workflow": "apple-ci", "job": "apple-ci", "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"},
             {"observes": "the iPhone app's Now Playing lyrics toggle shows the server's English layer of a track's embedded synced lyrics and lights a line as the track plays", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetiOSUITests/testTheLyricsPanelShowsTheSyncedLineThatIsPlaying"},
@@ -1082,6 +1087,7 @@
         },
         "ipados": {
           "status": "partial",
+          "promotion_condition": {"status": "blocked", "blocked_on": "ipad-lyrics-ui-proof", "reason": "No test drives the iPad app's lyrics panel; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run that observes the lit line beside the player. No such test exists yet, so none can be named."},
           "evidence": [
             {"conformance": "CONF-42", "workflow": "apple-ci", "job": "apple-ci", "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"},
             {"observes": "the lyrics model paints the stored document first, then the live one, and drops a late answer for a track that is no longer current", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitIOSTests/theModelPaintsTheStoredDocumentThenTheLiveOneAndDropsALateAnswer"}
