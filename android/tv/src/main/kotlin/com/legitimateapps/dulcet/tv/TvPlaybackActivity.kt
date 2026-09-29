@@ -53,6 +53,7 @@ import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.SkipNoticeRegion
 import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -109,7 +110,7 @@ class TvPlaybackActivity : ComponentActivity() {
 }
 
 @Composable
-private fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
+internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(playback != null) { if (playback != null) runCatching { playFocus.requestFocus() } }
     Surface(Modifier.fillMaxSize()) {
@@ -118,7 +119,15 @@ private fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, p
             Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 40.dp),
                 horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                 Column(Modifier.width(360.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    TvArtwork(account, state.artworkKey, 360)
+                    Box(Modifier.size(360.dp).testTag("tv.player.artwork")) {
+                        TvArtwork(account, state.artworkKey, 360)
+                        // Along the bottom of the cover, which takes no focus: the player's own
+                        // bottom edge is the Up Next list, whose rows the D-pad moves through, and
+                        // a card over a focused row hides where focus is (spec §12.12 rule 8).
+                        SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
+                            MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
+                            Modifier.matchParentSize())
+                    }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     Text(if (playback == null) "Connect an account before playing." else "Now Playing",
@@ -132,7 +141,7 @@ private fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, p
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(24.dp))
                     TvProgress(state)
-                    if (state.error != null) Text("Playback failed. Check your connection and choose the song again.",
+                    if (state.error != null) Text("Playback failed. Check your connection, then press Play to try again.",
                         color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
                     Spacer(Modifier.height(24.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
