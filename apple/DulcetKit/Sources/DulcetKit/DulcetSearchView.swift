@@ -73,6 +73,30 @@ struct DulcetSearchView: View {
                     .font(.title.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
 #endif
+#if os(iOS)
+                // The platform's filled search field: a magnifier on the control fill, as
+                // `.searchable` draws it, in the page's own layout rather than the navigation bar.
+                HStack(spacing: DulcetSpacing.xxs) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.callout)
+                        .dulcetForeground(.secondaryTextOnControl)
+                        .accessibilityHidden(true)
+                    TextField(DulcetStrings.searchPrompt, text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        // A search field takes the platform's search submit key and resigns on
+                        // submit, so the keyboard clears the results without a second gesture.
+                        .focused($searchFieldFocused)
+                        .submitLabel(.search)
+                        .onSubmit { searchFieldFocused = false }
+                        .onAppear(perform: takeRequestedFocus)
+                        .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
+                        .accessibilityLabel(DulcetStrings.searchPrompt)
+                        .accessibilityIdentifier("dulcet.search.field")
+                }
+                .padding(.horizontal, DulcetSpacing.xs)
+                .padding(.vertical, 7)
+                .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+#else
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .dulcetSearchFieldStyle()
 #if os(macOS)
@@ -83,21 +107,13 @@ struct DulcetSearchView: View {
 #else
                     .controlSize(.small)
 #endif
-#if os(iOS)
-                    // A search field takes the platform's search submit key and resigns on
-                    // submit, so the keyboard clears the results without a second gesture.
-                    .focused($searchFieldFocused)
-                    .submitLabel(.search)
-                    .onSubmit { searchFieldFocused = false }
-                    .onAppear(perform: takeRequestedFocus)
-                    .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
-#endif
                     // Deliberately no `.focused` binding on the Mac. MEASURED in the hosted
                     // search proof: with one attached -- even never set -- Return on a selected
                     // result row stopped reaching the table's primary action, so activating a
                     // result from the keyboard silently did nothing.
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
+#endif
                 Text(reader == nil ? DulcetStrings.searchSummary : DulcetStrings.readerSearchSummary)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
