@@ -6805,6 +6805,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-09-29 — Apple library on the reader.** Phase R2b (§16.18) lands on every Apple shell: the
+one production composition every target shares gives the store a reader session, so the library,
+its album, artist and playlist pages, Home's shelves and search read through the reader on iPhone,
+iPad, Mac and Apple TV alike, and no screen starts a library sync while the reader holds the account.
+A saved account opens straight into what this device saw, marked as such, with Reconnect in place
+(§16.14); rows report their viewport and extend as they scroll. Search offers no "load more" in
+reader mode, because the reader's search has no paging. The committed library browser remains only as
+the catalog that restores a queue saved before the reader existed. Four contracts are **not yet met
+on Apple**, each because the facade has no call for it: sign-out step 6 (§14.7) closes the reader
+before the credential is removed but does not purge its seen-cache and outbox; a held change cannot
+be withdrawn (§16.20), only retried or left; the bind-time discard count is never acknowledged; and
+a downloaded track's playability does not cross, so a row cannot say it is downloaded. Artwork is not
+fetched while the account is device-only.
+
 **Revision 113 (2026-09-26)** — Android adopts §12.12. Revision 106 said "Android does not adopt this yet: it
 does not share this controller"; that was wrong. `AndroidPlaybackController` drives the same
 `PlaybackQueueController`, so once revision 106 merged Android skipped past a track's own failure

@@ -1141,31 +1141,63 @@ final class DulcetiOSUITests: XCTestCase {
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
         XCTAssertTrue(firstResult.waitForExistence(timeout: 10),
             "Device search must answer without the server: " + app.debugDescription)
-        let scope = app.descendants(matching: .any)["dulcet.search.scope"].firstMatch
+        // The scope's icon carries the same identifier; the sentence is the text.
+        let scope = app.staticTexts["dulcet.search.scope"].firstMatch
         XCTAssertTrue(scope.waitForExistence(timeout: 5), "The results must say they come from this device")
         let scopeLabel = scope.exists ? scope.label : "<none>"
         let resultLabel = firstResult.exists ? firstResult.label : "<none>"
-        XCTAssertTrue(resultLabel.hasPrefix(album), "Rank 0 must be the album this device saw; got \(resultLabel)")
+        // The ranker orders by match tier, then type (spec §16.15), so the album need not be rank 0:
+        // it must be among the device's rows. Rank 0 is only reported.
+        let albumResult = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "dulcet.search.result.", album
+        )).firstMatch
+        // The list is lazy: a row below the fold is not in the hierarchy until it is scrolled to.
+        _ = dismissKeyboardIfPresent(in: app)
+        var swipes = 0
+        while !albumResult.waitForExistence(timeout: 2), swipes < 4 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(albumResult.exists,
+            "The album this device saw must be among the device's results; rank 0 was \(resultLabel): "
+                + app.debugDescription)
+        let albumRank = albumResult.exists ? albumResult.identifier : "<none>"
         _ = dismissKeyboardIfPresent(in: app)
 
         // 4. Reconnect in place, then leave the server as it was found.
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
             return
         }
-        guard reconnect.waitForExistence(timeout: 10) else {
+        // Library comes back where the person left it -- the album page, on a phone's tab and on
+        // an iPad's sidebar alike -- and that page offers its own Reconnect (`dulcet.reader.retry`),
+        // which reconnects the same session as the account's (`dulcet.reader.reconnect`) on Home.
+        let reconnectHere = app.buttons.matching(NSPredicate(
+            format: "label == %@ AND (identifier == %@ OR identifier == %@)",
+            "Reconnect", "dulcet.reader.reconnect", "dulcet.reader.retry"
+        )).firstMatch
+        guard reconnectHere.waitForExistence(timeout: 10) else {
             XCTFail("Reconnect must still be offered in the library: " + app.debugDescription)
             return
         }
-        reconnect.tap()
-        XCTAssertTrue(reconnect.waitForNonExistence(timeout: 30),
+        let reconnectedFrom = reconnectHere.identifier
+        reconnectHere.tap()
+        XCTAssertTrue(reconnectHere.waitForNonExistence(timeout: 30),
             "Reconnect must bring the library back without leaving it: " + app.debugDescription)
-        guard openLibraryAlbum(album, in: app, compact: compact), heart.waitForExistence(timeout: 10) else { return }
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        if !(albumTitle.exists && albumTitle.label == album) {
+            guard openLibraryAlbum(album, in: app, compact: compact) else { return }
+        }
+        guard heart.waitForExistence(timeout: 10) else {
+            XCTFail("The album page must offer its heart after Reconnect: " + app.debugDescription)
+            return
+        }
         heart.tap()
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20), false,
             "Removing the favourite must reach the server")
         print("DULCET READER PROOF PASS destination=\(compact ? "compact" : "regular")"
-            + " relaunch=device-only scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)")
+            + " relaunch=device-only scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)"
+            + " album-row=\(albumRank) reconnected-from=\(reconnectedFrom)")
     }
 
     /// A track that cannot play because of what it is -- here, an MP3 whose frames do not decode --

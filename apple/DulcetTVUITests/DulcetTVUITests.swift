@@ -323,6 +323,14 @@ final class DulcetTVUITests: XCTestCase {
             "Returning to Library must present the library, not the section it came from: " + app.debugDescription
         )
         XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Library")
+        // The reader's section bar is chrome; an album tile on Home is the library itself, read
+        // through the reader (the legacy library views are not reachable while it holds the account).
+        let shelfTile = app.descendants(matching: .any).matching(identifier: "dulcet.library.album").firstMatch
+        XCTAssertTrue(
+            shelfTile.waitForExistence(timeout: 30),
+            "Library must paint the reader's albums, not only its section bar: " + app.debugDescription
+        )
+        let observedTile = shelfTile.exists ? shelfTile.label : "missing"
         XCTAssertFalse(
             app.textFields["dulcet.search.field"].firstMatch.exists,
             "Library must replace the search surface: " + app.debugDescription
@@ -330,7 +338,8 @@ final class DulcetTVUITests: XCTestCase {
         print("DULCET TV SEARCH PASS query=typed ranks=\(observedLabels)"
             + " activated-rank=\(canaryRank) activation=remote-select source=search"
             + " title=\(observedTitle) progress=\(initialValue)->\(observedProgress)"
-            + " reached-search=section-bar returned-to=library setup=debug-account-only")
+            + " reached-search=section-bar returned-to=library library-tile=\(observedTile)"
+            + " setup=debug-account-only")
     }
 
     /// DulcetAccountConnectionView installs its own onExitCommand and supplies `nil` while idle:
