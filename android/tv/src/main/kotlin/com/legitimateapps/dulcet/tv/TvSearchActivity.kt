@@ -141,8 +141,14 @@ internal fun TvSearchScreen(
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
     val accountEntry = LocalTvAccountEntry.current
-    val resultFocus = remember(state.results.map { it.id }) {
-        List(state.results.size) { FocusRequester() }
+    // One read of the rows for this composition, used by the list and its focus requesters alike.
+    // The list's items are read when it measures, not when this composes; reading the state again
+    // there let a publication landing between the two (the results arriving) meet requesters sized
+    // for the rows before it, and the first result threw.
+    val rows = state.rows
+    val rowsScope = state.scope
+    val resultFocus = remember(rows.map { it.item.id }) {
+        List(rows.size) { FocusRequester() }
     }
 
     val keyboard = LocalSoftwareKeyboardController.current
@@ -241,14 +247,14 @@ internal fun TvSearchScreen(
                     .semantics { this[SearchObservation] = state },
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                itemsIndexed(state.rows) { index, row ->
+                itemsIndexed(rows) { index, row ->
                     val result = row.item
                     TvSearchResult(
                         result = result,
                         note = listOfNotNull(
                             resources.getString(SharedR.string.search_row_device_only).takeIf {
                                 row.source == AndroidLibrarySearchRowSource.Device &&
-                                    state.scope == AndroidLibrarySearchScope.ServerAndDevice
+                                    rowsScope == AndroidLibrarySearchScope.ServerAndDevice
                             },
                             resources.getString(SharedR.string.library_not_available_offline)
                                 .takeIf { row.playability == AndroidLibraryPlayability.UnavailableOffline },
