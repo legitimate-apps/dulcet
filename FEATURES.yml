@@ -690,6 +690,92 @@
       }
     },
     {
+      "id": "library.browse",
+      "title": "Browse the library, live and from what this device has seen",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1614-offline-the-presentation-states-and-reconnect",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-76", "CONF-77", "CONF-82", "CONF-86", "CONF-87"],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-macos-window-reconnect-and-lookahead-app-proofs",
+            "reason": "CONF-77 (reconnect's counted requests), CONF-82 (window tearing, rebasing, scanning mode and anchor keeping), CONF-86 (home rows publishing independently) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests, whose JUnit no evidence-verified job uploads. No macOS app-host or UI test drives them, so no workflow, job or test can be named yet. CONF-76 is also only partly observed here: the Mac proof evidences the cached-first publication on the relaunch but not a grid-only album's cached header online or a never-opened album offline."
+          },
+          "unevidenced_conformance": {
+            "CONF-76": "The Mac proof observes CONF-76's first clause only -- the relaunch's first albums and album-page publications are cached(offline) with the live read's titles and tracks, nothing is sent before Reconnect. It does not observe the other two: a grid-only album's cached header online and a never-opened album unavailable offline.",
+            "CONF-77": "No app-level proof counts reconnect's requests on Apple; the session's reconnect-in-place is unit-tested only (LibraryReaderTests).",
+            "CONF-82": "Window tearing, rebasing and scanning mode are exercised by core tests only; no test drives them through this app.",
+            "CONF-86": "Home rows publishing independently is exercised by core tests only; the Mac proof opens the albums window, not Home.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests only."
+          },
+          "evidence": [
+            {"observes": "the macOS app's production reader, reopened on a saved account against the database a connected run filled, publishes the albums list and a seen album page from the device first -- cached and offline, with the same titles and tracks the live read showed, with no loading publication before it -- and a Reconnect in place makes the same list live",
+             "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetMacAccountConnectAppTest/readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw"}
+          ],
+          "reason": "apple-ci drives the macOS app host against the disposable fixture in the same step as its other app-host proofs. readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw builds the store the way production does -- DulcetLibrarySession over DulcetCoreLibraryReaderFactory on a database of its own -- connects through the real account connector, and observes the reader's own publications rather than a view's copy of them. What it evidences is the first of CONF-76's three clauses: on the relaunch the first albums publication and the first album-page publication are cached(offline), carrying the same eight titles and four tracks the live read showed, with no loading publication ahead of them and no request sent until Reconnect. It does NOT observe the other two clauses (a grid-only album's cached header online, and a never-opened album unavailable offline), which is why CONF-76 is declared unevidenced above rather than evidenced. The credential store is in memory because an ad-hoc signed host cannot reach the data-protection Keychain, so the proof starts at that boundary; everything after it is the shipping reader, database and facade."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-ios-publication-order-reconnect-and-lookahead-app-proofs",
+            "reason": "The iPhone proof drives a saved account into the library this device saw, but it does not observe CONF-76's publication ORDER: no assertion separates the cached publication from a loading one, and the never-opened-offline clause is not driven. CONF-77 (reconnect's counted requests), CONF-82 (window tearing, rebasing, scanning mode and anchor keeping), CONF-86 (home rows publishing independently) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests, whose JUnit no evidence-verified job uploads, and no iOS UI test drives them, so no workflow, job or test can be named yet."
+          },
+          "unevidenced_conformance": {
+            "CONF-76": "The iPhone proof opens a saved account into what the device saw, but it does not observe CONF-76's publication ORDER: no assertion distinguishes the cached publication from a loading one, and the never-opened-offline clause is not driven.",
+            "CONF-77": "No app-level proof counts reconnect's requests on Apple; the session's reconnect-in-place is unit-tested only (LibraryReaderTests).",
+            "CONF-82": "Window tearing, rebasing and scanning mode are exercised by core tests only; no test drives them through this app.",
+            "CONF-86": "Home rows publishing independently is exercised by core tests only.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests only."
+          },
+          "evidence": [
+            {"observes": "the iPhone app, relaunched on a saved account with no launch arguments, opens straight into its library with the Reconnect action and the \"Showing what this device has seen\" copy, the album's favourite still shown, and search answers from the device with its scope label; Reconnect clears the banner",
+             "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite"}
+          ],
+          "reason": "apple-ci runs this proof on an iPhone simulator against the disposable fixture, in the step whose shell owns that server, and reads its evidence through the same execution guard and JUnit emission as the iPhone search and playback proofs. The test itself asserts the window is compact, so its result cannot be substituted for a regular-width one. It is deliberately not cited for any conformance id: it drives the reader through the app's own UI but does not measure the request counts or publication order those ids pin, so every declared id above is declared unevidenced instead. ipados stays planned: the test reads the window's width and there is no iPad run of it, so an iPhone result is not iPadOS evidence."
+        },
+        "ipados": {"status": "planned"},
+        "tvos": {"status": "planned"},
+        "android": {"status": "planned"},
+        "androidtv": {"status": "planned"}
+      }
+    },
+    {
+      "id": "library.favourites",
+      "title": "Favourite what is in the library, shown at once",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1620-favourites-and-ratings-in-a-reader-the-local-change-is-shown-at-once",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-84"],
+      "platforms": {
+        "macos": {"status": "planned"},
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-ios-favourite-publication-and-revalidation-app-proofs",
+            "reason": "The iPhone proof observes the tap filling the heart and the server then reporting the album starred, but CONF-84's other clauses are not driven through any app: that the change is in the SAME publication as the tap, that a revalidation landing before the send completes does not remove it, that compaction sends only the last value, and that the echoed value is adopted are exercised only by core tests, whose JUnit no evidence-verified job uploads. There is also no app-level favourite proof on macOS, iPadOS or tvOS at all, so those cells stay planned."
+          },
+          "unevidenced_conformance": {
+            "CONF-84": "The proof observes the tap filling the heart and the server then reporting the album starred, and the same after a relaunch, but not CONF-84's other clauses: that the change is in the SAME publication as the tap, that a revalidation landing before the send completes does not remove it, that compaction sends only the last value, or that the echoed value is adopted."
+          },
+          "evidence": [
+            {"observes": "the iPhone app's album heart flips to Remove Favorite within three seconds of the tap and the disposable server then reports the album starred; after a relaunch the heart is still filled from the device; unfavouriting returns the server to not starred",
+             "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite"}
+          ],
+          "reason": "The same iPhone run as library.browse/ios, cited here for the favourite half of it. The heart's label is the assertion: it must read Remove Favorite within three seconds of the tap, and the server is read back over /rest with the disposable account to prove the write crossed rather than only the UI changed. It clears any favourite an earlier run left before asserting, so the before-state is the proof's own, and it removes the favourite again at the end. Reading the server directly is what separates a UI change from a delivered one; it is not a claim about the same-frame publication CONF-84 requires, which stays unevidenced. No Mac, iPadOS or tvOS app-level favourite proof exists, so those cells stay planned."
+        },
+        "ipados": {"status": "planned"},
+        "tvos": {"status": "planned"},
+        "android": {"status": "planned"},
+        "androidtv": {"status": "planned"}
+      }
+    },
+    {
       "id": "search.query",
       "title": "Search the local and server library",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#181-search",
@@ -701,11 +787,11 @@
           "evidence": [
             {"conformance": "CONF-41", "workflow": "apple-ci", "job": "apple-ci",
              "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"},
-            {"observes": "the macOS app resolves dulcet.search.field to a real NSTextField, makes it first responder, types the query, renders the ranked rows in the real NSTableView, and Return on the canary row replaces exactly one queue with the search-sourced intent while rendering alone replaces none",
+            {"observes": "the macOS app, reading through the library reader over the production facade and a fresh database, resolves dulcet.search.field to a real NSTextField, makes it first responder, types the query, renders the reader's rows in the real NSTableView (the full expected set, one per rank, the canary at a non-zero rank), and Return on the canary row replaces exactly one queue with the search-sourced intent starting at that row, with the reader's own id for it, while rendering alone replaces none",
              "workflow": "apple-ci", "job": "apple-ci",
              "test": "DulcetMacAccountConnectAppTest/searchQueryRanksAndActivatesTrackThroughHostedAppUI"}
           ],
-          "reason": "apple-ci executes CONF-41 in the macosArm64 core-conformance runtime, and in the same job drives search through the macOS app's own UI: the query is typed into the production search field after it is made first responder, the ranked rows are read back from the real NSTableView, and Return on the canary row is observed to replace exactly one queue with the search-sourced playback intent. A negative control in the same test requires that rendering results alone replaces none. The playback controller is a double, so what is observed is the playback INTENT -- which is exactly what this cell's promotion condition asked for -- not audio."
+          "reason": "apple-ci executes CONF-41 in the macosArm64 core-conformance runtime, and in the same job drives search through the macOS app's own UI: the query is typed into the production search field after it is made first responder, the ranked rows are read back from the real NSTableView, and Return on the canary row is observed to replace exactly one queue with the search-sourced playback intent. A negative control in the same test requires that rendering results alone replaces none. The playback controller is a double, so what is observed is the playback INTENT -- which is exactly what this cell's promotion condition asked for -- not audio. Search is the reader's (§16.15); the legacy server search is not wired in this proof."
         }, "ios": {
           "status": "shipped",
           "evidence": [

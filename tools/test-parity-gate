@@ -877,6 +877,10 @@ passing_cases = """\
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="searchQueryRanksAndActivatesTrackThroughHostedAppUI" time="0.1" />
+  <testcase classname="DulcetMacAccountConnectAppTest"
+            name="readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone" time="0.1" />
   <testcase classname="DulcetiOSUITests"

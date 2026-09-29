@@ -1004,6 +1004,47 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
             DulcetMacAccountConnectAppTest
+          # The reader's own library proof (spec §16.14, §16.18 R2b): a connected launch paints
+          # the library live, and a relaunch on the saved account paints the same library from
+          # what this device saw, before any loading state and with nothing sent.
+          #
+          # Its own invocation and its own result bundle, exactly as the two app-host proofs
+          # above: the execution guard names one test, and a single run of several would let one
+          # test's absence hide inside another's pass. It reuses the product the first macOS
+          # test invocation built -- `test-without-building`, like the search proof.
+          #
+          # It takes the same fixture environment as the search proof (`DULCET_*` build settings
+          # that the DulcetMac scheme maps onto the test's `DULCET_CONFORMANCE_*`), and it refuses
+          # anything but the disposable loopback server. It writes to no user state: it makes its
+          # own database and its own in-memory credential store, so unlike the iOS proof below it
+          # needs no seed step and leaves the fixture's corpus untouched.
+          DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetMac \
+              -configuration Debug \
+              -destination 'platform=macOS' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-mac-reader-library-test.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY=- \
+              CODE_SIGN_ENTITLEMENTS= \
+              DEVELOPMENT_TEAM= \
+              PROVISIONING_PROFILE_SPECIFIER= \
+              DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+              DULCET_TEST_CONFORMANCE_DISPOSABLE=true 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-mac-reader-library-test.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-mac-reader-library-test.xcresult" \
+            DulcetMacTests.DulcetMacAccountConnectAppTest \
+            readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-mac-reader-library-test.xcresult" \
+            "$RUNNER_TEMP/dulcet-mac-reader-library-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
+            DulcetMacAccountConnectAppTest
           # Moved verbatim into tools/ci/, and invoked HERE so its position in this sequence is
           # unchanged. See the script header for why it is a file at all.
           tools/ci/run-app-host-library-sync-proof macos
@@ -1467,6 +1508,43 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # ---- iOS reader-library evidence (spec §16.14, §16.18 R2b) -------------------------
+          # The library is the reader's end to end on this destination: a favourite reaches the
+          # server (CONF-84), a relaunch with only the saved account opens straight into what this
+          # device saw with Reconnect offered and nothing sent (CONF-76, CONF-10b), search answers
+          # from the device and labels its scope, and Reconnect brings the library back in place.
+          #
+          # Inside this step for the same reason as the proofs above: Navidrome's lifetime is this
+          # step's shell. Unlike them it WRITES to the disposable server -- it clears any
+          # favourite an earlier run left, stars the album to prove the write crosses, and removes
+          # it again -- and it asserts the server's state over /rest either side. That is allowed
+          # on the disposable fixture and would not be on any other server.
+          #
+          # The test reads its window width to decide compact from regular, so this iPhone run is
+          # ios evidence only. There is no iPad variant of it yet: an iPhone run does not evidence
+          # ipados, and the ipados cell stays planned until one exists.
+          python3 tools/ci/isolate-simulator --phase reader-library-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-reader-library.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-reader-library.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-reader-library.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-reader-library.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-reader-library-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           # tvOS setup supplies an account and nothing else. The control reaches Search through
           # the section bar by remote, types into the real field, activates the focused result,
           # and returns to Library the same way, so it evidences reachability and not only that
@@ -1744,6 +1822,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-library-test-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-library-junit" \
             "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
             "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
