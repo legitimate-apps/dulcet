@@ -155,7 +155,9 @@ with tempfile.TemporaryDirectory() as directory:
 # an Apple input without running the Apple legs.
 tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
                          check=True).stdout.splitlines()
-readers = [path for path in tracked if planner.apple_affecting(path)]
+# The planner itself names every excluded tool, as data; that is the list, not a dependency.
+readers = [path for path in tracked
+           if planner.apple_affecting(path) and path != "tools/ci/plan-apple-legs"]
 texts: dict[str, str] = {}
 for path in readers:
     try:
