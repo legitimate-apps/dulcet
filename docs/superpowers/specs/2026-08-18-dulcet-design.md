@@ -4777,7 +4777,10 @@ before a reconnect answers its own caller after it, and that answer can be a fai
 after a newer read has already shown live lyrics — the core does this on purpose, since it is the
 answer to that request. A Swift or Android bridge must therefore cancel a read that a newer read of
 the same track supersedes, or order publications by admission and drop an older one; a panel that
-paints whichever publication arrives last would repaint a failure over live lyrics.
+paints whichever publication arrives last would repaint a failure over live lyrics. The Android
+shells meet this by numbering each request and showing an answer only when no answer to a later
+request has been shown (`LatestAnswer` in the shared Android module); a new track forgets every
+earlier request.
 
 A read is one endpoint as the gate chose it and one track: **`songLyrics` v1 and v2 are separate
 reads** (fourth review) — v2 asks for more (`enhanced=true`), so its refusal says nothing about v1's
@@ -4977,7 +4980,11 @@ again and one cue per word or syllable with its own text, times and byte offsets
 with its timestamps stripped, an unmatched artist/title answers `ok` with `value: ""`, and for a
 multilingual file it returns one language only.
 
-*For the shells* — the Now Playing panel is W17's UI half, not built here: render the selected
+*For the shells* — the Now Playing panel is W17's UI half, built on Android (a sheet from the phone
+player, a panel in place of Up Next on the TV) over the `AndroidLibraryLyrics` facade, and not yet
+on Apple. Media time between the playback controller's samples (about every 500 ms) is
+interpolated on the monotonic clock while playback progresses, never more than 1 s past the last
+sample. Render the selected
 layer; when synced, call `cursorAtMilliseconds(position)` on each position update, scroll to `index`
 and highlight through `lastIndex`, dimming on `isInterlude`; when unsynced, show the text statically; when the selected
 layer is null, say there are no lyrics; when `isTrimmed`, say that some lyrics were too large to
@@ -5243,7 +5250,7 @@ parameter; OBSERVED by the review, 600 playlists in one response on the referenc
 send `readonly` — ownership by this account. Dulcet follows `readonly` even for an admin, whom the
 reference server would let edit other users' playlists: editing someone else's playlist is not a
 feature Dulcet offers. An owner is compared with the account ignoring case (above). **REQUIREMENT on
-the shells, not yet met by any shell:** show a playlist's owner, and present one whose `editable` is
+the shells, met on Android (phone and TV), not yet on Apple:** show a playlist's owner, and present one whose `editable` is
 false as read-only, with no edit controls. The core refuses an edit of one (`NotEditable`); the
 server's code 50 is told like any refusal.
 
@@ -6893,6 +6900,25 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-09-29 — Android playlists and lyrics: the shells over the core editor and lyrics (§18.4,
+§18.6)** — the Android phone lists playlists in the Library, opens a playlist page that plays and
+shuffles in the playlist's order (duplicates kept, an entry chosen by position, never by id), and
+edits through the core editor only: create, rename, delete, append from track rows, row menus and an
+album's header, and move and remove in an edit mode that names the entries drawn as the view acted
+on. The TV browses and plays playlists and edits none. Both show a playlist's owner and present
+another user's as read-only, which meets the §18.6 shell requirement on Android. The core gains two
+Android facades over the reader, `AndroidLibraryPlaylists` and `AndroidLibraryLyrics`, on the same
+terms as the rest of `AndroidLibraryReader` (reader thread, call order, one main-thread completion,
+`Closed` after close). Lyrics show on the phone in a sheet from the player and on the TV in place of
+Up Next. Two facts learned, both now rules. (1) The §18.4 bridge rule binds even within one track:
+the stored document and the live read are two requests, and a read begun before a reconnect can
+answer after the newer one, so the Android shells order answers by request (`LatestAnswer`). (2) On
+the phone, a pushed page (a playlist, an album) now keeps the Library's own state underneath it, so
+Back from a playlist returns to the Playlists list instead of resetting to the home rows. The live
+app proofs against the disposable server read the server directly after every edit and assert the
+only writes are the three playlist writes, each read back before the next; they do not reach
+CONF-88..91 or CONF-42 as a whole, which the FEATURES cells name as gaps.
 
 **2026-09-29 — Android favourites: hearts everywhere, and a Favourites list that re-reads after a
 change (§16.20)** — the Android phone and TV apps put a heart on song rows, album and artist pages and

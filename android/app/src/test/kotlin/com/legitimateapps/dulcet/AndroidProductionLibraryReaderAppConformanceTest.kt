@@ -89,4 +89,20 @@ class AndroidProductionLibraryReaderAppConformanceTest {
         scenarios.anUnreachableAnswerArrivingInTheBackgroundStartsNoRead()
 
     @Test fun aTrackTappedPlaysTheAlbumFromThatTrack() = scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {}
+
+    // ---- Playlists (§18.6) and lyrics (§18.4) --------------------------------------------------------
+
+    @Test fun aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer() =
+        scenarios.aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer()
+
+    @Test fun aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntryTapped() =
+        scenarios.aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected {}
+
+    @Test fun theLyricsOfThePlayingTrackAreReadLiveAndShownSynced() =
+        scenarios.theLyricsOfThePlayingTrackAreReadLiveAndShownSynced {
+            compose.onNodeWithTag("player.mini").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithTag("player.lyrics").performClick()
+            compose.waitForIdle()
+        }
 }

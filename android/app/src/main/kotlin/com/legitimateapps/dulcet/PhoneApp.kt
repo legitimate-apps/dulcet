@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import com.legitimateapps.dulcet.library.LibraryLifecycle
 import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.playTracks
+import com.legitimateapps.dulcet.library.playPlaylist
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.titledTracks
@@ -90,6 +92,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf() }
     var playerOpen by rememberSaveable { mutableStateOf(false) }
+    var adding by remember { mutableStateOf<PlaylistAddition?>(null) }
 
     val playback = rememberPlaybackController()
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
@@ -119,6 +122,15 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         playTracks = { items, rawId, source ->
             if (playTracks(playback, provider, items, rawId, source)) playerOpen = true
         },
+        openPlaylist = { routes += "playlist:$it" },
+        followPlaylist = { local, server ->
+            val index = routes.lastIndexOf("playlist:$local")
+            if (index >= 0) routes[index] = "playlist:$server"
+        },
+        playPlaylist = { playlist, position, shuffle ->
+            if (playPlaylist(playback, provider, playlist, position, shuffle)) playerOpen = true
+        },
+        addToPlaylist = { adding = it },
     )
     // A restored Up Next row with no title takes it from what this device has seen, as it did from the
     // whole-library mirror: a seen-cache read, never a request.
@@ -158,12 +170,17 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         }
     }) {
         val route = routes.lastOrNull()
+        // The library's own state — which view, how far scrolled — is kept while a page is pushed
+        // over it, so Back from a playlist returns to the playlists, not to the home rows.
+        val saved = rememberSaveableStateHolder()
         when {
             route?.startsWith("album:") == true ->
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
             route?.startsWith("artist:") == true ->
                 ArtistScreen(account, library, route.removePrefix("artist:"), actions)
-            tab == PhoneTab.Library -> LibraryHome(account, library, actions, playingRawId)
+            route?.startsWith("playlist:") == true ->
+                PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
+            tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
             else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account) { result ->
                 playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
             }
@@ -174,6 +191,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     // composes its content during layout, after this effect has run, so on the phone start() — and
     // its reconnect's first request — comes before the screens open their windows; each window still
     // paints from the cache before its own read is issued.
+    adding?.let { addition -> AddToPlaylistSheet(account, library, addition) { adding = null } }
     LibraryLifecycle(library)
 }
 
@@ -256,6 +274,13 @@ internal class PhoneActions(
     val rememberAlbum: (AndroidLibraryPublication) -> Unit = {},
     /** A list's playable tracks queued from the one with the id, as a library queue with the name. */
     val playTracks: (List<AndroidLibraryItem>, String, String) -> Unit = { _, _, _ -> },
+    val openPlaylist: (String) -> Unit = {},
+    /** A playlist page open on a local id follows the playlist to the server's id once it is made. */
+    val followPlaylist: (String, String) -> Unit = { _, _ -> },
+    /** A playlist publication, the index of an entry in its items, and shuffle. */
+    val playPlaylist: (AndroidLibraryPublication, Int, Boolean) -> Unit = { _, _, _ -> },
+    /** Opens "Add to playlist" for songs or an album. */
+    val addToPlaylist: (PlaylistAddition) -> Unit = {},
 )
 
 /** [position] indexes the album's rows; the queue skips rows with no metadata to play. */

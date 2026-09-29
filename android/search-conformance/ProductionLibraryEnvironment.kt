@@ -83,6 +83,8 @@ class ProductionLibraryEnvironment : ExternalResource() {
         server = DisposableServer(target)
         // Favourites are per-user server state; a run starts from none, whatever an earlier run left.
         server.unstarEverything()
+        // So are playlists: a run starts with none of the ones these tests make.
+        server.deletePlaylistsNamed(TEST_PLAYLIST_PREFIX)
         proxy = CountingProxy(target)
         AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
     }
@@ -93,6 +95,7 @@ class ProductionLibraryEnvironment : ExternalResource() {
         runCatching { closeProcessReader() }
         proxy.close()
         runCatching { server.unstarEverything() }
+        runCatching { server.deletePlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         AndroidAccountCredentialStore(app).delete()
         app.deleteDatabase("dulcet.db")
     }
@@ -100,6 +103,9 @@ class ProductionLibraryEnvironment : ExternalResource() {
     companion object {
         const val USERNAME = "dulcet-admin"
         const val PASSWORD = "dulcet-ci-canary-password"
+
+        /** Every playlist a test makes is named with this, and only those are ever deleted. */
+        const val TEST_PLAYLIST_PREFIX = "Dulcet test "
     }
 }
 
@@ -164,13 +170,17 @@ class PlatformNetwork(app: Application) {
  * for per-user state the app claims to have changed.
  */
 class DisposableServer(private val baseUrl: String) {
-    fun get(endpoint: String, parameters: Map<String, String> = emptyMap()): JSONObject {
+    fun get(endpoint: String, parameters: Map<String, String> = emptyMap()): JSONObject = get(endpoint, parameters.toList())
+
+    /** [parameters] in order, a name repeated as often as it appears (`songId`, `songIdToAdd`). */
+    fun get(endpoint: String, parameters: List<Pair<String, String>>): JSONObject {
         val salt = ByteArray(16).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
         val token = MessageDigest.getInstance("MD5").digest((ProductionLibraryEnvironment.PASSWORD + salt).toByteArray())
             .joinToString("") { "%02x".format(it) }
-        val query = (mapOf("u" to ProductionLibraryEnvironment.USERNAME, "t" to token, "s" to salt, "v" to "1.16.1",
-            "c" to "dulcet-conformance", "f" to "json") + parameters)
-            .entries.joinToString("&") { (key, value) -> "$key=${URLEncoder.encode(value, "UTF-8")}" }
+        val query = mapOf("u" to ProductionLibraryEnvironment.USERNAME, "t" to token, "s" to salt, "v" to "1.16.1",
+            "c" to "dulcet-conformance", "f" to "json")
+            .toList().let { it + parameters }
+            .joinToString("&") { (key, value) -> "$key=${URLEncoder.encode(value, "UTF-8")}" }
         val connection = URI("$baseUrl/rest/$endpoint?$query").toURL().openConnection() as HttpURLConnection
         try {
             val body = connection.inputStream.use { String(it.readBytes(), Charsets.UTF_8) }
@@ -185,6 +195,28 @@ class DisposableServer(private val baseUrl: String) {
     fun albumStarred(albumId: String): Boolean = get("getAlbum", mapOf("id" to albumId)).getJSONObject("album").has("starred")
 
     fun songStarred(songId: String): Boolean = get("getSong", mapOf("id" to songId)).getJSONObject("song").has("starred")
+
+    /** The account's playlists: id to name. */
+    fun playlists(): Map<String, String> {
+        val list = get("getPlaylists").optJSONObject("playlists")?.optJSONArray("playlist") ?: JSONArray()
+        return (0 until list.length()).associate { list.getJSONObject(it).getString("id") to list.getJSONObject(it).getString("name") }
+    }
+
+    /** One playlist's entries, song ids in the server's order, duplicates kept. */
+    fun playlistEntries(id: String): List<String> {
+        val entries = get("getPlaylist", mapOf("id" to id)).getJSONObject("playlist").optJSONArray("entry") ?: JSONArray()
+        return (0 until entries.length()).map { entries.getJSONObject(it).getString("id") }
+    }
+
+    /** Makes a playlist directly on the server, as another client would. Returns its id. */
+    fun createPlaylist(name: String, songIds: List<String>): String {
+        require(name.startsWith(ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX)) { "a test playlist is named for cleanup" }
+        return get("createPlaylist", listOf("name" to name) + songIds.map { "songId" to it }).getJSONObject("playlist").getString("id")
+    }
+
+    fun deletePlaylistsNamed(prefix: String) {
+        for ((id, name) in playlists()) if (name.startsWith(prefix)) get("deletePlaylist", mapOf("id" to id))
+    }
 
     fun unstarEverything() {
         val starred = get("getStarred2").optJSONObject("starred2") ?: return

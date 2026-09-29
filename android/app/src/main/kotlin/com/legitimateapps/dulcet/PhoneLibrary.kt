@@ -30,6 +30,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -109,7 +111,7 @@ import com.legitimateapps.dulcet.ui.rememberArtwork
  * file draws them with the shared words in `LibraryCopy.kt`, the same words the TV app uses.
  */
 
-private enum class LibraryView { Home, Albums, Artists, Favourites }
+private enum class LibraryView { Home, Albums, Artists, Favourites, Playlists }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -135,6 +137,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
                     LibraryView.Albums -> R.string.library_view_albums
                     LibraryView.Artists -> R.string.library_view_artists
                     LibraryView.Favourites -> R.string.library_view_favourites
+                    LibraryView.Playlists -> R.string.library_view_playlists
                 })) },
                 modifier = Modifier.testTag("library.view.${option.name.lowercase()}"),
             )
@@ -145,6 +148,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
             LibraryView.Albums -> AlbumsGrid(account, session, actions)
             LibraryView.Artists -> ArtistsList(session, actions)
             LibraryView.Favourites -> FavouritesList(account, session, actions, playingRawId)
+            LibraryView.Playlists -> PlaylistsList(account, session, actions)
         }
     }
 }
@@ -196,7 +200,7 @@ private fun HomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurfa
 }
 
 @Composable
-private fun RowPlaceholder(modifier: Modifier) {
+internal fun RowPlaceholder(modifier: Modifier) {
     Row(modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         repeat(3) {
             Box(Modifier.size(140.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
@@ -306,7 +310,8 @@ private fun FavouritesList(account: SearchAccount, session: LibrarySession, acti
                 TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag("library.favourites.track.$position"),
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
-                    favouriteTag = "library.favourites.track.$position.favourite") {
+                    favouriteTag = "library.favourites.track.$position.favourite",
+                    onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) }) {
                     note = null
                     actions.playTracks(tracks, track.rawId, title)
                 }
@@ -343,7 +348,7 @@ private fun FavouritesList(account: SearchAccount, session: LibrarySession, acti
 }
 
 @Composable
-private fun SectionHeading(text: Int, tag: String) {
+internal fun SectionHeading(text: Int, tag: String) {
     Text(stringResource(text), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp).testTag(tag),
         style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 }
@@ -354,7 +359,7 @@ private fun SectionHeading(text: Int, tag: String) {
  * "Nothing here yet".
  */
 @Composable
-private fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
+internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
     val resources = libraryResources()
     Column {
         FreshnessLine(publication.freshness, tag, retry)
@@ -380,7 +385,7 @@ private fun ListStatus(publication: AndroidLibraryPublication, tag: String, retr
  * statements that are made once rather than on every list (§16.12, §16.10).
  */
 @Composable
-private fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
@@ -436,6 +441,15 @@ internal fun AlbumScreen(
                 Icon(DulcetIcons.Refresh, stringResource(R.string.library_refresh))
             }
             val album = publication?.header as? AndroidLibraryItem.Album
+            val shown = publication
+            if (album != null && shown != null && shown.itemsState == AndroidLibraryItemsState.Present) {
+                IconButton(onClick = {
+                    actions.addToPlaylist(PlaylistAddition.Album(album.rawId, album.title,
+                        shown.items.filterIsInstance<AndroidLibraryItem.Track>().map { it.rawId }))
+                }, modifier = Modifier.testTag("album.addToPlaylist")) {
+                    Icon(DulcetIcons.PlaylistAdd, stringResource(R.string.playlist_add_to))
+                }
+            }
             if (album != null) FavouriteButton(album.favourite == true, "album.favourite") {
                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
             }
@@ -496,7 +510,8 @@ internal fun AlbumScreen(
                         TrackRow(item, position + 1, item.rawId == playingRawId, Modifier.testTag("album.track.$position"),
                             onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                             onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
-                            favouriteTag = "album.track.$position.favourite") {
+                            favouriteTag = "album.track.$position.favourite",
+                            onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(item.rawId), item.title.orEmpty())) }) {
                             note = null
                             actions.playAlbum(current, position, false)
                         }
@@ -528,7 +543,7 @@ internal fun FavouriteButton(favourite: Boolean, tag: String, modifier: Modifier
  * so a test can tell which entity a line is about.
  */
 @Composable
-private fun OutcomeLines(lines: List<Pair<AndroidLibraryEntity, String>>, primary: AndroidLibraryEntity?, tag: String) {
+internal fun OutcomeLines(lines: List<Pair<AndroidLibraryEntity, String>>, primary: AndroidLibraryEntity?, tag: String) {
     for ((target, line) in lines) {
         StatementText(line, if (target == primary) tag else "$tag.${target.kind.name.lowercase()}.${target.rawId}")
     }
@@ -614,7 +629,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
 
 /** The one freshness line (§16.14), with "Try again" where a reconnect can help. Null for live content. */
 @Composable
-private fun FreshnessLine(freshness: AndroidLibraryFreshness, tag: String, retry: () -> Unit) {
+internal fun FreshnessLine(freshness: AndroidLibraryFreshness, tag: String, retry: () -> Unit) {
     val resources = libraryResources()
     val line = resources.freshnessLine(freshness) ?: return
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -627,7 +642,7 @@ private fun FreshnessLine(freshness: AndroidLibraryFreshness, tag: String, retry
 }
 
 @Composable
-private fun StatementText(text: String, tag: String) {
+internal fun StatementText(text: String, tag: String) {
     Text(text, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag(tag),
         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
@@ -687,6 +702,7 @@ internal fun TrackRow(
     onUnavailable: () -> Unit,
     onFavourite: (() -> Unit)? = null,
     favouriteTag: String? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
@@ -709,12 +725,14 @@ internal fun TrackRow(
                     style = MaterialTheme.typography.bodyMedium)
             }
         },
-        trailingContent = if (track.durationMilliseconds == null && onFavourite == null) null else {
+        trailingContent = if (track.durationMilliseconds == null && onFavourite == null && onAddToPlaylist == null) null else {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     track.durationMilliseconds?.let { Text(formatDuration(it), style = MaterialTheme.typography.bodySmall) }
                     // A heart on a track that cannot play offline still works: a favourite is sent on reconnect.
                     if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
+                    // The row's context menu. An append is not positional, so it needs no view (§18.6).
+                    if (onAddToPlaylist != null) TrackMenu(favouriteTag?.removeSuffix(".favourite"), onAddToPlaylist)
                 }
             }
         },
@@ -723,7 +741,7 @@ internal fun TrackRow(
 }
 
 @Composable
-private fun PlayShuffleButtons(onPlay: () -> Unit, onShuffle: () -> Unit, enabled: Boolean, tagPrefix: String) {
+internal fun PlayShuffleButtons(onPlay: () -> Unit, onShuffle: () -> Unit, enabled: Boolean, tagPrefix: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = onPlay, enabled = enabled, modifier = Modifier.width(148.dp).testTag("$tagPrefix.play")) {
             Icon(DulcetIcons.Play, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
@@ -751,7 +769,7 @@ internal fun Artwork(account: SearchAccount, key: String?, title: String, size: 
 }
 
 @Composable
-private fun Monogram(name: String, size: Dp) {
+internal fun Monogram(name: String, size: Dp) {
     Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
         contentAlignment = Alignment.Center) {
         val initial = name.trim().firstOrNull()?.uppercase()
@@ -767,8 +785,27 @@ internal fun formatDuration(milliseconds: Long): String {
 }
 
 @Composable
-private fun longDuration(milliseconds: Long): String {
+internal fun longDuration(milliseconds: Long): String {
     val minutes = (milliseconds / 60_000).coerceAtLeast(1).toInt()
     return if (minutes < 60) stringResource(R.string.duration_minutes, minutes)
     else stringResource(R.string.duration_hours_minutes, minutes / 60, minutes % 60)
+}
+
+/** The row's context menu: what can be done to one song besides playing it. */
+@Composable
+private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.testTag((tag ?: "track") + ".menu")) {
+            Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.playlist_add_to)) },
+                leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
+                onClick = { open = false; onAddToPlaylist() },
+                modifier = Modifier.testTag((tag ?: "track") + ".menu.addToPlaylist"),
+            )
+        }
+    }
 }

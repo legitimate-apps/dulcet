@@ -150,7 +150,16 @@ internal fun NowPlayingScreen(
     close: () -> Unit,
 ) {
     var showQueue by rememberSaveable { mutableStateOf(false) }
-    val heart: (@Composable () -> Unit)? = library?.let { session -> { NowPlayingFavourite(session, state) } }
+    var showLyrics by rememberSaveable { mutableStateOf(false) }
+    // The header's library controls: the heart, and the lyrics (§18.4), which need the session's reader.
+    val heart: (@Composable () -> Unit)? = library?.let { session -> {
+        NowPlayingFavourite(session, state)
+        if (state.queue.getOrNull(state.currentIndex ?: -1) != null) {
+            IconButton(onClick = { showLyrics = true }, modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
+                Icon(DulcetIcons.Lyrics, stringResource(R.string.action_lyrics))
+            }
+        }
+    } }
     val surface = MaterialTheme.colorScheme.surface
     val accent = state.artworkKey?.let { ArtworkImages.accent(account, it) }
     val top by animateColorAsState(accent?.copy(alpha = 0.55f)?.compositeOver(surface) ?: MaterialTheme.colorScheme.primaryContainer,
@@ -168,6 +177,7 @@ internal fun NowPlayingScreen(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
     }
     if (showQueue) UpNextSheet(account, state, playback) { showQueue = false }
+    if (showLyrics && library != null) LyricsSheet(library, state, playback) { showLyrics = false }
 }
 
 /** The transport row's width with every button at its full size, and at its compact size. */

@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.runtime.saveable.rememberSaveable
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
@@ -183,7 +184,8 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     } else {
         null
     }
-    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite)
+    val lyrics: (@Composable () -> Unit)? = library?.let { session -> { TvLyricsPanel(session, state) } }
+    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics)
 }
 
 /** Lean-back Now Playing for [state]; null [playback] before the service is bound or without an account. */
@@ -193,8 +195,11 @@ internal fun TvNowPlayingScreen(
     state: AndroidPlaybackState,
     playback: TvPlayerActions?,
     favourite: TvPlayerFavourite? = null,
+    lyrics: (@Composable () -> Unit)? = null,
 ) {
     val playFocus = remember { FocusRequester() }
+    // The lyrics take Up Next's place while on (§18.4); the setting outlives a track change.
+    var showLyrics by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(playback != null) { if (playback != null) runCatching { playFocus.requestFocus() } }
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(
@@ -232,9 +237,13 @@ internal fun TvNowPlayingScreen(
                     if (state.error != null) Text(stringResource(R.string.tv_player_failed),
                         color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
                     Spacer(Modifier.height(20.dp))
-                    TvTransport(state, playback, playFocus, favourite)
+                    TvTransport(state, playback, playFocus, favourite,
+                        lyrics = if (lyrics != null && state.queue.getOrNull(state.currentIndex ?: -1) != null) showLyrics else null) {
+                        showLyrics = !showLyrics
+                    }
                     Spacer(Modifier.height(24.dp))
-                    if (state.queue.size > 1) TvUpNext(state, playback)
+                    if (showLyrics && lyrics != null && state.queue.getOrNull(state.currentIndex ?: -1) != null) lyrics()
+                    else if (state.queue.size > 1) TvUpNext(state, playback)
                 }
             }
         }
@@ -243,7 +252,8 @@ internal fun TvNowPlayingScreen(
 
 /** Shuffle, Previous, Play/Pause, Next and Repeat, left to right, as on the phone. */
 @Composable
-private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?, playFocus: FocusRequester, favourite: TvPlayerFavourite?) {
+private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?, playFocus: FocusRequester, favourite: TvPlayerFavourite?,
+                        lyrics: Boolean? = null, toggleLyrics: () -> Unit = {}) {
     val live = playback != null
     // tv-material buttons can keep an onClick from an earlier composition: read the modes live.
     val current by rememberUpdatedState(state)
@@ -278,6 +288,10 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
             TvToggle(if (favourite.favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
                 stringResource(if (favourite.favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add),
                 on = favourite.favourite, enabled = true, tag = "tv.player.favourite") { latest.toggle() }
+        }
+        if (lyrics != null) {
+            TvToggle(DulcetIcons.Lyrics, stringResource(SharedR.string.lyrics_title), on = lyrics, enabled = true,
+                tag = "tv.player.lyrics") { toggleLyrics() }
         }
     }
 }

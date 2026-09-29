@@ -1,5 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
+import com.legitimateapps.dulcet.library.playPlaylist
+import com.legitimateapps.dulcet.library.playlistOwnerLine
+import com.legitimateapps.dulcet.library.playlistPendingLine
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -138,7 +141,9 @@ internal const val ROUTE_LIBRARY = "library"
 internal const val ROUTE_ALBUMS = "albums"
 internal const val ROUTE_ARTISTS = "artists"
 internal const val ROUTE_FAVOURITES = "favourites"
+internal const val ROUTE_PLAYLISTS = "playlists"
 private const val ALBUM = "album:"
+private const val PLAYLIST = "playlist:"
 private const val ARTIST = "artist:"
 
 private val routeSaver = listSaver<SnapshotStateList<String>, String>(
@@ -205,6 +210,9 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
                         top == ROUTE_FAVOURITES -> TvFavouritesScreen(account, session, playback, playingRawId, navigator)
+                        top == ROUTE_PLAYLISTS -> TvPlaylistsGrid(account, session, navigator)
+                        top.startsWith(PLAYLIST) ->
+                            TvPlaylistScreen(account, session, playback, playingRawId, top.removePrefix(PLAYLIST), navigator)
                         top.startsWith(ALBUM) ->
                             TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator)
                         top.startsWith(ARTIST) ->
@@ -360,6 +368,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
                 TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
                 TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
                 TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
+                TvAction(stringResource(R.string.tv_library_playlists), "library.view.playlists") { navigator.open(ROUTE_PLAYLISTS) }
                 TvAction(stringResource(R.string.tv_refresh), "library.refresh", onClick = session::refresh)
             }
         }
@@ -804,22 +813,23 @@ private fun TvFavouriteButton(favourite: Boolean, tag: String, onClick: () -> Un
 @Composable
 private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                        onUnavailable: () -> Unit, onFavourite: (() -> Unit)? = null, tagPrefix: String = "album.track",
-                       default: Boolean = false) {
+                       default: Boolean = false, byPosition: Boolean = false) {
     if (onFavourite == null) {
-        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth())
+        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth(), byPosition)
         return
     }
     // The heart is beside the row, a focus target of its own: RIGHT from the row reaches it, and the
     // row stays one target whose action is play.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.weight(1f))
+        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.weight(1f), byPosition)
         TvFavouriteButton(track.isFavourite(), "$tagPrefix.$position.favourite", onFavourite)
     }
 }
 
 @Composable
 private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
-                           onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier) {
+                           onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
+                           byPosition: Boolean = false) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -861,11 +871,134 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
         }
         Box(Modifier.width(32.dp)) {
             if (playing) Icon(DulcetIcons.Play, nowPlaying, Modifier.size(20.dp).testTag("$tagPrefix.$position.playing"), tint = content)
-            else Text((track.trackNumber ?: position + 1).toString(), color = content)
+            else Text((if (byPosition) position + 1 else track.trackNumber ?: position + 1).toString(), color = content)
         }
         Text(track.title.orEmpty(), Modifier.weight(1f), color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (unavailable) Text(resources.getString(SharedR.string.library_not_available_offline), color = content)
         track.durationMilliseconds?.let { Text(clock(it), color = content) }
+    }
+}
+
+// ---- Playlists (spec §18.6): browse and play; editing is the phone's -------------------------------------
+
+/** The account's playlists, one response (§16.9). */
+@Composable
+private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
+    EnterRoute()
+    val surface = rememberSurface(session, ROUTE_PLAYLISTS) { openPlaylists() }
+    TvBrowseGrid(account, session, surface, "library.playlists", R.string.tv_library_playlists) { item ->
+        if (item is AndroidLibraryItem.Playlist) navigator.open(PLAYLIST + item.rawId)
+    }
+}
+
+/**
+ * One playlist, read-only here: its name, whose it is, and its entries in the playlist's order,
+ * duplicates kept. Play and Shuffle queue the playable entries; an entry plays the playlist from it.
+ */
+@Composable
+private fun TvPlaylistScreen(
+    account: SearchAccount,
+    session: LibrarySession,
+    playback: AndroidPlaybackController?,
+    playingRawId: String?,
+    rawId: String,
+    navigator: TvNavigator,
+) {
+    EnterRoute()
+    val surface = rememberSurface(session, PLAYLIST + rawId) { openPlaylist(rawId) }
+    val context = LocalContext.current
+    val publication by surface.state.collectAsState()
+    val observation by session.observation.collectAsState()
+    var note by remember(rawId) { mutableStateOf<String?>(null) }
+    val resources = libraryResources()
+    val provider = account.providerInstanceId
+    fun play(current: AndroidLibraryPublication, position: Int, shuffle: Boolean) {
+        note = null
+        if (playPlaylist(playback, provider, current, position, shuffle)) showNowPlaying(context)
+    }
+    // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.
+    val shown by rememberUpdatedState(publication)
+    val returning = pendingPosition("playlist.entry.")
+    val list = rememberLazyListState()
+    LaunchedEffect(returning, publication?.items?.size) {
+        val size = publication?.items?.size ?: return@LaunchedEffect
+        if (returning != null && returning < size) list.scrollToItem(returning + 2)
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().testTag("playlist.surface").semantics { this[LibraryObservation] = observation },
+        state = list,
+        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TvAction(stringResource(R.string.tv_back), "playlist.back", onClick = navigator.back)
+                TvAction(stringResource(R.string.tv_refresh), "playlist.refresh", onClick = session::refresh)
+            }
+        }
+        val current = publication
+        val playlist = current?.header as? AndroidLibraryItem.Playlist
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvConnectionNotices(session, accountNotices = false)
+                Row(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TvArtwork(account, playlist?.artworkKey, 200, DulcetIcons.PlaylistPlay)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(playlist?.name.orEmpty(), Modifier.testTag("playlist.title"),
+                            style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        playlist?.let { resources.playlistOwnerLine(it) }?.let { TvStatement(it, "playlist.owner") }
+                        playlist?.let { resources.playlistPendingLine(it) }?.let { TvStatement(it, "playlist.pending") }
+                        if (current != null) {
+                            resources.freshnessLine(current.freshness)?.let { TvStatement(it, "playlist.freshness") }
+                            (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
+                                TvStatement(resources.unavailableLine(unavailable.reason, LibrarySubject.List), "playlist.unavailable")
+                            }
+                        }
+                        if (current != null && playlist != null) {
+                            val playable = current.itemsState == AndroidLibraryItemsState.Present && current.items.any {
+                                it is AndroidLibraryItem.Track && !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline
+                            }
+                            if (playable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                TvAction(stringResource(R.string.tv_play), "playlist.play", icon = DulcetIcons.Play, default = true) {
+                                    shown?.let { play(it, 0, false) }
+                                }
+                                TvAction(stringResource(R.string.tv_shuffle), "playlist.shuffle", icon = DulcetIcons.Shuffle) {
+                                    shown?.let { play(it, 0, true) }
+                                }
+                            }
+                        }
+                        note?.let { TvStatement(it, "playlist.note") }
+                    }
+                }
+            }
+        }
+        if (current == null) return@LazyColumn
+        when (current.itemsState) {
+            AndroidLibraryItemsState.Loading -> item { TvStatement("…", "playlist.entries.loading") }
+            AndroidLibraryItemsState.Unavailable -> if (current.header != null) item {
+                TvStatement(
+                    resources.unavailableLine(
+                        current.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure,
+                        LibrarySubject.List,
+                    ),
+                    "playlist.entries.unavailable",
+                )
+            }
+            AndroidLibraryItemsState.Present -> {
+                if (current.items.isEmpty()) item { TvStatement(resources.getString(SharedR.string.library_empty_list), "playlist.empty") }
+                itemsIndexed(current.items) { position, item ->
+                    if (item is AndroidLibraryItem.Track) TvTrackRow(
+                        item,
+                        position,
+                        playing = item.rawId == playingRawId,
+                        onPlay = { play(current, position, false) },
+                        onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                        tagPrefix = "playlist.entry",
+                        byPosition = true,
+                    )
+                }
+            }
+        }
     }
 }
 

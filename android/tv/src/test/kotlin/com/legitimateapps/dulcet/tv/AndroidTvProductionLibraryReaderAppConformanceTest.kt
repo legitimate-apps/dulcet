@@ -166,6 +166,13 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "the TV's own Now Playing")
         }
 
+    /** A playlist selected with the remote plays in its own order from that entry and opens Now Playing. */
+    @Test fun aPlaylistSelectedWithTheRemotePlaysInItsOwnOrderAndOpensNowPlaying() =
+        scenarios.aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected {
+            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now Playing was opened")
+            assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action)
+        }
+
     // ---- The TV's own navigation, focus and playing (not shared with the phone) -------------------
 
     /**

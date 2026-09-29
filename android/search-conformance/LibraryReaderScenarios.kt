@@ -37,6 +37,7 @@ import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidLibrarySeenCounts
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
+import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.library.LibraryConnectionState
 import com.legitimateapps.dulcet.library.LibraryFrame
@@ -177,7 +178,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("the home rows to say offline") {
             (last("home.0").freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Offline
         }
-        val mark = proxy.size()
+        val mark = proxy.log().size
         openHomeAlbum(NEVER_OPENED_ALBUM)
         await("the never-opened album to publish") { frames("album:$neverOpened").isNotEmpty() }
         val offline = frames("album:$neverOpened")
@@ -233,7 +234,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         ui.backFromAlbum()
         await("the home rows to say offline") { HOME.all { last(it).freshness.isOfflineCached() } }
 
-        val mark = proxy.size()
+        val mark = proxy.log().size
         val reconnectsBefore = observed().reconnects
         val framesBefore = HOME.associateWith { frames(it).size }
         // The last visible read is held, so the sequence has a step left after the others are
@@ -317,7 +318,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         ui.openLibrary()
         awaitHomeLive()
         awaitQuiet()
-        val mark = proxy.size()
+        val mark = proxy.log().size
         val reconnectsBefore = observed().reconnects
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         // Longer than the retired fifteen-minute import cadence: a stopped app reads nothing.
@@ -402,7 +403,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         awaitQuiet()
 
         // The network comes back, and the reconnect it starts is held at its epoch read.
-        val mark = proxy.size()
+        val mark = proxy.log().size
         val reconnectsBefore = observed().reconnects
         proxy.hold { it.endpoint in EPOCH_READS }
         environment.network.restore()
@@ -450,7 +451,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         // Every connection is closed unanswered, and the app returns to the foreground.
         proxy.drop { true }
-        val mark = proxy.size()
+        val mark = proxy.log().size
         val reconnectsBefore = observed().reconnects
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
@@ -518,7 +519,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         // The network returns and the session's reconnect finds the server unreachable.
         proxy.drop { it.endpoint == "getScanStatus" }
-        val mark = proxy.size()
+        val mark = proxy.log().size
         val reconnects = observed().reconnects
         val answers = observed().reconnectAnswers
         environment.network.restore()
@@ -587,7 +588,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         awaitQuiet(composed = false)
         proxy.hold { it.endpoint == "getScanStatus" }
         proxy.drop { it.endpoint == "getScanStatus" }
-        val mark = proxy.size()
+        val mark = proxy.log().size
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         await("the return's epoch read to be issued, and held") {
             proxy.since(mark).any { it.endpoint == "getScanStatus" && !it.answered }
@@ -727,7 +728,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         // deviceOffline: the seen-cache's own counts, stated.
         environment.network.lose()
-        val mark = proxy.size()
+        val mark = proxy.log().size
         type("Thresh")
         await("deviceOffline") { search().answered == "Thresh" && search().scope is AndroidLibrarySearchScope.DeviceOffline }
         val counts = seenCounts()
@@ -841,7 +842,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         awaitQuiet()
         val song0 = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, songId)
         fun saved() = observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target == song0 }
-        val mark = proxy.size()
+        val mark = proxy.log().size
         assertEquals(false, selected("album.track.0.favourite"), "setup: the song's heart starts hollow")
         ui.activate(compose.onNodeWithTag("album.track.0.favourite"))
         await("the song's heart to fill") { selected("album.track.0.favourite") }
@@ -875,8 +876,232 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             "unstar-from-list=true cover-art=${coverArt()}")
     }
 
+    // ---- Playlists (§18.6) and lyrics (§18.4) ------------------------------------------------------
+
+    /**
+     * A playlist made on the server by another client opens from Library > Playlists and plays in
+     * ITS order — duplicates kept, not the album's — from the entry selected: the second of two
+     * entries for the same song starts there, not at the first.
+     */
+    fun aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected(afterPlay: () -> Unit) = withPlaybackService { playback ->
+        val album = server.get("getAlbum", mapOf("id" to server.albumId(OPENED_ALBUM))).getJSONObject("album").getJSONArray("song")
+        val songs = (0 until album.length()).map { album.getJSONObject(it).getString("id") }
+        assertTrue(songs.size >= 3, "setup: the album needs three songs")
+        // Not the album's order, and one song twice: only the playlist's own order can produce this.
+        val order = listOf(songs[2], songs[0], songs[2], songs[1])
+        val id = server.createPlaylist(PLAYLIST_ORDER, order)
+        assertEquals(order, server.playlistEntries(id), "setup: the server holds the order as made")
+
+        ui.openLibrary()
+        awaitHomeLive()
+        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        // The TV's browse grids carry no observation, so the list is waited on by what it draws.
+        await("the playlist listed") { listed("library.playlists.item", PLAYLIST_ORDER) != null }
+        ui.activate(compose.onNodeWithTag(listed("library.playlists.item", PLAYLIST_ORDER)!!))
+        await("the playlist live with its entries") {
+            frames("playlist:$id").lastOrNull()?.let { it.freshness == AndroidLibraryFreshness.Live && it.itemRawIds == order } == true
+        }
+        compose.onNodeWithTag("playlist.title").assertTextEquals(PLAYLIST_ORDER)
+        ui.select("playlist.entry.2", from = "playlist.entry.1")
+        await("the playlist to be queued") {
+            shadowOf(Looper.getMainLooper()).idle()
+            playback.state.value.queue.isNotEmpty()
+        }
+        val state = playback.state.value
+        assertEquals(order, state.queue.map { it.track.rawId }, "the queue is the playlist, in its own order, duplicates kept")
+        assertEquals(2, state.currentIndex, "playing from the entry selected, the second of the song's two entries")
+        afterPlay()
+        assertNoCredentialLeak()
+        println("PLAYLIST OBSERVED $platform play-order=playlist queue=${state.queue.size} current=${state.currentIndex}")
+    }
+
+    /**
+     * The phone's whole edit path against the server, each step read back from the server directly:
+     * create, add an album and a song from its menu, move, remove, rename, delete. Every write is one
+     * of the three playlist writes, and the last of them is followed by a read of that playlist.
+     */
+    fun aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer() {
+        val albumId = server.albumId(OPENED_ALBUM)
+        val album = server.get("getAlbum", mapOf("id" to albumId)).getJSONObject("album").getJSONArray("song")
+        val songs = (0 until album.length()).map { album.getJSONObject(it).getString("id") }
+        assertTrue(songs.size >= 3, "setup: the album needs three songs")
+        assertTrue(server.playlists().values.none { it.startsWith(ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX) },
+            "setup: no test playlist is left from an earlier run")
+        ui.openLibrary()
+        awaitHomeLive()
+        val mark = proxy.log().size
+
+        // Create, from the list: the page opens on it at once and follows it to the server's id.
+        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        await("the playlists live") { frames("playlists").lastOrNull()?.freshness == AndroidLibraryFreshness.Live }
+        compose.onNodeWithTag("library.playlists.new").performClick()
+        compose.onNodeWithTag("library.playlists.name").performTextReplacement(PLAYLIST_EDIT)
+        compose.onNodeWithTag("library.playlists.name.confirm").performClick()
+        await("the playlist made on the server") { server.playlists().containsValue(PLAYLIST_EDIT) }
+        val id = server.playlists().entries.single { it.value == PLAYLIST_EDIT }.key
+        await("the page on the server's id, live") {
+            frames("playlist:$id").lastOrNull()?.freshness == AndroidLibraryFreshness.Live && exists("playlist.title")
+        }
+        assertEquals(emptyList(), server.playlistEntries(id))
+        assertTrue(observed().playlistOutcomes.any { it is AndroidPlaylistOutcome.Created && it.playlistId == id },
+            "the create's outcome named the server's id")
+        compose.onNodeWithTag("playlist.back").performClick()
+        compose.waitForIdle()
+
+        // Add the album, from its header, then one song from its row's menu.
+        ui.activate(compose.onNodeWithTag("library.view.home"))
+        openHomeAlbum(OPENED_ALBUM)
+        await("the album live with its tracks") {
+            last("album:$albumId").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
+        }
+        compose.onNodeWithTag("album.addToPlaylist").performClick()
+        await("the sheet lists the playlist") { listed("playlists.add.item", PLAYLIST_EDIT) != null }
+        compose.onNodeWithTag(listed("playlists.add.item", PLAYLIST_EDIT)!!).performClick()
+        await("the album on the server") { server.playlistEntries(id) == songs }
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onNodeWithTag("album.track.0.menu.addToPlaylist").performClick()
+        await("the sheet lists the playlist") { listed("playlists.add.item", PLAYLIST_EDIT) != null }
+        compose.onNodeWithTag(listed("playlists.add.item", PLAYLIST_EDIT)!!).performClick()
+        val filled = songs + songs[0]
+        await("the song appended on the server") { server.playlistEntries(id) == filled }
+        ui.backFromAlbum()
+
+        // Reorder and remove on the page, in edit mode.
+        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        await("the playlist listed") { listed("library.playlists.item", PLAYLIST_EDIT) != null }
+        ui.activate(compose.onNodeWithTag(listed("library.playlists.item", PLAYLIST_EDIT)!!))
+        await("the page live with every entry") { frames("playlist:$id").lastOrNull()?.itemRawIds == filled }
+        compose.onNodeWithTag("playlist.edit").performClick()
+        compose.waitForIdle()
+        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries")).performScrollToNode(hasTestTag("playlist.entry.0.down"))
+        compose.onNodeWithTag("playlist.entry.0.down").performClick()
+        val moved = listOf(filled[1], filled[0]) + filled.drop(2)
+        await("the move on the server") { server.playlistEntries(id) == moved }
+        await("the page showing it") { frames("playlist:$id").lastOrNull()?.itemRawIds == moved }
+        val last = moved.lastIndex
+        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries")).performScrollToNode(hasTestTag("playlist.entry.$last.remove"))
+        compose.onNodeWithTag("playlist.entry.$last.remove").performClick()
+        val trimmed = moved.dropLast(1)
+        await("the removal on the server") { server.playlistEntries(id) == trimmed }
+        await("the page showing it") { frames("playlist:$id").lastOrNull()?.itemRawIds == trimmed }
+
+        // Rename, then delete.
+        compose.onNodeWithTag("playlist.menu").performClick()
+        compose.onNodeWithTag("playlist.rename").performClick()
+        compose.onNodeWithTag("playlist.name").performTextReplacement(PLAYLIST_RENAMED)
+        compose.onNodeWithTag("playlist.name.confirm").performClick()
+        await("the new name on the server") { server.playlists()[id] == PLAYLIST_RENAMED }
+        await("the page showing it") { runCatching { compose.onNodeWithTag("playlist.title").assertTextEquals(PLAYLIST_RENAMED) }.isSuccess }
+        compose.onNodeWithTag("playlist.menu").performClick()
+        compose.onNodeWithTag("playlist.delete").performClick()
+        compose.onNodeWithTag("playlist.delete.confirm").performClick()
+        await("the playlist gone from the server") { id !in server.playlists() }
+        try {
+            await("the page closed, back on the list") { !exists("playlist.surface") && exists("library.playlists") }
+        } catch (failure: AssertionError) {
+            val note = compose.onAllNodesWithTag("playlist.note").fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.Text) { emptyList() } }
+            throw AssertionError("${failure.message}; page=${exists("playlist.surface")} note=$note outcomes=${observed().playlistOutcomes}", failure)
+        }
+        awaitQuiet()
+
+        val writes = readerRequests(mark).filter { it.endpoint in PLAYLIST_WRITES }
+        assertTrue(writes.isNotEmpty(), "control: the edits were sent")
+        val sent = readerRequests(mark)
+        val endpoints = sent.map { it.endpoint }
+        // Each write but the delete is read back before the next write is sent (§18.6: a send is at
+        // least once, and only the server's answer to a read says what the playlist now holds).
+        sent.forEachIndexed { index, request ->
+            if (request.endpoint in PLAYLIST_WRITES && request.endpoint != "deletePlaylist") {
+                val rest = endpoints.drop(index + 1)
+                val nextWrite = rest.indexOfFirst { it in PLAYLIST_WRITES }.let { if (it < 0) rest.size else it }
+                assertTrue("getPlaylist" in rest.take(nextWrite), "the ${request.endpoint} at $index was read back: $endpoints")
+            }
+        }
+        // The only create that is not a replacement is the first; a reorder replaces the entries of THIS playlist.
+        val creates = sent.filter { it.endpoint == "createPlaylist" }
+        assertEquals(null, creates.first().parameters["playlistId"], "the first create makes the playlist")
+        assertTrue(creates.drop(1).all { it.parameters["playlistId"] == id }, "every later create replaces this playlist: $creates")
+        assertEquals(1, sent.count { it.endpoint == "deletePlaylist" && it.parameters["id"] == id }, "one delete, of this playlist")
+        assertTrue(observed().playlistOutcomes.none { it !is AndroidPlaylistOutcome.Saved && it !is AndroidPlaylistOutcome.Created },
+            "no edit ended any other way: ${observed().playlistOutcomes}")
+        assertNoCredentialLeak()
+        println("PLAYLIST EDIT OBSERVED $platform writes=${writes.groupingBy { it.endpoint }.eachCount()} " +
+            "outcomes=${observed().playlistOutcomes.size} create+album+song+move+remove+rename+delete=server-read-back")
+    }
+
+    /**
+     * A track with synced lyrics in three languages plays, and Now Playing's lyrics show the
+     * server's English layer — the core's choice for this device — synced, read live through the
+     * endpoint the server advertises; a track with none says so.
+     */
+    fun theLyricsOfThePlayingTrackAreReadLiveAndShownSynced(openLyrics: () -> Unit) = withPlaybackService { playback ->
+        val lyricsSong = server.songId(LYRICS_TRACK)
+        val albumId = server.get("getSong", mapOf("id" to lyricsSong)).getJSONObject("song").getString("albumId")
+        val tracks = server.get("getAlbum", mapOf("id" to albumId)).getJSONObject("album").getJSONArray("song")
+        val position = (0 until tracks.length()).first { tracks.getJSONObject(it).getString("id") == lyricsSong }
+        ui.openLibrary()
+        awaitHomeLive()
+        openHomeAlbum(server.get("getSong", mapOf("id" to lyricsSong)).getJSONObject("song").getString("album"))
+        await("the album live with its tracks") {
+            last("album:$albumId").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
+        }
+        compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("album.track.$position")))
+            .performScrollToNode(hasTestTag("album.track.$position"))
+        val mark = proxy.log().size
+        ui.activate(compose.onNodeWithTag("album.track.$position"))
+        await("the track to be current") {
+            shadowOf(Looper.getMainLooper()).idle()
+            playback.state.value.let { state -> state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId == lyricsSong }
+        }
+        openLyrics()
+        await("the lyrics read live") {
+            observed().lyrics.lastOrNull()?.let { it.trackRawId == lyricsSong && it.freshness == AndroidLibraryFreshness.Live } == true
+        }
+        val shown = observed().lyrics.last()
+        assertEquals(com.legitimateapps.dulcet.core.AndroidLyricsState.Lyrics, shown.state)
+        assertTrue(shown.synced, "the synced layer")
+        assertEquals("eng", shown.language, "the English layer, for this device's language")
+        await("the lines drawn") { exists("lyrics.line.0") || exists("tv.player.lyrics.line.0") }
+        val line = if (exists("lyrics.line.0")) "lyrics.line.0" else "tv.player.lyrics.line.0"
+        compose.onNodeWithTag(line).assertTextEquals("Dulcet English line one")
+        val reads = readerRequests(mark).map { it.endpoint to it.parameters["id"] }
+        assertTrue(("getLyricsBySongId" to lyricsSong) in reads, "read through the advertised extension: $reads")
+        assertEquals(1, reads.count { it.first == "getOpenSubsonicExtensions" }, "the extension list was read once: $reads")
+        assertNoCredentialLeak()
+        println("LYRICS OBSERVED $platform synced=${shown.synced} language=${shown.language} lines=${shown.lineCount} " +
+            "endpoint=getLyricsBySongId extensions-reads=1")
+    }
+
+    private fun <T> withPlaybackService(block: (com.legitimateapps.dulcet.core.AndroidPlaybackController) -> T): T {
+        val app = RuntimeEnvironment.getApplication()
+        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val binder = checkNotNull(service.get().onBind(Intent(PlaybackService.LOCAL_BIND))) { "setup: no local binder" }
+            shadowOf(app).setComponentNameAndServiceForBindServiceForIntent(
+                Intent(app, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+                ComponentName(app, PlaybackService::class.java),
+                binder,
+            )
+            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+            val playback = checkNotNull(service.get().playback) { "setup: the service has no controller" }
+            return block(playback)
+        } finally {
+            service.destroy()
+        }
+    }
+
     private fun selected(tag: String): Boolean =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Selected) { false }
+
+    /**
+     * The tag of the row under [prefix] (`<prefix>.N`) that names [name], or null: the server may hold
+     * other playlists, so a row is found by what it says, never by where it happens to be.
+     */
+    private fun listed(prefix: String, name: String): String? =
+        compose.onAllNodes(hasText(name, substring = true) and SemanticsMatcher("tag under $prefix") { node ->
+            node.config.getOrElse(SemanticsProperties.TestTag) { "" }.matches(Regex(Regex.escape(prefix) + "\\.\\d+"))
+        }, useUnmergedTree = false).fetchSemanticsNodes().firstOrNull()?.config?.get(SemanticsProperties.TestTag)
 
     private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
@@ -1040,6 +1265,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         const val PLAYS_ON_RECONNECT_COPY = "Not downloaded. It'll play when you reconnect."
         const val NOT_AVAILABLE_OFFLINE_COPY = "Not available offline"
         const val WAIT_MILLIS = 60_000L
+        const val PLAYLIST_ORDER = "Dulcet test order"
+        const val PLAYLIST_EDIT = "Dulcet test edits"
+        const val PLAYLIST_RENAMED = "Dulcet test edits renamed"
+        val PLAYLIST_WRITES = setOf("createPlaylist", "updatePlaylist", "deletePlaylist")
+        /** Embedded synced lyrics in three languages (the CONF-42 fixture). */
+        const val LYRICS_TRACK = "Twenty Nine Seconds"
     }
 }
 
@@ -1056,6 +1287,17 @@ private fun AndroidLibraryFreshness.isOfflineCached(): Boolean =
 private fun AndroidLibraryFreshness.isFailed(): Boolean =
     (this as? AndroidLibraryFreshness.Unavailable)?.reason is AndroidLibraryUnavailableReason.Failed ||
         (this as? AndroidLibraryFreshness.Cached)?.reason is AndroidLibraryCachedReason.Failed
+
+/** The disposable fixture's song id for [title], read from the server itself. */
+fun DisposableServer.songId(title: String): String {
+    val songs = get("search3", mapOf("query" to title, "songCount" to "20", "albumCount" to "0", "artistCount" to "0"))
+        .getJSONObject("searchResult3").getJSONArray("song")
+    for (index in 0 until songs.length()) {
+        val song = songs.getJSONObject(index)
+        if (song.getString("title") == title) return song.getString("id")
+    }
+    error("The disposable fixture has no song titled $title")
+}
 
 /** The disposable fixture's album id for [name], read from the server itself. */
 fun DisposableServer.albumId(name: String): String {

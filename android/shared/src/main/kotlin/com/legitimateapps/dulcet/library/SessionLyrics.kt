@@ -31,18 +31,22 @@ public class SessionLyrics internal constructor(
 
     private var current: AndroidLyricsTrack? = null
     private var generation = 0
+    private val order = LatestAnswer()
 
     /** The track now current, or null. The same track again reads nothing. */
     public fun show(track: AndroidLyricsTrack?) {
         if (track == current) return
         current = track
         generation += 1
+        order.reset()
         mutable.value = null
         if (track == null || session.isClosed) return
         val asked = generation
         val lyrics = session.lyricsFacade(preferredLanguages)
-        lyrics.cached(track) { deliver(asked, it) }
-        lyrics.read(track) { deliver(asked, it) }
+        val stored = order.next()
+        lyrics.cached(track) { deliver(asked, stored, it) }
+        val live = order.next()
+        lyrics.read(track) { deliver(asked, live, it) }
     }
 
     /** "Try again": admitted past the breaker as its trial (§10.4). */
@@ -50,7 +54,8 @@ public class SessionLyrics internal constructor(
         val track = current ?: return
         if (session.isClosed) return
         val asked = generation
-        session.lyricsFacade(preferredLanguages).retry(track) { deliver(asked, it) }
+        val ticket = order.next()
+        session.lyricsFacade(preferredLanguages).retry(track) { deliver(asked, ticket, it) }
     }
 
     /**
@@ -62,13 +67,42 @@ public class SessionLyrics internal constructor(
         val shown = mutable.value ?: return
         if (shown.freshness == AndroidLibraryFreshness.Live || session.isClosed) return
         val asked = generation
-        session.lyricsFacade(preferredLanguages).read(track) { deliver(asked, it) }
+        val ticket = order.next()
+        session.lyricsFacade(preferredLanguages).read(track) { deliver(asked, ticket, it) }
     }
 
-    private fun deliver(asked: Int, publication: AndroidLyricsPublication) {
+    /**
+     * An answer about another track is dropped, and so is one to a request older than the answer
+     * shown (§18.4, the rule for the platform bridges): a read begun before a reconnect answers after
+     * it, and may be a failure arriving after a newer read already showed live lyrics.
+     */
+    private fun deliver(asked: Int, ticket: Int, publication: AndroidLyricsPublication) {
         if (asked != generation || publication.trackRawId != current?.rawId) return
+        if (!order.accept(ticket)) return
         mutable.value = publication
         session.recordLyrics(publication)
+    }
+}
+
+/**
+ * Orders answers by when their requests were made: [next] numbers a request, and [accept] admits an
+ * answer only when no answer to a later request has been shown. Main thread only.
+ */
+public class LatestAnswer {
+    private var issued = 0
+    private var shown = 0
+
+    public fun next(): Int = ++issued
+
+    public fun accept(ticket: Int): Boolean {
+        if (ticket < shown) return false
+        shown = ticket
+        return true
+    }
+
+    /** A new subject: every earlier request is forgotten, and none of its answers is shown. */
+    public fun reset() {
+        shown = issued + 1
     }
 }
 

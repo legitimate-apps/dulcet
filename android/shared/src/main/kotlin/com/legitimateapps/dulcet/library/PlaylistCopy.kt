@@ -11,6 +11,7 @@ import com.legitimateapps.dulcet.core.AndroidPlaylistEditRecord
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditResult
 import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
 import com.legitimateapps.dulcet.core.AndroidQueueSource
+import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.shared.R
 
@@ -84,11 +85,33 @@ public fun AndroidLibraryPublication.playlistView(): List<String>? {
     return items.map { it.rawId }
 }
 
+/** A playlist queue: its tracks, in the playlist's order, and the index to start at. */
+public data class PlaylistQueue(val name: String, val tracks: List<AndroidTrack>, val start: Int)
+
 /**
- * The playlist in [publication] queued from the entry at [position] (an index into its items), in
- * the playlist's order, duplicates kept, as a library queue named for the playlist. Entries this
- * device cannot play now, or knows only by id, are left out. False, and nothing played, when the
- * service is not bound or nothing can play.
+ * The playlist in [publication] as a queue from the entry at [position] (an index into its items), in
+ * the playlist's order, duplicates kept. Entries this device cannot play now, or knows only by id, are
+ * left out; a start on one of those begins at the next entry that can play. Null when the publication
+ * is not a playlist with its entries present, or nothing in it can play.
+ */
+public fun AndroidLibraryPublication.playlistQueue(providerInstanceId: String, position: Int): PlaylistQueue? {
+    val playlist = header as? AndroidLibraryItem.Playlist ?: return null
+    if (itemsState != AndroidLibraryItemsState.Present) return null
+    val playable = items.withIndex().filter { (_, item) ->
+        item is AndroidLibraryItem.Track && !item.metadataMissing && !item.title.isNullOrBlank() &&
+            item.playability != AndroidLibraryPlayability.UnavailableOffline
+    }
+    val tracks = playable.mapNotNull { (it.value as AndroidLibraryItem.Track).toTrack(providerInstanceId) }
+    if (tracks.isEmpty()) return null
+    // Duplicates are separate entries: the start is found by position, never by id.
+    val start = playable.indexOfFirst { it.index >= position }.takeIf { it >= 0 } ?: 0
+    return PlaylistQueue(playlist.name, tracks, start)
+}
+
+/**
+ * The playlist in [publication] played from the entry at [position] ([playlistQueue]), as a library
+ * queue named for the playlist. False, and nothing played, when the service is not bound or nothing
+ * can play.
  */
 public fun playPlaylist(
     playback: AndroidPlaybackController?,
@@ -97,16 +120,8 @@ public fun playPlaylist(
     position: Int,
     shuffle: Boolean = false,
 ): Boolean {
-    val playlist = publication.header as? AndroidLibraryItem.Playlist ?: return false
-    if (playback == null || publication.itemsState != AndroidLibraryItemsState.Present) return false
-    val playable = publication.items.withIndex().filter { (_, item) ->
-        item is AndroidLibraryItem.Track && !item.metadataMissing && !item.title.isNullOrBlank() &&
-            item.playability != AndroidLibraryPlayability.UnavailableOffline
-    }
-    val tracks = playable.mapNotNull { (it.value as AndroidLibraryItem.Track).toTrack(providerInstanceId) }
-    if (tracks.isEmpty()) return false
-    // Duplicates are separate entries: the start is found by position, not by id.
-    val start = playable.indexOfFirst { it.index >= position }.takeIf { it >= 0 } ?: 0
-    playback.playQueue(tracks, start, AndroidQueueSource.Library, playlist.name, shuffle = shuffle)
+    val queue = publication.playlistQueue(providerInstanceId, position) ?: return false
+    if (playback == null) return false
+    playback.playQueue(queue.tracks, queue.start, AndroidQueueSource.Library, queue.name, shuffle = shuffle)
     return true
 }
