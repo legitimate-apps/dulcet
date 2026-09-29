@@ -90,7 +90,8 @@ class PlaylistEditingSeventhReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         assertEquals(1, creates, "fixture: the first send's answer proves nothing")
         session.playlists.rename(localId!!, "Trip")
@@ -141,7 +142,8 @@ class PlaylistEditingSeventhReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1", "song-2")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         assertEquals(PlaylistEditRecord.Pending, session.playlists.move(localId!!, 0, 1, listOf("song-1", "song-2")), "fixture: the move")
         session.playlists.flush()
@@ -194,7 +196,8 @@ class PlaylistEditingSeventhReviewTest {
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
         session.setOnline(true)
-        session.playlists.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         runCurrent()
         other = env.server.add("Other", listOf("song-9"))
         session.playlists.flush()
@@ -219,13 +222,13 @@ class PlaylistEditingSeventhReviewTest {
     @Test
     fun aCreateDeletedWhileItsResendIsOutNamesWhatItsFirstSendMadeLate() = hooked { env ->
         val session = timed(env)
-        var creates = 0
+        val names = mutableListOf<String?>()
         var localId: String? = null
         var late: FakePlaylistServer.Playlist? = null
         env.hooked.before = { endpoint, parameters ->
             if (isNewCreate(endpoint, parameters)) {
-                creates++
-                when (creates) {
+                names += parameters.firstOrNull { it.first == "name" }?.second
+                when (names.size) {
                     1 -> status(500)
                     2 -> {
                         late = env.server.add("Road", listOf("song-1"))
@@ -240,18 +243,21 @@ class PlaylistEditingSeventhReviewTest {
         }
         session.setOnline(false)
         localId = assertNotNull(session.playlists.create("Road", listOf("song-1")).localId)
+        // The reconnect's flush (§16.14 step 1) is the first send. A second explicit flush here would
+        // re-send "Road" before the rename, and the restore would never differ from the re-send.
         session.setOnline(true)
-        session.playlists.flush()
         runCurrent()
+        assertEquals(listOf<String?>("Road"), names, "fixture: the reconnect's flush sent the create once")
         session.playlists.rename(localId!!, "Trip")
         session.playlists.flush()
         runCurrent()
-        assertEquals(2, creates, "fixture: sent again as Trip, deleted while out, 429")
+        // The condition under test: a re-send that differs from the first send, deleted while out.
+        assertEquals(listOf<String?>("Road", "Trip"), names, "fixture: sent again as Trip, deleted while out, 429")
         advanceTimeBy(10_000); runCurrent()
         session.playlists.flush()
         runCurrent()
         advanceUntilIdle()
-        assertEquals(2, creates, "the deleted create was sent again")
+        assertEquals(2, names.size, "the deleted create was sent again: $names")
         val x = assertNotNull(late)
         assertTrue(
             PlaylistEditOutcome.PossiblyCreated(localId!!, "Road", listOf(x.id)) in env.outcomes,

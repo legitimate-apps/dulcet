@@ -825,6 +825,56 @@ def extra_macos_legs(text: str) -> str:
 
 
 
+PLAN_JOB = """  apple-plan:
+    name: apple-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      leg: ${{ steps.plan.outputs.leg }}
+    steps:
+      - id: plan
+        run: echo leg=true >> "$GITHUB_OUTPUT"
+"""
+PLAN_GATE = "${{ needs.apple-plan.outputs.leg == 'true' }}"
+
+
+def with_leg_planner(root: Path) -> None:
+    """A fixture invoking tools/ci/plan-apple-legs needs the script present, as the repository has."""
+    planner = root / "tools" / "ci" / "plan-apple-legs"
+    planner.parent.mkdir(parents=True, exist_ok=True)
+    planner.write_text((VERIFIER.parent / "ci" / "plan-apple-legs").read_text())
+
+
+def planned(text: str) -> str:
+    """spec §21.6's shape: apple-leg runs only when apple-plan says so, and apple-ci checks it
+    against the plan, then reads evidence only on a run that planned it."""
+    text = text.replace(LEG_START, PLAN_JOB + LEG_START)
+    text = text.replace("    name: apple-leg\n",
+                        f"    name: apple-leg\n    needs: [apple-plan]\n    if: {PLAN_GATE}\n")
+    text = text.replace("needs: [apple-leg]", "needs: [apple-plan, apple-leg]")
+    text = text.replace(
+        "      APPLE_LEG_RESULT: ${{ needs.apple-leg.result }}\n",
+        "      APPLE_PLAN_RESULT: ${{ needs.apple-plan.result }}\n"
+        "      RUN_APPLE_LEG: ${{ needs.apple-plan.outputs.leg }}\n"
+        "      APPLE_LEG_RESULT: ${{ needs.apple-leg.result }}\n")
+    text = text.replace(
+        '          test "$APPLE_LEG_RESULT" = success\n',
+        '          test "$APPLE_PLAN_RESULT" = success\n'
+        '          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_LEG" "$APPLE_LEG_RESULT"\n')
+    for step in ("      - name: Download parity evidence\n", "      - name: Verify evidence\n"):
+        text = text.replace(step, step + f"        if: {PLAN_GATE}\n")
+    return text
+
+
+def planned_then(*edits):
+    def apply(text: str) -> str:
+        text = planned(text)
+        for one in edits:
+            text = one(text)
+        return text
+    return apply
+
+
 def verify_before_download(text: str) -> str:
     """Move the aggregator's download step to the end, after the verify step."""
     download = text[text.index("      - name: Download parity evidence\n"):
@@ -931,8 +981,38 @@ SHAPE_CASES = (
     ("a leg that may fail without failing the run is rejected",
      edit("    timeout-minutes: 10\n", "    timeout-minutes: 10\n    continue-on-error: true\n"),
      "job apple-leg sets continue-on-error"),
+    # spec §21.6: a leg the plan may skip. Each rule that replaces `test ... = success` for such a
+    # leg is exercised, with the positive case proving the shape is satisfiable at all.
+    ("a planned leg checked against its plan is accepted", planned, ""),
+    ("a planned leg nobody checks against its plan is rejected",
+     planned_then(edit('          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_LEG" '
+                       '"$APPLE_LEG_RESULT"\n', "")),
+     "must check needs.apple-leg.result against needs.apple-plan.outputs.leg"),
+    ("a plan check whose failure is swallowed is rejected",
+     planned_then(edit('"$APPLE_LEG_RESULT"\n', '"$APPLE_LEG_RESULT" || true\n')),
+     "must check needs.apple-leg.result against needs.apple-plan.outputs.leg"),
+    ("a plan check bound to another output is rejected",
+     planned_then(edit("RUN_APPLE_LEG: ${{ needs.apple-plan.outputs.leg }}",
+                       "RUN_APPLE_LEG: ${{ needs.apple-plan.outputs.other }}")),
+     "must check needs.apple-leg.result against needs.apple-plan.outputs.leg"),
+    ("a leg skipped on any other condition is rejected",
+     planned_then(edit(f"    if: {PLAN_GATE}\n    runs-on: macos-latest",
+                       "    if: ${{ github.event_name == 'push' }}\n    runs-on: macos-latest")),
+     "job apple-leg carries a condition apple-ci cannot check"),
+    ("a plan job that may itself be skipped is rejected",
+     planned_then(edit("    name: apple-plan\n",
+                       "    name: apple-plan\n    if: ${{ github.event_name == 'push' }}\n")),
+     "job apple-leg carries a condition apple-ci cannot check"),
+    ("an evidence read on a run that skipped a leg is rejected",
+     planned_then(edit(f"      - name: Verify evidence\n        if: {PLAN_GATE}\n",
+                       "      - name: Verify evidence\n")),
+     "step 'Verify evidence' must run only when every leg was planned"),
+    ("an evidence read gated on anything but the plan is rejected",
+     planned_then(edit(f"      - name: Download parity evidence\n        if: {PLAN_GATE}\n",
+                       "      - name: Download parity evidence\n        if: ${{ success() }}\n")),
+     "step 'Download parity evidence' must be unconditional and blocking"),
 )
-EXPECTED_SHAPE_CASES = 31
+EXPECTED_SHAPE_CASES = 39
 shape_cases_run: list[str] = []
 
 
@@ -946,6 +1026,7 @@ def run_shape_case(name: str, mutate, expected: str) -> None:
         workflows.mkdir(parents=True)
         (workflows / "apple-ci.yml").write_text(text)
         (workflows / "core-ci.yml").write_text(workflow_for(next(c for c in CASES if c.accepted)))
+        with_leg_planner(root)
         result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root, text=True,
                                 capture_output=True, check=False)
     if not expected:
@@ -1500,6 +1581,18 @@ DIAGNOSTIC_AGGREGATOR = '''  apple-ci:
       - run: python3 tools/verify-parity-evidence
 '''
 
+DIAGNOSTIC_PLAN = '''  apple-plan:
+    name: apple-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      conformance: ${{ steps.plan.outputs.conformance }}
+    steps:
+      - id: plan
+        run: echo conformance=true >> "$GITHUB_OUTPUT"
+'''
+
+
 def diagnostic_case(control=None, mutation=None):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -1530,16 +1623,36 @@ def diagnostic_case(control=None, mutation=None):
             apple = apple.replace('    name: apple-conformance', '    if: false\n    name: apple-conformance')
         if mutation == 'linux-only':
             apple = apple.replace('macos-26', 'ubuntu-latest')
-        if mutation == 'manual-only':
-            apple = apple.replace('pull_request:', 'workflow_dispatch:')
+        if mutation == 'planned':
+            # spec §21.6: the conformance leg runs when the plan asks, so it still gates.
+            apple = apple.replace('jobs:\n', 'jobs:\n' + DIAGNOSTIC_PLAN)
+            apple = apple.replace('    name: apple-conformance\n',
+                                  '    name: apple-conformance\n    needs: [apple-plan]\n'
+                                  "    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}\n")
+            apple = apple.replace('    needs: [apple-conformance]\n',
+                                  '    needs: [apple-plan, apple-conformance]\n')
+            apple = apple.replace(
+                '      APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}\n',
+                '      APPLE_PLAN_RESULT: ${{ needs.apple-plan.result }}\n'
+                '      RUN: ${{ needs.apple-plan.outputs.conformance }}\n'
+                '      APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}\n')
+            apple = apple.replace(
+                '      - run: test "$APPLE_CONFORMANCE_RESULT" = success\n',
+                '      - run: test "$APPLE_PLAN_RESULT" = success\n'
+                '      - run: python3 tools/ci/plan-apple-legs require-leg "$RUN" "$APPLE_CONFORMANCE_RESULT"\n')
+            apple = apple.replace(
+                '      - run: python3 tools/verify-parity-evidence\n',
+                "      - if: ${{ needs.apple-plan.outputs.conformance == 'true' }}\n"
+                '        run: python3 tools/verify-parity-evidence\n')
         if mutation == 'not-needed':
             # A leg the required job does not need can fail and still let the pull request merge.
             apple = apple.replace('    needs: [apple-conformance]\n', '')
         (workflows / 'apple-ci.yml').write_text(apple)
         (workflows / 'core-ci.yml').write_text(workflow_for(CASES[0]))
+        with_leg_planner(root)
         result = subprocess.run([sys.executable, str(VERIFIER)], cwd=root,
                                 capture_output=True, text=True)
-        if mutation is None:
+        if mutation in (None, 'planned'):
             assert result.returncode == 0, result.stderr
         else:
             assert result.returncode != 0, f'{control} {mutation} was accepted'
@@ -1581,7 +1694,9 @@ assert len(DIAGNOSTIC_CONTROLS) >= MINIMUM_DIAGNOSTIC_CONTROLS, (
     f"at least {MINIMUM_DIAGNOSTIC_CONTROLS} are required"
 )
 
-# 1 unmutated baseline + one per (control x mutation) + 4 job-level mutations.
+# 1 unmutated baseline + one per (control x mutation) + 4 job-level cases. The pull-request
+# requirement ('manual-only') was retired with spec §21.6: the conformance leg no longer runs on
+# pull requests, and 'planned' proves a leg the plan gates still counts as gating.
 EXPECTED_DIAGNOSTIC_CASES = 1 + len(DIAGNOSTIC_CONTROLS) * 6 + 4
 diagnostic_cases_run: list[tuple[str | None, str | None]] = []
 
@@ -1589,7 +1704,7 @@ diagnostic_case()
 for control in DIAGNOSTIC_CONTROLS:
     for mutation in ('missing', 'comment', 'echo', 'disabled', 'allowed-failure', 'missing-file'):
         diagnostic_case(control, mutation)
-for mutation in ('job-disabled', 'linux-only', 'manual-only', 'not-needed'):
+for mutation in ('job-disabled', 'linux-only', 'planned', 'not-needed'):
     diagnostic_case(mutation=mutation)
 
 # The count is asserted against a declared constant, not printed from one. An independent review
@@ -1625,6 +1740,8 @@ REGENERATION_MUTATIONS = {
     'deleted': lambda a: a.replace('      - name: regenerate\n        run: ' + REGENERATION_STEP + '\n', ''),
     'commented': lambda a: a.replace('        run: ' + REGENERATION_STEP, '        # run: ' + REGENERATION_STEP + '\n        run: true'),
     'job-allowed-failure': lambda a: a.replace('    name: apple-platform', '    continue-on-error: true\n    name: apple-platform'),
+    # spec §21.6 admits only a plan condition on a gating leg; any other job condition is refused.
+    'job-other-condition': lambda a: a.replace('    name: apple-platform', "    if: ${{ github.event_name == 'push' }}\n    name: apple-platform"),
     'linux-only': lambda a: a.replace('macos-26', 'ubuntu-latest'),
     'not-needed': lambda a: a.replace('    needs: [apple-platform]\n', ''),
     'manual-only': lambda a: a.replace('pull_request:', 'workflow_dispatch:'),
@@ -1666,8 +1783,8 @@ def regeneration_case(mutation=None) -> None:
 regeneration_case()
 for mutation in REGENERATION_MUTATIONS:
     regeneration_case(mutation)
-assert len(regeneration_cases_run) == 1 + 12, regeneration_cases_run
-print(f'Regeneration step controls passed: {len(regeneration_cases_run)}/13 cases')
+assert len(regeneration_cases_run) == 1 + 13, regeneration_cases_run
+print(f'Regeneration step controls passed: {len(regeneration_cases_run)}/14 cases')
 
 # ---------------------------------------------------------------------------------------------
 # The release.yml cancellation exemption. Each condition of the exemption must be necessary: the

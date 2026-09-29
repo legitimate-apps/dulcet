@@ -7,7 +7,7 @@ apple/project.yml -- the project, its schemes and workspace, and the plists it w
 Xcode builds the committed apple/Dulcet.xcodeproj, not project.yml, and nothing regenerates it during a
 build. A hand edit to a generated file is therefore a route into a PROD build that no review of
 project.yml sees: a scheme pre-action, a synchronized folder or a package re-pointed on the PROD
-target alone (spec §22.3, §22.6). tools/verify_release_policy.py refuses each of those by name; this
+target alone (spec §22.3, §22.6). The release policy check refuses each of those by name; this
 closes the class, because none of them is a state the pinned XcodeGen emits from an accepted
 project.yml.
 

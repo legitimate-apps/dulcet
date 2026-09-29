@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet.core
 
-import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -13,6 +12,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * [FakeReaderServer] plus the endpoints search and favourites need: `search3`, `star`, `unstar`,
@@ -23,6 +24,15 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     data class Request(val endpoint: String, val parameters: Map<String, String>)
 
     val log = mutableListOf<Request>()
+
+    /**
+     * The most requests one test may issue. The request past it fails, and [capHit] is set, so a
+     * mutant that loops on the network ends as a failed test instead of holding a worker.
+     */
+    var requestCap: Int = Int.MAX_VALUE
+    var capHit = false
+        private set
+
     val starredIds = mutableSetOf<String>()
     val ratings = mutableMapOf<String, Int>()
 
@@ -43,6 +53,13 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
 
     /** The `Retry-After` header sent with every [failWithStatus] answer. */
     var retryAfter: String? = null
+
+    /**
+     * Answers a request with its response instead of the server's, whenever it returns one: the exact
+     * status, body and headers a server or a proxy sends, for the reader's checked request path to
+     * classify. Nothing is applied.
+     */
+    var answerInstead: (endpoint: String) -> LibraryEndpointResponse? = { null }
 
     /** Endpoint -> an HTTP status answered with no envelope AFTER the change was applied (a gateway timing out). */
     val applyThenStatus = mutableMapOf<String, Int>()
@@ -81,10 +98,15 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     }
 
     override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
+        if (log.size >= requestCap) {
+            capHit = true
+            throw IllegalStateException("request cap $requestCap reached: a loop")
+        }
         log += Request(endpoint, parameters)
         failWithError[endpoint]?.let { throw LibraryRequestFailure(it) }
         failWithCode[endpoint]?.let { return envelope(""""error":{"code":$it,"message":"refused"}""") }
         failWithStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>refused</html>", "http://fixture.invalid/rest", retryAfter = retryAfter) }
+        answerInstead(endpoint)?.let { return it }
         if (endpoint in holdBeforeApply) hold()
         val response = when (endpoint) {
             "ping" -> envelope(null)
@@ -159,7 +181,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
 
 internal class SessionEnv(
     val server: SessionTestServer,
-    val driver: SqlDriver,
+    val driver: CountingSqlDriver,
     val database: DulcetDatabaseStore,
     val store: SeenCacheStore,
     val clock: ManualWallClock,
@@ -170,11 +192,15 @@ internal class SessionEnv(
         binding: CacheBinding = BINDING,
         config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
         otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
+        // Background by default in tests: a foreground reader's epoch cadence never lets
+        // `advanceUntilIdle` return. A test about the foreground says so.
+        foreground: Boolean = false,
     ): LibraryReaderSession = LibraryReaderSession(
         database = database.database,
         cache = store.bind(binding),
         transport = server,
         scope = scope,
+        foreground = foreground,
         config = config,
         otherOutboxes = otherOutboxes,
         formPost = false,
@@ -187,13 +213,29 @@ internal class SessionEnv(
     }
 }
 
-internal fun sessionTest(block: suspend TestScope.(SessionEnv) -> Unit) = runTest {
-    val driver = createTestDriver()
+internal fun sessionTest(block: suspend TestScope.(SessionEnv) -> Unit) = runTest { sessionBody(Int.MAX_VALUE, block) }
+
+/**
+ * [sessionTest] bounded twice over, so a mutant that loops cannot hold a test worker: the test fails
+ * at [timeout] of real time, and at [requestCap] requests — asserted after the body, so a cap met
+ * and swallowed as a failed read still fails the test.
+ */
+internal fun cappedSessionTest(
+    requestCap: Int = 400,
+    timeout: Duration = 45.seconds,
+    block: suspend TestScope.(SessionEnv) -> Unit,
+) = runTest(timeout = timeout) { sessionBody(requestCap, block) }
+
+private suspend fun TestScope.sessionBody(requestCap: Int, block: suspend TestScope.(SessionEnv) -> Unit) {
+    val driver = CountingSqlDriver(createTestDriver())
     val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
     try {
         val database = DulcetDatabaseStore.open(driver)
         val clock = ManualWallClock(now = 2_000_000)
-        block(SessionEnv(SessionTestServer(), driver, database, SeenCacheStore(database, clock), clock, scope))
+        val env = SessionEnv(SessionTestServer(), driver, database, SeenCacheStore(database, clock), clock, scope)
+        env.server.requestCap = requestCap
+        block(env)
+        check(!env.server.capHit) { "the test reached its request cap of $requestCap: a loop" }
     } finally {
         scope.cancel()
         driver.close()

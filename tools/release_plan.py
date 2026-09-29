@@ -169,15 +169,49 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
         raise PlanError(
             f"PROD needs the tag {expected_tag} on the dispatched commit; found {sorted(tags_at_head)}"
         )
+    require_green(check_runs, required, "PROD needs every required check green on this commit")
+
+
+# spec §21.6: pull requests run apple-ci without its conformance leg, and skip the platform leg too
+# when nothing Apple-affecting changed. So a green required check on a pull request does not mean the
+# live-server conformance ran. What a build ships must: every required check AND both Apple legs,
+# green on the exact commit. A skipped leg reports `skipped`, never `success`, so a run that planned
+# less than everything cannot satisfy this.
+FULL_RUN_JOBS = {"apple-platform", "apple-conformance"}
+
+
+def require_green(check_runs: list[dict[str, str]], names: set[str], reason: str) -> None:
     # Only GitHub Actions' own runs count: a third-party app can post a check run with any name.
     latest = {run["name"]: run.get("conclusion") for run in check_runs
               if run.get("app") == "github-actions"}
-    missing = sorted(name for name in required if latest.get(name) != "success")
+    missing = sorted(name for name in names if latest.get(name) != "success")
     if missing:
         raise PlanError(
-            "PROD needs every required check green on this commit; not green: "
+            f"{reason}; not green: "
             + ", ".join(f"{name}={latest.get(name)}" for name in missing)
         )
+
+
+def full_run_gate(upload: str, waive: str, check_runs: list[dict[str, str]] | None,
+                  required: set[str]) -> str:
+    """Refuse to archive a commit whose full CI run is not green, unless a DRY run waives it.
+
+    `upload` is the plan's upload decision and `waive` the dispatch's skip_full_run_gate input,
+    both exact 'true'/'false' spellings. Returns the line to print. `check_runs` is None only when
+    the gate is waived, since a waived gate reads nothing.
+    """
+    if upload not in ("true", "false") or waive not in ("true", "false"):
+        raise PlanError(f"upload and skip_full_run_gate must be exactly 'true' or 'false', got "
+                        f"{upload!r} and {waive!r}")
+    if waive == "true":
+        if upload != "false":
+            raise PlanError("skip_full_run_gate is for dry runs only; an upload needs the full "
+                            "CI run green on this commit")
+        return "FULL RUN GATE WAIVED for this dry run: nothing will be uploaded"
+    require_green(check_runs or [], required | FULL_RUN_JOBS,
+                  "a release build needs the full CI run green on this commit (spec §21.6)")
+    return ("FULL RUN GATE passed: " + ", ".join(sorted(required | FULL_RUN_JOBS))
+            + " green on this commit")
 
 
 def fetch_check_runs(repository: str, sha: str, token: str) -> list[dict[str, str]]:
@@ -214,9 +248,27 @@ def main_prod_gate() -> int:
     return 0
 
 
+def main_full_run_gate() -> int:
+    try:
+        _, required = load_required_checks()
+        upload = os.environ.get("RELEASE_UPLOAD", "")
+        waive = os.environ.get("RELEASE_SKIP_FULL_RUN_GATE", "")
+        runs = None
+        if waive != "true":
+            runs = fetch_check_runs(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"],
+                                    os.environ["GITHUB_TOKEN"])
+        print(full_run_gate(upload, waive, runs, required))
+    except (PlanError, ValueError, KeyError) as error:
+        print(f"FULL RUN GATE REFUSED: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     if sys.argv[1:] == ["prod-gate"]:
         return main_prod_gate()
+    if sys.argv[1:] == ["full-run-gate"]:
+        return main_full_run_gate()
     try:
         plan = resolve(
             os.environ.get("RELEASE_CHANNEL", ""),

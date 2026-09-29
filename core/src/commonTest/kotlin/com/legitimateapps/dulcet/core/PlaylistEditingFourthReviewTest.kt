@@ -57,7 +57,7 @@ class PlaylistEditingFourthReviewTest {
         val fav = mutableListOf<MutationOutcome>()
 
         fun session(config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0)): LibraryReaderSession =
-            LibraryReaderSession(database.database, store.bind(PlaylistEnv.BINDING), hooked, scope, config, formPost = true).also { s ->
+            LibraryReaderSession(database.database, store.bind(PlaylistEnv.BINDING), hooked, scope, config, formPost = true, foreground = false).also { s ->
                 s.playlists.addOutcomeListener(outcomes::add)
                 s.favourites.addOutcomeListener { fav += it }
             }
@@ -561,13 +561,12 @@ class PlaylistEditingFourthReviewTest {
         val track = LibraryEntityRef(LibraryEntityKind.Track, "song-1")
         session.setOnline(false)
         session.favourites.setFavourite(track, true)
-        session.setOnline(true)
         var record: MutationRecord? = null
         env.hooked.before = { endpoint, _ ->
             if (endpoint == "star" && record == null) record = session.favourites.withdraw(track, MutationField.Starred)
             null
         }
-        session.favourites.flush()
+        session.setOnline(true) // its reconnect flushes both outboxes first (§16.14 step 1): that is the flush
         advanceUntilIdle()
         handle.close()
         assertEquals(MutationRecord.AlreadySent, record, "too late to undo, and said so")
@@ -939,10 +938,10 @@ class PlaylistEditingFourthReviewTest {
         session.setOnline(false)
         session.playlists.rename(p.id, "Evening")
         session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Track, "song-1"), true)
-        session.setOnline(true)
         env.server.failWithCode["updatePlaylist"] = 40
         env.server.failWithCode["star"] = 40
         env.server.failWithCode["ping"] = 40
+        session.setOnline(true) // its reconnect flushes both outboxes first (§16.14 step 1) and meets the refusal
         repeat(PlaylistEditor.MAX_FAILURES + 2) { session.playlists.flush(); session.favourites.flush(); advanceUntilIdle() }
         assertEquals(1L, session.playlists.pendingCount())
         assertEquals(1L, session.favourites.pendingCount())
@@ -964,7 +963,8 @@ class PlaylistEditingFourthReviewTest {
         first.setOnline(false)
         val localId = assertNotNull(first.playlists.create("Road", listOf("song-1")).localId)
         first.setOnline(true)
-        try { first.playlists.flush() } catch (_: CancellationException) {}
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         advanceUntilIdle()
         assertEquals(0, env.server.count("createPlaylist"), "fixture: killed before the send")
         val relaunched = env.session()

@@ -2,8 +2,8 @@
 """Hold release.yml to the properties that make it safe to exist in a public repository.
 
 1. It is triggered by workflow_dispatch and nothing else, so no push, tag or fork pull request
-   can start it, and its inputs are exactly channel, platform and dry_run (dry_run a boolean
-   defaulting to true).
+   can start it, and its inputs are exactly channel, platform, dry_run and skip_full_run_gate
+   (dry_run a boolean defaulting to true, skip_full_run_gate a boolean defaulting to false).
 2. Every job runs in the `release` environment (maintainer approval, protected branches only)
    on the standard hosted `macos-latest` label, never a larger, billed one.
 3. Only release.yml may name the release secrets or the release environment (in any YAML
@@ -39,6 +39,9 @@
    under xcuserdata/ may be tracked.
    What this cannot see is a server address shared by both channels and assembled at run time from
    pieces -- that is review's job, not this gate's.
+6. Before any step reads a secret, an unconditional step runs `tools/release_plan.py
+   full-run-gate`, which refuses a commit whose required checks and both apple-ci legs are not
+   green (spec §21.6); only a dry run may waive it, and release_plan.py enforces that part.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed. A file it parses (project.yml, the committed
@@ -238,6 +241,8 @@ RELEASE_ENV = {
     "BUILD_NUMBER", "CHANNEL", "PLATFORM", "VERSION", "APP_RECORD", "OUTCOME",
     # exported inside run blocks
     "RELEASE_TAGS_AT_HEAD", "RELEASE_ROOT", "RELEASE_DERIVED_DATA",
+    # the full-run gate step's two booleans (spec §21.6); that step builds nothing
+    "RELEASE_UPLOAD", "RELEASE_SKIP_FULL_RUN_GATE",
 } | RELEASE_SECRETS
 POLICY_FILE = "tools/verify_release_policy.py"
 
@@ -341,11 +346,15 @@ def check(errors: list[str]) -> None:
         errors.append(f"{RELEASE}: must be triggered by workflow_dispatch only, found {triggers}")
     inputs = block(lines, "inputs", 4)
     names = keys_at(inputs, 6)
-    if sorted(names) != ["channel", "dry_run", "platform"]:
-        errors.append(f"{RELEASE}: dispatch inputs must be exactly channel, platform, dry_run; found {names}")
+    if sorted(names) != ["channel", "dry_run", "platform", "skip_full_run_gate"]:
+        errors.append(f"{RELEASE}: dispatch inputs must be exactly channel, platform, dry_run, "
+                      f"skip_full_run_gate; found {names}")
     dry_run = [code(line).strip() for line in block(inputs, "dry_run", 6)]
     if "type: boolean" not in dry_run or "default: true" not in dry_run:
         errors.append(f"{RELEASE}: dry_run must be a boolean input that defaults to true")
+    waiver = [code(line).strip() for line in block(inputs, "skip_full_run_gate", 6)]
+    if "type: boolean" not in waiver or "default: false" not in waiver:
+        errors.append(f"{RELEASE}: skip_full_run_gate must be a boolean input that defaults to false")
 
     jobs = block(lines, "jobs", 0)
     job_names = keys_at(jobs, 2)
@@ -365,6 +374,21 @@ def check(errors: list[str]) -> None:
         errors.append(f"{RELEASE}: references secrets the release environment does not hold: {unknown}")
 
     steps = re.split(r"(?m)^      - ", "\n".join(code(line) for line in lines))
+    gates = [index for index, step in enumerate(steps)
+             if re.search(r"(?m)^\s*run: python3 tools/release_plan\.py full-run-gate$", step)]
+    first_secret = next((index for index, step in enumerate(steps) if "secrets." in step), len(steps))
+    if len(gates) != 1:
+        errors.append(f"{RELEASE}: exactly one step must run python3 tools/release_plan.py "
+                      f"full-run-gate, found {len(gates)}")
+    elif re.search(r"(?m)^        (?:if|continue-on-error):", steps[gates[0]]):
+        errors.append(f"{RELEASE}: the full-run gate step must be unconditional and blocking")
+    elif gates[0] > first_secret:
+        errors.append(f"{RELEASE}: the full-run gate must run before any step reads a secret")
+    elif not re.search(r"(?m)^          RELEASE_SKIP_FULL_RUN_GATE: \$\{\{ inputs\.skip_full_run_gate \}\}$",
+                       steps[gates[0]]) or not re.search(
+            r"(?m)^          RELEASE_UPLOAD: \$\{\{ steps\.plan\.outputs\.upload \}\}$", steps[gates[0]]):
+        errors.append(f"{RELEASE}: the full-run gate must read the plan's upload decision and the "
+                      "skip_full_run_gate input, so a waiver cannot reach an upload")
     uploads = [step for step in steps if UPLOAD_MECHANISMS.search(step)]
     if len(uploads) != 1 or not re.search(
             r"(?m)^        if: \$\{\{ steps\.plan\.outputs\.upload == 'true' \}\}$", uploads[0]):

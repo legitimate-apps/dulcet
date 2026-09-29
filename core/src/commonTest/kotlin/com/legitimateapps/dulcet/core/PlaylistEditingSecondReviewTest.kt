@@ -282,7 +282,9 @@ class PlaylistEditingSecondReviewTest {
     private suspend fun TestScope.heldAcrossFlushes(env: PlaylistEnv, status: Int, error: DomainError) {
         val (p, session) = renameHeldBy(env, status)
         env.server.httpStatus["ping"] = status
-        repeat(PlaylistEditor.MAX_FAILURES + 1) {
+        // The reachable report's reconnect flushes too (§16.14 step 1), at the first yield below, and
+        // meets the same refusal: it is one of the MAX_FAILURES + 1 flushes counted.
+        repeat(PlaylistEditor.MAX_FAILURES) {
             val report = session.playlists.flush()
             assertEquals(error, report.stoppedBy)
             runCurrent()

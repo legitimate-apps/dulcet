@@ -100,6 +100,7 @@ class MutationOutboxReviewTest {
             val session = LibraryReaderSession(
                 store.database, SeenCacheStore(store, ManualWallClock()).bind(SessionEnv.BINDING), env.server, scope,
                 formPost = false,
+                foreground = false,
             )
             val outcomes = mutableListOf<MutationOutcome>()
             session.favourites.addOutcomeListener { outcomes += it }
@@ -108,7 +109,7 @@ class MutationOutboxReviewTest {
             assertEquals(MutationRecord.NotRecorded, session.favourites.setRating(album4, 3))
             assertEquals(false, session.favourites.toggleFavourite(album4), "a toggle that was not recorded reports the old state")
             assertEquals(null, session.favourites.isFavourite(album4))
-            assertEquals(0L, session.favourites.pendingCount())
+            assertEquals(null, session.favourites.pendingCount(), "an unreadable count is unknown, never zero")
             assertEquals(MutationRecord.Invalid, session.favourites.setRating(album4, 9))
             assertTrue(outcomes.isNotEmpty() && outcomes.all { it is MutationOutcome.NotRecorded })
             session.openSearch { }.updateQuery("Album") // must not throw either
@@ -177,6 +178,112 @@ class MutationOutboxReviewTest {
         assertEquals(0L, session.favourites.pendingCount())
     }
 
+    // ---- The sign-out offer's count (§14.7) ----------------------------------------------------------
+
+    /**
+     * A count that cannot be read is unknown, never zero: zero tells the person signing out that
+     * nothing will be lost. The failure is injected into the database read itself, and the test
+     * proves it fired before believing the answer.
+     */
+    @Test
+    fun aPendingCountThatCannotBeReadIsUnknownNeverZero() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        assertEquals(1L, session.favourites.pendingCount(), "fixture: one change is pending")
+
+        env.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) }
+        val unreadable = session.favourites.pendingCount()
+        env.driver.failRead = null
+
+        assertTrue(env.driver.failedReads > 0, "the injected read failure never fired; the test measured nothing")
+        assertEquals<Long?>(null, unreadable, "an unreadable count was reported as a number")
+        assertEquals(1L, session.favourites.pendingCount(), "the change is still pending once the read succeeds")
+    }
+
+    /**
+     * The sign-out offer counts every change the person would lose: a favourite AND a playlist edit.
+     * The two outboxes share one table, and the favourites' count leaves playlist rows to their own
+     * outbox, so a count read from the favourites alone says 1 here where 2 would be lost.
+     */
+    @Test
+    fun theSignOutCountIncludesAPendingPlaylistEdit() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        assertEquals(PlaylistEditRecord.Pending, session.playlists.create("Road").record, "fixture: the create is queued")
+        assertEquals(1L, session.favourites.pendingCount(), "fixture: the favourites' own count is favourites only")
+        assertEquals(1L, session.playlists.pendingCount(), "fixture: one playlist change is pending")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "a pending playlist edit was left out of the sign-out count")
+    }
+
+    /**
+     * The shared outbox table unreadable: the playlist editor's own count is unknown, never zero, and
+     * so is the sign-out count. Both outboxes' reads fail here; the next test fails the playlist
+     * count alone.
+     */
+    @Test
+    fun aPlaylistCountThatCannotBeReadIsUnknownNeverZero() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.playlists.create("Road")
+        assertEquals(1L, session.playlists.pendingCount(), "fixture: one playlist change is pending")
+
+        env.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) }
+        val playlists = session.playlists.pendingCount()
+        val total = session.pendingChangeCount()
+        env.driver.failRead = null
+
+        assertTrue(env.driver.failedReads > 0, "the injected read failure never fired; the test measured nothing")
+        assertEquals<Long?>(null, playlists, "an unreadable playlist count was reported as a number")
+        assertEquals<Long?>(null, total, "an unreadable sign-out count was reported as a number")
+        assertEquals<Long?>(1L, session.pendingChangeCount(), "the change is still pending once the read succeeds")
+    }
+
+    /**
+     * Only the playlist count unreadable — the favourites' count, read first, succeeds — and the
+     * sign-out count is unknown: never the favourites' count alone, which would read an unreadable
+     * playlist count as zero.
+     */
+    @Test
+    fun theSignOutCountIsUnknownWhenOnlyThePlaylistCountCannotBeRead() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.favourites.setFavourite(album4, true)
+        session.playlists.create("Road")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "fixture: two changes are pending")
+
+        var reads = 0
+        env.driver.failRead = { it.contains("mutation_outbox", ignoreCase = true) && reads++ == 1 }
+        val total = session.pendingChangeCount()
+        env.driver.failRead = null
+
+        assertEquals(2, reads, "fixture: the sign-out count read the outbox table twice, favourites then playlists")
+        assertEquals(1, env.driver.failedReads, "fixture: only the second read, the playlist count's, failed")
+        assertEquals<Long?>(null, total, "an unreadable playlist count was treated as zero")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "both changes are still pending once the read succeeds")
+    }
+
+    /**
+     * A queued playlist row this build cannot decode is never sent, so it is lost at sign-out like any
+     * other: the count includes it. The favourites' twin is
+     * [ReaderSessionReviewTest.aQueuedChangeThatCannotBeDecodedIsCounted].
+     */
+    @Test
+    fun anUndecodablePlaylistRowIsCountedForSignOut() = sessionTest { env ->
+        val session = env.session()
+        session.setOnline(false)
+        session.playlists.create("Road")
+        assertEquals<Long?>(1L, session.playlists.pendingCount(), "fixture: one playlist change is pending")
+        env.database.database.protectedReservedDataQueries.insertPendingMutation(
+            SessionEnv.BINDING.serverId, "playlist-9", PLAYLIST_FIELD_PREFIX + "unknownKind", "{\"value\":1}", 999_999L, 0L,
+        )
+        assertEquals(1, session.playlists.pendingChanges().size, "fixture: the new row cannot be decoded")
+        assertEquals(0L, session.favourites.pendingCount(), "fixture: the favourites never count a playlist row")
+        assertEquals<Long?>(2L, session.playlists.pendingCount(), "an undecodable playlist row was left out of the count")
+        assertEquals<Long?>(2L, session.pendingChangeCount(), "an undecodable playlist row was left out of the sign-out count")
+    }
+
     // ---- S1 -----------------------------------------------------------------------------------------
 
     @Test
@@ -197,6 +304,12 @@ class MutationOutboxReviewTest {
 
     // ---- S2 -----------------------------------------------------------------------------------------
 
+    /**
+     * Both changes are made while connected and neither send reaches the server, so a read issued
+     * after them can land before the next flush. (So can an offline change whose send fails: a
+     * reconnect flushes before it reads, §16.14 step 1, but a failed send does not stop the
+     * reconnect — MutationOutboxTest's `anOfflineChangeWhoseSend…IsSuperseded` cases.)
+     */
     @Test
     fun aSendThatNeverReachedTheServerDoesNotShieldTheChangeFromANewerServerValue() = sessionTest { env ->
         env.server.ratings[albumId(4)] = 3
@@ -207,16 +320,16 @@ class MutationOutboxReviewTest {
         session.favourites.setRating(album4, 4)
         advanceUntilIdle()
         assertEquals(1, env.server.count("setRating"), "fixture: the send was tried and never arrived")
-        session.setOnline(false)
         session.favourites.setRating(album4, 5)
+        advanceUntilIdle()
+        assertEquals(2, env.server.count("setRating"), "fixture: the second send never arrived either")
         env.server.failWithError.clear()
         env.server.ratings[albumId(4)] = 4 // another client, after this device's change
-        session.setOnline(true)
         session.reader.open(grid) {}.also { it.refresh() } // a read issued after the change
         advanceUntilIdle()
         session.reader.reconnect()
         advanceUntilIdle()
-        assertEquals(1, env.server.count("setRating"), "4 was never delivered by this device, so 4 is another client's")
+        assertEquals(2, env.server.count("setRating"), "4 was never delivered by this device, so 4 is another client's")
         assertEquals(listOf<MutationOutcome>(MutationOutcome.Superseded(album4, MutationField.Rating, 4)), outcomes)
         assertEquals(4, env.server.ratings[albumId(4)])
         assertEquals(4, pubs.last.album(albumId(4)).userRating)
@@ -371,10 +484,14 @@ class MutationOutboxReviewTest {
         session.favourites.setRating(album4, 4)
         advanceUntilIdle()
         env.server.failWithStatus.clear()
-        session.setOnline(false)
+        // The later change is made while connected and its send times out, so it stays queued with 5
+        // among the values it may have sent. (A change made OFFLINE would be sent by the reconnect
+        // before anything is read, §16.14 step 1, and so be newer than any read here, §18.3.)
+        env.server.failWithError["setRating"] = DomainError.Transport.Timeout
         session.favourites.setRating(album4, 5)
+        advanceUntilIdle()
+        env.server.failWithError.clear()
         env.server.ratings[albumId(4)] = 4 // another client, after this device's change
-        session.setOnline(true)
         session.reader.open(grid) {}.also { it.refresh() }
         advanceUntilIdle()
         session.reader.reconnect()
@@ -431,7 +548,7 @@ class MutationOutboxReviewTest {
             suspendCoroutine { c -> d.invokeOnCompletion { c.resume(d.getCompleted()) } }
         }
         val session = LibraryReaderSession(env.database.database, env.store.bind(SessionEnv.BINDING), transport, env.scope,
-            LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = false)
+            LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = false, foreground = false)
         session.reader.connect()
         session.reader.open(grid) {}.also { advanceUntilIdle() }.close()
         env.server.holdAfterAnswer += "search3"
@@ -470,7 +587,9 @@ class MutationOutboxReviewTest {
     private suspend fun TestScope.favouritesHeldAcrossFlushes(env: SessionEnv, status: Int, error: DomainError) {
         val (session, outcomes) = favouritesHeldBy(env, status)
         env.server.failWithStatus["ping"] = status
-        repeat(LibraryFavourites.MAX_FAILURES + 1) {
+        // The reachable report's reconnect flushes too (§16.14 step 1), at the first yield below, and
+        // meets the same refusal: it is one of the MAX_FAILURES + 1 flushes counted.
+        repeat(LibraryFavourites.MAX_FAILURES) {
             assertEquals(error, session.favourites.flush().stoppedBy)
             runCurrent()
         }
@@ -664,6 +783,7 @@ class MutationOutboxReviewTest {
     fun aFavouriteMadeDuringTheWaitIsNotSentEarly() = sessionTest { env ->
         val (session, _) = favouritesHeldBy(env, 429, retryAfter = "30")
         session.favourites.flush()
+        runCurrent() // the reachable report's reconnect: its flush is stopped by the wait, and it reads the epoch
         env.server.failWithStatus.clear()
         val before = env.server.log.size
         session.favourites.setFavourite(LibraryEntityRef(LibraryEntityKind.Track, "album-0004-track-0"), true)
