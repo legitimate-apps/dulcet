@@ -29,34 +29,45 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.library.hostInForeground
+import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
+import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.searchScopeLabel
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchHostDependencies
-import com.legitimateapps.dulcet.search.SearchIntentRouter
+import com.legitimateapps.dulcet.search.SearchObservation
+import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
 
+/**
+ * The account's search presenter, kept by the app above its tabs and pages, so a result opened and
+ * left with Back finds its query and results as they were. Keyed by the whole account: a changed
+ * password or address replaces the process's reader, and a presenter still attached to the old one
+ * would never hear from it again.
+ */
 @Composable
-internal fun MobileSearchRoute(
-    account: SearchAccount,
-    dependencies: SearchHostDependencies,
-    onPlay: ((SearchResultItem) -> Unit)? = null,
-) {
+internal fun rememberSearchPresenter(account: SearchAccount, dependencies: SearchHostDependencies): SearchPresenter {
     val context = LocalContext.current
-    val presenter = remember(account.providerInstanceId) { dependencies.createPresenter(account, context) }
-    val router = remember(context) { dependencies.createRouter(context) }
+    val foreground = hostInForeground()
+    val presenter = remember(account) { dependencies.createPresenter(account, context, foreground) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)
     }
-    MobileSearchScreen(presenter, router, account, onPlay)
+    return presenter
 }
 
 @Composable
 internal fun MobileSearchScreen(
     presenter: SearchPresenter,
-    router: SearchIntentRouter,
+    /** An album or artist result opens its library page; a track plays ([SearchActivation]). */
+    onActivate: (SearchResultItem) -> Unit,
     account: SearchAccount? = null,
     onPlay: ((SearchResultItem) -> Unit)? = null,
 ) {
@@ -77,11 +88,16 @@ internal fun MobileSearchScreen(
                 shape = RoundedCornerShape(28.dp),
                 modifier = Modifier.fillMaxWidth().testTag("search.query"),
             )
+            // Where these results come from (§16.15): the core's scope, in the shared words. A server
+            // that failed or cannot be reached leaves the device's rows showing, labelled.
+            val scopeLine = libraryResources().searchScopeLabel(state.scope.takeIf { state.query.isNotBlank() })
+            if (scopeLine != null) Text(
+                scopeLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("search.scope"),
+            )
             when {
-                state.error != null -> Text(
-                    stringResource(R.string.search_failed),
-                    modifier = Modifier.testTag("search.error"),
-                )
                 state.isLoading && state.results.isEmpty() -> Text(
                     stringResource(R.string.search_loading),
                     modifier = Modifier.testTag("search.loading"),
@@ -92,15 +108,22 @@ internal fun MobileSearchScreen(
                 )
             }
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results"),
+                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
+                    .semantics { this[SearchObservation] = state },
             ) {
-                itemsIndexed(state.results) { index, result ->
+                itemsIndexed(state.rows) { index, row ->
+                    val result = row.item
+                    val playable = row.playability != AndroidLibraryPlayability.UnavailableOffline
                     MobileSearchResult(
                         result = result,
                         index = index,
                         account = account,
-                        onActivate = { router.activate(result) },
-                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track }?.let { play -> { play(result) } },
+                        // Only beside the server's rows is "on this device" news; the scope line covers the rest.
+                        deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
+                            state.scope == AndroidLibrarySearchScope.ServerAndDevice,
+                        unavailableOffline = !playable,
+                        onActivate = { onActivate(result) },
+                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { play(result) } },
                     )
                 }
             }
@@ -113,9 +136,12 @@ private fun MobileSearchResult(
     result: SearchResultItem,
     index: Int,
     account: SearchAccount?,
+    deviceOnly: Boolean,
+    unavailableOffline: Boolean,
     onActivate: () -> Unit,
     onPlay: (() -> Unit)?,
 ) {
+    val resources = libraryResources()
     val kind = stringResource(when (result.type) {
         SearchResultType.Artist -> R.string.search_kind_artist
         SearchResultType.Album -> R.string.search_kind_album
@@ -125,7 +151,11 @@ private fun MobileSearchResult(
     ListItem(
         headlineContent = { Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            Text(listOf(kind, credits).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
+            val notes = listOfNotNull(
+                resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
+                resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
+            )
+            Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         },
         leadingContent = {

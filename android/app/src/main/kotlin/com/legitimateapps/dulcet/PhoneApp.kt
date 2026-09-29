@@ -17,7 +17,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -26,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
@@ -33,21 +33,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
-import com.legitimateapps.dulcet.core.AndroidQueueSource
-import com.legitimateapps.dulcet.library.LibraryAlbum
-import com.legitimateapps.dulcet.library.LibraryArtist
-import com.legitimateapps.dulcet.library.LibraryIndex
+import com.legitimateapps.dulcet.core.AndroidLibraryItem
+import com.legitimateapps.dulcet.core.AndroidLibraryPublication
+import com.legitimateapps.dulcet.library.ArtistPlayResult
+import com.legitimateapps.dulcet.library.LibraryLifecycle
+import com.legitimateapps.dulcet.library.playAlbum
+import com.legitimateapps.dulcet.library.playArtist
+import com.legitimateapps.dulcet.library.playTracks
+import com.legitimateapps.dulcet.library.playPlaylist
+import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.titledTracks
 import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.search.SearchActivation
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,16 +92,13 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf() }
     var playerOpen by rememberSaveable { mutableStateOf(false) }
+    var adding by remember { mutableStateOf<PlaylistAddition?>(null) }
 
     val playback = rememberPlaybackController()
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
         .collectAsStateWithLifecycle()
-    val library = rememberLibrarySession(account)
-    val libraryState by library.state.collectAsState()
-    val index = remember(libraryState.library) { LibraryIndex.from(libraryState.library?.rows.orEmpty()) }
-
-    // Restored Up Next rows take their titles from the saved library first; no request is made.
-    LaunchedEffect(playback, index) { playback?.rememberTracks(index.albums.flatMap { it.playable() }) }
+    val foreground = hostInForeground()
+    val library = remember(account) { LibrarySession(context, account, foreground) }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect
@@ -108,17 +109,47 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     val showRequests by requests.show.collectAsState()
     LaunchedEffect(showRequests) { if (showRequests > 0) playerOpen = true }
 
+    val provider = account.providerInstanceId
     val actions = PhoneActions(
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
-        playAlbum = { album, start, shuffle -> playAlbum(playback, album, start, shuffle) },
-        playArtist = { artist, shuffle -> playArtist(playback, index, artist, shuffle) },
+        playAlbum = { album, start, shuffle -> playAlbumFrom(playback, provider, album, start, shuffle) },
+        playArtist = { artist, shuffle, done -> playArtist(playback, library, provider, artist, shuffle, done) },
+        // Up Next rows take their titles from albums already on screen, every titled track whether or
+        // not it can play right now; no request is made for them.
+        rememberAlbum = { album -> playback?.rememberTracks(album.titledTracks(provider)) },
+        playTracks = { items, rawId, source ->
+            if (playTracks(playback, provider, items, rawId, source)) playerOpen = true
+        },
+        openPlaylist = { routes += "playlist:$it" },
+        followPlaylist = { local, server ->
+            val index = routes.lastIndexOf("playlist:$local")
+            if (index >= 0) routes[index] = "playlist:$server"
+        },
+        playPlaylist = { playlist, position, shuffle ->
+            if (playPlaylist(playback, provider, playlist, position, shuffle)) playerOpen = true
+        },
+        addToPlaylist = { adding = it },
     )
+    // A restored Up Next row with no title takes it from what this device has seen, as it did from the
+    // whole-library mirror: a seen-cache read, never a request.
+    val untitled = remember(playbackState.queue) {
+        playbackState.queue.map { it.track }.filter { it.title.isBlank() }.map { it.rawId }.distinct()
+    }
+    LaunchedEffect(playback, library, untitled) {
+        val controller = playback ?: return@LaunchedEffect
+        if (untitled.isNotEmpty()) library.seenTracks(untitled) { tracks -> controller.rememberTracks(tracks) }
+    }
     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
+    // Search lives above the pages, so Back from a result's page returns to the query and results.
+    val searchPresenter = rememberSearchPresenter(account, dependencies)
+    val searchActivation = remember(context) {
+        SearchActivation(context, openAlbum = { routes += "album:$it" }, openArtist = { routes += "artist:$it" })
+    }
 
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
-        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, tabs = {
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
         NavigationBar {
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
@@ -134,20 +165,34 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
                 label = { Text(stringResource(R.string.tab_search)) },
                 modifier = Modifier.testTag("search.open"),
             )
+            // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
+            AccountNavigationItem()
         }
     }) {
         val route = routes.lastOrNull()
+        // The library's own state — which view, how far scrolled — is kept while a page is pushed
+        // over it, so Back from a playlist returns to the playlists, not to the home rows.
+        val saved = rememberSaveableStateHolder()
         when {
             route?.startsWith("album:") == true ->
-                AlbumScreen(account, index.album(route.removePrefix("album:")), playingRawId, actions)
+                AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
             route?.startsWith("artist:") == true ->
-                ArtistScreen(account, index, index.artist(route.removePrefix("artist:")), actions)
-            tab == PhoneTab.Library -> LibraryHome(account, library, libraryState, index, playingRawId, actions)
-            else -> MobileSearchRoute(account, dependencies) { result ->
+                ArtistScreen(account, library, route.removePrefix("artist:"), actions)
+            route?.startsWith("playlist:") == true ->
+                PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
+            tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
+            else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account) { result ->
                 playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
             }
         }
     }
+    // One session for every tab and detail page, started with the activity. The search tab's
+    // presenter uses the same process reader, so it follows the same reachability. The scaffold
+    // composes its content during layout, after this effect has run, so on the phone start() — and
+    // its reconnect's first request — comes before the screens open their windows; each window still
+    // paints from the cache before its own read is issued.
+    adding?.let { addition -> AddToPlaylistSheet(account, library, addition) { adding = null } }
+    LibraryLifecycle(library)
 }
 
 /**
@@ -164,6 +209,7 @@ internal fun PhoneFrame(
     playerOpen: Boolean,
     setPlayerOpen: (Boolean) -> Unit,
     back: (() -> Unit)? = null,
+    library: LibrarySession? = null,
     tabs: @Composable () -> Unit,
     page: @Composable () -> Unit,
 ) {
@@ -205,7 +251,7 @@ internal fun PhoneFrame(
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {
-            if (playback != null) NowPlayingScreen(account, playbackState, playback) { setPlayerOpen(false) }
+            if (playback != null) NowPlayingScreen(account, playbackState, playback, library) { setPlayerOpen(false) }
         }
     }
 }
@@ -218,40 +264,33 @@ internal class PhoneActions(
     val openAlbum: (String) -> Unit,
     val openArtist: (String) -> Unit,
     val back: () -> Unit,
-    val playAlbum: (LibraryAlbum, Int, Boolean) -> Unit,
-    val playArtist: (LibraryArtist, Boolean) -> Unit,
+    /** An album publication and the index of a row in its items. */
+    val playAlbum: (AndroidLibraryPublication, Int, Boolean) -> Unit,
+    /**
+     * An artist publication: every album's playable tracks, in the artist's album order. The last
+     * argument hears how it ended; the returned handle abandons the albums still opening.
+     */
+    val playArtist: (AndroidLibraryPublication, Boolean, (ArtistPlayResult) -> Unit) -> AutoCloseable?,
+    val rememberAlbum: (AndroidLibraryPublication) -> Unit = {},
+    /** A list's playable tracks queued from the one with the id, as a library queue with the name. */
+    val playTracks: (List<AndroidLibraryItem>, String, String) -> Unit = { _, _, _ -> },
+    val openPlaylist: (String) -> Unit = {},
+    /** A playlist page open on a local id follows the playlist to the server's id once it is made. */
+    val followPlaylist: (String, String) -> Unit = { _, _ -> },
+    /** A playlist publication, the index of an entry in its items, and shuffle. */
+    val playPlaylist: (AndroidLibraryPublication, Int, Boolean) -> Unit = { _, _, _ -> },
+    /** Opens "Add to playlist" for songs or an album. */
+    val addToPlaylist: (PlaylistAddition) -> Unit = {},
 )
 
-private fun playAlbum(playback: AndroidPlaybackController?, album: LibraryAlbum, start: Int, shuffle: Boolean) {
-    val tracks = album.playable()
-    if (playback == null || tracks.isEmpty()) return
-    playback.playQueue(tracks, start.coerceIn(tracks.indices), AndroidQueueSource.Album, album.item.title,
-        album.item.id.rawId, shuffle)
-}
-
-private fun playArtist(playback: AndroidPlaybackController?, index: LibraryIndex, artist: LibraryArtist, shuffle: Boolean) {
-    val tracks = index.albumsBy(artist).flatMap { it.playable() }
-    if (playback == null || tracks.isEmpty()) return
-    playback.playQueue(tracks, 0, AndroidQueueSource.Artist, artist.item.title, artist.item.id.rawId, shuffle)
-}
-
-/** The same session lifecycle the library screen always had, hoisted so detail pages share one read. */
-@Composable
-private fun rememberLibrarySession(account: SearchAccount): LibrarySession {
-    val context = LocalContext.current
-    val session = remember(account.providerInstanceId) { LibrarySession(context, account) }
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(session, lifecycle) {
-        session.openSaved()
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> session.resume()
-                Lifecycle.Event.ON_STOP -> session.pause()
-                else -> Unit
-            }
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); session.close() }
-    }
-    return session
+/** [position] indexes the album's rows; the queue skips rows with no metadata to play. */
+private fun playAlbumFrom(
+    playback: AndroidPlaybackController?,
+    provider: String,
+    publication: AndroidLibraryPublication,
+    position: Int,
+    shuffle: Boolean,
+) {
+    val rawId = (publication.items.getOrNull(position) as? AndroidLibraryItem.Track)?.rawId
+    playAlbum(playback, provider, publication, rawId, shuffle)
 }

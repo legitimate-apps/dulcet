@@ -306,6 +306,20 @@ internal abstract class ReaderHandle(
         }
     }
 
+    /**
+     * Why a detail's child list cannot be shown while its header can: offline, the reader's own
+     * failure, or the read's failure. Null while the list can still arrive, which is `loading`.
+     */
+    protected fun childListUnavailableReason(): LibraryUnavailableReason? {
+        val error = failure
+        return when {
+            !reader.online -> LibraryUnavailableReason.NotCachedOffline
+            internalFailure -> LibraryUnavailableReason.InternalFailure
+            error != null -> LibraryUnavailableReason.Failed(error)
+            else -> null
+        }
+    }
+
     /** Freshness when nothing is cached. A read in flight or coming says so, as [cachedFreshness] does. */
     protected fun emptyFreshness(): LibraryFreshness {
         val error = failure ?: owedFailure()
@@ -1307,13 +1321,16 @@ internal class AlbumDetailWindow(
         val header = cached.toItem(pending[albumMember])
         val itemsState: LibraryItemsState
         val items: List<LibraryItem>
+        val itemsUnavailable: LibraryUnavailableReason?
         if (cached.detailComplete) {
             val downloaded = reader.downloads.downloadedTrackRawIds(cache.serverId)
             items = tracks.map { it.toItem(pending[CacheListMember(CacheItemKind.Track, it.rawId)], reader.trackPlayability(it.rawId, downloaded)) }
             itemsState = LibraryItemsState.Present
+            itemsUnavailable = null
         } else {
             items = emptyList()
-            itemsState = if (reader.online && failure == null && !internalFailure) LibraryItemsState.Loading else LibraryItemsState.Unavailable
+            itemsUnavailable = childListUnavailableReason()
+            itemsState = if (itemsUnavailable == null) LibraryItemsState.Loading else LibraryItemsState.Unavailable
         }
         val current = reader.sessionEpoch
         val live = reader.liveDetailReads.containsKey(album.rawId) && current != null &&
@@ -1326,7 +1343,7 @@ internal class AlbumDetailWindow(
         }
         return LibraryPublication(
             query, 0, cachedFreshness(cached.row.fetchedAtWall, live), coverage, null, header, items, itemsState,
-            LibraryItemsOrder.Server,
+            LibraryItemsOrder.Server, itemsUnavailableReason = itemsUnavailable,
         )
     }
 
@@ -1459,15 +1476,16 @@ internal class CollectionDetailWindow(
         touchShown(listKey)
         // A playlist keeps its duplicate entries (§18.6); an artist's albums are distinct anyway.
         val (items, _) = if (state != null) itemsOf(cache.listRows(listKey), dedupe = false) else emptyList<LibraryItem>() to emptyList()
+        val itemsUnavailable = if (state != null) null else childListUnavailableReason()
         val itemsState = when {
             state != null -> LibraryItemsState.Present
-            reader.online && failure == null && !internalFailure -> LibraryItemsState.Loading
+            itemsUnavailable == null -> LibraryItemsState.Loading
             else -> LibraryItemsState.Unavailable
         }
         val live = liveThisSession && reader.sessionEpoch != null && state?.windowEpoch == reader.sessionEpoch?.key
         return LibraryPublication(
             query, 0, cachedFreshness(state?.fetchedAtWall, live), null, null, header, items, itemsState,
-            LibraryItemsOrder.Server,
+            LibraryItemsOrder.Server, itemsUnavailableReason = itemsUnavailable,
         )
     }
 

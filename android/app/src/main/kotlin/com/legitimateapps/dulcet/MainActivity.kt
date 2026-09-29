@@ -22,10 +22,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -41,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
+import com.legitimateapps.dulcet.shared.R as SharedR
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AccountConnectViewModel by viewModels()
@@ -76,14 +79,34 @@ internal fun AccountConnectScreen(
     requests: PhonePlaybackRequests = PhonePlaybackRequests(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val signOut by viewModel.signOut.state.collectAsStateWithLifecycle()
+    val signOutCallbacks = remember(viewModel) { viewModel.signOut.callbacks() }
     val context = LocalContext.current
-    val storedAccount = remember(state.status) {
+    // Re-read on every sign-out step too: a finished sign-out may leave the form state unchanged.
+    val storedAccount = remember(state.status, signOut) {
         runCatching { searchDependencies.loadAccount(context) }.getOrNull()
     }
-    if (storedAccount != null) {
-        PhoneApp(storedAccount, searchDependencies, requests)
+    SignOutDialogs(signOut, signOutCallbacks)
+    if (signOut.hidesAccount) {
+        SigningOutSurface(signOut, signOutCallbacks)
         return
     }
+    if (storedAccount != null) {
+        val actions = remember(storedAccount) {
+            AccountActions(
+                serverName = runCatching { java.net.URI(storedAccount.normalizedBaseUrl).host }.getOrNull()
+                    ?.takeIf { it.isNotBlank() } ?: storedAccount.normalizedBaseUrl,
+                username = storedAccount.username,
+                requestSignOut = viewModel.signOut::request,
+            )
+        }
+        CompositionLocalProvider(LocalAccountActions provides actions) {
+            PhoneApp(storedAccount, searchDependencies, requests)
+        }
+        return
+    }
+    // A saved account whose record cannot be read never reaches the app, so it is signed out from here.
+    val unreadable = remember(state.status, signOut) { viewModel.signOut.unreadableAccountId() != null }
     AccountConnectContent(
         state = state,
         onServerUrlChanged = viewModel::updateServerUrl,
@@ -91,6 +114,7 @@ internal fun AccountConnectScreen(
         onPasswordChanged = viewModel::updatePassword,
         onAllowLocalHttpChanged = viewModel::updateAllowLocalHttp,
         onSubmit = viewModel::submitOrCancel,
+        onSignOutUnreadable = if (unreadable) signOutCallbacks.retry else null,
     )
 }
 
@@ -102,6 +126,7 @@ private fun AccountConnectContent(
     onPasswordChanged: (String) -> Unit,
     onAllowLocalHttpChanged: (Boolean) -> Unit,
     onSubmit: () -> Unit,
+    onSignOutUnreadable: (() -> Unit)? = null,
 ) {
     val connecting = state.status == AccountConnectStatus.Connecting
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -172,6 +197,13 @@ private fun AccountConnectContent(
             }
 
             AccountStatusCard(state.status)
+            if (onSignOutUnreadable != null) OutlinedButton(
+                onClick = onSignOutUnreadable,
+                enabled = !connecting,
+                modifier = Modifier.fillMaxWidth().testTag("account.signout-unreadable"),
+            ) {
+                Text(stringResource(SharedR.string.account_signout_unreadable_action))
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 stringResource(R.string.credential_storage_note),

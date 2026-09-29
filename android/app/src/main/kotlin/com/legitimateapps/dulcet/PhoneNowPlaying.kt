@@ -1,5 +1,14 @@
 package com.legitimateapps.dulcet
 
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+import com.legitimateapps.dulcet.core.AndroidLibraryEntity
+import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
+import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.outcomeLine
+import com.legitimateapps.dulcet.library.rememberWatchedFavourite
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -41,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -136,9 +146,20 @@ internal fun NowPlayingScreen(
     account: SearchAccount,
     state: AndroidPlaybackState,
     playback: AndroidPlaybackController,
+    library: LibrarySession? = null,
     close: () -> Unit,
 ) {
     var showQueue by rememberSaveable { mutableStateOf(false) }
+    var showLyrics by rememberSaveable { mutableStateOf(false) }
+    // The header's library controls: the heart, and the lyrics (§18.4), which need the session's reader.
+    val heart: (@Composable () -> Unit)? = library?.let { session -> {
+        NowPlayingFavourite(session, state)
+        if (state.queue.getOrNull(state.currentIndex ?: -1) != null) {
+            IconButton(onClick = { showLyrics = true }, modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
+                Icon(DulcetIcons.Lyrics, stringResource(R.string.action_lyrics))
+            }
+        }
+    } }
     val surface = MaterialTheme.colorScheme.surface
     val accent = state.artworkKey?.let { ArtworkImages.accent(account, it) }
     val top by animateColorAsState(accent?.copy(alpha = 0.55f)?.compositeOver(surface) ?: MaterialTheme.colorScheme.primaryContainer,
@@ -152,10 +173,11 @@ internal fun NowPlayingScreen(
         .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) {
         // The app locks no orientation and runs in split screen, so the player lays itself out for
         // the window it is given (`PlayerLayout`).
-        PlayerLayout(account, state, playback, close, { showQueue = true },
+        PlayerLayout(account, state, playback, close, { showQueue = true }, heart,
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
     }
     if (showQueue) UpNextSheet(account, state, playback) { showQueue = false }
+    if (showLyrics && library != null) LyricsSheet(library, state, playback) { showLyrics = false }
 }
 
 /** The transport row's width with every button at its full size, and at its compact size. */
@@ -220,6 +242,7 @@ private fun PlayerLayout(
     playback: AndroidPlaybackController,
     close: () -> Unit,
     openQueue: () -> Unit,
+    heart: (@Composable () -> Unit)?,
     modifier: Modifier,
 ) {
     val card = rememberSkipNoticeCard(state.skipNotice, MaterialTheme.typography.bodyMedium)
@@ -234,7 +257,7 @@ private fun PlayerLayout(
             else ((width - TRANSPORT_COMPACT_WIDTH.roundToPx()) / 2).coerceIn(8.dp.roundToPx(), 28.dp.roundToPx())
         val inner = (width - pad * 2).coerceAtLeast(0)
         val header = subcompose(PlayerSlot.Header) {
-            PlayerHeader(state, close, openQueue, vertical = if (short) 0.dp else if (wide) 4.dp else 8.dp)
+            PlayerHeader(state, close, openQueue, heart, vertical = if (short) 0.dp else if (wide) 4.dp else 8.dp)
         }.single().measure(Constraints(maxWidth = inner))
         val info = subcompose(PlayerSlot.Info) { PlayerInfo(state) }.single()
         val error = subcompose(PlayerSlot.Error) { PlayerError(state) }.single()
@@ -366,7 +389,7 @@ private fun PlayerLayout(
 internal val TOUCH_TARGET = 48.dp
 
 @Composable
-private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openQueue: () -> Unit, vertical: Dp) {
+private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openQueue: () -> Unit, heart: (@Composable () -> Unit)?, vertical: Dp) {
     Row(Modifier.fillMaxWidth().padding(vertical = vertical), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = close, modifier = Modifier.size(TOUCH_TARGET).testTag("player.close")) {
             Icon(DulcetIcons.ExpandMore, stringResource(R.string.action_close_player))
@@ -374,6 +397,7 @@ private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openQue
         Text(state.album ?: stringResource(R.string.now_playing), Modifier.weight(1f),
             style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        heart?.invoke()
         IconButton(onClick = openQueue, modifier = Modifier.size(TOUCH_TARGET).testTag("player.queue")) {
             Icon(DulcetIcons.QueueMusic, stringResource(R.string.action_up_next))
         }
@@ -543,4 +567,26 @@ private fun UpNextSheet(account: SearchAccount, state: AndroidPlaybackState, pla
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/**
+ * The playing track's heart (§16.20): the state this device knows for it, the change shown with the
+ * tap, and — the player has no room for a line — a short message when a change to it needs words,
+ * the same words the library screens use. Nothing while no track is current.
+ */
+@Composable
+private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackState) {
+    val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId ?: return
+    val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
+    val favourite = rememberWatchedFavourite(session, target) == true
+    val outcomes by session.outcomes.collectAsState()
+    val line = libraryResources().outcomeLine(outcomes[target])
+    val context = LocalContext.current
+    LaunchedEffect(line) {
+        if (line != null) {
+            Toast.makeText(context, line, Toast.LENGTH_LONG).show()
+            session.dismissOutcome(target)
+        }
+    }
+    FavouriteButton(favourite, "player.favourite", Modifier.size(TOUCH_TARGET)) { session.setFavourite(target, !favourite) }
 }

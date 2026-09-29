@@ -1,8 +1,152 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The reader's user-facing copy, shared by the phone and TV apps so both say the same thing
+     (spec §16.14, §16.15). Words the person sees are "Available offline", "Downloaded" and
+     "Not available offline"; never "cached" or "sync". -->
 <resources>
+    <string name="library_age_just_now">just now</string>
+    <string name="library_seen_at">Showing what you last saw %1$s</string>
+    <string name="library_seen_unknown_age">Showing what this device had saved, age unknown</string>
+    <string name="library_seen_with_reason">%1$s — %2$s</string>
+    <string name="library_reason_offline">you\'re offline</string>
+    <string name="library_reason_revalidating">checking your server</string>
+    <string name="library_reason_stale">your library has changed since</string>
+    <string name="library_reason_owed">the rest of this list is still to load</string>
+    <string name="library_reason_internal">something went wrong on this device</string>
+
+    <string name="library_error_unreachable">couldn\'t reach your server</string>
+    <string name="library_error_timeout">your server didn\'t answer in time</string>
+    <string name="library_error_credentials">your server didn\'t accept your sign-in</string>
+    <string name="library_error_forbidden">your account isn\'t allowed to see this</string>
+    <string name="library_error_busy">your server is busy</string>
+    <string name="library_error_not_found">your server no longer has this</string>
+    <string name="library_error_tls">your server\'s certificate isn\'t trusted</string>
+    <string name="library_error_access_refused">your server refused access</string>
+    <string name="library_error_server">your server couldn\'t answer</string>
+
+    <string name="library_unavailable_album">You haven\'t opened this album on this device. Connect to your server to see it.</string>
+    <string name="library_unavailable_list">You haven\'t opened this on this device. Connect to your server to see it.</string>
+    <string name="library_unavailable_gone">This is no longer on your server.</string>
+    <string name="library_unavailable_failed">Couldn\'t load this — %1$s.</string>
+    <string name="library_unavailable_internal">Couldn\'t load this — something went wrong on this device.</string>
+    <string name="library_unavailable_closed">This screen has closed.</string>
+    <string name="library_empty_list">Nothing here yet.</string>
+
+    <string name="library_coverage_open_total">Showing %1$s of %2$s — the rest need a connection</string>
+    <string name="library_coverage_open">Showing %1$s — the rest need a connection</string>
+    <plurals name="library_count_albums">
+        <item quantity="one">%1$s album</item>
+        <item quantity="other">%1$s albums</item>
+    </plurals>
+    <plurals name="library_count_artists">
+        <item quantity="one">%1$s artist</item>
+        <item quantity="other">%1$s artists</item>
+    </plurals>
+    <plurals name="library_count_tracks">
+        <item quantity="one">%1$s track</item>
+        <item quantity="other">%1$s tracks</item>
+    </plurals>
+    <plurals name="library_count_playlists">
+        <item quantity="one">%1$s playlist</item>
+        <item quantity="other">%1$s playlists</item>
+    </plurals>
+    <plurals name="library_count_items">
+        <item quantity="one">%1$s item</item>
+        <item quantity="other">%1$s items</item>
+    </plurals>
+    <string name="library_coverage_scanning">Your server is updating its library — this list may change</string>
+    <string name="library_coverage_changing">This list kept changing while it was read — it may be incomplete</string>
+    <string name="library_local_view">Available offline</string>
+
+    <string name="library_not_available_offline">Not available offline</string>
+    <string name="library_plays_on_reconnect">Not downloaded. It\'ll play when you reconnect.</string>
+    <string name="library_artist_nothing_playable">Nothing on this artist\'s albums can play right now.</string>
+    <string name="library_try_again">Try again</string>
+    <string name="library_dismiss">Dismiss</string>
+    <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>
+    <string name="library_no_epoch">Your server doesn\'t say when its library changes, so lists may be out of date until you refresh.</string>
+    <plurals name="library_discarded_changes">
+        <item quantity="one">%1$d favourite or rating wasn\'t sent and has been discarded: this device is now signed in as someone else.</item>
+        <item quantity="other">%1$d favourites or ratings weren\'t sent and have been discarded: this device is now signed in as someone else.</item>
+    </plurals>
+
+    <string name="library_home_newest">Recently added</string>
+    <string name="library_home_recent">Recently played</string>
+    <string name="library_home_frequent">Most played</string>
+    <string name="library_home_favourites">Favourites</string>
+
+    <string name="library_favourite_add">Add to favourites</string>
+    <string name="library_favourite_remove">Remove from favourites</string>
+    <string name="library_favourite_on">Favourite</string>
+    <string name="library_favourites_songs">Songs</string>
+    <string name="library_favourites_albums">Albums</string>
+    <string name="library_favourites_artists">Artists</string>
+    <string name="library_favourites_empty">No favourites yet. Choose the heart on a song, album or artist to keep it here.</string>
+    <string name="library_change_not_saved">Couldn\'t save that change — %1$s</string>
+    <string name="library_change_held_busy">That change isn\'t sent yet — your server is busy. It will be sent later.</string>
+    <string name="library_change_held_refused">That change isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>
+    <string name="library_change_superseded">Changed on another device — showing your server\'s value</string>
+    <string name="library_change_not_recorded">Couldn\'t save that change on this device</string>
+
+    <string name="search_scope_device">On this device</string>
+    <string name="search_scope_offline">Searching what\'s available offline — %1$s and %2$s on this device</string>
+    <string name="search_scope_failed">On this device — %1$s</string>
+    <string name="search_scope_reader_failed">On this device — something went wrong on this device</string>
+    <string name="search_row_device_only">On this device</string>
+    <plurals name="search_scope_albums">
+        <item quantity="one">%1$d album</item>
+        <item quantity="other">%1$d albums</item>
+    </plurals>
+    <plurals name="search_scope_tracks">
+        <item quantity="one">%1$d track</item>
+        <item quantity="other">%1$d tracks</item>
+    </plurals>
+
     <!-- The notice for a track the queue moved past because it could not be played (spec §12.12
          rule 5). Each is one whole sentence, the same copy the Apple apps use, so it can be
          translated as written and read aloud in one piece. -->
     <string name="playback_skipped">Couldn’t play a track. Skipped.</string>
     <string name="playback_skipped_track">Couldn’t play “%1$s”. Skipped.</string>
+
+    <!-- Playlists (spec §18.6) -->
+    <string name="playlist_pending">Not saved to your server yet</string>
+    <string name="playlist_local">Made on this device — not on your server yet</string>
+    <string name="playlist_read_only">Read-only</string>
+    <string name="playlist_read_only_owner">%1$s\'s playlist · read-only</string>
+    <string name="playlist_edit_invalid">That change can\'t be made.</string>
+    <string name="playlist_edit_not_editable">You can\'t change this playlist.</string>
+    <string name="playlist_edit_not_cached">Connect to your server first — this device hasn\'t read those songs yet.</string>
+    <string name="playlist_edit_stale">The playlist changed while you were looking at it. Here it is now — try again.</string>
+    <string name="playlist_edit_deleted">This playlist has been deleted.</string>
+    <string name="playlist_edit_not_recorded">Couldn\'t save that change on this device.</string>
+    <string name="playlist_edit_already_sent">Too late to undo — that change may already be on your server.</string>
+    <string name="playlist_outcome_not_saved">Couldn\'t save a change to this playlist — %1$s. Showing your server\'s version.</string>
+    <string name="playlist_outcome_changed_elsewhere">This playlist changed on another device, so your change wasn\'t sent. Showing your server\'s version.</string>
+    <string name="playlist_outcome_diverged">Your server saved something different from what you meant. Showing your server\'s version.</string>
+    <string name="playlist_outcome_held">A change to this playlist isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>
+    <string name="playlist_outcome_superseded">Renamed on another device — showing your server\'s name.</string>
+    <string name="playlist_outcome_possibly_created">“%1$s” may already have been made on your server. Check your playlists.</string>
+    <string name="playlist_question_lone">“%1$s” may already be on your server. Is the one there yours?</string>
+    <string name="playlist_question_lone_unnamed">This playlist may already be on your server. Is the one there yours?</string>
+    <plurals name="playlist_question_many">
+        <item quantity="one">%1$d playlist named “%2$s” is on your server, and this one may be it. Look in Playlists before you decide.</item>
+        <item quantity="other">%1$d playlists named “%2$s” are on your server, and this one may be one of them. They can\'t be told apart here — look in Playlists before you decide.</item>
+    </plurals>
+    <plurals name="playlist_question_many_unnamed">
+        <item quantity="one">%1$d playlist with this name is on your server, and this one may be it. Look in Playlists before you decide.</item>
+        <item quantity="other">%1$d playlists with this name are on your server, and this one may be one of them. They can\'t be told apart here — look in Playlists before you decide.</item>
+    </plurals>
+    <string name="playlist_keep_existing">Yes, use that one</string>
+    <string name="playlist_create_lone">Not mine — create it</string>
+    <string name="playlist_create_many">None of these — create it</string>
+    <string name="playlist_decide_later">Decide later</string>
+    <string name="playlist_question_waiting">Not on your server yet — waiting for you to say whether it\'s already there.</string>
+    <string name="playlist_question_choose">Choose…</string>
+    <string name="playlists_empty">No playlists yet.</string>
+    <!-- Lyrics (spec §18.4) -->
+    <string name="lyrics_none">No lyrics for this song.</string>
+    <string name="lyrics_unavailable">Lyrics couldn\'t be loaded.</string>
+    <string name="lyrics_unavailable_offline">You haven\'t seen this song\'s lyrics on this device. Connect to your server to see them.</string>
+    <string name="lyrics_unavailable_paused">Your server isn\'t answering for lyrics right now.</string>
+    <string name="lyrics_trimmed">Some languages were too long to keep and aren\'t shown.</string>
+    <string name="lyrics_title">Lyrics</string>
 </resources>
