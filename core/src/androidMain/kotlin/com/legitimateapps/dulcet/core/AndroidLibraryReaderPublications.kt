@@ -183,6 +183,20 @@ public sealed interface AndroidLibraryItem {
         val durationMilliseconds: Long?,
         val owner: String?,
         val artworkKey: String?,
+        /** The comment, as the server (or a pending edit made here) has it. */
+        val comment: String? = null,
+        /** The visibility; null when the server did not say. */
+        val isPublic: Boolean? = null,
+        /**
+         * This account may edit it (§18.6): the server said `readonly: false`, or, for a server that
+         * does not say, the account owns it. False for another user's playlist, which a shell shows
+         * with its [owner] and no edit affordance at all.
+         */
+        val editable: Boolean = false,
+        /** Edits made on this device that the server has not confirmed are shown in it. */
+        val pendingChanges: Boolean = false,
+        /** Created on this device and not yet on the server: [rawId] is a local id. */
+        val local: Boolean = false,
     ) : AndroidLibraryItem
 
     public data class Genre(override val rawId: String) : AndroidLibraryItem
@@ -461,7 +475,10 @@ internal fun LibraryItem.toAndroid(): AndroidLibraryItem = when (this) {
         sourceContainer, artworkKey, favourite = starred, rating = userRating, playCount = playCount,
         playability = playability.toAndroid(), metadataMissing = metadataMissing,
     )
-    is LibraryItem.Playlist -> AndroidLibraryItem.Playlist(rawId, name, songCount, durationMilliseconds, owner, artworkKey)
+    is LibraryItem.Playlist -> AndroidLibraryItem.Playlist(
+        rawId, name, songCount, durationMilliseconds, owner, artworkKey,
+        comment = comment, isPublic = isPublic, editable = editable, pendingChanges = pendingChanges, local = local,
+    )
     is LibraryItem.Genre -> AndroidLibraryItem.Genre(rawId)
 }
 

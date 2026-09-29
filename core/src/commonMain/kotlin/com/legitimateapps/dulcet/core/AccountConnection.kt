@@ -1501,7 +1501,7 @@ private fun parseEnvelope(body: String): SubsonicEnvelope? {
     }
 }
 
-private fun JsonElement?.toExtensionMapOrNull(): Map<String, Set<Int>>? {
+internal fun JsonElement?.toExtensionMapOrNull(): Map<String, Set<Int>>? {
     val list = this as? JsonArray ?: return null
     val result = mutableMapOf<String, Set<Int>>()
     list.forEach { element ->

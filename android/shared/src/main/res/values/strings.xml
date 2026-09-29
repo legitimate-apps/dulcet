@@ -106,4 +106,34 @@
          translated as written and read aloud in one piece. -->
     <string name="playback_skipped">Couldn’t play a track. Skipped.</string>
     <string name="playback_skipped_track">Couldn’t play “%1$s”. Skipped.</string>
+
+    <!-- Playlists (spec §18.6) -->
+    <string name="playlist_pending">Not saved to your server yet</string>
+    <string name="playlist_local">Made on this device — not on your server yet</string>
+    <string name="playlist_read_only">Read-only</string>
+    <string name="playlist_read_only_owner">%1$s\'s playlist · read-only</string>
+    <string name="playlist_edit_invalid">That change can\'t be made.</string>
+    <string name="playlist_edit_not_editable">You can\'t change this playlist.</string>
+    <string name="playlist_edit_not_cached">Connect to your server first — this device hasn\'t read those songs yet.</string>
+    <string name="playlist_edit_stale">The playlist changed while you were looking at it. Here it is now — try again.</string>
+    <string name="playlist_edit_deleted">This playlist has been deleted.</string>
+    <string name="playlist_edit_not_recorded">Couldn\'t save that change on this device.</string>
+    <string name="playlist_edit_already_sent">Too late to undo — that change may already be on your server.</string>
+    <string name="playlist_outcome_not_saved">Couldn\'t save a change to this playlist — %1$s. Showing your server\'s version.</string>
+    <string name="playlist_outcome_changed_elsewhere">This playlist changed on another device, so your change wasn\'t sent. Showing your server\'s version.</string>
+    <string name="playlist_outcome_diverged">Your server saved something different from what you meant. Showing your server\'s version.</string>
+    <string name="playlist_outcome_held">A change to this playlist isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>
+    <string name="playlist_outcome_superseded">Renamed on another device — showing your server\'s name.</string>
+    <string name="playlist_outcome_possibly_created">“%1$s” may already have been made on your server. Check your playlists.</string>
+    <string name="playlist_outcome_possible_duplicate">“%1$s” may already be on your server. Keep it as it is, or make another?</string>
+    <string name="playlist_keep_existing">Use the one on the server</string>
+    <string name="playlist_make_another">Make another</string>
+    <string name="playlists_empty">No playlists yet.</string>
+    <!-- Lyrics (spec §18.4) -->
+    <string name="lyrics_none">No lyrics for this song.</string>
+    <string name="lyrics_unavailable">Lyrics couldn\'t be loaded.</string>
+    <string name="lyrics_unavailable_offline">You haven\'t seen this song\'s lyrics on this device. Connect to your server to see them.</string>
+    <string name="lyrics_unavailable_paused">Your server isn\'t answering for lyrics right now.</string>
+    <string name="lyrics_trimmed">Some languages were too long to keep and aren\'t shown.</string>
+    <string name="lyrics_title">Lyrics</string>
 </resources>

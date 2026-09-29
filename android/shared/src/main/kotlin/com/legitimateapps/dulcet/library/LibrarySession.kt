@@ -22,7 +22,13 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidLibraryQuery
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidLibraryReaderAccount
+import com.legitimateapps.dulcet.core.AndroidLibraryLyrics
+import com.legitimateapps.dulcet.core.AndroidLibraryPlaylists
 import com.legitimateapps.dulcet.core.AndroidLibraryWindow
+import com.legitimateapps.dulcet.core.AndroidLyricsPublication
+import com.legitimateapps.dulcet.core.AndroidLyricsTrack
+import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
+import com.legitimateapps.dulcet.core.AndroidPlaylistOutcomeRegistration
 import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.search.SearchAccount
@@ -127,6 +133,56 @@ public class LibrarySession internal constructor(
         reader.acknowledgeDiscardedChanges()
     }
 
+    private val latestPlaylistOutcomes = MutableStateFlow<Map<String, AndroidPlaylistOutcome>>(emptyMap())
+
+    /**
+     * The latest playlist outcome for each playlist (§18.6), keyed by the playlist it concerns — a
+     * create in doubt by its local id — for the line on that playlist's page or the list. A screen
+     * clears one with [dismissPlaylistOutcome] once it has said it.
+     */
+    public val playlistOutcomes: StateFlow<Map<String, AndroidPlaylistOutcome>> = latestPlaylistOutcomes.asStateFlow()
+
+    public fun dismissPlaylistOutcome(playlistId: String) {
+        latestPlaylistOutcomes.update { it - playlistId }
+    }
+
+    private val createdIds = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /**
+     * A playlist made on this device, local id to the server's id, once the server has it: a page
+     * open on the local id follows it to the server's.
+     */
+    public val createdPlaylists: StateFlow<Map<String, String>> = createdIds.asStateFlow()
+
+    private val playlistRegistration: AndroidPlaylistOutcomeRegistration =
+        reader.playlists.addOutcomeListener { outcome ->
+            if (outcome is AndroidPlaylistOutcome.Created) createdIds.update { it + (outcome.localId to outcome.playlistId) }
+            // Saved needs no words; every other outcome is said on the playlist's page or the list.
+            if (outcome !is AndroidPlaylistOutcome.Saved && outcome !is AndroidPlaylistOutcome.Created) {
+                latestPlaylistOutcomes.update { it + (outcome.playlistId to outcome) }
+            }
+            observationState.update { it.copy(playlistOutcomes = (it.playlistOutcomes + outcome).takeLast(MAX_FRAMES)) }
+        }
+
+    /**
+     * Playlist editing (§18.6) on the process's reader: every edit through the core's editor, which
+     * guards positions with the view acted on, queues, sends at least once and reads back.
+     */
+    public val playlists: AndroidLibraryPlaylists get() = reader.playlists
+
+    /**
+     * Lyrics for Now Playing (§18.4), in the person's languages, most preferred first. One per session:
+     * the endpoint it discovers is kept for the session's life.
+     */
+    public fun lyrics(preferredLanguages: List<String>): SessionLyrics = SessionLyrics(this, preferredLanguages)
+
+    private var lyricsFacade: AndroidLibraryLyrics? = null
+
+    internal fun lyricsFacade(preferredLanguages: List<String>): AndroidLibraryLyrics =
+        lyricsFacade ?: AndroidLibraryLyrics(reader, preferredLanguages).also { lyricsFacade = it }
+
+    internal val isClosed: Boolean get() = closed
+
     private val surfaces = mutableListOf<LibrarySurface>()
     private var started = false
     private var closed = false
@@ -184,6 +240,18 @@ public class LibrarySession internal constructor(
     public fun openFavourites(): LibrarySurface = openSurface("favourites", favourites = true) { listener ->
         reader.openWindow(AndroidLibraryQuery.Starred, listener)
     }
+
+    /** The account's playlists, one response (§16.9, §18.6), each carrying any pending edit. The caller closes it. */
+    public fun openPlaylists(): LibrarySurface = openSurface("playlists") { listener ->
+        reader.openWindow(AndroidLibraryQuery.Playlists, listener)
+    }
+
+    /**
+     * One playlist: its header and its entries in the playlist's order, duplicates kept, with any
+     * pending edit already in them (§18.6). The caller closes it when the screen goes.
+     */
+    public fun openPlaylist(rawId: String): LibrarySurface =
+        openSurface("playlist:$rawId") { listener -> reader.openWindow(AndroidLibraryQuery.Playlist(rawId), listener) }
 
     /** One album's detail. The caller closes it when the screen goes. */
     public fun openAlbum(rawId: String): LibrarySurface =
@@ -270,6 +338,13 @@ public class LibrarySession internal constructor(
 
     private val watches = mutableListOf<AutoCloseable>()
 
+    internal fun recordLyrics(publication: AndroidLyricsPublication) {
+        observationState.update {
+            it.copy(lyrics = (it.lyrics + LyricsFrame(publication.trackRawId, publication.state, publication.synced,
+                publication.lines.size, publication.language, publication.freshness)).takeLast(MAX_FRAMES))
+        }
+    }
+
     // ---- Lifecycle ----------------------------------------------------------------------------------
 
     /**
@@ -336,6 +411,7 @@ public class LibrarySession internal constructor(
         stop()
         closed = true
         outcomeRegistration.close()
+        playlistRegistration.close()
         collections.toList().forEach(AutoCloseable::close)
         collections.clear()
         watches.toList().forEach(AutoCloseable::close)
@@ -641,6 +717,20 @@ public data class LibraryObservationState(
     val connections: List<LibraryConnectionState> = emptyList(),
     /** Every favourite or rating outcome, in order: entity ids and values, never account data. */
     val changeOutcomes: List<AndroidLibraryChangeOutcome> = emptyList(),
+    /** Every playlist outcome, in order: playlist and entry ids, never account data. */
+    val playlistOutcomes: List<AndroidPlaylistOutcome> = emptyList(),
+    /** Every lyrics publication a panel drew: track id, state, synced, line count. */
+    val lyrics: List<LyricsFrame> = emptyList(),
+)
+
+/** One lyrics publication, for tests: ids and shape only, never the text. */
+public data class LyricsFrame(
+    val trackRawId: String,
+    val state: com.legitimateapps.dulcet.core.AndroidLyricsState,
+    val synced: Boolean,
+    val lineCount: Int,
+    val language: String?,
+    val freshness: AndroidLibraryFreshness,
 )
 
 public data class LibraryFrame(
@@ -649,6 +739,8 @@ public data class LibraryFrame(
     val itemCount: Int,
     val itemsState: AndroidLibraryItemsState,
     val headerRawId: String?,
+    /** The rows' ids in order: a playlist's entries, duplicates kept. */
+    val itemRawIds: List<String> = emptyList(),
     val favourite: Boolean?,
     val itemsUnavailableReason: com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason? = null,
 ) {
@@ -659,6 +751,7 @@ public data class LibraryFrame(
             itemCount = publication.items.size,
             itemsState = publication.itemsState,
             headerRawId = publication.header?.rawId,
+            itemRawIds = publication.items.map { it.rawId },
             favourite = when (val header = publication.header) {
                 is AndroidLibraryItem.Album -> header.favourite
                 is AndroidLibraryItem.Artist -> header.favourite

@@ -11,6 +11,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.DisposableHandle
@@ -152,6 +153,10 @@ public class AndroidLibraryReader internal constructor(
     private val searches = mutableListOf<AndroidLibrarySearch>()
     private val outcomeListeners = mutableListOf<AndroidLibraryOutcomeRegistration>()
     private val favouriteWatches = mutableListOf<AndroidLibraryFavouriteWatch>()
+    private val playlistOutcomeListeners = mutableListOf<AndroidPlaylistOutcomeRegistration>()
+
+    /** Playlist editing (§18.6) over this reader's session. */
+    public val playlists: AndroidLibraryPlaylists = AndroidLibraryPlaylists(this)
 
     /** Completed by [close], so a reader closed while it waits for its predecessor stops waiting. */
     private val closeRequested = CompletableDeferred<Unit>()
@@ -194,6 +199,7 @@ public class AndroidLibraryReader internal constructor(
                 built = made
                 made.session.favourites.addOutcomeListener(::fanOutOutcome)
                 made.session.favourites.addChangeListener(::fanOutFavouriteChange)
+                made.session.playlists.addOutcomeListener(::fanOutPlaylistOutcome)
                 made.session.reader.setNetworkConstrained(reportedConstrained)
                 reportedReachable?.let(made.session::setOnline)
             }
@@ -536,6 +542,7 @@ public class AndroidLibraryReader internal constructor(
                         searches.toList().forEach(AndroidLibrarySearch::closeFromReader)
                         outcomeListeners.clear()
                         favouriteWatches.clear()
+                        playlistOutcomeListeners.clear()
                         closing?.session?.reader?.setForeground(false)
                     } catch (_: Throwable) {
                         // Closing is best effort and exports nothing.
@@ -644,6 +651,68 @@ public class AndroidLibraryReader internal constructor(
 
     internal fun unregister(registration: AndroidLibraryOutcomeRegistration) {
         outcomeListeners -= registration
+    }
+
+    internal fun register(registration: AndroidPlaylistOutcomeRegistration) {
+        playlistOutcomeListeners += registration
+    }
+
+    internal fun unregister(registration: AndroidPlaylistOutcomeRegistration) {
+        playlistOutcomeListeners -= registration
+    }
+
+    /** Reader thread: the playlist editor's listener. */
+    private fun fanOutPlaylistOutcome(outcome: PlaylistEditOutcome) {
+        val converted = try {
+            outcome.toAndroid()
+        } catch (_: Throwable) {
+            return
+        }
+        playlistOutcomeListeners.toList().forEach { it.emit(converted) }
+    }
+
+    /**
+     * One call that answers: returns at once, runs [work] on the reader's thread after every call made
+     * before it — up to its first suspension before any later call, so an edit is recorded, and in
+     * the next publication, before a window opened after it reads — and completes exactly once, on
+     * the main thread: with the result, or with [failed] of [AndroidOperationFailure.Closed] (the
+     * reader was closed, or closed the work) or [AndroidOperationFailure.InternalFailure] (the
+     * session could not be built, or the work threw). Nothing thrown leaves it.
+     */
+    internal fun <T> operation(
+        completion: (T) -> Unit,
+        failed: (AndroidOperationFailure) -> T,
+        work: suspend (LibraryReaderSession) -> T,
+    ) {
+        val delivered = AtomicBoolean(false)
+        fun finish(value: T) {
+            if (delivered.compareAndSet(false, true)) onMain(checkClosed = false) { completion(value) }
+        }
+        onReader(onDropped = { finish(failed(AndroidOperationFailure.Closed)) }) {
+            val session = try {
+                composed()?.session
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            if (session == null) {
+                finish(failed(if (closed.get()) AndroidOperationFailure.Closed else AndroidOperationFailure.InternalFailure))
+                return@onReader
+            }
+            readerScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                val result = try {
+                    work(session)
+                } catch (cancelled: CancellationException) {
+                    finish(failed(AndroidOperationFailure.Closed))
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    uncaughtFailures += failure
+                    failed(AndroidOperationFailure.InternalFailure)
+                }
+                finish(result)
+            }.invokeOnCompletion { cause -> if (cause != null) finish(failed(AndroidOperationFailure.Closed)) }
+        }
     }
 
     private fun fanOutOutcome(outcome: MutationOutcome) {
@@ -930,9 +999,10 @@ private fun productionComposer(
         AndroidLibraryReaderComposition(
             // No download source: downloads join the reader in phase R4, so nothing is published as
             // `downloaded` yet, and Android TV must be given none then either.
-            // No playlist editing reaches this facade yet, and the Android account does not carry the
-            // server's extensions, so `formPost` is off, as on Apple: without it an edit is batched
-            // within the parameter budget (§18.6), never refused for want of it.
+            // Playlist editing reaches the shells through [AndroidLibraryPlaylists]. The Android
+            // account does not carry the server's extensions, so `formPost` is off, as on Apple:
+            // without it an edit is batched within the parameter budget (§18.6), never refused for
+            // want of it.
             session = LibraryReaderSession(
                 opened.database, cache, live, scope,
                 epochIntervalMillis?.let { LibraryReaderConfig(epochIntervalMillis = it) } ?: LibraryReaderConfig(),

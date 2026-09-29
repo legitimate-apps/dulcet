@@ -141,7 +141,7 @@ public fun Resources.outcomeLine(outcome: AndroidLibraryChangeOutcome?): String?
  * almost anything but a network failure. It says nothing about the item — an error code such as 70
  * answers the ping, not this change — so it is only ever sign-in, a refusal of access, or the server.
  */
-private fun Resources.heldPhrase(error: DomainError): String = getString(
+internal fun Resources.heldPhrase(error: DomainError): String = getString(
     when {
         error == DomainError.Auth.InvalidCredentials -> R.string.library_error_credentials
         error is DomainError.Auth -> R.string.library_error_access_refused
