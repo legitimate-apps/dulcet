@@ -70,11 +70,11 @@
           "sha256": "81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a"
         },
         {
-          "formula": "openssl@3", "version": "3.6.4", "revision": 0,
+          "formula": "openssl@3", "version": "3.6.4", "revision": 1,
           "version_scheme": 0, "dependencies": ["ca-certificates"], "bottle_tag": "arm64_tahoe",
           "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:8c7dab98311d025fda379dba80eaf985af1ceca26c403c66318b3c7d43a028b9",
-          "sha256": "8c7dab98311d025fda379dba80eaf985af1ceca26c403c66318b3c7d43a028b9"
+          "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:ef13592a20830e81b8a72d958a65dfe671966e0df199c437cbbbe1d9362d72dc",
+          "sha256": "ef13592a20830e81b8a72d958a65dfe671966e0df199c437cbbbe1d9362d72dc"
         },
         {
           "formula": "opus", "version": "1.6.1", "revision": 0,
