@@ -6025,7 +6025,9 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    `main`, a manual dispatch and any other event plan both legs. A pull request never plans
    `apple-conformance`, and plans `apple-platform` when it changes an Apple input. Apple inputs are
    defined by exclusion: every path counts except documentation, `FEATURES.yml`, Android sources, the
-   other workflows and repository metadata, and a named list of tools no Apple leg reads. Gradle
+   other workflows and repository metadata, the Kotlin source sets no Apple target compiles
+   (`android*` and `jvm*` under `core/src` and `core-conformance/src`), and a named list of tools no
+   Apple leg reads. Gradle
    build files count wherever they are, and `apple-ci.yml` always counts. A new directory or tool
    therefore runs the platform leg until someone decides otherwise, and anything the planner cannot
    establish (a checkout that is not a two-parent merge, a failed or empty diff) plans the platform

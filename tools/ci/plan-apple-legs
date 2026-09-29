@@ -83,6 +83,15 @@ NOT_APPLE = (
     "NOTICE",
     "FEATURES.yml",  # read by parity-gate; evidence is resolved on main and before a release
     "android/*",
+    # Kotlin source sets no Apple target compiles (the default hierarchy: android* and jvm* sit
+    # beside appleMain, not under it). commonMain, commonTest and apple* stay Apple inputs.
+    "core/src/androidMain/*",
+    "core/src/androidHostTest/*",
+    "core/src/jvmMain/*",
+    "core/src/jvmTest/*",
+    "core-conformance/src/androidDeviceTest/*",
+    "core-conformance/src/androidHostTest/*",
+    "core-conformance/src/jvmTest/*",
     # Every workflow but apple-ci's own definition, and repository metadata.
     ".github/*",
 ) + NOT_APPLE_TOOLS
