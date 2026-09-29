@@ -14,6 +14,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
+  # something an Apple build reads, and never runs apple-conformance; a push to main and a manual
+  # dispatch run both. The legs are skipped by a job condition, never by a workflow `paths:` filter:
+  # a workflow that does not run leaves its required check pending forever, while a job skipped by
+  # a condition reports, and the required apple-ci job below always runs and decides. Anything the
+  # planner cannot establish plans MORE work (tools/ci/plan-apple-legs).
+  apple-plan:
+    name: apple-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      platform: ${{ steps.plan.outputs.platform }}
+      conformance: ${{ steps.plan.outputs.conformance }}
+    steps:
+      # Depth 2 reaches both parents of the merge commit a pull request checks out, which is all the
+      # diff needs. On push and dispatch the planner reads no diff.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Plan the Apple legs
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+        run: python3 tools/ci/plan-apple-legs plan --event "$EVENT" >> "$GITHUB_OUTPUT"
+
   # spec §21.5: two parallel legs on the standard hosted image behind the required `apple-ci`
   # job below. This leg is the platform half -- the macOS presentation and captures, then the
   # iPhone, iPadOS and tvOS shells and the compact shell. It talks to no loopback fixture.
@@ -30,6 +55,8 @@ jobs:
   # be killed by the job instead of by its own cap. Re-measure as the leg's history grows.
   apple-platform:
     name: apple-platform
+    needs: [apple-plan]
+    if: ${{ needs.apple-plan.outputs.platform == 'true' }}
     runs-on: macos-26
     timeout-minutes: 80
     # The required job downloads this leg's artifacts by the attempt that PRODUCED them. See there.
@@ -648,6 +675,8 @@ jobs:
   # 12.4 to 18.5 minutes, so 85 + 18.5 = 103.5. Re-measure as the leg's history grows.
   apple-conformance:
     name: apple-conformance
+    needs: [apple-plan]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 115
     outputs:
@@ -1663,29 +1692,48 @@ jobs:
           retention-days: 14
 
   # The required status check. Branch protection matches it by NAME and FEATURES.yml cites it by job
-  # id, so both are `apple-ci`. It needs every leg and runs `if: always()`: without that, a failed
-  # leg SKIPS this job, and a skipped required check does not block a merge. Any leg result other
-  # than `success` -- `failure`, `cancelled` (a timeout reports as cancelled) or `skipped` -- fails
-  # it. It then resolves every apple-ci evidence row against the JUnit the legs uploaded, as
-  # `core-ci` does for Android. It runs no Apple tooling, so it takes no macOS runner.
+  # id, so both are `apple-ci`. It needs the plan and every leg and runs `if: always()`: without
+  # that, a failed leg SKIPS this job, and a skipped required check does not block a merge. The
+  # plan must succeed; a leg the plan asked for must report `success` -- `failure`, `cancelled` (a
+  # timeout reports as cancelled) and `skipped` all fail it -- and a leg the plan did not ask for
+  # must report `skipped` (spec §21.6). On a run that planned both legs it then resolves every
+  # apple-ci evidence row against the JUnit the legs uploaded, as `core-ci` does for Android. It
+  # runs no Apple tooling, so it takes no macOS runner.
   apple-ci:
     name: apple-ci
     if: ${{ always() }}
-    needs: [apple-platform, apple-conformance]
+    needs: [apple-plan, apple-platform, apple-conformance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
+      APPLE_PLAN_RESULT: ${{ needs.apple-plan.result }}
+      RUN_APPLE_PLATFORM: ${{ needs.apple-plan.outputs.platform }}
+      RUN_APPLE_CONFORMANCE: ${{ needs.apple-plan.outputs.conformance }}
       APPLE_PLATFORM_RESULT: ${{ needs.apple-platform.result }}
       APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Require every Apple leg
+      # A planned leg must succeed and an unplanned one must be skipped; anything else fails,
+      # including an empty plan output, which is what a plan job that never ran leaves behind.
+      - name: Require every planned Apple leg
         run: |
+          echo "apple-plan=$APPLE_PLAN_RESULT platform=$RUN_APPLE_PLATFORM conformance=$RUN_APPLE_CONFORMANCE"
           echo "apple-platform=$APPLE_PLATFORM_RESULT"
           echo "apple-conformance=$APPLE_CONFORMANCE_RESULT"
-          test "$APPLE_PLATFORM_RESULT" = success
-          test "$APPLE_CONFORMANCE_RESULT" = success
+          test "$APPLE_PLAN_RESULT" = success
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_PLATFORM" "$APPLE_PLATFORM_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_RESULT"
           echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance=$APPLE_CONFORMANCE_RESULT"
+      # Evidence is resolved only on a run that planned every leg: push to main, a manual dispatch,
+      # and so before any release (release.yml requires this run green on the commit it ships). A
+      # pull request runs no conformance leg, so its FEATURES.yml citations are resolved after merge.
+      - name: Report whether this run resolves evidence
+        run: |
+          if [ "$RUN_APPLE_PLATFORM" = true ] && [ "$RUN_APPLE_CONFORMANCE" = true ]; then
+            echo "APPLE CI EVIDENCE resolved on this run"
+          else
+            echo "APPLE CI EVIDENCE not resolved on this run: platform=$RUN_APPLE_PLATFORM conformance=$RUN_APPLE_CONFORMANCE (resolved on main and before any release)"
+          fi
       # Each download names the attempt that PRODUCED the artifact, read from that leg's `attempt`
       # output -- never this job's own `github.run_attempt`. Re-running failed jobs re-runs the
       # failed leg and this job, not the leg that passed, so an artifact named after this job's
@@ -1697,31 +1745,37 @@ jobs:
       # The JUnit directories land in RUNNER_TEMP and the conformance results in the workspace,
       # exactly where the evidence check below read them when this was one job.
       - name: Download platform parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-apple-parity-evidence-apple-platform-${{ github.run_id }}-${{ needs.apple-platform.outputs.attempt }}
           path: ${{ runner.temp }}
       - name: Download conformance parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-apple-parity-evidence-apple-conformance-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
           path: ${{ runner.temp }}
       - name: Download macosArm64 core-conformance JUnit results
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
           path: core-conformance/build/test-results/macosArm64Test
       - name: Download iosSimulatorArm64 core-conformance JUnit results
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
           path: core-conformance/build/test-results/iosSimulatorArm64Test
       - name: Download tvosSimulatorArm64 core-conformance JUnit results
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
           path: core-conformance/build/test-results/tvosSimulatorArm64Test
       - name: Verify Apple parity evidence executed and passed
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         run: |
           python3 tools/verify-parity-evidence \
             core-conformance/build/test-results/macosArm64Test \

@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Decide which apple-ci legs a run needs, and check afterwards that each did what was planned.
+
+spec §21.6. A pull request runs `apple-platform` only when it changes something an Apple build can
+read, and never runs `apple-conformance`; a push to `main` and a manual dispatch run both legs. The
+required `apple-ci` job always runs, because a check that never reports blocks a merge forever.
+
+  plan-apple-legs plan --event EVENT [--changed-files FILE]
+      Prints `platform=true|false` and `conformance=true|false` as step outputs on stdout, and the
+      reason on stderr. On a pull request the changed paths come from FILE (one per line) or, when
+      it is omitted, from `git diff --name-only HEAD^1 HEAD` on the merge commit Actions checks out.
+      Anything it cannot establish -- an unknown event, a checkout that is not a two-parent merge, a
+      failed diff, an empty diff -- plans every leg. It can only ever plan MORE work than needed.
+
+  plan-apple-legs require-leg PLANNED RESULT
+      Exits 0 only for (PLANNED=true, RESULT=success) or (PLANNED=false, RESULT=skipped). Every
+      other pair fails, including an empty PLANNED, which is what a plan job that never produced
+      its outputs leaves behind.
+
+What counts as Apple-affecting is an EXCLUSION list: a path is Apple-affecting unless it matches
+NOT_APPLE below, so a new top-level directory or a new tool runs the Apple legs until someone
+decides otherwise. `tools/test-plan-apple-legs` proves that no excluded tool is named by anything
+the Apple legs read.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import subprocess
+import sys
+
+
+# Tools no Apple leg runs or reads. Each is run by parity-gate, core-ci or release.yml, or is a
+# manual instrument. tools/test-plan-apple-legs fails if any of these is named by apple-ci.yml or by
+# any file an Apple build reads, so this list cannot quietly hide an Apple input.
+NOT_APPLE_TOOLS = (
+    "tools/app_store_connect.py",
+    "tools/design_rating.py",
+    "tools/generate_migration_fixture.py",
+    "tools/migration_gate.py",
+    "tools/parity_gate.py",
+    "tools/release/archive-and-export",
+    "tools/release_plan.py",
+    "tools/report-apple-ci-durations",
+    "tools/report_main_health.py",
+    "tools/required_checks.py",
+    "tools/run-capture-soak-summary",
+    "tools/run-local-gates",
+    "tools/signing/with-temporary-keychain",
+    "tools/summarize_capture_soak.py",
+    "tools/test-capture-soak-summary",
+    "tools/test-design-rating-harness",
+    "tools/test-downloads-macos-review-regressions",
+    "tools/test-linux-conformance-local",
+    "tools/test-migration-fixture-generator",
+    "tools/test-parity-gate",
+    "tools/test-plan-apple-legs",
+    "tools/test-pr-workflow-secret-boundary",
+    "tools/test-project-spec-paths",
+    "tools/test-release-channel",
+    "tools/test-report-main-health",
+    "tools/test-required-checks",
+    "tools/test-run-local-gates",
+    "tools/test-spec-evidence-boundaries",
+    "tools/test-spec-evidence-boundary-mutations",
+    "tools/test-verify-ci-policy",
+    "tools/test-xcode-script-phases",
+    "tools/verify_branch_protection.py",
+    "tools/verify_ci_policy.py",
+    "tools/verify_project_spec_paths.py",
+    "tools/verify_release_policy.py",
+    "tools/verify_xcode_script_phases.py",
+)
+
+# Gradle configuration is read by every Kotlin/Native framework build, wherever the file lives.
+GRADLE_INPUTS = ("*.gradle.kts", "*.gradle", "gradle.properties", "gradlew", "gradlew.bat")
+
+NOT_APPLE = (
+    "docs/*",
+    "*.md",
+    "LICENSE",
+    "NOTICE",
+    "FEATURES.yml",  # read by parity-gate; evidence is resolved on main and before a release
+    "android/*",
+    # Every workflow but apple-ci's own definition, and repository metadata.
+    ".github/*",
+) + NOT_APPLE_TOOLS
+
+# Checked BEFORE NOT_APPLE, so these win: apple-ci's own definition, and Gradle inputs inside an
+# otherwise excluded directory (android/app/build.gradle.kts configures with the frameworks).
+ALWAYS_APPLE = (".github/workflows/apple-ci.yml",) + tuple(
+    pattern for name in GRADLE_INPUTS for pattern in (name, "*/" + name))
+
+
+def apple_affecting(path: str) -> bool:
+    if any(fnmatch.fnmatchcase(path, pattern) for pattern in ALWAYS_APPLE):
+        return True
+    return not any(fnmatch.fnmatchcase(path, pattern) for pattern in NOT_APPLE)
+
+
+def plan(event: str, changed: list[str] | None) -> tuple[bool, bool, str]:
+    """(platform, conformance, reason). `changed` is None when the diff could not be read."""
+    if event != "pull_request":
+        return True, True, f"event {event!r} runs every leg"
+    if changed is None:
+        return True, False, "pull request: changed paths unknown, so the platform leg runs"
+    if not changed:
+        return True, False, "pull request: empty diff read, so the platform leg runs"
+    affecting = [path for path in changed if apple_affecting(path)]
+    if affecting:
+        shown = ", ".join(affecting[:5]) + (" ..." if len(affecting) > 5 else "")
+        return True, False, (f"pull request: {len(affecting)} of {len(changed)} changed paths are "
+                             f"Apple-affecting ({shown})")
+    return False, False, f"pull request: none of {len(changed)} changed paths is Apple-affecting"
+
+
+def merge_diff() -> list[str] | None:
+    def git(*args: str) -> str | None:
+        result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+        return result.stdout if result.returncode == 0 else None
+
+    parents = git("rev-list", "--parents", "-n", "1", "HEAD")
+    if parents is None or len(parents.split()) != 3:
+        return None
+    names = git("diff", "--name-only", "HEAD^1", "HEAD")
+    if names is None:
+        return None
+    return [line for line in names.splitlines() if line.strip()]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    plan_parser = commands.add_parser("plan")
+    plan_parser.add_argument("--event", required=True)
+    plan_parser.add_argument("--changed-files")
+    require = commands.add_parser("require-leg")
+    require.add_argument("planned")
+    require.add_argument("result")
+    arguments = parser.parse_args()
+
+    if arguments.command == "require-leg":
+        expected = {"true": "success", "false": "skipped"}.get(arguments.planned)
+        if expected is None or arguments.result != expected:
+            print(f"APPLE LEG REFUSED planned={arguments.planned!r} result={arguments.result!r}; "
+                  f"a planned leg must succeed and an unplanned one must be skipped",
+                  file=sys.stderr)
+            return 1
+        print(f"APPLE LEG OK planned={arguments.planned} result={arguments.result}")
+        return 0
+
+    changed: list[str] | None = None
+    if arguments.event == "pull_request":
+        if arguments.changed_files:
+            with open(arguments.changed_files, encoding="utf-8") as handle:
+                changed = [line.strip() for line in handle if line.strip()]
+        else:
+            changed = merge_diff()
+    platform, conformance, reason = plan(arguments.event, changed)
+    print(f"APPLE LEG PLAN platform={str(platform).lower()} "
+          f"conformance={str(conformance).lower()}: {reason}", file=sys.stderr)
+    print(f"platform={str(platform).lower()}")
+    print(f"conformance={str(conformance).lower()}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
