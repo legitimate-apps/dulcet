@@ -129,7 +129,7 @@ private struct DulcetPlaylistPageContent: View {
                 DulcetArtworkView(artwork: item.artwork, size: artworkSize)
             }
             VStack(alignment: compact ? .center : .leading, spacing: DulcetSpacing.xxs) {
-                Text(item?.displayTitle ?? "")
+                Text(item?.displayTitle ?? DulcetStrings.playlistUntitledName)
                     .font(.title.weight(.bold))
                     .multilineTextAlignment(compact ? .center : .leading)
                     .lineLimit(nil)
@@ -321,7 +321,7 @@ private struct DulcetPlaylistPageContent: View {
 #if os(iOS)
         .environment(\.editMode, .constant(.active))
 #endif
-        .navigationTitle(window.header?.displayTitle ?? "")
+        .navigationTitle(window.header?.displayTitle ?? DulcetStrings.playlistUntitledName)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button(DulcetStrings.playlistDone) { editing = false }

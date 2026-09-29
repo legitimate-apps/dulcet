@@ -281,6 +281,10 @@ extension DulcetStrings {
     static let lyricsShownOffline = dynamicText("lyrics.shownOffline", fallback: "Offline \u{2014} showing lyrics saved on this device.")
     static let lyricsTrimmed = dynamicText("lyrics.trimmed", fallback: "Some of this song\u{2019}s lyrics were too large to show.")
     static let lyricsTryAgain = dynamicText("lyrics.tryAgain", fallback: "Try Again")
+    // A line the server left empty still holds its place. The plain list draws a space and the
+    // synced one an ellipsis, so a blank line is a line rather than a row that has gone missing.
+    static let lyricsPlainBlankLine = dynamicText("lyrics.blankLine.plain", fallback: " ")
+    static let lyricsSyncedBlankLine = dynamicText("lyrics.blankLine.synced", fallback: "\u{2026}")
 
     static func lyricsFailed(_ phrase: String) -> String {
         dynamicFormatted("lyrics.failed", fallback: "Lyrics couldn\u{2019}t be loaded \u{2014} %@", phrase)

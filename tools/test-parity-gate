@@ -959,6 +959,42 @@ passing_cases = """\
             name="downloadTriggerPromotesValidatedResponseAtomicallyOnIPadOS" time="0.1" />
   <testcase classname="DulcetAppleDownloadIntegrationTest"
             name="offlinePlaybackLoadsIdenticalBytesAfterNetworkClientsCloseOnIPadOS" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[macosArm64]"
+            name="conf88PlaylistWritesOnTheReferenceServer[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[macosArm64]"
+            name="conf89EveryEditThroughTheEditorIsReadBack[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[macosArm64]"
+            name="conf90AStaleIndexIsPreventedNotSent[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[macosArm64]"
+            name="conf91AnotherUsersPlaylistIsNotEditable[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
+            name="conf88PlaylistWritesOnTheReferenceServer[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
+            name="conf89EveryEditThroughTheEditorIsReadBack[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
+            name="conf90AStaleIndexIsPreventedNotSent[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
+            name="conf91AnotherUsersPlaylistIsNotEditable[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.LyricsConformanceTest[macosArm64]"
+            name="conf42SongLyricsStructuredShapeSelectionAndOfflineCache[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.LyricsConformanceTest[iosSimulatorArm64]"
+            name="conf42SongLyricsStructuredShapeSelectionAndOfflineCache[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="positionalEditsCarryTheViewThePersonActedOn" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="theCurrentLineIsTheCoresCursorInWholeMillisecondsAndNoneWhenUnsynced" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="theEditorKeepsProblemsQuestionsAndCreatedIDsFromOutcomes" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="noPositionalEditIsOfferedOnAViewThatIsNotTheWholePlaylist" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="theLyricsPanelDrawsWhatTheCorePublishedAndNeverASpinnerForNone" time="0.1" />
+  <testcase classname="DulcetKitIOSTests"
+            name="theModelPaintsTheStoredDocumentThenTheLiveOneAndDropsALateAnswer" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testTheLyricsPanelShowsTheSyncedLineThatIsPlaying" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'

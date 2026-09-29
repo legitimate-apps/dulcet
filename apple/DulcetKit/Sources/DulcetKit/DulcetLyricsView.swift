@@ -63,7 +63,7 @@ struct DulcetLyricsPanel: View {
                 VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                     notes(document)
                     ForEach(Array(document.lines.enumerated()), id: \.offset) { _, line in
-                        Text(line.text.isEmpty ? " " : line.text)
+                        Text(line.text.isEmpty ? DulcetStrings.lyricsPlainBlankLine : line.text)
                             .font(.title3.weight(.semibold))
                             .dulcetForeground(.primaryTextOnWindow)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -138,7 +138,7 @@ private struct DulcetSyncedLyrics: View {
                     }
                     ForEach(Array(document.lines.enumerated()), id: \.offset) { index, line in
                         let lit = cursor.contains(index)
-                        Text(line.text.isEmpty ? "\u{2026}" : line.text)
+                        Text(line.text.isEmpty ? DulcetStrings.lyricsSyncedBlankLine : line.text)
                             .font(.title2.weight(.bold))
                             .dulcetForeground(lit ? .primaryTextOnWindow : .secondaryTextOnWindow)
                             .opacity(lit ? 1 : 0.55)

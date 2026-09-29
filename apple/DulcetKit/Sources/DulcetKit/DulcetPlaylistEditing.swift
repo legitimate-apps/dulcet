@@ -598,6 +598,12 @@ extension DulcetStrings {
     static let playlistSuperseded = dynamicText("playlist.superseded", fallback: "This playlist\u{2019}s details were changed somewhere else, and those changes were kept.")
     static let playlistChangesPending = dynamicText("playlist.pending", fallback: "Changes not yet on your server")
     static let playlistNotYetOnServer = dynamicText("playlist.local", fallback: "Not yet on your server")
+    /// The page's name before the reader has a header for it, in the header and in the iOS
+    /// navigation title. Deliberately empty, and it must stay empty: the page draws no name
+    /// rather than naming a playlist the server has not named. It is a plain constant and NOT a
+    /// `dynamicText` row -- measured, an empty fallback there does not resolve to "" but to the
+    /// key itself, which would draw "playlist.untitledName" as the page's title.
+    static let playlistUntitledName = ""
     static let playlistWhichIsYoursTitle = dynamicText("playlist.question.which.title", fallback: "Was this playlist already created?")
     static let playlistNoneOfThese = dynamicText("playlist.question.none", fallback: "None of These \u{2014} Create It")
     static let playlistDecideLater = dynamicText("playlist.question.later", fallback: "Decide Later")
