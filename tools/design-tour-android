@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# design-tour-android -- photograph the real Android phone and TV apps' key screens for design review.
+#
+# USAGE
+#   tools/design-tour-android <out-dir> [--device phone|tv|all] [--keep-server] [--keep-emulator]
+#
+#   Starts (or reuses) a local disposable Navidrome seeded with the conformance corpus
+#   (tools/design-tour-server), builds the app and its instrumented tour once (Gradle keeps later
+#   builds incremental), boots the emulator unless one is already running, and runs one tour per
+#   device. Shots are JPEGs of the whole display, about 1000 px on the long edge, written to:
+#       <out-dir>/<device>-<nn>-<screen>.jpg
+#   where <device> is phone-light, phone-dark or tv. A screen the tour could not reach is still
+#   written, as <nn>-<screen>-UNREACHED.jpg, and the command exits 1.
+#   <out-dir>/tour-summary.txt lists every shot and each run's instrumentation result.
+#
+# SCREENS
+#   phone (android/app/src/androidTest/.../AndroidPhoneDesignTourTest.kt): Library Home, Albums,
+#   an album, Artists, an artist, Favourites, Now Playing while playing, Up Next, Search with results.
+#   tv (android/tv/src/androidTest/.../AndroidTvDesignTourTest.kt): the home screen at launch,
+#   Library, Albums, an album, Artists, an artist, Favourites, Now Playing, Up Next, then Search
+#   with results, each reached with focus and the centre key so the focus a remote leaves is in
+#   the shot.
+#   This branch has no playlists or lyrics on Android, so the tour has no such screens.
+#
+# RUNTIME (measured on an Apple Silicon laptop)
+#   warm Gradle (nothing changed): ~2.5 min for all three tours including one emulator boot; each
+#   tour ~35-55 s. A first Gradle build of the app and test APKs adds several minutes.
+#
+# ENVIRONMENT (all optional)
+#   ANDROID_HOME                      the SDK (adb and emulator are taken from it)
+#   DULCET_DESIGN_TOUR_WORK           server root and logs (default ~/Library/Caches/dulcet-design-tour)
+#   DULCET_DESIGN_TOUR_PHONE_AVD      phone AVD to boot (default dulcet-phone)
+#   DULCET_DESIGN_TOUR_TV_AVD         Android TV AVD to boot (default dulcet-tv)
+#   DULCET_DESIGN_TOUR_PHONE_SERIAL   use this running device instead of booting one
+#   DULCET_DESIGN_TOUR_TV_SERIAL      likewise for TV
+#   DULCET_DESIGN_TOUR_NAVIDROME      a Navidrome binary to use instead of fetching the pinned one
+#   DULCET_DESIGN_TOUR_PORT           server port (default 4861); the emulator reaches it at 10.0.2.2
+#
+# KNOWN LIMITS
+#   - The corpus is synthetic: tones, placeholder artwork, fixture names.
+#   - Each run clears the app's data first (the tour connects a fresh account through the
+#     production connect), so any account saved on that emulator's app is lost.
+#   - An emulator this tool booted is shut down at the end unless --keep-emulator; one it found
+#     running is left alone. The server is stopped at the end unless --keep-server.
+#   - Only the automated disposable server is ever used. Never point this at a personal server.
+set -euo pipefail
+
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[[ $# -ge 1 ]] || usage
+OUT="$1"; shift
+DEVICE=all; KEEP_SERVER=0; KEEP_EMULATOR=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --device) DEVICE="${2:-}"; shift 2 ;;
+    --keep-server) KEEP_SERVER=1; shift ;;
+    --keep-emulator) KEEP_EMULATOR=1; shift ;;
+    -h|--help) usage ;;
+    *) echo "unknown argument: $1" >&2; usage ;;
+  esac
+done
+case "$DEVICE" in phone|tv|all) ;; *) echo "--device must be phone, tv or all" >&2; exit 2 ;; esac
+: "${ANDROID_HOME:?ANDROID_HOME must name the Android SDK}"
+ADB="$ANDROID_HOME/platform-tools/adb"
+EMULATOR="$ANDROID_HOME/emulator/emulator"
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="${DULCET_DESIGN_TOUR_WORK:-$HOME/Library/Caches/dulcet-design-tour}"
+PORT="${DULCET_DESIGN_TOUR_PORT:-4861}"
+LOGS="$WORK/logs"
+mkdir -p "$OUT" "$LOGS"
+OUT="$(cd "$OUT" && pwd)"
+SUMMARY="$OUT/tour-summary.txt"
+: > "$SUMMARY"
+START=$(date +%s)
+note() { echo "design-tour: $*"; echo "$*" >> "$SUMMARY"; }
+
+SERVER_ARGS=(up --root "$WORK/server" --port "$PORT")
+[[ -n "${DULCET_DESIGN_TOUR_NAVIDROME:-}" ]] && SERVER_ARGS+=(--navidrome "$DULCET_DESIGN_TOUR_NAVIDROME")
+SERVER_LINE=$("$REPO/tools/design-tour-server" "${SERVER_ARGS[@]}" | tail -1)
+[[ "$SERVER_LINE" == *url=* ]] || { echo "server did not start: $SERVER_LINE" >&2; exit 1; }
+BOOTED=()
+cleanup() {
+  if [[ $KEEP_EMULATOR -eq 0 ]]; then
+    for serial in "${BOOTED[@]:-}"; do [[ -n "$serial" ]] && "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true; done
+  fi
+  if [[ $KEEP_SERVER -eq 0 ]]; then "$REPO/tools/design-tour-server" down --root "$WORK/server" >/dev/null || true; fi
+}
+trap cleanup EXIT
+note "server ($SERVER_LINE)"
+
+want() { [[ "$DEVICE" == all || "$DEVICE" == "$1" ]]; }
+TASKS=()
+want phone && TASKS+=(:android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest)
+want tv && TASKS+=(:android:tv:assembleDebug :android:tv:assembleDebugAndroidTest)
+t0=$(date +%s)
+if ! (cd "$REPO" && ./gradlew --quiet "${TASKS[@]}") > "$LOGS/android-build.log" 2>&1; then
+  tail -30 "$LOGS/android-build.log" >&2; echo "Android build failed; full log: $LOGS/android-build.log" >&2; exit 1
+fi
+note "built ${TASKS[*]} in $(( $(date +%s) - t0 ))s"
+
+# A running emulator, or one this tool boots on a port of its own and shuts down afterwards.
+# Sets SERIAL; not a command substitution, so what it boots is remembered for the cleanup.
+device() { # env-serial avd port
+  if [[ -n "$1" ]]; then SERIAL="$1"; return; fi
+  local serial="emulator-$3"
+  if ! "$ADB" devices | grep -q "^$serial[[:space:]]*device"; then
+    "$EMULATOR" -avd "$2" -port "$3" -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect \
+      > "$LOGS/emulator-$2.log" 2>&1 &
+    BOOTED+=("$serial")
+    "$ADB" -s "$serial" wait-for-device
+  fi
+  for _ in $(seq 1 180); do
+    [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+    sleep 2
+  done
+  SERIAL="$serial"
+}
+
+FAILED=0
+tour() { # serial label app-apk test-apk app-package test-package class night
+  local serial="$1" label="$2" pkg="$5" t0 result; t0=$(date +%s)
+  "$ADB" -s "$serial" install -r -t "$3" >/dev/null
+  "$ADB" -s "$serial" install -r -t "$4" >/dev/null
+  "$ADB" -s "$serial" shell pm clear "$pkg" >/dev/null
+  "$ADB" -s "$serial" shell cmd uimode night "$8" >/dev/null
+  "$ADB" -s "$serial" shell rm -rf "/sdcard/Android/data/$pkg/files/design-tour" >/dev/null 2>&1 || true
+  "$ADB" -s "$serial" shell am instrument -w -r \
+    -e class "$7#designTour" -e dulcetDesignTour true -e dulcetDesignTourLabel "$label" \
+    -e dulcetServerUrl "http://10.0.2.2:$PORT" -e dulcetServerDisposable true \
+    "$6/androidx.test.runner.AndroidJUnitRunner" > "$LOGS/$label.log" 2>&1 || true
+  result=$(grep -E "^OK \(|^FAILURES!!!|Tests run:" "$LOGS/$label.log" | tr '\n' ' ')
+  note "$label: ${result:-no instrumentation result; see $LOGS/$label.log}"
+  [[ "$result" == "OK (1 test)"* ]] || FAILED=1
+  rm -f "$OUT/$label"-*.jpg
+  local tmp; tmp=$(mktemp -d)
+  "$ADB" -s "$serial" pull "/sdcard/Android/data/$pkg/files/design-tour/." "$tmp" >/dev/null 2>&1 || true
+  find "$tmp" -name "$label-*.jpg" -exec mv {} "$OUT/" \;
+  rm -rf "$tmp"
+  # find, not ls: a run that photographed nothing must still be reported, not end the script.
+  local count unreached
+  count=$(find "$OUT" -maxdepth 1 -name "$label-*.jpg" | wc -l | tr -d ' ')
+  unreached=$(find "$OUT" -maxdepth 1 -name "$label-*UNREACHED*.jpg" | wc -l | tr -d ' ')
+  find "$OUT" -maxdepth 1 -name "$label-*.jpg" | sort | sed 's|.*/|  |' >> "$SUMMARY"
+  note "$label: $count shots, $unreached unreached, in $(( $(date +%s) - t0 ))s"
+  [[ $count -gt 0 ]] || FAILED=1
+}
+
+APP=android/app/build/outputs/apk
+TVO=android/tv/build/outputs/apk
+if want phone; then
+  device "${DULCET_DESIGN_TOUR_PHONE_SERIAL:-}" "${DULCET_DESIGN_TOUR_PHONE_AVD:-dulcet-phone}" 5586; PHONE="$SERIAL"
+  for mode in light dark; do
+    night=no; [[ $mode == dark ]] && night=yes
+    tour "$PHONE" "phone-$mode" "$REPO/$APP/dev/debug/app-dev-debug.apk" \
+      "$REPO/$APP/androidTest/dev/debug/app-dev-debug-androidTest.apk" \
+      com.legitimateapps.dulcet.dev com.legitimateapps.dulcet.dev.test \
+      com.legitimateapps.dulcet.AndroidPhoneDesignTourTest "$night"
+  done
+  "$ADB" -s "$PHONE" shell cmd uimode night no >/dev/null
+fi
+if want tv; then
+  device "${DULCET_DESIGN_TOUR_TV_SERIAL:-}" "${DULCET_DESIGN_TOUR_TV_AVD:-dulcet-tv}" 5588; TV="$SERIAL"
+  tour "$TV" tv "$REPO/$TVO/debug/tv-debug.apk" "$REPO/$TVO/androidTest/debug/tv-debug-androidTest.apk" \
+    com.legitimateapps.dulcet.tv com.legitimateapps.dulcet.tv.test \
+    com.legitimateapps.dulcet.tv.AndroidTvDesignTourTest no
+fi
+
+grep -q UNREACHED "$SUMMARY" && FAILED=1
+note "total $(( $(date +%s) - START ))s; shots in $OUT"
+exit $FAILED
