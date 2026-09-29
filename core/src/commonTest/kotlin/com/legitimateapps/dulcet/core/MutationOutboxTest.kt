@@ -151,9 +151,31 @@ class MutationOutboxTest {
         return opened
     }
 
-    /** Back online, a read of the album is issued AFTER the change and lands before the flush. */
+    /**
+     * Rates album 4 at [base] on the server and reads it, then rates it 5 while connected — and the
+     * send never reaches the server, so the change stays pending with nothing attempted.
+     *
+     * This is how a read comes to be issued AFTER a change and land BEFORE the change is delivered:
+     * its send failed. An offline change gets there the same way — a reconnect flushes before it
+     * reads (§16.14 step 1), but a send that fails does not stop the reconnect
+     * ([anOfflineChangeWhoseSendFailsIsSuperseded]). The fixture proves the failed send happened.
+     */
+    private suspend fun TestScope.unsentRatingOver(env: SessionEnv, base: Int): Opened {
+        env.server.ratings[albumId(4)] = base
+        val opened = openGrid(env)
+        assertEquals(base, opened.pubs.last.album(albumId(4)).userRating, "fixture: the server's rating was read")
+        env.server.failWithError["setRating"] = DomainError.Transport.Unreachable
+        opened.session.favourites.setRating(album4, 5)
+        advanceUntilIdle()
+        env.server.failWithError.remove("setRating")
+        assertEquals(1, env.server.count("setRating"), "fixture: the send was tried and never arrived")
+        assertEquals(1L, opened.session.favourites.pendingCount(), "fixture: the change is still pending")
+        assertEquals(5, opened.pubs.last.album(albumId(4)).userRating)
+        return opened
+    }
+
+    /** A read of the album issued AFTER the change lands, then the next flush (a reconnect) runs. */
     private suspend fun TestScope.readBeforeFlush(opened: Opened) {
-        opened.session.setOnline(true)
         opened.handle.refresh()
         advanceUntilIdle()
         opened.session.reader.reconnect()
@@ -162,12 +184,13 @@ class MutationOutboxTest {
 
     @Test
     fun conflictAServerValueChangedAfterTheChangeWins() = sessionTest { env ->
-        val opened = offlineRatingOver(env, base = 3)
+        val opened = unsentRatingOver(env, base = 3)
         val outcomes = mutableListOf<MutationOutcome>()
         opened.session.favourites.addOutcomeListener { outcomes += it }
         env.server.ratings[albumId(4)] = 4 // changed elsewhere
+        val mark = sends(env).size
         readBeforeFlush(opened)
-        assertEquals(emptyList(), sends(env), "the server's newer value wins; nothing is sent")
+        assertEquals(emptyList(), sends(env).drop(mark), "the server's newer value wins; nothing is sent")
         assertEquals(listOf<MutationOutcome>(MutationOutcome.Superseded(album4, MutationField.Rating, 4)), outcomes)
         assertEquals(4, opened.pubs.last.album(albumId(4)).userRating)
         assertEquals(0L, opened.session.favourites.pendingCount())
@@ -175,23 +198,88 @@ class MutationOutboxTest {
 
     @Test
     fun conflictAnUnchangedServerValueLeavesTheLocalChangeTheNewest() = sessionTest { env ->
-        val opened = offlineRatingOver(env, base = 3)
+        val opened = unsentRatingOver(env, base = 3)
+        val mark = sends(env).size
         readBeforeFlush(opened)
-        assertEquals(listOf(SessionTestServer.Request("setRating", mapOf("id" to albumId(4), "rating" to "5"))), sends(env))
+        assertEquals(listOf(SessionTestServer.Request("setRating", mapOf("id" to albumId(4), "rating" to "5"))), sends(env).drop(mark))
         assertEquals(5, opened.pubs.last.album(albumId(4)).userRating)
     }
 
     @Test
     fun conflictAServerAlreadyHoldingTheValueIsAdoptedWithoutSending() = sessionTest { env ->
-        val opened = offlineRatingOver(env, base = 3)
+        val opened = unsentRatingOver(env, base = 3)
         val outcomes = mutableListOf<MutationOutcome>()
         opened.session.favourites.addOutcomeListener { outcomes += it }
         env.server.ratings[albumId(4)] = 5
+        val mark = sends(env).size
         readBeforeFlush(opened)
-        assertEquals(emptyList(), sends(env))
+        assertEquals(emptyList(), sends(env).drop(mark))
         assertEquals(emptyList(), outcomes, "the change took effect: the person is not told it did not save")
         assertEquals(5, opened.pubs.last.album(albumId(4)).userRating)
         assertEquals(0L, opened.session.favourites.pendingCount())
+    }
+
+    /**
+     * The model's other half: an OFFLINE change is sent before anything is read after the reconnect,
+     * so when that send succeeds it replaces a value another client set meanwhile — the change is
+     * sent, and it wins. Reporting reachability and refreshing before the reconnect reads nothing.
+     * (A send that fails is the next case.)
+     */
+    @Test
+    fun anOfflineChangeIsFlushedBeforeAnyReadSoItIsSent() = sessionTest { env ->
+        val opened = offlineRatingOver(env, base = 3)
+        env.server.ratings[albumId(4)] = 4 // changed elsewhere
+        val before = env.server.log.size
+        opened.session.setOnline(true)
+        opened.handle.refresh() // not connected yet: reads nothing
+        advanceUntilIdle()
+        val sent = env.server.endpoints().drop(before)
+        assertEquals("setRating", sent.first(), "the flush comes first: $sent")
+        assertTrue(sent.indexOf("getAlbumList2") < 0 || sent.indexOf("getAlbumList2") > sent.indexOf("getScanStatus"), "a page was read before the epoch: $sent")
+        assertEquals(5, env.server.ratings[albumId(4)])
+        assertEquals(0L, opened.session.favourites.pendingCount())
+    }
+
+    /**
+     * The limit of that half: a reconnect flushes before it reads, but a send that FAILS does not
+     * stop it. The offline change is then like a connected change whose send failed — the
+     * revalidation reads a value set elsewhere while this device was offline, the next flush finds
+     * it newer, and the person is told their change was superseded (§18.3).
+     */
+    private suspend fun TestScope.anOfflineChangeWhoseSendFailsIsSuperseded(env: SessionEnv, fail: () -> Unit) {
+        val opened = offlineRatingOver(env, base = 3)
+        val outcomes = mutableListOf<MutationOutcome>()
+        opened.session.favourites.addOutcomeListener { outcomes += it }
+        env.server.ratings[albumId(4)] = 4 // changed elsewhere while this device was offline
+        env.clock.now += LibraryReaderConfig().revalidateWithinMillis + 1 // the grid is due a re-read
+        fail()
+        val mark = env.server.log.size
+        val outcome = opened.session.reader.reconnect()
+        advanceUntilIdle()
+        val sent = env.server.endpoints().drop(mark)
+        assertIs<ReaderConnectionOutcome.Read>(outcome, "fixture: the reconnect read the epoch")
+        assertTrue(sent.indexOf("setRating") in 0 until sent.indexOf("getAlbumList2"), "fixture: the send failed, then the grid was read: $sent")
+        assertEquals(1L, opened.session.favourites.pendingCount(), "fixture: the change was still pending when the read went out")
+        assertEquals(emptyList(), outcomes, "fixture: nothing decided yet")
+
+        env.server.failWithCode.clear()
+        env.server.failWithError.clear()
+        opened.session.reader.reconnect() // the next flush
+        advanceUntilIdle()
+        assertEquals(listOf<MutationOutcome>(MutationOutcome.Superseded(album4, MutationField.Rating, 4)), outcomes, "the person was not told")
+        assertEquals(4, opened.pubs.last.album(albumId(4)).userRating)
+        assertEquals(4, env.server.ratings[albumId(4)])
+        assertEquals(0L, opened.session.favourites.pendingCount())
+    }
+
+    @Test
+    fun anOfflineChangeWhoseSendIsAnsweredBusyIsSupersededAndThePersonIsTold() = sessionTest { env ->
+        anOfflineChangeWhoseSendFailsIsSuperseded(env) { env.server.failWithCode["setRating"] = 0 }
+    }
+
+    @Test
+    fun anOfflineChangeWhoseSendTimesOutIsSupersededAndThePersonIsTold() = sessionTest { env ->
+        anOfflineChangeWhoseSendFailsIsSuperseded(env) { env.server.failWithError["setRating"] = DomainError.Transport.Timeout }
     }
 
     @Test

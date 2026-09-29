@@ -58,7 +58,7 @@ class PlaylistEditingFifthReviewTest {
         ): LibraryReaderSession =
             LibraryReaderSession(
                 database.database, store.bind(PlaylistEnv.BINDING), hooked, scope, config,
-                otherOutboxes = otherOutboxes, formPost = true,
+                otherOutboxes = otherOutboxes, formPost = true, foreground = false,
             ).also { s ->
                 s.playlists.addOutcomeListener(outcomes::add)
                 s.favourites.addOutcomeListener { fav += it }
@@ -104,7 +104,6 @@ class PlaylistEditingFifthReviewTest {
         session.setOnline(false)
         val a = assertNotNull(session.playlists.create("New Playlist").localId)
         val b = assertNotNull(session.playlists.create("New Playlist").localId)
-        session.setOnline(true)
         var creates = 0
         env.hooked.before = { endpoint, _ ->
             if (endpoint == "createPlaylist") {
@@ -118,7 +117,9 @@ class PlaylistEditingFifthReviewTest {
                 null
             }
         }
-        session.playlists.flush()
+        session.setOnline(true)
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
+        runCurrent()
         env.server.applyThenStatus.clear()
         assertEquals(2, creates, "fixture: both creates were sent")
         return Triple(a, b, env.server.playlists.single().id)
@@ -312,11 +313,10 @@ class PlaylistEditingFifthReviewTest {
         val q = env.server.add("Mix", listOf("song-1"))
         session.setOnline(false)
         val b = assertNotNull(session.playlists.create("Mix", listOf("song-1")).localId)
-        session.setOnline(true)
         var creates = 0
         // The second create's first send is refused, proving it never applied: it stays unsent.
         env.hooked.before = { endpoint, _ -> if (endpoint == "createPlaylist" && ++creates == 1) status(400) else null }
-        session.playlists.flush()
+        session.setOnline(true) // its reconnect flushes both outboxes first (§16.14 step 1): that is the flush
         advanceUntilIdle()
         assertTrue(
             PlaylistEditOutcome.PossibleDuplicate(a, "Mix", listOf(p.id, q.id)) in env.outcomes,
@@ -609,7 +609,7 @@ class PlaylistEditingFifthReviewTest {
         session.favourites.setFavourite(song1, true)
         session.favourites.setFavourite(song2, true)
         session.setOnline(true)
-        session.favourites.flush()
+        // Its reconnect flushes both outboxes first (§16.14 step 1): that is the flush.
         runCurrent()
         assertEquals(1, updates, "fixture: the rename met its 429 while the favourites flush ran")
         assertEquals(1, stars, "the favourites flush sent $stars stars inside the server's Retry-After: 60")

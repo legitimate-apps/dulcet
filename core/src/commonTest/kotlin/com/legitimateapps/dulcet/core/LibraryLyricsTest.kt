@@ -128,7 +128,7 @@ class LibraryLyricsTest {
         assertEquals(mapOf("id" to TRACK.rawId, "enhanced" to "true"), env.transport.log.single().second)
         assertEquals(4, live.lyrics?.selected?.lines?.size)
 
-        env.session.setOnline(false)
+        env.setOnline(false)
         val offline = lyrics.read(TRACK)
         assertEquals(1, env.transport.log.size, "an offline read must send nothing")
         assertEquals(LibraryFreshness.Cached(env.clock.now, LibraryCachedReason.Offline), offline.freshness)
@@ -276,6 +276,39 @@ class LibraryLyricsTest {
         assertEquals(5, env.transport.log.size)
     }
 
+    /**
+     * A read that reaches [LibraryReader.send] after the reader went offline is refused unsent
+     * (§16.14). Nothing was asked, so the endpoint is not charged, and the read says what is true —
+     * offline — rather than publishing the refusal as the server being unreachable. Reached here
+     * the way a read gets past its own offline check: it joined a flight while online, and that
+     * flight was cancelled after the network went away, so it asks for itself.
+     */
+    @Test
+    fun aReadRefusedUnsentBecauseTheReaderWentOfflineIsNotChargedToTheEndpoint() = lyricsTest { env ->
+        env.transport.failWith["getLyricsBySongId"] = DomainError.Transport.Unreachable
+        val lyrics = env.lyrics(capabilities(setOf(1)))
+        repeat(2) { lyrics.read(TRACK) }
+        assertFalse(lyrics.breakerOpen, "fixture: two failures, one short of the threshold")
+
+        env.transport.holdNext = CompletableDeferred()
+        val first = launch { lyrics.read(TRACK) }
+        runCurrent()
+        assertEquals(3, env.transport.log.size, "fixture: the first read is in flight")
+        val joined = async { lyrics.read(TRACK) }
+        runCurrent()
+        env.setOnline(false)
+        first.cancelAndJoin()
+        val refused = joined.await()
+
+        assertEquals(3, env.transport.log.size, "the joined read, asking for itself offline, sent nothing")
+        assertEquals(LibraryFreshness.Unavailable(LibraryUnavailableReason.NotCachedOffline), refused.freshness)
+        assertFalse(lyrics.breakerOpen, "a request never sent is not the endpoint's third failure")
+        // The positive control: the same count does open it once a third request really fails.
+        env.setOnline(true)
+        repeat(3) { lyrics.read(TRACK) }
+        assertTrue(lyrics.breakerOpen)
+    }
+
     @Test
     fun malformedAnswersOpenTheBreakerAndAreNeverStored() = lyricsTest { env ->
         env.transport.bodies["getLyricsBySongId"] =
@@ -309,8 +342,8 @@ class LibraryLyricsTest {
             assertIs<LibraryUnavailableReason.Failed>(assertIs<LibraryFreshness.Unavailable>(read.freshness).reason)
             assertNull(env.cache.lyrics(id), "failure $index was stored as a document")
             // A new observation window, so the breaker (which counts every class) lets the next one out.
-            env.session.setOnline(false)
-            env.session.setOnline(true)
+            env.setOnline(false)
+            env.setOnline(true)
         }
         assertEquals(failures.size, env.transport.log.size)
         // The positive control: the same instrument does see a stored "no lyrics".
@@ -325,11 +358,11 @@ class LibraryLyricsTest {
         val lyrics = env.lyrics(capabilities(setOf(1)))
         repeat(3) { lyrics.read(TRACK) }
         assertTrue(lyrics.breakerOpen)
-        env.session.setOnline(true)
+        env.setOnline(true)
         assertTrue(lyrics.breakerOpen, "already online: that is not a reconnect")
-        env.session.setOnline(false)
+        env.setOnline(false)
         assertTrue(lyrics.breakerOpen, "losing the network is not a reconnect")
-        env.session.setOnline(true)
+        env.setOnline(true)
         assertFalse(lyrics.breakerOpen)
 
         env.transport.failWith.clear()
@@ -426,8 +459,8 @@ class LibraryLyricsTest {
         }
         assertTrue(lyrics.breakerOpen, "three malformed answers are three failures")
         // An object with no value is the server saying it has none.
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         env.transport.bodies["getLyrics"] = envelope(""""lyrics":{"artist":"A","title":"T"}""")
         assertEquals(LibraryFreshness.Live, lyrics.read(TRACK).freshness)
         assertEquals(emptyList(), env.cache.lyrics(TRACK.rawId)?.layers)
@@ -439,15 +472,15 @@ class LibraryLyricsTest {
         val lyrics = env.lyrics(capabilities(setOf(1)))
         repeat(3) { lyrics.read(TRACK) }
         assertTrue(lyrics.breakerOpen)
-        env.session.setOnline(false)
+        env.setOnline(false)
         env.session.reader.reconnect()
         assertFalse(lyrics.breakerOpen, "the reconnect path is a way back online too")
         repeat(3) { lyrics.read(TRACK) }
         assertTrue(lyrics.breakerOpen)
         // The reviewer's sequence: offline, reconnect, then the platform reporting online again.
-        env.session.setOnline(false)
+        env.setOnline(false)
         env.session.reader.reconnect()
-        env.session.setOnline(true)
+        env.setOnline(true)
         assertFalse(lyrics.breakerOpen)
         // The reconnect sequence also runs on a return to the foreground while online (§16.14):
         // that is no transition, and it resets nothing.
@@ -648,7 +681,7 @@ class LibraryLyricsTest {
             env.clock.now += 1_000
         }
         // a is the oldest write; serving it from the store makes it the most recently accessed.
-        env.session.setOnline(false)
+        env.setOnline(false)
         assertEquals("a", lyrics.read(LyricsTrack("a", null, null)).lyrics?.selected?.lines?.single()?.text)
         env.clock.now += 1_000
         env.cache.writeLyrics(10, "d", LyricsSource.SongLyricsExtension, listOf(layer("d")))
@@ -843,8 +876,8 @@ class LibraryLyricsTest {
         // after a reconnect, since the size is the file's and not the network's.
         assertEquals(tooLarge, lyrics.read(TRACK).freshness)
         assertEquals(tooLarge, env.lyrics(capabilities(setOf(1))).read(TRACK).freshness)
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         assertEquals(tooLarge, lyrics.read(TRACK).freshness)
         assertEquals(1, env.transport.log.size, "an oversized answer is downloaded once per session")
         // The verdict is the track's: another track is still asked.
@@ -943,12 +976,12 @@ class LibraryLyricsTest {
         assertEquals("fits", fits.lyrics?.selected?.lines?.single()?.text)
         assertEquals(1, fits.lyrics?.droppedLayers)
         // The marker is stored: it survives the store, offline, and the panel's first frame.
-        env.session.setOnline(false)
+        env.setOnline(false)
         assertEquals(1, lyrics.read(LyricsTrack("german-first", null, null)).lyrics?.droppedLayers)
         assertEquals(1, lyrics.cached(LyricsTrack("synced-second", null, null)).lyrics?.droppedLayers)
         assertEquals(1, env.cache.lyrics("german-first")?.droppedLayers)
         // The negative control: a document within the caps is complete.
-        env.session.setOnline(true)
+        env.setOnline(true)
         env.transport.bodies["getLyricsBySongId"] = OBSERVED_SIDECAR_LRC
         val whole = assertNotNull(lyrics.read(TRACK).lyrics)
         assertEquals(0, whole.droppedLayers)
@@ -1350,8 +1383,8 @@ class LibraryLyricsTest {
         val before = async { lyrics.read(TRACK) }
         runCurrent()
         assertEquals(1, env.transport.log.size, "precondition: the request before the reconnect is out")
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         env.transport.bodies["getLyricsBySongId"] = OBSERVED_SIDECAR_LRC
         val after = async { lyrics.read(TRACK) }
         runCurrent()
@@ -1377,8 +1410,8 @@ class LibraryLyricsTest {
         // The positive side of the rule above: within one window the second read joins — in a
         // window after a reconnect too, so the stamp is the window the request was sent in.
         val lyrics = env.lyrics(capabilities(setOf(1)))
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         val answer = CompletableDeferred<String>()
         env.transport.answers += answer
         val first = async { lyrics.read(TRACK) }
@@ -1398,8 +1431,8 @@ class LibraryLyricsTest {
         env.transport.holdNext = gate
         val before = async { lyrics.read(TRACK) }
         runCurrent()
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         env.transport.failWith["getLyricsBySongId"] = DomainError.Transport.Timeout
         gate.complete(Unit)
         assertEquals(
@@ -1687,8 +1720,8 @@ class LibraryLyricsTest {
         env.transport.failWith.clear()
         env.transport.codes["getLyricsBySongId"] = 70
         val other = env.lyrics(capabilities(setOf(1)))
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         assertTrue(other.read(OTHER_TRACK).notFound)
         assertNotNull(env.cache.lyrics(OTHER_TRACK.rawId))
     }
@@ -1779,8 +1812,8 @@ class LibraryLyricsTest {
         lyrics.read(OTHER_TRACK)
         lyrics.read(OTHER_TRACK)
         assertEquals(4, env.transport.log.size, "precondition: the timeout is remembered")
-        env.session.setOnline(false)
-        env.session.setOnline(true)
+        env.setOnline(false)
+        env.setOnline(true)
         lyrics.read(OTHER_TRACK)
         assertEquals(5, env.transport.log.size, "a reconnect kept the timeout")
     }
@@ -2104,12 +2137,21 @@ class LibraryLyricsTest {
 
         fun endpoints() = log.map { it.first }
 
+        /** Every epoch read a reconnect sent, in order; never in [log]. */
+        val epochReads = mutableListOf<String>()
+
         override suspend fun request(endpoint: String, parameters: Map<String, String>, maxBodyBytes: Int): LibraryEndpointResponse {
             limited += endpoint to maxBodyBytes
             return super.request(endpoint, parameters, maxBodyBytes)
         }
 
         override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
+            // A reconnect's own epoch read (§16.14 step 2), answered before anything a test arranges
+            // for lyrics and kept out of [log], which counts the lyrics requests alone.
+            EPOCH_READS[endpoint]?.let { body ->
+                epochReads += endpoint
+                return LibraryEndpointResponse(200, body, "http://fixture.invalid/rest")
+            }
             log += endpoint to parameters
             status[endpoint]?.let { (code, body, retryAfter) ->
                 return LibraryEndpointResponse(code, body, "http://fixture.invalid/rest", retryAfter = retryAfter)
@@ -2146,6 +2188,20 @@ class LibraryLyricsTest {
 
         fun lyrics(capabilities: CapabilitySet, languages: List<String> = listOf("en")) =
             session.lyrics(capabilities, languages)
+
+        /**
+         * The platform's reachability report. Reachable while offline requests a reconnect, and the
+         * reader is online again only once that reconnect has read the epoch (§16.14), so this
+         * waits for it — and proves it ran, by its epoch read — before returning.
+         */
+        suspend fun setOnline(reachable: Boolean) {
+            session.setOnline(reachable)
+            if (!reachable || session.reader.online) return
+            val before = transport.epochReads.size
+            assertIs<ReaderConnectionOutcome.Read>(session.reader.reconnect())
+            assertTrue(session.reader.online)
+            assertTrue(transport.epochReads.size > before, "the reconnect read the epoch")
+        }
     }
 
     private fun lyricsTest(
@@ -2162,7 +2218,9 @@ class LibraryLyricsTest {
             val transport = LyricsTransport()
             val monotonic = longArrayOf(50_000)
             val breaker = EndpointCircuitBreaker(openMillis = BREAKER_OPEN_MILLIS, monotonicMillis = { monotonic[0] })
-            val session = LibraryReaderSession(database.database, store.bind(binding), transport, scope, formPost = false, breaker = breaker)
+            val session = LibraryReaderSession(
+                database.database, store.bind(binding), transport, scope, formPost = false, foreground = false, breaker = breaker,
+            )
             block(Env(transport, database, store, clock, binding, session, monotonic, driver))
         } finally {
             scope.cancel()
@@ -2172,6 +2230,12 @@ class LibraryLyricsTest {
 
     private companion object {
         const val BREAKER_OPEN_MILLIS = 120_000L
+
+        /** The reconnect's epoch read: an idle server with one music folder. */
+        val EPOCH_READS = mapOf(
+            "getScanStatus" to envelope(""""scanStatus":{"scanning":false,"count":1,"lastScan":"2026-09-23T10:00:00Z"}"""),
+            "getMusicFolders" to envelope(""""musicFolders":{"musicFolder":[{"id":"1","name":"Music"}]}"""),
+        )
 
         /** What a limiter in front of the server may send with its 429: the generic code 0. */
         const val BUSY_ENVELOPE = """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}"""

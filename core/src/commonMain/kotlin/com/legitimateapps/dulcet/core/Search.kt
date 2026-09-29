@@ -222,16 +222,26 @@ internal sealed interface SearchScope {
     /** The server is unreachable: "Searching what's available offline — N albums and M tracks". */
     data class DeviceOffline(val seen: SeenCacheCounts) : SearchScope
 
-    /** The server search failed with [error]; the device's rows stand, with the device label. */
+    /**
+     * The server search failed with [error]; the device's rows stand, with the device label. When
+     * a quiet re-read of a query the server had already answered fails, the rows shown stay as they
+     * were, and a row that answer returned keeps [SearchResultSource.Server].
+     */
     data class DeviceServerFailed(val error: DomainError, val seen: SeenCacheCounts) : SearchScope
 }
 
-/** One row as shells draw it. [favourite] and [rating] carry any pending local change (§16.20). */
+/**
+ * One row as shells draw it. [favourite] and [rating] carry any pending local change (§16.20).
+ * [playability] is set for tracks only, by the same rule as a window's track rows: `downloaded`,
+ * else `streamable` while the reader is online, else `unavailableOffline` — so offline search dims
+ * and badges what cannot play (§16.14). Albums and artists carry none.
+ */
 internal data class LibrarySearchRow(
     val item: SearchResultItem,
     val source: SearchResultSource,
     val favourite: Boolean?,
     val rating: Int?,
+    val playability: LibraryPlayability? = null,
 )
 
 internal data class LibrarySearchPublication(
@@ -280,6 +290,8 @@ internal class LibrarySearchSession(
     private val reader: LibraryReader,
     private val config: LibrarySearchConfig = LibrarySearchConfig(),
     private val listener: (LibrarySearchPublication) -> Unit,
+    /** Called once, by the first [close]: the owner unregisters what it registered for this search. */
+    private val onClose: () -> Unit = {},
 ) {
     private val cache: BoundSeenCache get() = reader.cache
     private val local = SeenCacheSearch(reader.cache)
@@ -294,6 +306,13 @@ internal class LibrarySearchSession(
 
     /** The last `search3` failed as unreachable, and none has succeeded since. */
     private var serverUnreachable = false
+
+    /**
+     * When the server answer now shown was read, and under which epoch; null when none is shown.
+     * A reconnect leaves a current answer alone by the windows' own rule (§16.11 rule 3).
+     */
+    private var serverReadAt: Long? = null
+    private var serverReadEpoch: String? = null
 
     val query: String get() = text
 
@@ -320,6 +339,8 @@ internal class LibrarySearchSession(
         val trimmed = value.trim()
         val device = local.search(trimmed)
         serverIds = emptySet()
+        serverReadAt = null
+        serverReadEpoch = null
         items = device
         if (!reader.online) {
             scope = SearchScope.DeviceOffline(local.counts())
@@ -335,30 +356,97 @@ internal class LibrarySearchSession(
             if (submitted != generation || closed) return@launch
             val outcome = readServer(trimmed)
             if (submitted != generation || closed) return@launch
-            when (outcome) {
-                is ServerOutcome.Read -> {
-                    serverUnreachable = false
-                    serverIds = outcome.items.mapTo(mutableSetOf()) { it.id }
-                    items = mergeSearchResults(device, outcome.items)
-                    scope = SearchScope.ServerAndDevice
-                }
-                is ServerOutcome.Failed -> {
-                    serverUnreachable = outcome.error == DomainError.Transport.Unreachable
-                    scope = if (outcome.error == DomainError.Transport.Unreachable || !reader.online) {
-                        SearchScope.DeviceOffline(local.counts())
-                    } else {
-                        SearchScope.DeviceServerFailed(outcome.error, local.counts())
-                    }
-                }
-            }
+            adopt(outcome) { mergeSearchResults(device, it) }
             publish()
         }
     }
 
-    /** Runs the current query again, as if retyped: after reachability changes, or on request. */
+    /** Takes a server outcome in: [merge] places the server's rows among those shown. */
+    private fun adopt(outcome: ServerOutcome, merge: (List<SearchResultItem>) -> List<SearchResultItem>) {
+        when (outcome) {
+            is ServerOutcome.Read -> {
+                serverUnreachable = false
+                serverIds = outcome.items.mapTo(mutableSetOf()) { it.id }
+                items = merge(outcome.items)
+                serverReadAt = outcome.readAt
+                serverReadEpoch = outcome.epochKey
+                scope = SearchScope.ServerAndDevice
+            }
+            is ServerOutcome.Failed -> {
+                serverUnreachable = outcome.error == DomainError.Transport.Unreachable
+                scope = if (outcome.error == DomainError.Transport.Unreachable || !reader.online) {
+                    SearchScope.DeviceOffline(local.counts())
+                } else {
+                    SearchScope.DeviceServerFailed(outcome.error, local.counts())
+                }
+            }
+        }
+    }
+
+    /** Runs the current query again, as if retyped: on request. */
     fun refresh() {
         reader.checkConfined()
         updateQuery(text)
+    }
+
+    /**
+     * The reader's visible-surface hook: the reader went offline, or a reconnect is revalidating
+     * the screen (§16.14 step 3). Never throws.
+     *
+     * - **Offline:** the query re-runs on the device at once, under `deviceOffline`.
+     * - **A server answer is shown and current** — read within
+     *   [LibraryReaderConfig.revalidateWithinMillis] under the current epoch, the windows' own rule
+     *   (§16.11 rule 3): left alone. No request, no publication.
+     * - **A server answer is shown and older:** re-read QUIETLY — no debounce and no intermediate
+     *   publication, so neither the label nor any row's source flips while it is in flight. Rows
+     *   shown keep their positions; the answer replaces in place and appends, as within one query
+     *   (§18.1), and a row that neither the server nor the device still matches is dropped. A
+     *   failure keeps the rows shown and names itself in the scope.
+     * - **Offline or failed label while online:** the query re-runs, as if retyped.
+     * - **Waiting for the server's answer** (or too short to ask): left to it.
+     */
+    fun revalidate() {
+        reader.checkConfined()
+        if (closed) return
+        try {
+            when {
+                !reader.online -> query(text)
+                scope == SearchScope.ServerAndDevice -> if (!serverAnswerIsCurrent()) reReadQuietly()
+                scope == SearchScope.DeviceWhileServerPending -> Unit
+                else -> query(text)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // As in updateQuery: the rows already published stand, and nothing crosses the facade.
+        }
+    }
+
+    private fun serverAnswerIsCurrent(): Boolean {
+        val readAt = serverReadAt ?: return false
+        val epoch = reader.sessionEpoch?.key ?: return false
+        return serverReadEpoch == epoch && cache.now() - readAt < reader.config.revalidateWithinMillis
+    }
+
+    private fun reReadQuietly() {
+        val trimmed = text.trim()
+        val submitted = generation
+        serverJob?.cancel()
+        serverJob = reader.scope.launch {
+            val outcome = readServer(trimmed)
+            if (submitted != generation || closed) return@launch
+            adopt(outcome) { server -> keepPositions(local.search(trimmed), server) }
+            publish()
+        }
+    }
+
+    /** The rows shown, in place, refreshed from [device] and [server]; then what is new. */
+    private fun keepPositions(device: List<SearchResultItem>, server: List<SearchResultItem>): List<SearchResultItem> {
+        val deviceById = device.associateBy { it.id }
+        val serverIdsNow = server.mapTo(mutableSetOf()) { it.id }
+        val kept = items.mapNotNull { shown -> deviceById[shown.id] ?: shown.takeIf { it.id in serverIdsNow } }
+        val keptIds = kept.mapTo(mutableSetOf()) { it.id }
+        return mergeSearchResults(kept + device.filter { it.id !in keptIds }, server)
     }
 
     /** A pending favourite or rating changed: republish if any row shows one of [rawIds]. */
@@ -378,13 +466,20 @@ internal class LibrarySearchSession(
     /** Idempotent; cancels the server request. Nothing is published after it. */
     fun close() {
         reader.checkConfined()
+        if (closed) return
         closed = true
         serverJob?.cancel()
         serverJob = null
+        try {
+            onClose()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+        }
     }
 
     private sealed interface ServerOutcome {
-        data class Read(val items: List<SearchResultItem>) : ServerOutcome
+        data class Read(val items: List<SearchResultItem>, val readAt: Long, val epochKey: String?) : ServerOutcome
         data class Failed(val error: DomainError) : ServerOutcome
     }
 
@@ -414,6 +509,8 @@ internal class LibrarySearchSession(
                         entities.albums.map { it.toSearchResult(provider) } +
                         entities.tracks.map { it.toSearchResult(provider) },
                 ),
+                readAt = cache.now(),
+                epochKey = epochKey,
             )
         } catch (failure: CancellationException) {
             throw failure
@@ -425,6 +522,11 @@ internal class LibrarySearchSession(
     private fun publish() {
         if (closed) return
         val pending = reader.overlay.pending(cache.serverId, items.mapTo(mutableSetOf()) { it.member() })
+        val downloaded = if (items.any { it.type == SearchResultType.Track }) {
+            reader.downloads.downloadedTrackRawIds(cache.serverId)
+        } else {
+            emptySet()
+        }
         val rows = items.map { item ->
             val state = userState(item)
             val overlay = pending[item.member()]
@@ -433,6 +535,7 @@ internal class LibrarySearchSession(
                 source = if (item.id in serverIds) SearchResultSource.Server else SearchResultSource.Device,
                 favourite = overlay?.starred ?: state?.starred,
                 rating = overlay?.userRating ?: state?.userRating,
+                playability = if (item.type == SearchResultType.Track) reader.trackPlayability(item.id.rawId, downloaded) else null,
             )
         }
         sequence += 1
