@@ -566,6 +566,7 @@ struct DulcetReaderListRow: View {
 /// A track in an album, a playlist, a genre or the favourites. A track that cannot play offline
 /// is dimmed and labelled, and tapping it says why rather than doing nothing (§16.14).
 struct DulcetReaderTrackRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
     let index: Int
@@ -601,6 +602,49 @@ struct DulcetReaderTrackRow: View {
                 DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle)
             }
         }
+    }
+
+    private var unplayableRow: some View {
+        HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+            Text(String(index))
+                .font(showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit())
+                .dulcetForeground(.secondaryTextOnWindow)
+                .frame(minWidth: 20)
+                .accessibilityHidden(true)
+            if showsArtwork {
+                DulcetArtworkView(artwork: item.artwork, size: DulcetMetrics.denseRowArtworkSize, muted: true)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.displayTitle)
+                    .font(showsArtwork ? .callout.weight(.medium) : .body)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                if !unplayableSubtitle.isEmpty {
+                    Text(unplayableSubtitle)
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                }
+            }
+            Spacer(minLength: DulcetSpacing.xs)
+            Text(DulcetStrings.readerTrackDurationUnknown)
+                .font(.caption.monospacedDigit())
+                .dulcetForeground(.secondaryTextOnWindow)
+        }
+        .padding(.horizontal, DulcetSpacing.xs)
+        .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// What the row can still say about the track: its artists, and its album where the list
+    /// names albums. Either side may be missing; an empty pair is no line at all.
+    private var unplayableSubtitle: String {
+        let artists = DulcetStrings.artistNames(item.artistName.map { [$0] } ?? [])
+        if showsAlbum, let album = item.albumTitle, !album.isEmpty {
+            return artists.isEmpty ? album : DulcetStrings.trackSubtitle(artists: artists, album: album)
+        }
+        return artists
     }
 
     private func row(_ track: DulcetTrack) -> some View {
@@ -1247,7 +1291,7 @@ struct DulcetReaderTrackListPage: View {
                     Button(DulcetStrings.play, systemImage: "play.fill") {
                         store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .dulcetProminentActionStyle()
                     .disabled(playable.isEmpty)
                     .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
                     Button(DulcetStrings.shuffle, systemImage: "shuffle") {

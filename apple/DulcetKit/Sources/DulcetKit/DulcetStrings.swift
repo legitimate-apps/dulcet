@@ -377,6 +377,8 @@ enum DulcetStrings {
     // "Downloaded" and "Not available offline"; never "cached" or "sync".
 
     static let readerUntitled = text("reader.untitled", "Unknown")
+    /// Where a track's length would read had the server stated it: it never did (§16.11).
+    static let readerTrackDurationUnknown = text("reader.track.durationUnknown", "\u{2013}")
     static let readerHome = text("reader.section.home", "Home")
     static let readerAlbums = text("reader.section.albums", "Albums")
     static let readerArtists = text("reader.section.artists", "Artists")
