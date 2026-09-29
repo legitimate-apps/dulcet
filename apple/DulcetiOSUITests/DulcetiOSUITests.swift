@@ -1541,6 +1541,233 @@ final class DulcetiOSUITests: XCTestCase {
         }
         return observed
     }
+
+    /// A playlist on the server opens from Library > Playlists, plays in ITS order, and a rename
+    /// made on its page reaches the server (spec §18.6). The playlist is made for this run over
+    /// `/rest` with the canary first and "Thirty One Seconds" second -- the reverse of their album
+    /// order -- so the track that starts proves the playlist's order and not the album's. It is
+    /// deleted afterwards, whatever the outcome.
+    @MainActor
+    func testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer() {
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let first = "UI Playback Canary"
+        let second = "Thirty One Seconds"
+        let name = "Dulcet UI Proof " + UUID().uuidString.prefix(8)
+        let renamed = name + " Renamed"
+        guard let songs = restCall("search3", [
+                  URLQueryItem(name: "query", value: "Threshold"), URLQueryItem(name: "songCount", value: "10"),
+                  URLQueryItem(name: "albumCount", value: "0"), URLQueryItem(name: "artistCount", value: "0"),
+              ], configuration: configuration)?["searchResult3"] as? [String: Any],
+              let rows = songs["song"] as? [[String: Any]],
+              let firstID = rows.first(where: { $0["title"] as? String == first })?["id"] as? String,
+              let secondID = rows.first(where: { $0["title"] as? String == second })?["id"] as? String else {
+            XCTFail("The corpus must hold \(first) and \(second)")
+            return
+        }
+        guard let created = restCall("createPlaylist", [
+                  URLQueryItem(name: "name", value: name),
+                  URLQueryItem(name: "songId", value: firstID), URLQueryItem(name: "songId", value: secondID),
+              ], configuration: configuration)?["playlist"] as? [String: Any],
+              let playlistID = created["id"] as? String else {
+            XCTFail("The run's playlist could not be made on the disposable server")
+            return
+        }
+        addTeardownBlock { [configuration] in
+            _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlistID)], configuration: configuration)
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", configuration.serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        let compact = window.frame.width < 700
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The live account connection must succeed first")
+            return
+        }
+        guard openLibraryPlaylists(in: app, compact: compact) else { return }
+        let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else {
+            XCTFail("Playlists must list the run's playlist: " + app.debugDescription)
+            return
+        }
+        row.tap()
+        let title = app.staticTexts["dulcet.playlist.title"].firstMatch
+        guard title.waitForExistence(timeout: 10), waitForLabel(name, of: title, timeout: 10) else {
+            XCTFail("The row must open its playlist: " + app.debugDescription)
+            return
+        }
+        let play = app.buttons["dulcet.playlist.play"].firstMatch
+        guard play.waitForExistence(timeout: 10), waitForEnabled(play, timeout: 15) else {
+            XCTFail("The playlist's Play must be offered once its tracks are read: " + app.debugDescription)
+            return
+        }
+        play.tap()
+        guard openNowPlayingFromBar(in: app, expectingTitle: first) else { return }
+        let nowPlaying = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(nowPlaying.waitForExistence(timeout: 10) && nowPlaying.label.contains(first),
+            "Play must start the playlist's FIRST entry, \(first), not the album's; title=\(nowPlaying.exists ? nowPlaying.label : "<none>")")
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
+
+        // Rename from the page; the header shows it at once and the server gets it.
+        let more = app.buttons["dulcet.playlist.more"].firstMatch
+        guard more.waitForExistence(timeout: 10) else {
+            XCTFail("The person's own playlist must offer its menu: " + app.debugDescription)
+            return
+        }
+        more.tap()
+        let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rename")).firstMatch
+        guard rename.waitForExistence(timeout: 5) else {
+            XCTFail("The menu must offer Rename: " + app.debugDescription)
+            return
+        }
+        rename.tap()
+        let alert = app.alerts.firstMatch
+        guard alert.waitForExistence(timeout: 5),
+              replaceText(in: alert.textFields.firstMatch, with: renamed, name: "playlist name") else { return }
+        alert.buttons["Rename"].firstMatch.tap()
+        XCTAssertTrue(waitForLabel(renamed, of: title, timeout: 5),
+            "The page must show the new name before the server answers; title=\(title.label)")
+        var serverName: String?
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            serverName = (restCall("getPlaylist", [URLQueryItem(name: "id", value: playlistID)], configuration: configuration)?[
+                "playlist"] as? [String: Any])?["name"] as? String
+            if serverName == renamed { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        } while Date() < deadline
+        XCTAssertEqual(serverName, renamed, "The rename must reach the server")
+        print("DULCET PLAYLIST PROOF PASS destination=\(compact ? "compact" : "regular") first=\(first.debugDescription)"
+            + " server-name=\((serverName ?? "<none>").debugDescription)")
+    }
+
+    /// Now Playing's lyrics panel shows the server's synced lyrics and lights the current line as
+    /// media time moves (spec §18.4). "Twenty Nine Seconds" carries embedded synced lyrics in three
+    /// languages; an English-preferring simulator is shown the English layer, whose first line
+    /// starts at two seconds.
+    @MainActor
+    func testTheLyricsPanelShowsTheSyncedLineThatIsPlaying() {
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        let line = "Dulcet English line one"
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", configuration.serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        let compact = window.frame.width < 700
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The live account connection must succeed first")
+            return
+        }
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return }
+        app.buttons["dulcet.album.play"].firstMatch.tap()
+        guard openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
+        let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        guard toggle.waitForExistence(timeout: 10) else {
+            XCTFail("Now Playing must offer lyrics: " + app.debugDescription)
+            return
+        }
+        toggle.tap()
+        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "The lyrics panel must open: " + app.debugDescription)
+        let shown = app.staticTexts.matching(NSPredicate(format: "label == %@", line)).firstMatch
+        XCTAssertTrue(shown.waitForExistence(timeout: 20),
+            "The panel must show the English layer's line: " + app.debugDescription)
+        // The control: a lit line proves the cursor ran against media time, not only that text
+        // was drawn. Nothing is lit before two seconds, so this also needs playback to progress.
+        let current = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 25),
+            "A line must light as the track plays: " + app.debugDescription)
+        let lit = current.exists ? current.label : "<none>"
+        XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be one of the English layer's; lit=\(lit)")
+        print("DULCET LYRICS PROOF PASS destination=\(compact ? "compact" : "regular") lit=\(lit.debugDescription)")
+    }
+
+    /// Library > Playlists: a row of the phone's Library, a sidebar section on a regular width.
+    @MainActor
+    private func openLibraryPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
+            return false
+        }
+        if !compact { return openSidebarLibrarySection("playlists", in: app) }
+        let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
+        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else {
+            XCTFail("The phone's Library must list Playlists: " + app.debugDescription)
+            return false
+        }
+        link.tap()
+        return true
+    }
+
+    @MainActor
+    private func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !element.isEnabled, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return element.isEnabled
+    }
+
+    /// One `/rest` call with the disposable account; the envelope's body on `ok`, else nil with
+    /// the endpoint named -- never the URL, which carries a token.
+    private func restCall(
+        _ endpoint: String,
+        _ query: [URLQueryItem],
+        configuration: LivePlaybackConfiguration
+    ) -> [String: Any]? {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((configuration.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: configuration.serverURL) else { return nil }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/" + endpoint
+        components.queryItems = [
+            URLQueryItem(name: "u", value: configuration.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+            URLQueryItem(name: "f", value: "json"),
+        ] + query
+        guard let url = components.url else { return nil }
+        final class Outcome: @unchecked Sendable { var data: Data? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 { outcome.data = data }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            print("DULCET REST \(endpoint) timed out")
+            return nil
+        }
+        guard let data = outcome.data,
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let envelope = document["subsonic-response"] as? [String: Any],
+              envelope["status"] as? String == "ok" else {
+            print("DULCET REST \(endpoint) did not return an ok envelope")
+            return nil
+        }
+        return envelope
+    }
+
     /// The iPad shell: Now Playing is not a sidebar place, and the now-playing bar opens the
     /// player over the whole window with Up Next beside it.
     ///

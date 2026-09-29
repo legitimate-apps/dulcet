@@ -216,6 +216,20 @@ public final class DulcetLyricsModel {
 
     public var state: DulcetLyricsPanelState { DulcetLyricsPresentation.state(publication, loading: loading) }
 
+    /// Reads the same track again from a new reader -- after a reconnect -- keeping what is shown
+    /// until the answer arrives. Every earlier read's answer is dropped (§18.4's bridge rule).
+    public func reload(from reader: (any DulcetLyricsReading)?) {
+        guard let request, let reader else { return }
+        generation += 1
+        let current = generation
+        loading = true
+        reader.readLyrics(request, mode: .read) { [weak self] live in
+            guard let self, self.generation == current else { return }
+            self.publication = live
+            self.loading = false
+        }
+    }
+
     /// Loads `request` from `reader`; a different track drops what the last one showed.
     public func load(_ request: DulcetLyricsRequest, from reader: (any DulcetLyricsReading)?) {
         guard request != self.request || publication == nil else { return }

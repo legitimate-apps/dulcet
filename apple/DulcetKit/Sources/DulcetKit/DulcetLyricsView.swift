@@ -33,7 +33,12 @@ struct DulcetLyricsPanel: View {
             .onChange(of: track.id) { _, _ in model.load(DulcetLyricsRequest(track: track), from: reader) }
             .onChange(of: elapsed) { _, new in anchor = DulcetLyricsClockAnchor(elapsed: new, at: .now) }
             .onChange(of: store.librarySession?.readerGeneration) { _, _ in
-                model.load(DulcetLyricsRequest(track: track), from: reader)
+                model.reload(from: reader)
+            }
+            // Reconnect in place keeps the reader; what was read while offline is read again.
+            .onChange(of: store.librarySession?.isOnline == true) { wasOnline, online in
+                guard online, !wasOnline, model.publication?.freshness != .live else { return }
+                model.reload(from: reader)
             }
     }
 

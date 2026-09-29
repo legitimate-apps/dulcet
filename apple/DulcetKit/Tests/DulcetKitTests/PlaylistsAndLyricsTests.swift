@@ -412,6 +412,28 @@ func theModelPaintsTheStoredDocumentThenTheLiveOneAndDropsALateAnswer() {
 }
 
 @Test @MainActor
+func aReloadKeepsWhatIsShownUntilItsAnswerAndDropsEveryEarlierRead() {
+    let reader = RecordingLyrics()
+    let model = DulcetLyricsModel()
+    model.load(DulcetLyricsRequest(trackRawID: "t1", artist: nil, title: nil), from: reader)
+    reader.completions[1](lyricsPublication("unavailable", freshness: .unavailable(.notCachedOffline)))
+    let offline = model.state
+
+    // A reconnect reads again; the offline answer stays until the new one arrives.
+    model.reload(from: reader)
+    #expect(reader.reads.last?.1 == .read)
+    #expect(reader.reads.count == 3)
+    #expect(model.publication?.freshness == .unavailable(.notCachedOffline))
+    guard case .unavailable = offline else { Issue.record("expected the offline state first"); return }
+
+    // The first load's stored read answering late must not repaint over the reload.
+    reader.completions[0](lyricsPublication("none"))
+    #expect(model.publication?.freshness == .unavailable(.notCachedOffline))
+    reader.completions[2](lyricsPublication("lyrics"))
+    guard case .synced = model.state else { Issue.record("the reload's answer must paint, got \(model.state)"); return }
+}
+
+@Test @MainActor
 func withNoReaderTheModelSaysUnavailableRatherThanSpinning() {
     let model = DulcetLyricsModel()
     model.load(DulcetLyricsRequest(trackRawID: "t1", artist: nil, title: nil), from: nil)
