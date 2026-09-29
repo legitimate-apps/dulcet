@@ -36,7 +36,7 @@ struct DulcetEmptyLibraryView: View {
             if !connected {
                 VStack(spacing: DulcetSpacing.sm) {
                     Button(DulcetStrings.connectServer, systemImage: "plus", action: onConnect)
-                        .buttonStyle(.borderedProminent)
+                        .dulcetProminentActionStyle()
                         .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.connectServer)
 
@@ -103,7 +103,7 @@ struct DulcetSavedAccountLibraryView: View {
                 .lineLimit(nil)
                 .frame(maxWidth: 560)
             Button(DulcetStrings.reconnect, systemImage: "arrow.clockwise", action: onReconnect)
-                .buttonStyle(.borderedProminent)
+                .dulcetProminentActionStyle()
                 .dulcetDefaultActionShortcut()
                 .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
             Text(DulcetStrings.savedAccountDisconnectedFootnote)
@@ -137,7 +137,7 @@ struct DulcetLibraryErrorView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 560)
             Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise", action: onRetry)
-                .buttonStyle(.borderedProminent)
+                .dulcetProminentActionStyle()
                 .accessibilityLabel(DulcetStrings.tryAgain)
         }
         .padding(DulcetSpacing.xxl)
@@ -1553,7 +1553,7 @@ struct DulcetOfflineLibraryView: View {
                         }
                         Spacer()
                         Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
-                            .buttonStyle(.borderedProminent)
+                            .dulcetProminentActionStyle()
                             .dulcetDefaultActionShortcut()
                             .accessibilityLabel(DulcetStrings.tryAgain)
                     }

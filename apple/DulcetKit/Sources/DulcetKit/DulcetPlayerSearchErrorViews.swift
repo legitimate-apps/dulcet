@@ -94,7 +94,7 @@ struct DulcetPlaybackFailedView: View {
             Button(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
                 onControl(.retry)
             }
-            .buttonStyle(.borderedProminent)
+            .dulcetProminentActionStyle()
             .accessibilityIdentifier("dulcet.now-playing.retry")
         }
         if failure.canSkip {
@@ -912,7 +912,7 @@ struct DulcetTLSUntrustedView: View {
                     Link(destination: DulcetLinks.certificateInstallationGuide) {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
                     }
-                        .buttonStyle(.borderedProminent)
+                        .dulcetProminentActionStyle()
                         .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
 #endif

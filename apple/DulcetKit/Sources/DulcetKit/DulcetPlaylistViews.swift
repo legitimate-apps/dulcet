@@ -151,7 +151,7 @@ private struct DulcetPlaylistPageContent: View {
                     Button(DulcetStrings.play, systemImage: "play.fill") {
                         store.playReaderTracks(playable, sourceKind: .playlist, sourceID: id, sourceName: item?.displayTitle ?? "")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .dulcetProminentActionStyle()
                     .disabled(playable.isEmpty)
                     .accessibilityIdentifier("dulcet.playlist.play")
                     Button(DulcetStrings.shuffle, systemImage: "shuffle") {

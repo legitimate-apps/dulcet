@@ -332,6 +332,15 @@ extension View {
         buttonStyle(.bordered)
 #endif
     }
+
+    /// A prominent (accent-filled) action. Its label takes the accent-fill contrast pair: an
+    /// ancestor's primary-text style would otherwise paint it dark on the dark accent of light
+    /// mode and light on the light accent of dark mode.
+    @ViewBuilder
+    func dulcetProminentActionStyle() -> some View {
+        buttonStyle(.borderedProminent)
+            .dulcetForeground(.labelOnAccentFill)
+    }
 }
 
 struct DulcetArtworkView: View {

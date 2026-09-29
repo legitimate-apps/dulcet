@@ -211,7 +211,7 @@ struct DulcetReaderAccountBanner: View {
                 Button(DulcetStrings.reconnect, systemImage: "arrow.clockwise") {
                     store.submitAccountConnection()
                 }
-                .buttonStyle(.borderedProminent)
+                .dulcetProminentActionStyle()
                 .disabled(store.snapshot.accountConnection == .connecting)
                 .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
                 .accessibilityIdentifier("dulcet.reader.reconnect")
@@ -593,11 +593,9 @@ struct DulcetReaderTrackRow: View {
 #endif
                 }
             } else {
-                // The server never gave this track's length: listed, and never handed to the player.
-                Text(item.displayTitle)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .padding(.horizontal, DulcetSpacing.xs)
+                // The server never gave this track's length: listed with the list's chrome, and
+                // never handed to the player, so no play action and no bright title.
+                unplayableRow
             }
             if let target = item.favouriteTarget {
                 DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle)

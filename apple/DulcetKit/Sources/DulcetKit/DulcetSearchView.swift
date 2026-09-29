@@ -153,7 +153,7 @@ struct DulcetSearchView: View {
                     body: DulcetStrings.searchErrorBody
                 )
                 Button(DulcetStrings.searchRetry, action: onRetry)
-                    .buttonStyle(.borderedProminent)
+                    .dulcetProminentActionStyle()
             }
         case .idle:
             searchMessage(
