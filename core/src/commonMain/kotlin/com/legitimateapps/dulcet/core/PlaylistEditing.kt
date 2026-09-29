@@ -474,6 +474,11 @@ internal data class PendingPlaylistChange(
     val failures: Int,
     /** A create waiting for the person's choice ([PlaylistEditOutcome.PossibleDuplicate]): its candidates. */
     val candidates: List<String>?,
+    /**
+     * For a create waiting for the person's choice: the name its send carried, which is the name the
+     * candidates share — what [PlaylistEditOutcome.PossibleDuplicate] named. Null otherwise.
+     */
+    val name: String? = null,
 )
 
 internal data class PlaylistFlushReport(
@@ -735,6 +740,7 @@ internal class PlaylistEditor(
                     inDoubt = row.sent,
                     failures = row.failures,
                     candidates = (row as? PendingPlaylistRow.Create)?.takeIf { it.awaitsChoice }?.candidates,
+                    name = (row as? PendingPlaylistRow.Create)?.takeIf { it.awaitsChoice }?.let { it.sentName ?: it.name },
                 )
             }
         }

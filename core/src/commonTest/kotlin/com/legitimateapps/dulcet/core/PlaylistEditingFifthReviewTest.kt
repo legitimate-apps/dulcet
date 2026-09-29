@@ -253,7 +253,11 @@ class PlaylistEditingFifthReviewTest {
         val bIs = session.reader.playlistOverlay.resolve(b)
         assertTrue(bIs != first && bIs != second, "the second create took a playlist offered for the first: ${env.outcomes}")
         assertEquals(3, env.server.count("createPlaylist"))
-        assertEquals(listOf(first, second), session.playlists.pendingChanges().single { it.playlistId == a }.candidates)
+        val waiting = session.playlists.pendingChanges().single { it.playlistId == a }
+        assertEquals(listOf(first, second), waiting.candidates)
+        // A shell re-asks from this row after a relaunch: it names what the candidates share.
+        assertEquals("Mix", waiting.name)
+        assertTrue(session.playlists.pendingChanges().filter { it.candidates == null }.all { it.name == null }, "only a create waiting names one")
     }
 
     // ---- NIT x2: a choice another create voids is asked again ---------------------------------------------

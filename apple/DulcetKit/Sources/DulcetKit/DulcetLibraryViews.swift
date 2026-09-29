@@ -1271,6 +1271,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
             Button(DulcetStrings.play, systemImage: "play", action: onPlay)
         }
         DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
+        DulcetAddTrackToPlaylistMenuItem(track: track)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
                 onNavigate()

@@ -4791,7 +4791,7 @@ over: its failure or success is not counted in the new window (§10.4), its time
 remembered (the period mark it gets is from its own generation), and no read of the new window
 joins it. An older request still answers its own caller.
 
-**A rule for the platform bridges** (sixth review; no shell consumes lyrics yet). A read begun
+**A rule for the platform bridges** (sixth review). A read begun
 before a reconnect answers its own caller after it, and that answer can be a failure published
 after a newer read has already shown live lyrics — the core does this on purpose, since it is the
 answer to that request. A Swift or Android bridge must therefore cancel a read that a newer read of
@@ -4999,17 +4999,29 @@ again and one cue per word or syllable with its own text, times and byte offsets
 with its timestamps stripped, an unmatched artist/title answers `ok` with `value: ""`, and for a
 multilingual file it returns one language only.
 
-*For the shells* — the Now Playing panel is W17's UI half, built on Android (a sheet from the phone
-player, a panel in place of Up Next on the TV) over the `AndroidLibraryLyrics` facade, and not yet
-on Apple. Media time between the playback controller's samples (about every 500 ms) is
-interpolated on the monotonic clock while playback progresses, never more than 1 s past the last
-sample. Render the selected
+*For the shells* — the Now Playing panel is W17's UI half, built on Apple (2026-09-29) and on
+Android (a sheet from the phone player, a panel in place of Up Next on the TV) over the
+`AndroidLibraryLyrics` facade. On Android, media time between the playback controller's samples
+(about every 500 ms) is interpolated on the monotonic clock while playback progresses, never more
+than 1 s past the last sample. Render the selected
 layer; when synced, call `cursorAtMilliseconds(position)` on each position update, scroll to `index`
 and highlight through `lastIndex`, dimming on `isInterlude`; when unsynced, show the text statically; when the selected
 layer is null, say there are no lyrics; when `isTrimmed`, say that some lyrics were too large to
 show. The reader's `LibraryLyrics` is internal like the rest of
 the reader and reaches a shell through the facade that R2 adds; `LyricsContract` exposes the same
 production path to the conformance suite.
+
+*The Apple bridge* (`AppleLibraryLyricsClient`, 2026-09-29). The endpoint gate needs the account's
+extension set, and the Apple reader composition is not given one, so the bridge asks for it once per
+client with `getOpenSubsonicExtensions` over the reader's own transport and keeps the answer: a 404
+is a legacy server (classic `getLyrics` only), an `ok` envelope is parsed, and an envelope refusing
+the call is an empty set. A failed read — no answer, or a malformed one — is **not** kept, and the
+track's stored document is published with that failure; the next read asks again rather
+than pinning a server to `getLyrics` for the life of the session on one dropped request. A read
+while no answer is kept (offline, or before the first read) publishes the stored document through a
+provisional instance that is never kept. The Swift model applies the rule above by admission: each
+load, retry or reload of a track takes a generation, and an answer from an earlier generation is
+dropped; the stored document paints only while nothing newer has.
 
 *Future work — word-by-word highlighting.* The core does not model cues: `enhanced=true` is read for
 its extra layers (translation, pronunciation), and the `cueLine` data it also carries is downloaded,
@@ -5269,8 +5281,9 @@ parameter; OBSERVED by the review, 600 playlists in one response on the referenc
 send `readonly` — ownership by this account. Dulcet follows `readonly` even for an admin, whom the
 reference server would let edit other users' playlists: editing someone else's playlist is not a
 feature Dulcet offers. An owner is compared with the account ignoring case (above). **REQUIREMENT on
-the shells, met on Android (phone and TV), not yet on Apple:** show a playlist's owner, and present one whose `editable` is
-false as read-only, with no edit controls. The core refuses an edit of one (`NotEditable`); the
+the shells, met on Apple (2026-09-29) and on Android (phone and TV):** show a playlist's owner, and
+present one whose `editable` is false as read-only, with no edit controls. The core refuses an edit
+of one (`NotEditable`); the
 server's code 50 is told like any refusal.
 
 **Failures.** An HTTP 429 is `Server.Busy`, named from the status whatever the body (the reference
@@ -7125,6 +7138,35 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
+page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and
+delete, and on iPhone, iPad and Mac removal and reorder against the view the person acted on
+(§18.6 rule 1), with pending, held and not-yet-on-server states and the create-in-doubt questions
+said on the page. Now Playing gains a lyrics panel that lights the core's cursor (§18.4). tvOS lists
+and plays playlists read-only and has no lyrics control yet. Two facades carry them across the
+Objective-C boundary: `AppleLibraryPlaylistClient` and `AppleLibraryLyricsClient`; the lyrics bridge
+discovers the account's extensions itself (§18.4, *The Apple bridge*). The §18.6 owner requirement
+is now met on Apple. Every playlist deletion, the context menu's included, waits for the person's
+confirmation. Create-in-doubt questions queue and are never overwritten. A `possibleDuplicate` the
+person leaves for later is asked again from its page and from `pendingChanges()` (which now carries
+the sent name), and a `possiblyCreated` question is carried to the account's next reader. The core
+names candidates by id only, and they share the sent name, so a question offers to adopt or delete a
+candidate only when there is exactly one.
+
+**2026-09-29 — Apple library on the reader.** Phase R2b (§16.18) lands on every Apple shell: the
+one production composition every target shares gives the store a reader session, so the library,
+its album, artist and playlist pages, Home's shelves and search read through the reader on iPhone,
+iPad, Mac and Apple TV alike, and no screen starts a library sync while the reader holds the account.
+A saved account opens straight into what this device saw, marked as such, with Reconnect in place
+(§16.14); rows report their viewport and extend as they scroll. Search offers no "load more" in
+reader mode, because the reader's search has no paging. The committed library browser remains only as
+the catalog that restores a queue saved before the reader existed. Four contracts are **not yet met
+on Apple**, each because the facade has no call for it: sign-out step 6 (§14.7) closes the reader
+before the credential is removed but does not purge its seen-cache and outbox; a held change cannot
+be withdrawn (§16.20), only retried or left; the bind-time discard count is never acknowledged; and
+a downloaded track's playability does not cross, so a row cannot say it is downloaded. Artwork is not
+fetched while the account is device-only.
 
 **2026-09-29 — Ship readiness: privacy manifests, PROD iOS, tvOS DEV delivery, launcher icons and a PROD-server guard.** Ship readiness for the App Store and Google Play: privacy manifests,
 a PROD iOS target, tvOS DEV delivery, launcher icons, and the documentation corrections the

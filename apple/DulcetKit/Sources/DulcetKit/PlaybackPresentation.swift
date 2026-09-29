@@ -36,6 +36,8 @@ public enum DulcetPlaybackQueueSourceKind: String, Sendable, Hashable {
     case library
     case album
     case search
+    case playlist
+    case artist
 }
 
 public struct DulcetPlaybackQueueIntent: Sendable, Hashable {

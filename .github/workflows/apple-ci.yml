@@ -1531,6 +1531,55 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
+          # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
+          # renames it from its page and reads the new name back from the server, then deletes it:
+          # playlists are not media, so the counted corpus the phases after this read is unchanged.
+          # The lyrics proof plays the corpus's embedded synced lyrics and waits for a lit line.
+          python3 tools/ci/isolate-simulator --phase playlist-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-playlist.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          python3 tools/ci/isolate-simulator --phase lyrics-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheLyricsPanelShowsTheSyncedLineThatIsPlaying 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-lyrics.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheLyricsPanelShowsTheSyncedLineThatIsPlaying
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-lyrics-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           # The automatic-skip proofs on iPhone (spec §12.12): an undecodable track is skipped with a
           # notice and the next one plays, and the server counts a play for the next track and never
           # for the skipped one; at the largest text size the notice clears navigation, and for a
@@ -1798,6 +1847,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-search-junit" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-junit" \
+            "$RUNNER_TEMP/dulcet-ios-lyrics-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \

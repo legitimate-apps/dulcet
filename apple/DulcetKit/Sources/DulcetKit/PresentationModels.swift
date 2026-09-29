@@ -361,6 +361,9 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
     public let availability: DulcetMediaAvailability
     public let isFavorite: Bool
     public let downloadState: DulcetDownloadState
+    /// The album this track belongs to, when the source that produced it knows. The reader's
+    /// tracks carry it, so Go to Album needs no library held in memory to find it.
+    public let albumID: DulcetProviderItemID?
 
     public init(
         id: DulcetProviderItemID,
@@ -375,7 +378,8 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
         isFavorite: Bool = false,
-        downloadState: DulcetDownloadState = .notDownloaded
+        downloadState: DulcetDownloadState = .notDownloaded,
+        albumID: DulcetProviderItemID? = nil
     ) {
         self.id = id
         self.title = title
@@ -390,6 +394,7 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         self.availability = availability
         self.isFavorite = isFavorite
         self.downloadState = downloadState
+        self.albumID = albumID
     }
 
     public var artistNames: [String] {
@@ -535,6 +540,25 @@ extension DulcetAlbum {
 }
 
 extension DulcetTrack {
+    func replacingFavorite(_ favorite: Bool) -> Self {
+        Self(
+            id: id,
+            title: title,
+            credits: credits,
+            albumTitle: albumTitle,
+            discNumber: discNumber,
+            trackNumber: trackNumber,
+            duration: duration,
+            sourceContainer: sourceContainer,
+            mediaSourceID: mediaSourceID,
+            artwork: artwork,
+            availability: availability,
+            isFavorite: favorite,
+            downloadState: downloadState,
+            albumID: albumID
+        )
+    }
+
     func replacingDownloadState(_ state: DulcetDownloadState) -> Self {
         Self(
             id: id,
@@ -549,7 +573,8 @@ extension DulcetTrack {
             artwork: artwork,
             availability: availability,
             isFavorite: isFavorite,
-            downloadState: state
+            downloadState: state,
+            albumID: albumID
         )
     }
 }

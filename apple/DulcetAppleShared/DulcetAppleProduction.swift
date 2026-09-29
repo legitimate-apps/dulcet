@@ -2,6 +2,7 @@ import DulcetCore
 import DulcetKit
 import Foundation
 import ImageIO
+import Network
 
 /// Shared production account composition for every native Apple shell.
 @MainActor
@@ -59,7 +60,12 @@ enum DulcetAppleProduction {
     ) -> DulcetPresentationStore {
         // One artwork fetcher, and so one disk cache, serves the library grid and the system Now
         // Playing entry: the lock-screen image is usually already cached by the time it is asked.
-        DulcetPresentationStore(
+        //
+        // Library and Search read through the library reader (spec §16.18). The committed
+        // library browser stays only as the queue-restoration catalog for a queue saved before
+        // the reader existed: it reads the local database and sends nothing, and no library sync
+        // is started from any screen while the reader holds the account.
+        let store = DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
                 credentialStore: credentialStore,
@@ -74,9 +80,15 @@ enum DulcetAppleProduction {
                 providerInstanceIDFactory: {
                     credentialStore.activeAccountID ?? UUID().uuidString
                 },
-                localNetworkAccess: DulcetNetworkLocalNetworkAccessProbe()
+                localNetworkAccess: DulcetNetworkLocalNetworkAccessProbe(),
+                librarySession: DulcetLibrarySession(
+                    factory: DulcetCoreLibraryReaderFactory(),
+                    reachability: DulcetNetworkReachability()
+                )
             )
         )
+        store.likeCommandDriver = DulcetLikeCommandDriver(store: store)
+        return store
     }
 }
 
@@ -417,20 +429,6 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
                 DulcetArtworkReference(serverID: providerInstanceID, artworkKey: $0)
             }
         )
-    }
-}
-
-private extension DulcetAudioContainer {
-    init?(coreName: String) {
-        switch coreName {
-        case "Mp3": self = .mp3
-        case "Mp4": self = .mp4
-        case "Wav": self = .wav
-        case "Flac": self = .flac
-        case "Ogg": self = .ogg
-        case "AdtsAac": self = .adtsAAC
-        default: return nil
-        }
     }
 }
 
@@ -813,5 +811,360 @@ final class DulcetCoreAccountOperation: DulcetAccountConnectOperation {
 
     func cancel() {
         operation.cancel()
+    }
+}
+
+// MARK: - The library reader
+
+/// Makes one `AppleLibraryReaderClient` per account over the app's database.
+@MainActor
+final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
+    private let databaseName: String
+
+    init(databaseName: String = "dulcet.db") {
+        self.databaseName = databaseName
+    }
+
+    func makeReader(account: DulcetLibraryReaderAccount, foreground: Bool) -> any DulcetLibraryReading {
+        DulcetCoreLibraryReader(client: AppleLibraryReaderClient(
+            databaseName: databaseName,
+            account: AppleLibraryReaderAccount(
+                providerInstanceId: account.providerInstanceID,
+                normalizedBaseUrl: account.normalizedServerURL,
+                username: account.username,
+                password: account.password,
+                allowLocalHttp: account.allowLocalHTTP
+            ),
+            foreground: foreground
+        ))
+    }
+}
+
+/// `DulcetLibraryReading` over the core's facade. Each publication is copied field for field into
+/// DulcetKit's values, whose initializers own every decision about a word (§7.1). The facade
+/// delivers on the main thread; the listeners assert it rather than hop.
+@MainActor
+final class DulcetCoreLibraryReader: DulcetLibraryReading {
+    /// Read by the playlist and lyrics adapters (DulcetCorePlaylistsLyrics.swift).
+    let client: AppleLibraryReaderClient
+    /// Made on first use, one per reader (DulcetCorePlaylistsLyrics.swift).
+    var playlistClient: AppleLibraryPlaylistClient?
+    var lyricsClient: AppleLibraryLyricsClient?
+
+    init(client: AppleLibraryReaderClient) {
+        self.client = client
+    }
+
+    func subscribeWindow(
+        _ query: DulcetLibraryQuery,
+        onPublication: @escaping @MainActor (DulcetLibraryWindow) -> Void
+    ) -> any DulcetLibraryWindowSubscribing {
+        let fields = query.request
+        let listener = DulcetCoreWindowListener(handler: onPublication)
+        let subscription = client.subscribeLibraryWindow(
+            request: AppleLibraryWindowRequest(
+                kind: fields.kind,
+                rawId: fields.rawID,
+                listType: fields.listType,
+                genre: fields.genre,
+                fromYear: 0,
+                toYear: 0,
+                musicFolderId: nil
+            ),
+            listener: listener
+        )
+        return DulcetCoreWindowSubscription(subscription: subscription, listener: listener)
+    }
+
+    func subscribeSearch(
+        onPublication: @escaping @MainActor (DulcetReaderSearchPublication) -> Void
+    ) -> any DulcetLibrarySearchSubscribing {
+        let listener = DulcetCoreSearchListener(handler: onPublication)
+        return DulcetCoreSearchSubscription(
+            subscription: client.subscribeSearch(listener: listener),
+            listener: listener
+        )
+    }
+
+    func setFavourite(_ target: DulcetFavouriteTarget, favourite: Bool) -> Bool {
+        client.setFavourite(kind: target.kind.rawValue, rawId: target.id.rawID, favourite: favourite)
+    }
+
+    func subscribeFavouriteOutcomes(
+        _ handler: @escaping @MainActor (DulcetFavouriteOutcome) -> Void
+    ) -> any DulcetLibraryReaderCancellable {
+        let listener = DulcetCoreOutcomeListener(handler: handler)
+        let subscription = client.subscribeFavouriteOutcomes(listener: listener)
+        return DulcetCoreReaderCancellable(listener: listener) { subscription.close() }
+    }
+
+    func pendingChangeCount(
+        completion: @escaping @MainActor (DulcetPendingChanges) -> Void
+    ) -> any DulcetLibraryReaderCancellable {
+        let operation = client.pendingChangeCount { pending in
+            let copy = DulcetPendingChanges(count: pending.count?.int64Value)
+            MainActor.assumeIsolated { completion(copy) }
+        }
+        return DulcetCoreReaderCancellable(listener: nil) { operation.cancel() }
+    }
+
+    func connect(completion: @escaping @MainActor (DulcetReaderConnection) -> Void) -> any DulcetLibraryReaderCancellable {
+        let operation = client.connect { connection in
+            let copy = Self.copy(connection)
+            MainActor.assumeIsolated { completion(copy) }
+        }
+        return DulcetCoreReaderCancellable(listener: nil) { operation.cancel() }
+    }
+
+    func reconnect(completion: @escaping @MainActor (DulcetReaderConnection) -> Void) -> any DulcetLibraryReaderCancellable {
+        let operation = client.reconnect { connection in
+            let copy = Self.copy(connection)
+            MainActor.assumeIsolated { completion(copy) }
+        }
+        return DulcetCoreReaderCancellable(listener: nil) { operation.cancel() }
+    }
+
+    func setOnline(_ reachable: Bool) {
+        client.setOnline(reachable: reachable)
+    }
+
+    func setForeground(_ foreground: Bool) {
+        client.setForeground(foreground: foreground)
+    }
+
+    func setNetworkConstrained(_ constrained: Bool) {
+        client.setNetworkConstrained(constrained: constrained)
+    }
+
+    func close(completion: @escaping @MainActor () -> Void) {
+        client.close {
+            MainActor.assumeIsolated { completion() }
+        }
+    }
+
+    nonisolated static func copy(_ connection: AppleLibraryReaderConnection) -> DulcetReaderConnection {
+        DulcetReaderConnection(
+            epochKnown: connection.epochKnown,
+            serverReportsNoEpoch: connection.serverReportsNoEpoch,
+            discardedPendingChanges: connection.discardedPendingChanges,
+            errorKind: connection.errorKind
+        )
+    }
+
+    nonisolated static func copy(_ publication: AppleLibraryWindowPublication) -> DulcetLibraryWindow {
+        DulcetLibraryWindow(
+            sequence: Int(publication.sequence),
+            freshness: copy(publication.freshness),
+            coverage: publication.coverage,
+            total: publication.total?.intValue,
+            leadingOffset: Int(publication.leadingOffset),
+            header: publication.header.flatMap(copy(_:)),
+            items: publication.items.compactMap(copy(_:)),
+            itemsState: publication.itemsState,
+            order: publication.order,
+            anchorRawID: publication.anchorRawId,
+            anchorIndex: publication.anchorIndex?.intValue
+        )
+    }
+
+    nonisolated static func copy(_ freshness: AppleLibraryReaderFreshness) -> DulcetReaderFreshness {
+        DulcetReaderFreshness(
+            kind: freshness.kind,
+            reason: freshness.reason,
+            errorKind: freshness.errorKind,
+            asOfEpochMillis: freshness.asOfEpochMillis?.int64Value
+        )
+    }
+
+    nonisolated static func copy(_ item: AppleLibraryReaderItem) -> DulcetReaderItem? {
+        DulcetReaderItem(
+            kind: item.kind,
+            providerInstanceID: item.providerInstanceId,
+            rawID: item.rawId,
+            title: item.title,
+            artistName: item.artistName,
+            artistRawID: item.artistRawId,
+            albumTitle: item.albumTitle,
+            albumRawID: item.albumRawId,
+            year: item.year?.intValue,
+            genre: item.genre,
+            durationMilliseconds: item.durationMilliseconds?.int64Value,
+            songCount: item.songCount?.intValue,
+            albumCount: item.albumCount?.intValue,
+            discNumber: item.discNumber?.intValue,
+            trackNumber: item.trackNumber?.intValue,
+            sourceContainer: item.sourceContainer,
+            artworkKey: item.artworkKey,
+            owner: item.owner,
+            favourite: item.favourite?.boolValue,
+            rating: item.rating?.intValue,
+            playCount: item.playCount?.int64Value,
+            playability: item.playability,
+            detailComplete: item.detailComplete,
+            metadataMissing: item.metadataMissing,
+            editable: item.editable,
+            pendingChanges: item.pendingChanges,
+            local: item.local,
+            comment: item.comment,
+            isPublic: item.isPublic?.boolValue
+        )
+    }
+
+    nonisolated static func copy(_ publication: AppleLibrarySearchPublication) -> DulcetReaderSearchPublication {
+        DulcetReaderSearchPublication(
+            query: publication.query,
+            sequence: Int(publication.sequence),
+            scope: DulcetReaderSearchScope(
+                scope: publication.scope,
+                errorKind: publication.errorKind,
+                seen: DulcetReaderSeenCounts(
+                    artists: publication.seenArtistCount?.int64Value,
+                    albums: publication.seenAlbumCount?.int64Value,
+                    tracks: publication.seenTrackCount?.int64Value
+                )
+            ),
+            rows: publication.rows.compactMap { row in
+                DulcetReaderSearchRow(
+                    kind: row.kind,
+                    providerInstanceID: row.providerInstanceId,
+                    rawID: row.rawId,
+                    title: row.title,
+                    credits: row.credits.map { (role: $0.role, name: $0.name, rawID: $0.rawId) },
+                    albumTitle: row.albumTitle,
+                    year: row.year?.intValue,
+                    durationMilliseconds: row.durationMilliseconds?.int64Value,
+                    discNumber: row.discNumber?.intValue,
+                    trackNumber: row.trackNumber?.intValue,
+                    sourceContainer: row.sourceContainer,
+                    mediaSourceID: row.mediaSourceId,
+                    artworkKey: row.artworkKey,
+                    source: row.source,
+                    favourite: row.favourite?.boolValue,
+                    rating: row.rating?.intValue,
+                    playability: row.playability
+                )
+            }
+        )
+    }
+}
+
+// Unchecked because its one stored property is an immutable main-actor closure, and the facade
+// delivers on the main thread (spec §16.18), where the closure is entered.
+private final class DulcetCoreWindowListener: NSObject, AppleLibraryWindowListener, @unchecked Sendable {
+    private let handler: @MainActor (DulcetLibraryWindow) -> Void
+
+    init(handler: @escaping @MainActor (DulcetLibraryWindow) -> Void) {
+        self.handler = handler
+    }
+
+    func onWindowPublication(publication: AppleLibraryWindowPublication) {
+        let window = DulcetCoreLibraryReader.copy(publication)
+        MainActor.assumeIsolated { handler(window) }
+    }
+}
+
+private final class DulcetCoreSearchListener: NSObject, AppleLibrarySearchListener, @unchecked Sendable {
+    private let handler: @MainActor (DulcetReaderSearchPublication) -> Void
+
+    init(handler: @escaping @MainActor (DulcetReaderSearchPublication) -> Void) {
+        self.handler = handler
+    }
+
+    func onSearchPublication(publication: AppleLibrarySearchPublication) {
+        let copy = DulcetCoreLibraryReader.copy(publication)
+        MainActor.assumeIsolated { handler(copy) }
+    }
+}
+
+private final class DulcetCoreOutcomeListener: NSObject, AppleLibraryFavouriteOutcomeListener, @unchecked Sendable {
+    private let handler: @MainActor (DulcetFavouriteOutcome) -> Void
+
+    init(handler: @escaping @MainActor (DulcetFavouriteOutcome) -> Void) {
+        self.handler = handler
+    }
+
+    func onOutcome(outcome: AppleLibraryFavouriteOutcome) {
+        let copy = DulcetFavouriteOutcome(
+            kind: outcome.kind,
+            targetKind: outcome.targetKind,
+            rawID: outcome.rawId,
+            field: outcome.field,
+            errorKind: outcome.errorKind
+        )
+        MainActor.assumeIsolated { handler(copy) }
+    }
+}
+
+@MainActor
+private final class DulcetCoreWindowSubscription: DulcetLibraryWindowSubscribing {
+    private let subscription: AppleLibraryWindowSubscription
+    /// Held so the listener lives exactly as long as the subscription the facade delivers to.
+    private let listener: DulcetCoreWindowListener
+
+    init(subscription: AppleLibraryWindowSubscription, listener: DulcetCoreWindowListener) {
+        self.subscription = subscription
+        self.listener = listener
+    }
+
+    func loadMore() { subscription.loadMore() }
+    func loadBefore() { subscription.loadBefore() }
+    func setViewport(first: Int, last: Int) {
+        subscription.setViewport(first: Int32(clamping: first), last: Int32(clamping: last))
+    }
+    func close() { subscription.close() }
+}
+
+@MainActor
+private final class DulcetCoreSearchSubscription: DulcetLibrarySearchSubscribing {
+    private let subscription: AppleLibrarySearchSubscription
+    private let listener: DulcetCoreSearchListener
+
+    init(subscription: AppleLibrarySearchSubscription, listener: DulcetCoreSearchListener) {
+        self.subscription = subscription
+        self.listener = listener
+    }
+
+    func updateQuery(_ text: String) { subscription.updateQuery(text: text) }
+    func close() { subscription.close() }
+}
+
+@MainActor
+private final class DulcetCoreReaderCancellable: DulcetLibraryReaderCancellable {
+    private let listener: AnyObject?
+    private var action: (() -> Void)?
+
+    init(listener: AnyObject?, action: @escaping () -> Void) {
+        self.listener = listener
+        self.action = action
+    }
+
+    func cancel() {
+        action?()
+        action = nil
+    }
+}
+
+/// The system's reachability, forwarded to the reader on every change (§16.14). "Reachable" is
+/// the path's own verdict; a constrained or expensive path is Low Data Mode or a metered network,
+/// which stops speculative reads (§16.13).
+@MainActor
+final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
+    private var monitor: NWPathMonitor?
+
+    func start(_ handler: @escaping @MainActor (Bool, Bool) -> Void) {
+        stop()
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { path in
+            let reachable = path.status == .satisfied
+            let constrained = path.isConstrained || path.isExpensive
+            Task { @MainActor in handler(reachable, constrained) }
+        }
+        monitor.start(queue: .main)
+        self.monitor = monitor
+    }
+
+    func stop() {
+        monitor?.cancel()
+        monitor = nil
     }
 }
