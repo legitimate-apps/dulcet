@@ -56,11 +56,35 @@ public object ArtworkImages {
     public fun accent(account: SearchAccount, key: String): Color? = accent.get(cacheKey(account, key, 0))
 
     private fun averageColor(bitmap: Bitmap): Color {
-        val tiny = Bitmap.createScaledBitmap(bitmap, 1, 1, true)
-        val pixel = tiny.getPixel(0, 0)
+        val tiny = Bitmap.createScaledBitmap(bitmap, ACCENT_SAMPLES, ACCENT_SAMPLES, true)
+        var red = 0L
+        var green = 0L
+        var blue = 0L
+        var count = 0L
+        val hsv = FloatArray(3)
+        for (y in 0 until tiny.height) {
+            for (x in 0 until tiny.width) {
+                val pixel = tiny.getPixel(x, y)
+                android.graphics.Color.colorToHSV(pixel, hsv)
+                // A cover's field is usually white or black; the accent should come from its colour.
+                if (hsv[1] < 0.18f || hsv[2] < 0.25f) continue
+                red += android.graphics.Color.red(pixel)
+                green += android.graphics.Color.green(pixel)
+                blue += android.graphics.Color.blue(pixel)
+                count++
+            }
+        }
         if (tiny !== bitmap) tiny.recycle()
+        if (count > 0) {
+            return Color(android.graphics.Color.rgb((red / count).toInt(), (green / count).toInt(), (blue / count).toInt()))
+        }
+        val single = Bitmap.createScaledBitmap(bitmap, 1, 1, true)
+        val pixel = single.getPixel(0, 0)
+        if (single !== bitmap) single.recycle()
         return Color(pixel)
     }
+
+    private const val ACCENT_SAMPLES = 24
 
     private fun cacheKey(account: SearchAccount, key: String, pixels: Int) =
         account.providerInstanceId + "\u0000" + key + "\u0000" + pixels
@@ -72,11 +96,21 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     val context = LocalContext.current
     val image by produceState(key?.let { ArtworkImages.cached(account, it, pixels) }, account.providerInstanceId, key, pixels) {
         if (key.isNullOrBlank()) { value = null; return@produceState }
-        value = ArtworkImages.cached(account, key, pixels) ?: try {
-            ArtworkImages.load(context, account, key, pixels)
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled // leaving composition cancels the load; that is not a missing cover
-        } catch (_: Exception) { null }
+        // A null is a missing cover and a failed fetch alike, and the repository remembers only the
+        // missing one — so asking again is cheap when there is no cover, and recovers a tile whose
+        // fetch hit a transient failure (a fresh device's first connections are reset).
+        repeat(LOAD_ATTEMPTS) { attempt ->
+            value = ArtworkImages.cached(account, key, pixels) ?: try {
+                ArtworkImages.load(context, account, key, pixels)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled // leaving composition cancels the load; that is not a missing cover
+            } catch (_: Exception) { null }
+            if (value != null) return@produceState
+            if (attempt + 1 < LOAD_ATTEMPTS) kotlinx.coroutines.delay(LOAD_RETRY_DELAY_MILLIS)
+        }
     }
     return image
 }
+
+private const val LOAD_ATTEMPTS = 3
+private const val LOAD_RETRY_DELAY_MILLIS = 700L
