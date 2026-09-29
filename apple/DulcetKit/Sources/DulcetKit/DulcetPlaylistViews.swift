@@ -281,7 +281,7 @@ private struct DulcetPlaylistPageContent: View {
                     Button {
                         store.playlistEditor?.perform(context.remove(index))
                     } label: {
-                        Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                        Image(systemName: "minus.circle.fill").symbolRenderingMode(.multicolor)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(DulcetStrings.playlistRemove)
@@ -293,7 +293,7 @@ private struct DulcetPlaylistPageContent: View {
                         if let artist = item.artistName, !artist.isEmpty {
                             Text(artist)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .dulcetForeground(.secondaryTextOnWindow)
                                 .lineLimit(1)
                         }
                     }
@@ -550,7 +550,7 @@ private struct DulcetAddToPlaylistSheet: View {
                         .accessibilityIdentifier("dulcet.addToPlaylist.new")
                     let editable = (model.window?.items ?? []).filter(\.isEditable)
                     if let window = model.window, editable.isEmpty, window.freshness != .loading {
-                        Text(DulcetStrings.playlistNoneEditable).foregroundStyle(.secondary)
+                        Text(DulcetStrings.playlistNoneEditable).dulcetForeground(.secondaryTextOnWindow)
                     }
                     ForEach(editable) { item in
                         Button {
@@ -559,7 +559,7 @@ private struct DulcetAddToPlaylistSheet: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(item.displayTitle)
                                 if let count = item.songCount {
-                                    Text(DulcetStrings.readerCount(.tracks, count)).font(.caption).foregroundStyle(.secondary)
+                                    Text(DulcetStrings.readerCount(.tracks, count)).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                                 }
                             }
                         }
