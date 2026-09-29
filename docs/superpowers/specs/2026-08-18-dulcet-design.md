@@ -2754,6 +2754,13 @@ and reconciliation against a changed server item. The platform owns the **execut
   (§12.8), pause on `Server.Busy` for at least `Retry-After`, and are never scheduled at a
   concurrency that could exhaust the server's cap while a session is playing.
 - **tvOS ships no downloads.** Its `FEATURES.yml` cells are `n/a` with a reason, not `planned`.
+- **A precondition for the Android executor (§28, 2026-09-29).** Android's launch sweep (§14.7) deletes
+  every file in the download directory and its `.tmp` directory that no `download` row names, as its
+  `file_relative_path` or as `<downloadId>.partial`. It lists the files before it reads the rows, so
+  a row written before its first file is always safe; `enqueue` already inserts the row before any
+  file exists. An executor must keep both rules: write a file only after its row, and only under a
+  name the row gives it. A file written first, or under any other name, is deleted at the next
+  launch. Android has no executor yet, so nothing writes a file there today.
 
 ### 14.6 Storage budget and eviction priority
 
@@ -2803,7 +2810,60 @@ chosen, and it never waits silently for a connection.
 **Step 6 waits for the account's reader to stop (R2a).** A reader closed on the main thread still
 runs the calls already queued on its own thread, and those can write seen-cache rows. Step 6 therefore
 starts only once the reader's thread has stopped — on Apple, when `close(completion:)` calls back —
-never merely once `close()` has returned (§28 revision 104 item 32).
+never merely once `close()` has returned (§28 revision 104 item 32). On Android, step 6 waits for
+the completion of `AndroidLibraryReader.closeCurrent`, which is bounded rather than exact. The close task first waits
+up to 10 s for cancelled work to unwind and then releases the store. After it ends, the completion
+waits until the thread's executor has terminated or 30 s have passed, and then until any reader
+still closing when this one was created has terminated or 45 s more have passed: about 85 s at
+worst. The bounds cover cooperative work only: a task queued before the close, or a release, that
+never finishes holds the completion indefinitely. And once a bound passes, step 6 may run while the
+old reader still writes seen-cache rows; how rarely that happens is **ASSUMED** (§28 revision 104
+item 32).
+
+**The order on Android (§28, 2026-09-29).** Android marks the account `removing` only once the person
+has chosen to sign out, not at step 1, and runs the steps in this order:
+
+1. the offer of step 2, with nothing marked — **Stay signed in** leaves nothing to undo. The unmarked
+   span is longer than the offer: it runs on through the release, the recount and, on Send, the
+   whole send. Stay is offered only while a question is open — the offer, the unknown count, and
+   the offer made again after the choice — and refused from the choice onward, since the release
+   and the send cannot be undone; choosing it at a re-offer keeps the account;
+2. on a choice to sign out, playback is released: the service's controller for the account is
+   closed and its media session removed, so no later account inherits them;
+3. what the account owes is counted again, plays by identity (a server id, a track and the wall
+   clock its session started) rather than by total, and a count holding anything not offered is
+   offered again instead of being discarded unseen;
+4. the account is marked `removing`, in a persisted set of ids rather than one slot, so a second
+   sign-out while a first is unfinished never forgets the first;
+5. the credential is deleted (step 3). The deletion counts as done once the record's removal is
+   committed to disk; a Keystore key that cannot be deleted then is recorded and retried at a later
+   launch, since the key alone decrypts nothing;
+6. the account's library reader is closed and its termination awaited (step 6's rule above), for at
+   most 90 s on a monotonic clock, past the reader's own worst case of about 85 s. Past that nothing
+   is deleted: the mark stays, the person lands on the connect form as after a finished sign-out,
+   and a later launch's sweep deletes the data;
+7. the account's artwork cache and downloaded files are deleted, then its database rows (steps 5
+   and 6). Android downloads nothing through a platform task, so step 4 has none to cancel;
+8. the `removing` mark is cleared.
+
+Whenever an activity creates its sign-out — at every launch, and when an activity is re-created in
+a process that is still alive — a removal left marked resumes: its credential, if still saved, is
+deleted before any account is read, and its data removal runs behind a signing-out screen. Then a
+sweep deletes the database rows, the artwork cache and the recorded downloaded files of every server
+id that is not the saved account's, and every downloaded or partial file no row names (§14.5). The
+sweep lists what exists before it reads the saved account, and lists the download files before it
+reads the rows that name them, so an account saved while it runs cannot lose anything it wrote. In a
+process that is still alive the sweep can meet a reader an earlier removal closed and that has not
+yet terminated, and a sign-out can begin while it runs; it waits for neither, so a row such a reader
+writes after the sweep has read the rows survives until the next sweep. It is what cleans up a write that lands after a removal: a
+reader still running past its bound, an artwork load that checked the account just before it was
+removed, or any writer this section does not know about. A saved account whose record cannot be
+decrypted can still be signed out, because the removal needs only its id; the offer then states the
+count as unknown. A person who connects an account from that form instead of signing out gets a new
+id, and the next sweep deletes the old id's unsent plays and changes **without an offer**. They
+could not have been sent — the credential that would send them is the unreadable one — and before
+this change they were stranded rather than deleted, but the loss is not announced. Removal leaves the last-selected tab (a preference holding no account data).
+Why the mark moved is the §28 entry of 2026-09-29.
 
 ---
 
@@ -3944,6 +4004,11 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
+A detail whose header is shown but whose child list cannot be has `itemsState` `unavailable`, and
+the publication says why in `itemsUnavailableReason`: offline, the reader's own failure, or the
+read's failure, in that order. The header's freshness cannot say it, because a revalidation in flight
+is `cached(revalidating)` whatever the list's state (§28, 2026-09-29).
+
 Lists also carry **coverage** (§16.12). `open` is stated when offline — **above** the list, not in a
 footer, because a grid that simply stops reads as finished — and with a total states both numbers:
 "Showing 120 of 2,950 albums — the rest need a connection". `unverified(scanning)` is labelled online
@@ -4307,11 +4372,17 @@ retires `DulcetKit`'s `browse` completion, which is invoked twice for one open (
   `initWithDatabaseName:account:foreground:`). It is required, with no default (§16.14), and
   `setForeground` reports every change after construction.
 
-**Android.** The same `LibraryReader` is consumed directly in Kotlin (no ObjC rule applies), through
-the `LibraryReaderSession` assembly, whose `foreground` argument is required as on Apple. It is exposed
-to Compose as `StateFlow<LibraryPublication>` inside the Android shell — never inside the core's
-public API, where CORPUS line 8 keeps raw `Flow` off the Apple boundary. `LibrarySession`'s 15-minute
-full-import cadence is removed; the epoch policy of §16.11 replaces it.
+**Android.** No ObjC rule applies, but the reader is still `internal` and confined to its thread, so
+the Android shell reaches it through a facade too: `AndroidLibraryReader` in `androidMain`, one per
+account and process, which owns the hop in both directions and copies each publication into public
+Kotlin value types (§28, 2026-09-29). The facade builds the `LibraryReaderSession` with both
+of its required arguments: `foreground`, the state the facade holds — given to
+`AndroidLibraryReader.forAccount(context, account, foreground)`, which is required with no default
+(§16.14), and reported with `setForeground` after that — and `formPost = false`, because the Android
+account carries no extension list (§28, 2026-09-29). The shell exposes those publications to Compose as
+`StateFlow`s inside `LibrarySession` — never in the core's public API, where CORPUS line 8 keeps raw
+`Flow` off the Apple boundary. `LibrarySession`'s 15-minute full-import cadence is removed; the epoch
+policy of §16.11 replaces it.
 
 **Core-owned rules, never shell-owned.** Freshness, coverage, playability, search scope and the
 mutation overlay are computed in the core and copied out. A product rule encoded in one platform's
@@ -4338,7 +4409,8 @@ with an independent adversarial review that checks commit messages and comments 
 `ServerData.sq` (account removal, §14.7) is owned by R1a for the cache tables and by R5 for the
 mirror tables' removal; the two never overlap in time.
 
-**`FEATURES.yml`.** `library.sync` is `shipped` on all six platforms, and the gate fails
+**`FEATURES.yml`.** `library.sync` was `shipped` on all six platforms when this plan was written
+(R3 makes the two Android cells `n/a`, below), and the gate fails
 **unconditionally** on a removed row (`tools/parity_gate.py`: "feature row removed") — there is no
 declaration that permits it. **Decision:** R5 adds an **`accepted_removals`** declaration to the
 gate — a row id, a reason and the reviewing pull request, validated like `accepted_regressions` —
@@ -4347,7 +4419,13 @@ retires `library.sync` through it. The gate change lands in the same phase as th
 so no unused declaration path exists in the meantime. The new rows are **`library.browse`** (CONF-76,
 77, 82, 86, 87) and **`library.offline`** (CONF-78, 80, 81, 83, 85), `planned` on every platform
 until each cell carries its own evidence; `search.query` gains CONF-79, and a new
-**`library.favourites`** row carries CONF-84.
+**`library.favourites`** row carries CONF-84. R3 added `library.browse` and `library.favourites`,
+`partial` on `android` and `androidtv` and `planned` elsewhere, and gave `search.query` CONF-79 as
+`platform_conformance` on those two platforms only: a `shipped` cell cannot carry an unevidenced id,
+and the Apple search cells are `shipped`, so the Apple destinations gain it with their own evidence in
+R2b. `library.sync` is `n/a` on `android` and `androidtv`, a regression from `shipped` declared in
+`accepted_regressions`: the Android apps no longer synchronize, and the row stays until R5 retires
+it. `library.offline` is added with its first evidence (§28, 2026-09-29).
 
 **Conformance and control ids** (§20.4 carries the registry rows). *Server-fact* ids pin the
 server's behaviour and are R0's; *reader* ids drive the production code.
@@ -4699,7 +4777,10 @@ before a reconnect answers its own caller after it, and that answer can be a fai
 after a newer read has already shown live lyrics — the core does this on purpose, since it is the
 answer to that request. A Swift or Android bridge must therefore cancel a read that a newer read of
 the same track supersedes, or order publications by admission and drop an older one; a panel that
-paints whichever publication arrives last would repaint a failure over live lyrics.
+paints whichever publication arrives last would repaint a failure over live lyrics. The Android
+shells meet this by numbering each request and showing an answer only when no answer to a later
+request has been shown (`LatestAnswer` in the shared Android module); a new track forgets every
+earlier request.
 
 A read is one endpoint as the gate chose it and one track: **`songLyrics` v1 and v2 are separate
 reads** (fourth review) — v2 asks for more (`enhanced=true`), so its refusal says nothing about v1's
@@ -4899,7 +4980,11 @@ again and one cue per word or syllable with its own text, times and byte offsets
 with its timestamps stripped, an unmatched artist/title answers `ok` with `value: ""`, and for a
 multilingual file it returns one language only.
 
-*For the shells* — the Now Playing panel is W17's UI half, not built here: render the selected
+*For the shells* — the Now Playing panel is W17's UI half, built on Android (a sheet from the phone
+player, a panel in place of Up Next on the TV) over the `AndroidLibraryLyrics` facade, and not yet
+on Apple. Media time between the playback controller's samples (about every 500 ms) is
+interpolated on the monotonic clock while playback progresses, never more than 1 s past the last
+sample. Render the selected
 layer; when synced, call `cursorAtMilliseconds(position)` on each position update, scroll to `index`
 and highlight through `lastIndex`, dimming on `isInterlude`; when unsynced, show the text statically; when the selected
 layer is null, say there are no lyrics; when `isTrimmed`, say that some lyrics were too large to
@@ -5165,7 +5250,7 @@ parameter; OBSERVED by the review, 600 playlists in one response on the referenc
 send `readonly` — ownership by this account. Dulcet follows `readonly` even for an admin, whom the
 reference server would let edit other users' playlists: editing someone else's playlist is not a
 feature Dulcet offers. An owner is compared with the account ignoring case (above). **REQUIREMENT on
-the shells, not yet met by any shell:** show a playlist's owner, and present one whose `editable` is
+the shells, met on Android (phone and TV), not yet on Apple:** show a playlist's owner, and present one whose `editable` is
 false as read-only, with no edit controls. The core refuses an edit of one (`NotEditable`); the
 server's code 50 is told like any refusal.
 
@@ -5536,6 +5621,17 @@ A `parity-gate` job on `ubuntu-latest` on every PR:
    the `planned` → `blocked` → `partial` → `shipped` order must gain at least one evidence row absent
    from the base cell, unless a matching `accepted_promotions` declaration records why that is
    structurally impossible. `n/a` is outside the order. The two exception lists do not cross-authorize.
+   The base document is compared, not re-submitted: the tests it cites need not exist in the
+   submitted tree, because a change may delete a test together with the rows that cited it. Every
+   row the submitted document keeps or adds must still name a test that exists, and a cell that
+   stays `shipped` while it stops citing a test (compared by workflow, job and test, so rewording a
+   row is not a loss) requires a matching `accepted_regressions` declaration, as a demotion does
+   (§28, 2026-09-29). Only the test-existence check is relaxed for the base document: its
+   workflows, jobs and conformance ids are still checked against the submitted tree, so a change
+   that retires a conformance id from the registry (R5, CONF-31..33) must account for the base
+   still citing it. A declaration is matched by row and platform only, whether or not the change
+   uses it, so one left in the document keeps permitting that cell's regressions; nothing yet
+   requires a declaration to be new or prunes an unused one.
 
    ⚠️ **Revision 2's mechanism does not exist and has been replaced.** It said a protected
    `regression-approved` label "may only be applied by a CODEOWNER." **OBSERVED** (GitHub, Managing
@@ -6863,6 +6959,108 @@ runs `apple-conformance`; a push to `main` and a dispatch run both; `apple-ci` c
 against the plan and resolves evidence only on a full run; and `release.yml` refuses to archive a
 commit without every required check and both legs green, except for a dry run that waives it
 explicitly. §21.1's table, §21.5 rule 6 and §21.5's "not adopted" note are amended in place.
+
+**2026-09-29 — Android playlists and lyrics: the shells over the core editor and lyrics (§18.4,
+§18.6)** — the Android phone lists playlists in the Library, opens a playlist page that plays and
+shuffles in the playlist's order (duplicates kept, an entry chosen by position, never by id), and
+edits through the core editor only: create, rename, delete, append from track rows, row menus and an
+album's header, and move and remove in an edit mode that names the entries drawn as the view acted
+on. The TV browses and plays playlists and edits none. Both show a playlist's owner and present
+another user's as read-only, which meets the §18.6 shell requirement on Android. The core gains two
+Android facades over the reader, `AndroidLibraryPlaylists` and `AndroidLibraryLyrics`, on the same
+terms as the rest of `AndroidLibraryReader` (reader thread, call order, one main-thread completion,
+`Closed` after close). Lyrics show on the phone in a sheet from the player and on the TV in place of
+Up Next. Two facts learned, both now rules. (1) The §18.4 bridge rule binds even within one track:
+the stored document and the live read are two requests, and a read begun before a reconnect can
+answer after the newer one, so the Android shells order answers by request (`LatestAnswer`). (2) On
+the phone, a pushed page (a playlist, an album) now keeps the Library's own state underneath it, so
+Back from a playlist returns to the Playlists list instead of resetting to the home rows. The live
+app proofs against the disposable server read the server directly after every edit and assert the
+only writes are the three playlist writes, each read back before the next; they do not reach
+CONF-88..91 or CONF-42 as a whole, which the FEATURES cells name as gaps.
+
+**2026-09-29 — Android favourites: hearts everywhere, and a Favourites list that re-reads after a
+change (§16.20)** — the Android phone and TV apps put a heart on song rows, album and artist pages and
+Now Playing, and add a Favourites screen over `getStarred2`. Two facts learned while doing it, both
+now rules. (1) A saved star for a track this device never cached has no row for the echo to be
+adopted into, so the overlay retires and the state reads *unknown*; a heart watching that track
+must keep the acknowledged value, or it fills, then empties once the server agrees. The Android
+reader keeps the last acknowledged favourite value per entity (not per watch, so skipping away and
+back still shows a saved star), and a heart showing a watched value sends the explicit opposite of
+what it shows rather than a toggle: the core's toggle flips what the cache knows, which for such a
+track is unknown, so a second tap would send `star` again instead of `unstar`. (2) The
+favourites list is user state, which the scan epoch never covers (§16.11), so a list read earlier in
+the session and served Live would not show a heart just added; after a Saved or Superseded favourite
+change the next favourites surface that opens re-reads the server. A pending change stays unlabelled
+(this section: "a favourite is a favourite"); only outcomes that need words are said. The Media3
+notification carries no like command, as on Apple: a service-owned reader would sit outside the
+sign-out and foreground rules.
+
+**2026-09-29 — Android on the reader, and sign-out (§14.7)** — the Android phone and TV apps move
+off the whole-library mirror onto the reader (R3), and gain sign-out and account removal. §14.5,
+§14.7, §16.14 and §16.18 are corrected in place; this entry records what changed and why.
+
+- **Android reaches the reader through a facade (§16.18).** The reader is `internal` to the core and
+  confined to its own thread, so the shell cannot consume it directly as §16.18 said.
+  `AndroidLibraryReader` is the Android composition root, one per account and process: every call
+  runs on the reader's thread in call order, every publication and completion is delivered on the
+  main thread as a public Kotlin value type, and it passes its foreground state at construction and
+  `formPost = false` (an Android account carries no extension list).
+- **Its close is bounded, not exact.** Closing a single-thread dispatcher does not stop queued work,
+  so the facade cancels the reader's coroutines and waits up to 10 s for them to unwind, releases
+  the store, then waits up to 30 s for the executor and up to 45 s for any predecessor still
+  closing: about 85 s at worst. A new reader opens the database only after the one still closing
+  has terminated, within those bounds. A task that never finishes holds the completion; how rarely a
+  reader outlives its bound is **ASSUMED** (revision 104 item 32).
+- **Facade rules beyond Apple's.** A reader whose setup threw retries at its next call that needs a
+  session, and opens the screens and the latest search query that waited on it. A call a racing
+  close cancels still answers (closed, reader-failed, a null count or no titles). Changes discarded
+  at binding are reported until acknowledged. A detail publication carries
+  `itemsUnavailableReason` (offline, the reader's failure, or the read's), because the header's
+  freshness cannot say it. `seenTracks` titles restored Up Next rows from the seen-cache.
+- **The shells follow the epoch policy (§16.11, §16.14).** `LibrarySession` has no import and no
+  timer. It reports the foreground on every change, forwards the default-network callback to
+  `setOnline`, and reconnects on start when there is a network. Only the transport's own
+  `unreachable` means offline; any other reconnect failure is stated with its reason and "Try
+  again". A reconnect answer arriving after the network was lost leaves the shell offline. Change
+  outcomes are keyed by entity kind and id. Each TV control is one focus target, and the TV album
+  plays.
+- **Sign-out on Android runs §14.7 in a different order.** The account is marked `removing` only
+  once the person has chosen to sign out, not before the offer: a mark written first would, after a
+  death during the offer, resume a removal nobody chose. Stay signed in is offered while a question
+  is open and refused from the choice onward, because the release of playback and a send cannot be
+  undone. After the choice, playback is released, what is owed is counted again by identity (a play
+  crossing the threshold meanwhile is offered, never discarded unseen), and only then are the mark
+  (a persisted set, so two unfinished removals are both kept) and the credential written and
+  deleted. The Keystore key is recorded as left before the record goes, and a failed
+  `SharedPreferences.commit()` is rolled back in memory so the process never acts on a state the
+  disk lacks.
+- **Step 6 waits for the reader for at most 90 s,** past its own worst case. Past the bound nothing
+  is deleted: the mark stays and the next launch finishes the removal.
+- **A sweep backs the removal up.** Whenever an activity creates its sign-out, a marked removal
+  resumes and a sweep deletes the rows, artwork and downloads of every server id other than the
+  saved account's, and every download or partial file no row names. It lists what exists before it
+  reads the saved account and the download names, so nothing an account saved meanwhile wrote is
+  lost. An executor must therefore write a download's row before its file (§14.5).
+- **Playback compares account ids.** The service releases a controller built for any id other than
+  the saved one, and a service created only by the sign-out's release bind builds none.
+- **An unreadable record can be signed out;** the offer states its count as unknown. Connecting a
+  new account from that form instead deletes the old id's unsent plays and changes at the next sweep
+  without an offer; they could not have been sent.
+- **The TV entry is reachable by remote.** Sign out is a row above every screen, and the search field
+  hands UP to it.
+- **The parity gate compares the base document without re-submitting it (§19.3).** The tests the
+  base cites need not exist in the submitted tree, since a change may delete a test with the rows
+  citing it; a cell that stays `shipped` while it stops citing a test needs a matching
+  `accepted_regressions` declaration, as a demotion does.
+- **Evidence.** Robolectric host tests on the production facade, `LibrarySession`, sign-out and
+  gateway (a favourite queued offline is offered and sent through the reader's reconnect to a
+  loopback server); CONF-76, 77, 79, 84 and 86 against the local disposable Navidrome on both apps;
+  one emulator pass per app for the library (2026-09-24). Sign-out has no emulator or device run.
+- **Left open.** A phone relaunch can read the epoch several times while a reading is in flight
+  (`ensureEpoch` does not join one); artwork does not consult reachability; the TV library screens'
+  D-pad reach to Sign out is not tested; the downloaded-album recheck is not reachable on Android
+  until it has a download source.
 
 **Revision 113 (2026-09-26)** — Android adopts §12.12. Revision 106 said "Android does not adopt this yet: it
 does not share this controller"; that was wrong. `AndroidPlaybackController` drives the same
@@ -8957,7 +9155,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     - The viewport-wins re-rebase of item 31 does not advance the tear-retry count. Each one needs a
       new viewport from the person during a rebase, so it is bounded by input, not by the limit.
 
-    R3 continues this record at item 34.
+    R3, Android on the reader, is recorded in the dated entry of 2026-09-29 above the numbered series.
 
 **Revision 103 (2026-09-23)** — written 2026-09-22. The
 delivery channel is built, and its trigger changed. §22.1 said DEV

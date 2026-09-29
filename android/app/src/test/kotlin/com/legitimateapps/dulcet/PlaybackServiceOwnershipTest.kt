@@ -36,4 +36,5 @@ class PlaybackServiceOwnershipTest {
 class FixtureAccountStore {
     @Implementation fun load(): StoredAccount = StoredAccount("service-fixture", "Fixture",
         "http://127.0.0.1:9", "USER_CANARY", "PASSWORD_CANARY", true)
+    @Implementation fun activeAccountId(): String = "service-fixture"
 }

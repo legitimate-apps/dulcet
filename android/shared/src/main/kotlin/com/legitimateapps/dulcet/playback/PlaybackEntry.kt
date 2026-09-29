@@ -5,21 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -58,15 +50,6 @@ public object PlaybackIntents {
 }
 
 public data class PlayRequest(val provider: String, val rawId: String, val title: String)
-
-/** Shared production entry; the Android/TV search detail surfaces supply only opaque identity. */
-@Composable
-fun PlaybackEntry(provider: String, rawId: String, title: String) {
-    val context = LocalContext.current
-    Box(Modifier.testTag("playback.open").clickable(role = Role.Button) {
-        context.startActivity(PlaybackIntents.playTrack(context, provider, rawId, title))
-    }.padding(16.dp)) { BasicText("Play") }
-}
 
 /** The service's controller while this composition is started; null before binding or without an account. */
 @Composable

@@ -155,7 +155,12 @@ def validate_exceptions(document: dict, key: str, source: str) -> None:
             fail(f"{key} entries require a reason and #<number> PR")
 
 
-def validate(document: dict, source: str) -> dict[str, dict]:
+def validate(document: dict, source: str, *, base: bool = False) -> dict[str, dict]:
+    """Validate one matrix. With [base], it is the document being compared against, not the one
+    submitted: its cited test names are not required to exist in the submitted tree, because a
+    change may delete a test together with the evidence rows that cited it. The submitted document
+    is always validated first, so every row it keeps or adds must still name a test that exists, and
+    the comparison requires a declared regression when a shipped cell stops citing a test."""
     unknown = set(document) - TOP_KEYS
     if unknown:
         fail(f"{source}: unknown top-level keys: {sorted(unknown)}")
@@ -324,7 +329,7 @@ def validate(document: dict, source: str) -> dict[str, dict]:
 
                     if (entry["workflow"], entry["job"]) not in jobs:
                         fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
-                    if entry["test"].split("/")[-1].split("#")[-1] not in tests:
+                    if not base and entry["test"].split("/")[-1].split("#")[-1] not in tests:
                         fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
                     if entry["job"] not in required_checks:
                         fail(
@@ -417,6 +422,15 @@ def evidence_rows(cell: dict) -> set[frozenset[tuple[str, str]]]:
     }
 
 
+def evidence_tests(cell: dict) -> set[tuple[str, str, str]]:
+    """The executed tests a cell cites, as (workflow, job, test), whatever its rows' prose says."""
+    evidence = cell.get("evidence")
+    if evidence is None:
+        return set()
+    entries = evidence if isinstance(evidence, list) else [evidence]
+    return {(entry["workflow"], entry["job"], entry["test"]) for entry in entries}
+
+
 def base_document() -> dict:
     base_ref = os.environ.get("GITHUB_BASE_REF")
     candidate = f"origin/{base_ref}" if base_ref else "HEAD^"
@@ -440,7 +454,7 @@ try:
     # declarations, which is semantically the same as the new list being empty; current
     # documents still have to carry the structural key and are validated above.
     previous_document.setdefault("accepted_promotions", [])
-    previous = validate(previous_document, "base FEATURES.yml")
+    previous = validate(previous_document, "base FEATURES.yml", base=True)
     for feature_id, old_feature in previous.items():
         if feature_id not in current:
             fail(f"feature row removed: {feature_id}")
@@ -454,6 +468,19 @@ try:
                     current_document, "accepted_regressions", feature_id, platform
                 ):
                     fail(f"undeclared regression: {feature_id}/{platform} shipped -> {new_status}")
+            # A cell that stays shipped while losing a test that evidenced it is a regression too:
+            # base tests need not exist (the change may delete them), so this is what stops a change
+            # deleting a shipped cell's proof and its row without saying so. Identity is the executed
+            # test, so rewording a row's prose is not a loss.
+            if old_status == "shipped" and new_status == "shipped":
+                lost = evidence_tests(old_cell) - evidence_tests(new_cell)
+                if lost and not accepted(
+                    current_document, "accepted_regressions", feature_id, platform
+                ):
+                    fail(
+                        f"undeclared regression: {feature_id}/{platform} stays shipped but no longer "
+                        f"cites {sorted(test for _, _, test in lost)}"
+                    )
             if (
                 old_status in STATUS_RANK
                 and new_status in STATUS_RANK
