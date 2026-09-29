@@ -3,16 +3,6 @@ package com.legitimateapps.dulcet.search
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.BasicText
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRow
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
@@ -20,6 +10,7 @@ import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.playback.PlaybackIntents
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -121,31 +112,26 @@ public class SearchPresenter(
     }
 }
 
-public object SearchDetailIntent {
-    public const val ACTION: String = "com.legitimateapps.dulcet.action.OPEN_SEARCH_DETAIL"
-    public const val EXTRA_PROVIDER_INSTANCE_ID: String = "providerInstanceId"
-    public const val EXTRA_RAW_ID: String = "rawId"
-    public const val EXTRA_RESULT_TYPE: String = "resultType"
-    public const val EXTRA_TITLE: String = "title"
-    public const val EXTRA_SOURCE: String = "source"
-    public const val SOURCE_SEARCH: String = "search"
-
-    public fun create(context: Context, result: SearchResultItem): Intent =
-        Intent(context, SearchDetailActivity::class.java)
-            .setAction(ACTION)
-            .putExtra(EXTRA_PROVIDER_INSTANCE_ID, result.id.providerInstanceId)
-            .putExtra(EXTRA_RAW_ID, result.id.rawId)
-            .putExtra(EXTRA_RESULT_TYPE, result.type.name)
-            .putExtra(EXTRA_TITLE, result.title)
-            .putExtra(EXTRA_SOURCE, SOURCE_SEARCH)
-            .apply {
-                if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-}
-
-public class SearchIntentRouter(private val context: Context) {
+/**
+ * What activating a search result does, the same in both shells: an album or an artist opens the
+ * library's own detail screen for it ([openAlbum], [openArtist], given the opaque raw id), and a track
+ * plays through this app's own non-exported player entry ([PlaybackIntents.playTrack]), which carries
+ * opaque identity only. No result opens a screen of its own.
+ */
+public class SearchActivation(
+    private val context: Context,
+    private val openAlbum: (String) -> Unit,
+    private val openArtist: (String) -> Unit,
+) {
     public fun activate(result: SearchResultItem) {
-        context.startActivity(SearchDetailIntent.create(context, result))
+        when (result.type) {
+            SearchResultType.Album -> openAlbum(result.id.rawId)
+            SearchResultType.Artist -> openArtist(result.id.rawId)
+            SearchResultType.Track -> context.startActivity(
+                PlaybackIntents.playTrack(context, result.id.providerInstanceId, result.id.rawId, result.title)
+                    .apply { if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) },
+            )
+        }
     }
 }
 
@@ -153,7 +139,6 @@ public interface SearchHostDependencies {
     public fun loadAccount(context: Context): SearchAccount?
     /** [foreground]: whether the host is in the foreground now, read from its lifecycle. */
     public fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter
-    public fun createRouter(context: Context): SearchIntentRouter
 }
 
 public interface SearchHostDependencyOwner {
@@ -174,38 +159,4 @@ public object ProductionSearchHostDependencies : SearchHostDependencies {
 
     override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter =
         SearchPresenter(account, AndroidLibrarySearchSource(context, account, foreground))
-
-    override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
-}
-
-public class SearchDetailActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val rawId = intent.getStringExtra(SearchDetailIntent.EXTRA_RAW_ID).orEmpty()
-        val title = intent.getStringExtra(SearchDetailIntent.EXTRA_TITLE).orEmpty()
-        val type = intent.getStringExtra(SearchDetailIntent.EXTRA_RESULT_TYPE)
-            ?.let { runCatching { SearchResultType.valueOf(it) }.getOrNull() }
-        if (
-            intent.action != SearchDetailIntent.ACTION ||
-            intent.getStringExtra(SearchDetailIntent.EXTRA_SOURCE) != SearchDetailIntent.SOURCE_SEARCH ||
-            rawId.isBlank() || title.isBlank() || type == null
-        ) {
-            finish()
-            return
-        }
-        val provider = intent.getStringExtra(SearchDetailIntent.EXTRA_PROVIDER_INSTANCE_ID).orEmpty()
-        setContent { SearchDetailContent(type, title, rawId, provider) }
-    }
-}
-
-@Composable
-private fun SearchDetailContent(type: SearchResultType, title: String, rawId: String, provider: String) {
-    Column(modifier = Modifier.fillMaxSize().padding(32.dp)) {
-        BasicText(type.name)
-        BasicText(title)
-        BasicText(rawId)
-        if (type == SearchResultType.Track) {
-            com.legitimateapps.dulcet.playback.PlaybackEntry(provider, rawId, title)
-        }
-    }
 }

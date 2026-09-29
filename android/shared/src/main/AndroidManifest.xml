@@ -13,8 +13,5 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
-        <activity
-            android:name="com.legitimateapps.dulcet.search.SearchDetailActivity"
-            android:exported="false" />
     </application>
 </manifest>

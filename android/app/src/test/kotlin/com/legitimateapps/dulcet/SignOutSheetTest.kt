@@ -18,7 +18,6 @@ import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchHostDependencies
-import com.legitimateapps.dulcet.search.SearchIntentRouter
 import com.legitimateapps.dulcet.search.SearchPresenter
 import kotlinx.coroutines.CompletableDeferred
 import org.robolectric.RuntimeEnvironment
@@ -213,5 +212,4 @@ private class StoreBackedDependencies(private val store: AccountCredentialStore)
         SearchAccount(it.id, it.serverUrl, it.username, it.password, it.allowLocalHttp)
     }
     override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter = error("not reached")
-    override fun createRouter(context: Context): SearchIntentRouter = error("not reached")
 }

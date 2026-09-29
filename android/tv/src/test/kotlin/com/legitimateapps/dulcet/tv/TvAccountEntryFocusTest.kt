@@ -2,7 +2,6 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -26,7 +25,6 @@ import com.legitimateapps.dulcet.core.ProviderItemId
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.search.SearchAccount
-import com.legitimateapps.dulcet.search.SearchIntentRouter
 import com.legitimateapps.dulcet.search.SearchPresenter
 import com.legitimateapps.dulcet.search.SearchSource
 import com.legitimateapps.dulcet.search.SearchSourceHandle
@@ -46,7 +44,7 @@ import kotlin.test.assertTrue
 
 /**
  * A remote reaches the TV's Sign out (spec §14.7) with nothing but D-pad keys, on the real search
- * screen inside the real host: from the launch state, where the empty query field holds focus, and
+ * screen inside the real host: from the launch state, where focus waits above the empty query field, and
  * from a list of results. No semantic click or focus request is used, since a remote has neither.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -67,12 +65,12 @@ class TvAccountEntryFocusTest {
 
     @Test fun fromTheLaunchStateUpReachesSignOutAndCenterAsksFirst() {
         host()
-        assertTrue(focused("search.query"), "setup: at launch the empty query field holds focus")
+        // At launch focus waits on the row above the screen, here Sign out, and never in the field,
+        // whose focus would bring up the on-screen keyboard.
+        assertTrue(focused("tv.account.signout"), "At launch focus is on the row above the search screen")
+        assertTrue(!focused("search.query"), "At launch the query field must not hold focus")
 
-        key("search.query", Key.DirectionUp)
-        assertTrue(focused("tv.account.signout"), "UP from the launch state must reach Sign out")
-
-        // And back down into the screen, then up again: the entry is not a dead end.
+        // Down into the screen, then up again: the entry is not a dead end.
         key("tv.account.signout", Key.DirectionDown)
         assertTrue(focused("search.query"), "DOWN from Sign out must return to the query field")
         key("search.query", Key.DirectionUp)
@@ -90,6 +88,8 @@ class TvAccountEntryFocusTest {
      */
     @Test fun fromAListOfResultsUpReachesSignOutWhichCoversNoResult() {
         host()
+        key("tv.account.signout", Key.DirectionDown)
+        key("search.query", Key.DirectionCenter)
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitForIdle()
         key("search.query", Key.DirectionDown)
@@ -117,9 +117,8 @@ class TvAccountEntryFocusTest {
         store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
         compose.setContent {
             MaterialTheme {
-                val context = LocalContext.current
                 TvAccountHost(signOut, "id") {
-                    TvSearchScreen(SearchPresenter(account, Results()), SearchIntentRouter(context))
+                    TvSearchScreen(SearchPresenter(account, Results())) {}
                 }
             }
         }

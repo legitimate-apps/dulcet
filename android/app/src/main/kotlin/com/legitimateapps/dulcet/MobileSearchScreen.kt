@@ -42,33 +42,32 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchHostDependencies
-import com.legitimateapps.dulcet.search.SearchIntentRouter
 import com.legitimateapps.dulcet.search.SearchObservation
 import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
 
+/**
+ * The account's search presenter, kept by the app above its tabs and pages, so a result opened and
+ * left with Back finds its query and results as they were. Keyed by the whole account: a changed
+ * password or address replaces the process's reader, and a presenter still attached to the old one
+ * would never hear from it again.
+ */
 @Composable
-internal fun MobileSearchRoute(
-    account: SearchAccount,
-    dependencies: SearchHostDependencies,
-    onPlay: ((SearchResultItem) -> Unit)? = null,
-) {
+internal fun rememberSearchPresenter(account: SearchAccount, dependencies: SearchHostDependencies): SearchPresenter {
     val context = LocalContext.current
-    // Keyed by the whole account: a changed password or address replaces the process's reader, and a
-    // presenter still attached to the old one would never hear from it again.
     val foreground = hostInForeground()
     val presenter = remember(account) { dependencies.createPresenter(account, context, foreground) }
-    val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)
     }
-    MobileSearchScreen(presenter, router, account, onPlay)
+    return presenter
 }
 
 @Composable
 internal fun MobileSearchScreen(
     presenter: SearchPresenter,
-    router: SearchIntentRouter,
+    /** An album or artist result opens its library page; a track plays ([SearchActivation]). */
+    onActivate: (SearchResultItem) -> Unit,
     account: SearchAccount? = null,
     onPlay: ((SearchResultItem) -> Unit)? = null,
 ) {
@@ -123,7 +122,7 @@ internal fun MobileSearchScreen(
                         deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
                             state.scope == AndroidLibrarySearchScope.ServerAndDevice,
                         unavailableOffline = !playable,
-                        onActivate = { router.activate(result) },
+                        onActivate = { onActivate(result) },
                         onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { play(result) } },
                     )
                 }

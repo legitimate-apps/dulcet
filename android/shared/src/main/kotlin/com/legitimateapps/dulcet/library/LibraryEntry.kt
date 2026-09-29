@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.library
 
+import android.annotation.SuppressLint
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.RememberObserver
@@ -25,8 +26,10 @@ public val LibraryObservation: SemanticsPropertyKey<LibraryObservationState> = S
 /**
  * Whether the host is in the foreground NOW — started, at least — for a reader created at this
  * composition (§16.14). Only the value at the reader's creation matters: [LibraryLifecycle] reports
- * every later change.
+ * every later change. Reading the current state in composition is therefore deliberate: a value that
+ * went stale would not be read again.
  */
+@SuppressLint("LifecycleCurrentStateInComposition")
 @Composable
 public fun hostInForeground(): Boolean =
     LocalLifecycleOwner.current.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)

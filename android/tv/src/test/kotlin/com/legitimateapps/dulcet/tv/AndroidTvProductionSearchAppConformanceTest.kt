@@ -53,12 +53,14 @@ class AndroidTvProductionSearchAppConformanceTest {
         compose.onNodeWithTag("search.result.1").assertIsFocused()
         compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionCenter) }
         val routed = assertNotNull(shadowOf(app).nextStartedActivity)
-        assertEquals(SearchDetailActivity::class.java.name, routed.component?.className)
-        assertEquals(SearchDetailIntent.ACTION, routed.action)
-        assertEquals(SearchDetailIntent.SOURCE_SEARCH, routed.getStringExtra(SearchDetailIntent.EXTRA_SOURCE))
-        assertEquals(environment.localOnly.id.rawId, routed.getStringExtra(SearchDetailIntent.EXTRA_RAW_ID))
-        assertEquals(environment.localOnly.type.name, routed.getStringExtra(SearchDetailIntent.EXTRA_RESULT_TYPE))
-        assertEquals(environment.account.providerInstanceId, routed.getStringExtra(SearchDetailIntent.EXTRA_PROVIDER_INSTANCE_ID))
+        // The local-only row is a track: activating it plays it through this app's own player entry,
+        // carrying the opaque id exactly as the row had it (album and artist rows open library pages).
+        assertEquals(com.legitimateapps.dulcet.core.SearchResultType.Track, environment.localOnly.type, "setup: the row is a track")
+        assertEquals(com.legitimateapps.dulcet.playback.PlaybackIntents.ACTION_PLAY_TRACK, routed.action)
+        assertEquals(app.packageName, routed.`package`)
+        assertEquals(environment.localOnly.id.rawId, routed.getStringExtra(com.legitimateapps.dulcet.playback.PlaybackIntents.SONG))
+        assertEquals(environment.account.providerInstanceId,
+            routed.getStringExtra(com.legitimateapps.dulcet.playback.PlaybackIntents.PROVIDER))
         val diagnostics = routed.toUri(Intent.URI_INTENT_SCHEME) + environment.account.toString() +
             org.robolectric.shadows.ShadowLog.getLogs().joinToString { it.msg.orEmpty() }
         for (canary in listOf(environment.account.username, environment.account.password)) {

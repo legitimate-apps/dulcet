@@ -870,6 +870,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             .firstOrNull()?.config?.get(SearchObservation) ?: SearchUiState()
 
     private fun type(text: String) {
+        // Selected first, as a person does: the TV field is read-only until selected, so passing
+        // over it with the D-pad brings up no keyboard. On the phone the tap only focuses it.
+        compose.onNodeWithTag("search.query").performClick()
         compose.onNodeWithTag("search.query").performTextReplacement(text)
     }
 

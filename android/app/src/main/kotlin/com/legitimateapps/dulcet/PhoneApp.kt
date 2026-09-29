@@ -48,6 +48,7 @@ import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.search.SearchActivation
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +126,11 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         if (untitled.isNotEmpty()) library.seenTracks(untitled) { tracks -> controller.rememberTracks(tracks) }
     }
     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
+    // Search lives above the pages, so Back from a result's page returns to the query and results.
+    val searchPresenter = rememberSearchPresenter(account, dependencies)
+    val searchActivation = remember(context) {
+        SearchActivation(context, openAlbum = { routes += "album:$it" }, openArtist = { routes += "artist:$it" })
+    }
 
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
         back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, tabs = {
@@ -154,7 +160,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
             route?.startsWith("artist:") == true ->
                 ArtistScreen(account, library, route.removePrefix("artist:"), actions)
             tab == PhoneTab.Library -> LibraryHome(account, library, actions)
-            else -> MobileSearchRoute(account, dependencies) { result ->
+            else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account) { result ->
                 playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
             }
         }

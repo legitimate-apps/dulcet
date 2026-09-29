@@ -4,9 +4,13 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
@@ -20,18 +24,18 @@ import com.legitimateapps.dulcet.core.ProviderItemId
 import com.legitimateapps.dulcet.core.mergeSearchResults
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchSource
 import com.legitimateapps.dulcet.search.SearchSourceHandle
-import com.legitimateapps.dulcet.search.SearchDetailActivity
-import com.legitimateapps.dulcet.search.SearchDetailIntent
-import com.legitimateapps.dulcet.search.SearchIntentRouter
 import com.legitimateapps.dulcet.search.SearchPresenter
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
 import org.junit.Rule
 import org.junit.runner.RunWith
@@ -50,6 +54,18 @@ class AndroidTvSearchAppConformanceTest {
     fun conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail() {
         val application = RuntimeEnvironment.getApplication() as AndroidTvSearchTestApplication
 
+        // At launch the remote starts on the navigation row, not in the field (no keyboard comes up).
+        compose.waitUntil(timeoutMillis = 5_000) { focused("search.open") }
+        assertFalse(focused("search.query"), "The query field must not take focus at launch")
+        compose.onNodeWithTag("search.open").performKeyInput { pressKey(Key.DirectionDown) }
+        compose.waitUntil(timeoutMillis = 5_000) { focused("search.query") }
+        // Passing over the field leaves it read-only (no input session, so no keyboard); the centre
+        // key selects it for typing.
+        compose.onNodeWithTag("search.query").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.IsEditable).not()
+            or SemanticsMatcher.expectValue(SemanticsProperties.IsEditable, false))
+        compose.onNodeWithTag("search.query").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.onNodeWithTag("search.query").assert(SemanticsMatcher.expectValue(SemanticsProperties.IsEditable, true))
+
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(timeoutMillis = 5_000) { application.presenter.state.value.results.size == 3 }
         compose.onNodeWithTag("search.result.0").assertTextContains("Echo")
@@ -60,18 +76,50 @@ class AndroidTvSearchAppConformanceTest {
         compose.onNodeWithTag("search.result.0").assertIsFocused()
         compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithTag("search.result.1").assertIsFocused()
-        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionCenter) }
 
-        val routed = shadowOf(application).nextStartedActivity
-        assertEquals(SearchDetailActivity::class.java.name, routed.component?.className)
-        assertEquals(SearchDetailIntent.ACTION, routed.action)
-        assertEquals(SearchDetailIntent.SOURCE_SEARCH, routed.getStringExtra(SearchDetailIntent.EXTRA_SOURCE))
-        assertEquals("artist::f4-opaque", routed.getStringExtra(SearchDetailIntent.EXTRA_RAW_ID))
-        assertEquals(SearchResultType.Artist.name, routed.getStringExtra(SearchDetailIntent.EXTRA_RESULT_TYPE))
+        // The artist result opens the library's artist screen above search, in this activity.
+        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitUntil(timeoutMillis = 5_000) { exists("artist.surface") }
+        assertNull(shadowOf(application).nextStartedActivity, "An artist result starts no other activity")
+        assertFalse(exists("search.results"))
+
+        // Back returns to search as it was left: the query, its results, and focus on the artist row.
+        // One Back is enough only if the centre key opened the artist once.
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.waitUntil(timeoutMillis = 5_000) { focused("search.result.1") }
+        compose.onNodeWithTag("search.query").assertTextContains("echo")
+        compose.onNodeWithTag("search.result.2").assertTextContains("Echo Track")
+        assertEquals(1, application.presenters, "Search keeps one presenter across a result opened and left")
+
+        // The album result opens the album screen.
+        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionUp) }
+        compose.onNodeWithTag("search.result.0").assertIsFocused()
+        compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitUntil(timeoutMillis = 5_000) { exists("album.surface") }
+        assertNull(shadowOf(application).nextStartedActivity, "An album result starts no other activity")
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.waitUntil(timeoutMillis = 5_000) { focused("search.result.0") }
+
+        // The track result plays, through this app's own player entry, with its opaque identity.
+        compose.onNodeWithTag("search.result.0").performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithTag("search.result.1").performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithTag("search.result.2").assertIsFocused()
+        compose.onNodeWithTag("search.result.2").performKeyInput { pressKey(Key.DirectionCenter) }
+        val routed = assertNotNull(shadowOf(application).nextStartedActivity)
+        assertEquals(PlaybackIntents.ACTION_PLAY_TRACK, routed.action)
+        assertEquals(application.packageName, routed.`package`)
+        assertEquals("track::a9-opaque", routed.getStringExtra(PlaybackIntents.SONG))
+        assertEquals("provider::opaque", routed.getStringExtra(PlaybackIntents.PROVIDER))
+        assertNull(shadowOf(application).nextStartedActivity, "One centre press plays once")
         val diagnosticShape = routed.toUri(Intent.URI_INTENT_SCHEME)
         assertFalse(diagnosticShape.contains(application.account.username))
         assertFalse(diagnosticShape.contains(application.account.password))
     }
+
+    private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
+        .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }
 }
 
 class AndroidTvSearchTestApplication : Application(), SearchHostDependencyOwner {
@@ -83,14 +131,13 @@ class AndroidTvSearchTestApplication : Application(), SearchHostDependencyOwner 
         allowLocalHttp = false,
     )
     lateinit var presenter: SearchPresenter
+    var presenters = 0
 
     override val searchHostDependencies: SearchHostDependencies = object : SearchHostDependencies {
         override fun loadAccount(context: Context): SearchAccount = account
 
         override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter =
-            SearchPresenter(account, TvRankedMergedFixtureSearchSource()).also { presenter = it }
-
-        override fun createRouter(context: Context): SearchIntentRouter = SearchIntentRouter(context)
+            SearchPresenter(account, TvRankedMergedFixtureSearchSource()).also { presenter = it; presenters++ }
     }
 }
 

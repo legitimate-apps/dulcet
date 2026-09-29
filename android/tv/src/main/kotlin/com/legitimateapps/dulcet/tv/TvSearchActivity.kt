@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +29,10 @@ import com.legitimateapps.dulcet.core.AccountConnector
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -34,6 +40,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -52,7 +59,7 @@ import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.searchScopeLabel
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.search.SearchAccount
-import com.legitimateapps.dulcet.search.SearchIntentRouter
+import com.legitimateapps.dulcet.search.SearchActivation
 import com.legitimateapps.dulcet.search.SearchObservation
 import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
@@ -85,7 +92,10 @@ class TvSearchActivity : ComponentActivity() {
                             account = loadAccount()
                         }
                     } else {
-                        TvLibraryEntry(current) { TvSearchRoute(current, searchDependencies) }
+                        val presenter = rememberSearchPresenter(current, searchDependencies)
+                        TvLibraryEntry(current) { navigator ->
+                            TvSearchScreen(presenter, rememberSearchActivation(navigator))
+                        }
                     }
                 }
             }
@@ -95,24 +105,37 @@ class TvSearchActivity : ComponentActivity() {
     private fun loadAccount(): SearchAccount? = runCatching { searchDependencies.loadAccount(this) }.getOrNull()
 }
 
+/**
+ * The account's search presenter, kept for as long as the account's library entry is: above the
+ * routes, so a result opened and left with Back finds its query, results and focus as they were.
+ * Keyed by the whole account: a changed password or address replaces the process's reader, and a
+ * presenter still attached to the old one would never hear from it again.
+ */
 @Composable
-private fun TvSearchRoute(account: SearchAccount, dependencies: SearchHostDependencies) {
+private fun rememberSearchPresenter(account: SearchAccount, dependencies: SearchHostDependencies): SearchPresenter {
     val context = LocalContext.current
-    // Keyed by the whole account: a changed password or address replaces the process's reader, and a
-    // presenter still attached to the old one would never hear from it again.
     val foreground = hostInForeground()
     val presenter = remember(account) { dependencies.createPresenter(account, context, foreground) }
-    val router = remember(context) { dependencies.createRouter(context) }
     DisposableEffect(presenter) {
         onDispose(presenter::close)
     }
-    TvSearchScreen(presenter, router)
+    return presenter
+}
+
+/** An album or artist result opens the library's detail screen above search; a track plays. */
+@Composable
+private fun rememberSearchActivation(navigator: TvNavigator): (SearchResultItem) -> Unit {
+    val context = LocalContext.current
+    val activation = remember(context, navigator) {
+        SearchActivation(context, openAlbum = navigator::openAlbum, openArtist = navigator::openArtist)
+    }
+    return activation::activate
 }
 
 @Composable
 internal fun TvSearchScreen(
     presenter: SearchPresenter,
-    router: SearchIntentRouter,
+    onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val resources = libraryResources()
@@ -122,7 +145,24 @@ internal fun TvSearchScreen(
         List(state.results.size) { FocusRequester() }
     }
 
-    LaunchedEffect(Unit) { queryFocus.requestFocus() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    // At launch the D-pad starts on the navigation row above, never in the field: an editable field
+    // with focus brings up the on-screen keyboard, which takes the remote until Back closes it. Coming
+    // back to search, focus returns instead to what last held it (TvRouteFocus).
+    //
+    // The field is read-only until it is selected — the centre key, or a tap — so the D-pad can pass
+    // over it without the keyboard coming up. A read-only field opens no input session, which is what
+    // keeps the keyboard down; `showKeyboardOnFocus = false` alone did not on an Android TV emulator.
+    // Selecting it makes it editable, which brings the keyboard up; leaving it makes it read-only again.
+    var editing by remember { mutableStateOf(false) }
+    LaunchedEffect(editing) {
+        if (editing) { withFrameNanos { }; keyboard?.show() }
+    }
+    EnterRoute()
+    val route = LocalTvRouteFocus.current
+    LaunchedEffect(Unit) {
+        if (route == null || route.claimDefault()) runCatching { accountEntry?.requestFocus() }
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -140,6 +180,7 @@ internal fun TvSearchScreen(
                     value = state.query,
                     onValueChange = presenter::updateQuery,
                     singleLine = true,
+                    readOnly = !editing,
                     textStyle = MaterialTheme.typography.titleLarge.copy(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
@@ -156,9 +197,23 @@ internal fun TvSearchScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(queryFocus)
+                        .onFocusChanged { if (!it.isFocused) editing = false }
+                        // A tap selects it too (the pointer's down, before the field's own gestures).
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                editing = true
+                            }
+                        }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                             when {
+                                // Selecting the field is what asks for the keyboard, whatever device
+                                // the key came from; again, once Back has closed it.
+                                event.key == Key.DirectionCenter || event.key == Key.Enter -> {
+                                    if (editing) keyboard?.show() else editing = true
+                                    true
+                                }
                                 event.key == Key.DirectionDown && resultFocus.isNotEmpty() -> {
                                     resultFocus.first().requestFocus()
                                     true
@@ -171,7 +226,7 @@ internal fun TvSearchScreen(
                                 else -> false
                             }
                         }
-                        .testTag("search.query"),
+                        .tvFocus("search.query"),
                 )
             }
             // Where these results come from (§16.15), in the words the phone uses for the same scope.
@@ -201,7 +256,7 @@ internal fun TvSearchScreen(
                         index = index,
                         focusRequester = resultFocus[index],
                         queryFocusRequester = queryFocus.takeIf { index == 0 },
-                        onActivate = { router.activate(result) },
+                        onActivate = { onActivate(result) },
                     )
                 }
             }
@@ -225,6 +280,13 @@ private fun TvSearchResult(
             .fillMaxWidth()
             .focusRequester(focusRequester)
             .onPreviewKeyEvent { event ->
+                // The centre key activates once, on release, as the Card's own click would. The Card
+                // is kept from seeing it: it clicked on the release of a press this handler had also
+                // acted on, and every result opened twice (Back then left a duplicate on top).
+                if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
+                    if (event.type == KeyEventType.KeyUp) onActivate()
+                    return@onPreviewKeyEvent true
+                }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 // Between results the list's own focus search moves UP and DOWN: it composes a
                 // result not yet on screen, where a requester of one never composed takes nothing,
@@ -236,14 +298,10 @@ private fun TvSearchResult(
                     } else {
                         false
                     }
-                    Key.Enter, Key.DirectionCenter -> {
-                        onActivate()
-                        true
-                    }
                     else -> false
                 }
             }
-            .testTag("search.result.$index"),
+            .tvFocus("search.result.$index"),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(20.dp),

@@ -154,7 +154,7 @@ internal class TvNavigator(val open: (String) -> Unit, val back: () -> Unit) {
  * screen is showing, and a search offline says so (§16.15).
  */
 @Composable
-internal fun TvLibraryEntry(account: SearchAccount, search: @Composable () -> Unit) {
+internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavigator) -> Unit) {
     val context = LocalContext.current
     val foreground = hostInForeground()
     val session = remember(account) { LibrarySession(context, account, foreground) }
@@ -196,7 +196,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable () -> Un
                 ) {
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
-                        top == ROUTE_SEARCH -> search()
+                        top == ROUTE_SEARCH -> search(navigator)
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
@@ -300,7 +300,7 @@ internal val LocalTvRouteFocus = staticCompositionLocalOf<TvRouteFocus?> { null 
 
 /** Marks the route's screen as entered, so its memory applies to this composition. */
 @Composable
-private fun EnterRoute() {
+internal fun EnterRoute() {
     val route = LocalTvRouteFocus.current ?: return
     remember(route) { route.also(TvRouteFocus::enter) }
 }

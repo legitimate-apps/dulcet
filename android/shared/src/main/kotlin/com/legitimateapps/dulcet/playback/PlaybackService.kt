@@ -4,6 +4,8 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
@@ -44,7 +46,11 @@ class PlaybackService : MediaSessionService() {
      * account on TV — and the new account must never be handed the old one's controller, which
      * carries its credentials, queue and server. The saved account's id is read without decrypting
      * its record, so this costs nothing on the usual path.
+     *
+     * Opted in to Media3's unstable API for the session's connection callback: accepting a trusted
+     * controller with the player's own commands (`isTrusted`, `AcceptedResultBuilder`) is marked unstable.
      */
+    @OptIn(UnstableApi::class)
     fun ensurePlayback(): AndroidPlaybackController? {
         val store = AndroidAccountCredentialStore(this)
         val activeId = store.activeAccountId()
