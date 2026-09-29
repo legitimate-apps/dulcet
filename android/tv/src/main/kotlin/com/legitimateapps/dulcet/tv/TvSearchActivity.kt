@@ -106,7 +106,7 @@ class TvSearchActivity : ComponentActivity() {
                     } else {
                         val presenter = rememberSearchPresenter(current, searchDependencies)
                         TvLibraryEntry(current) { navigator ->
-                            TvSearchScreen(presenter, rememberSearchActivation(navigator), account = current)
+                            TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator))
                         }
                     }
                 }
@@ -147,9 +147,9 @@ private fun rememberSearchActivation(navigator: TvNavigator): (SearchResultItem)
 @Composable
 internal fun TvSearchScreen(
     presenter: SearchPresenter,
-    onActivate: (SearchResultItem) -> Unit,
     /** Rows show cover art when the account is known; tests without one draw the placeholder. */
     account: SearchAccount? = null,
+    onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     val resources = libraryResources()
