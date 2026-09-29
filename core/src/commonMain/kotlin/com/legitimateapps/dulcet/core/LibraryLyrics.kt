@@ -76,7 +76,7 @@ internal data class LyricsPublication(
     /**
      * The server answered THIS read with code 70, "not found". A document with no layers is also
      * what a track without lyrics reads as, so this is the only way a consumer can prove it saw
-     * code 70 (CLAUDE.md trap 41). It describes the answer, not where the document came from: a
+     * code 70 (docs/TRAPS.md trap 41). It describes the answer, not where the document came from: a
      * later read, or [LibraryLyrics.cached], serving the stored result of a code-70 answer does
      * not carry it; and a code-70 answer from `getLyrics`, which is not stored (§18.4), carries it
      * on the publication of whatever the store already held.

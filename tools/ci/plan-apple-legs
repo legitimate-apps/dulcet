@@ -41,6 +41,7 @@ NOT_APPLE_TOOLS = (
     "tools/migration_gate.py",
     "tools/parity_gate.py",
     "tools/release/archive-and-export",
+    "tools/release/validate-app-bundle",
     "tools/release_plan.py",
     "tools/report-apple-ci-durations",
     "tools/report_main_health.py",

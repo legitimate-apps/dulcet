@@ -693,7 +693,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 wireClient?.observePreloadFailure(plan: corePlan, errorKind: "serverBusy")
             }
             // At least the server's own recovery time; five seconds when it named none, which is
-            // what the reference server sends (CLAUDE.md trap 24).
+            // what the reference server sends (docs/TRAPS.md trap 24).
             let wait = max(retryAfter ?? Self.defaultBusyBackoff, Self.minimumBusyBackoff)
             preloadSuppressedUntil = clock.now.advanced(by: .milliseconds(Int64(wait * 1_000)))
             preloadLog.append("busy")

@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Validate an archived .app before it is exported: the platform's App Store icon keys, and for PROD
+the preconfigured-server guard (spec §22.3) applied to the artifact itself.
+
+    validate-app-bundle <macos|ios|tvos> <dev|prod> <path/to/App.app>
+
+Called by tools/release/archive-and-export; tools/test-release-channel runs it against bundles shaped
+like observed Release builds. Exits 1 naming every violation.
+
+Icons, per platform (each shape OBSERVED in a Release build with Xcode 26.6):
+- macos: CFBundleIconName (the asset catalog; a bare .icns is ITMS-90546), LSApplicationCategoryType.
+- ios:   CFBundleIcons -> CFBundlePrimaryIcon is a dictionary carrying CFBundleIconName.
+- tvos:  actool writes CFBundleIcons -> CFBundlePrimaryIcon as a STRING, the brand-assets app icon's
+         name; the dictionary form is accepted too. A tvOS app also needs both top-shelf images
+         (TVTopShelfImage -> TVTopShelfPrimaryImage and TVTopShelfPrimaryImageWide).
+
+PROD only:
+- The Info.plist holds only the allowlisted keys for its platform plus the ones Xcode stamps into every
+  build, and no value anywhere in it is a URL.
+- No file in the bundle contains the server key's bytes (UTF-8 or UTF-16), whichever route put it
+  there: plist, resource, or code.
+- Every http:// or https:// address in any file (UTF-8 or UTF-16, either byte order) names a host in
+  URL_HOSTS. The authority is captured by an RFC 3986 character class and then parsed: userinfo up to
+  the last `@` is dropped, a bracketed IPv6 literal is a host of its own, percent-escapes are decoded,
+  and a captured authority that does not parse to a hostname or an IP literal is refused as unclassifiable.
+  The capture stops at the first character outside the class, which is not itself checked, so a
+  non-ASCII character after a real host is not seen (spec §22.6, limits). An empty
+  authority passes only when the byte after `//` ends the string.
+  What a byte scan cannot see is an address the compiler never stores contiguously: on arm64 a Swift
+  string of 15 UTF-8 bytes or fewer is built from instruction immediates (OBSERVED 2026-09-26,
+  `"http://10.0.0.5"`), and an address assembled at run time from pieces is never whole anywhere.
+  tools/verify_release_policy.py scans the Swift and Kotlin sources PROD compiles for the first; the
+  second is a review obligation (spec §22.6).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import plistlib
+import re
+import sys
+from pathlib import Path
+
+# The same key tools/verify_release_policy.py confines to DEV-only plists.
+SERVER_KEY = "DulcetPreconfiguredServer"
+# Every http(s) host a PROD bundle may contain, OBSERVED 2026-09-26 by scanning every file of Release
+# builds of DulcetiOSRelease and DulcetMacRelease (Xcode 26.6), where each appears:
+URL_HOSTS = {
+    "",                        # a bare "http://" / "https://": UI copy and the prefix an entered address is checked against
+    "www.apple.com",           # plist and privacy-manifest DTD references
+    "support.apple.com",       # the Keychain help link on the connect screen
+    "music.example.com",       # the server field's placeholder (a reserved example domain)
+    "music.example.invalid",   # a design-capture fixture compiled into shared Swift (reserved .invalid)
+    "query.invalid",           # a base the Kotlin core resolves relative queries against (reserved .invalid)
+    "localhost", "127.0.0.1",  # Ktor's default host, and a loopback pattern in the Kotlin core
+    "ktor.io",                 # Ktor's diagnostic messages
+    "youtrack.jetbrains.com",  # Kotlin/Native and Ktor diagnostic messages
+}
+# An exact authority that names an allowlisted host in a form the parser does not read: the Kotlin
+# core's loopback pattern, which a Release binary carries as the regular expression
+# "http://127\.0\.0\.1:[1-9][0-9]{0,4}" (the capture stops at "{").
+AUTHORITY_FORMS = {r"127\.0\.0\.1:[1-9][0-9]": "127.0.0.1"}
+# RFC 3986 authority characters (unreserved, percent-escape, sub-delims, ":", "@", "[", "]"), plus the
+# backslash that escapes a dot in a regular expression and begins a Swift interpolation, so "\(" is
+# captured and refused rather than ending the address early. The capture therefore runs to the first
+# RFC 3986 terminator ("/", "?", "#") or to a character no authority can hold.
+_AUTHORITY = rb"[A-Za-z0-9\-._~%!$&'()*+,;=:@\[\]\\]"
+URL_PATTERNS = (
+    ("utf-8", re.compile(rb"(?i)https?://(" + _AUTHORITY + rb"*)(.?)", re.S)),
+    ("utf-16-le", re.compile(rb"(?i)h\x00t\x00t\x00p\x00(?:s\x00)?:\x00/\x00/\x00((?:" + _AUTHORITY + rb"\x00)*)((?:..)?)", re.S)),
+    ("utf-16-be", re.compile(rb"(?i)\x00h\x00t\x00t\x00p(?:\x00s)?\x00:\x00/\x00/((?:\x00" + _AUTHORITY + rb")*)((?:..)?)", re.S)),
+)
+# What may follow a bare "http://" for it to be a bare scheme -- UI copy, a prefix check -- rather than
+# the start of an authority the capture could not read (a non-ASCII host, "/", "?", "#").
+BARE_SCHEME_ENDS = set("\x00\t\n\r\x0b\x0c \"`<>")
+_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+HOSTNAME = re.compile(rf"{_LABEL}(?:\.{_LABEL})*")
+HOST_PORT = re.compile(r"(\[[0-9a-f:.]+\]|[^:\[\]]*)(?::([0-9]*))?")
+
+
+def unclassifiable(authority: str) -> str:
+    """A marker no allowlist entry can equal, naming what failed to parse."""
+    return f"<unclassifiable authority {authority!r}>"
+
+
+def classify(authority: str, following: str | None) -> str:
+    """The host an address's authority names, "" for a bare scheme, or an unclassifiable marker.
+
+    `following` is the character after the captured authority, or None at the end of the data."""
+    if not authority:
+        return "" if following is None or following in BARE_SCHEME_ENDS else unclassifiable(following)
+    if authority in AUTHORITY_FORMS:
+        return AUTHORITY_FORMS[authority]
+    host_port = authority.rpartition("@")[2].replace("\\.", ".")
+    decoded = re.sub(r"%([0-9A-Fa-f]{2})", lambda escape: chr(int(escape.group(1), 16)), host_port)
+    match = HOST_PORT.fullmatch(decoded.lower())
+    if "%" in decoded or match is None:
+        return unclassifiable(authority)
+    host = match.group(1)
+    if host.startswith("["):
+        return host
+    host = host[:-1] if host.endswith(".") else host
+    return host if HOSTNAME.fullmatch(host) else unclassifiable(authority)
+
+
+def text_hosts(text: str) -> set[str]:
+    """url_hosts for decoded text: every host named after http:// or https://, classified."""
+    found = set()
+    for match in re.finditer(r"(?i)https?://(" + _AUTHORITY.decode() + r"*)(.?)", text, re.S):
+        found.add(classify(match.group(1), match.group(2) or None))
+    return found
+
+
+COMMON = {
+    "CFBundleDevelopmentRegion", "CFBundleDisplayName", "CFBundleExecutable", "CFBundleIdentifier",
+    "CFBundleInfoDictionaryVersion", "CFBundleName", "CFBundlePackageType",
+    "CFBundleShortVersionString", "CFBundleVersion", "ITSAppUsesNonExemptEncryption",
+    "NSLocalNetworkUsageDescription",
+    "BuildMachineOSBuild", "CFBundleSupportedPlatforms", "DTCompiler", "DTPlatformBuild",
+    "DTPlatformName", "DTPlatformVersion", "DTSDKBuild", "DTSDKName", "DTXcode", "DTXcodeBuild",
+}
+# The PROD allowlists, OBSERVED on Release builds of DulcetMacRelease and DulcetiOSRelease. The macOS
+# list once lacked NSLocalNetworkUsageDescription, which the PROD plist has always declared, so a
+# prod/macos archive would have been refused. There is no PROD tvOS target, so no tvOS list.
+PROD_KEYS = {
+    "macos": COMMON | {
+        "CFBundleIconFile", "CFBundleIconName", "LSApplicationCategoryType", "LSMinimumSystemVersion",
+        "NSHumanReadableCopyright",
+    },
+    "ios": COMMON | {
+        "LSRequiresIPhoneOS", "UIBackgroundModes", "UILaunchScreen",
+        "UISupportedInterfaceOrientations~iphone", "UISupportedInterfaceOrientations~ipad",
+        "CFBundleIcons", "CFBundleIcons~ipad", "MinimumOSVersion", "UIDeviceFamily",
+        "UIRequiredDeviceCapabilities", "UTExportedTypeDeclarations",
+    },
+}
+
+
+def text(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def icon_problems(platform: str, info: dict) -> list[str]:
+    problems = []
+    if platform == "macos":
+        if not text(info.get("CFBundleIconName")):
+            problems.append("no asset-catalog app icon (CFBundleIconName; ITMS-90546)")
+        if not text(info.get("LSApplicationCategoryType")):
+            problems.append("no LSApplicationCategoryType")
+        return problems
+    icons = info.get("CFBundleIcons")
+    primary = icons.get("CFBundlePrimaryIcon") if isinstance(icons, dict) else None
+    named = isinstance(primary, dict) and text(primary.get("CFBundleIconName"))
+    if platform == "ios" and not named:
+        problems.append("no asset-catalog app icon (CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName)")
+    if platform == "tvos":
+        if not (named or text(primary)):
+            problems.append("no brand-assets app icon (CFBundleIcons:CFBundlePrimaryIcon)")
+        shelf = info.get("TVTopShelfImage")
+        for key in ("TVTopShelfPrimaryImage", "TVTopShelfPrimaryImageWide"):
+            if not (isinstance(shelf, dict) and text(shelf.get(key))):
+                problems.append(f"no top-shelf image (TVTopShelfImage:{key})")
+    return problems
+
+
+def holds_url(value) -> bool:
+    return "://" in json.dumps(value, default=str)
+
+
+def kotlin_native_string(data: bytes, start: int, end: int) -> bool:
+    """Whether data[start:end] is the whole of a Kotlin/Native string literal.
+
+    Kotlin/Native stores a literal as an object, not a terminated string: 8 bytes of type pointer, a
+    little-endian uint32 count of UTF-16 units that is one more than the characters, a 4-byte hash
+    and 2 bytes of flags, then the characters -- and the next object follows directly. OBSERVED
+    2026-09-26 in Release builds of DulcetiOSRelease and DulcetMacRelease (Xcode 26.6): each carries a
+    bare "http://" this way, followed by a type pointer. So the byte after a bare scheme proves nothing
+    there, and the length in front of it is what says the literal ends."""
+    return start >= 10 and int.from_bytes(data[start - 10:start - 6], "little") == (end - start) // 2 + 1
+
+
+def url_hosts(data: bytes) -> set[str]:
+    """Every host named after http:// or https:// in `data`, in any of the encodings a bundle uses."""
+    found = set()
+    for encoding, pattern in URL_PATTERNS:
+        for match in pattern.finditer(data):
+            following = match.group(2).decode(encoding, errors="replace") if match.group(2) else None
+            # A little-endian literal also reads as big-endian one byte earlier, so the big-endian
+            # pattern sees the same Kotlin/Native literal shifted by one (OBSERVED in the same builds).
+            shift = {"utf-16-le": 0, "utf-16-be": 1}.get(encoding)
+            if (not match.group(1) and shift is not None
+                    and kotlin_native_string(data, match.start() + shift, match.end(1) + shift)):
+                following = None
+            found.add(classify(match.group(1).decode(encoding), following))
+    return found
+
+
+def prod_problems(platform: str, info: dict, app: Path) -> list[str]:
+    problems = []
+    allowed = PROD_KEYS.get(platform)
+    if allowed is None:
+        return [f"no PROD Info.plist allowlist for platform {platform}; there is no PROD {platform} target"]
+    extra = sorted(set(info) - allowed)
+    urls = sorted(key for key, value in info.items() if holds_url(value))
+    if extra or urls:
+        problems.append(f"PROD Info.plist: unexpected keys {extra}, URL-valued keys {urls}")
+    needles = [SERVER_KEY.encode(encoding) for encoding in ("utf-8", "utf-16-le", "utf-16-be")]
+    for directory, _, files in os.walk(app, followlinks=False):
+        for name in files:
+            path = Path(directory, name)
+            if path.is_symlink() or not path.is_file():
+                continue
+            data = path.read_bytes()
+            if any(needle in data for needle in needles):
+                problems.append(f"{path.relative_to(app.parent)} contains {SERVER_KEY}: PROD ships no "
+                                "preconfigured server")
+            unknown = sorted(url_hosts(data) - URL_HOSTS)
+            if unknown:
+                problems.append(f"{path.relative_to(app.parent)} contains addresses on hosts {unknown}, which are not "
+                                f"allowlisted: PROD ships no preconfigured server (spec §22.3). If the host is not a "
+                                f"server -- a library's documentation link, say -- add it to URL_HOSTS in "
+                                f"tools/release/validate-app-bundle, in review, saying where it comes from; an "
+                                f"unclassifiable authority is refused whatever it names")
+    return problems
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 4 or argv[1] not in ("macos", "ios", "tvos") or argv[2] not in ("dev", "prod"):
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    platform, channel, app = argv[1], argv[2], Path(argv[3])
+    info_path = app / ("Contents/Info.plist" if platform == "macos" else "Info.plist")
+    try:
+        info = plistlib.loads(info_path.read_bytes())
+    except Exception as error:  # noqa: BLE001 - an unreadable plist is a validation failure
+        print(f"{info_path}: unreadable: {error}", file=sys.stderr)
+        return 1
+    problems = icon_problems(platform, info)
+    if channel == "prod":
+        problems += prod_problems(platform, info, app)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

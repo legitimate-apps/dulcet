@@ -250,7 +250,7 @@ while the releases page is at 1.1.0; the guide lags.
 ### C5 — 🟠 The `ios()`/`tvos()` shortcuts were removed two years of releases ago, and the spec contradicts `CLAUDE.md`
 
 **Spec §4.1, verbatim:** "removal is **planned** for **Kotlin 2.2.0**."
-**`CLAUDE.md` trap 1, verbatim:** "`ios()` / `tvos()` / `watchos()` target shortcuts are gone
+**`docs/TRAPS.md` trap 1, verbatim:** "`ios()` / `tvos()` / `watchos()` target shortcuts are gone
 (**removed** in Kotlin 2.2.0)."
 
 **Kotlin, verbatim** (multiplatform compatibility guide):
@@ -757,7 +757,7 @@ The protocol chapter is in good shape. This is the strongest part of the documen
 | `@Observable` is macOS 14 / iOS 17 / tvOS 17 (§4.1, half of it) | ✅ Apple availability data |
 | `ghcr.io/navidrome/navidrome:0.63.2` is a multi-arch OCI index (digest-pinnable) and `navidrome_0.63.2_darwin_arm64.tar.gz` exists as a release asset (§20.2, §20.3) | ✅ both pinning mechanisms are feasible as specified |
 | Kotlin/Native tiers: `macosArm64`/`iosArm64`/`iosSimulatorArm64` **Tier 1**, `tvosArm64`/`tvosSimulatorArm64` **Tier 2** (§4.1) | ✅ verbatim from kotlinlang.org — see A6 for the sharper wording |
-| `macosX64` and `tvosX64` are deprecated (§4.1, `CORPUS.md` §5, `CLAUDE.md` trap 2) | ✅ "Starting with Kotlin **2.3.20**, the following targets are deprecated: `macosX64`… `tvosX64`". Recent enough that memory would have called this wrong |
+| `macosX64` and `tvosX64` are deprecated (§4.1, `CORPUS.md` §5, `docs/TRAPS.md` trap 2) | ✅ "Starting with Kotlin **2.3.20**, the following targets are deprecated: `macosX64`… `tvosX64`". Recent enough that memory would have called this wrong |
 | Kotlin/Native default Apple minimums are macOS 12 / tvOS 15 (§4.1) | ✅ verbatim — "For iOS and tvOS, 15.0. For macOS, 12.0." |
 | `<target>.binaries.framework { baseName; isStatic }` and `XCFramework(...)` (§4.3) | ✅ current DSL — "`isStatic` — For Objective-C frameworks. Includes a static library instead of a dynamic one." |
 | Gradle tasks `embedAndSignAppleFrameworkForXcode` and `assembleXCFramework` (§4.3) | ✅ both real and current — see A5 for the registration caveat |

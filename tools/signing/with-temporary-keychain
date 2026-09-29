@@ -27,6 +27,9 @@ Optional, and required together (a macOS App Store package must be installer-sig
   DULCET_CI_INSTALLER_P12_BASE64
   DULCET_CI_INSTALLER_P12_PASSWORD
 
+Optional (the PROD iOS profile; installed and validated like the others when supplied):
+  DULCET_IOS_APP_STORE_PROFILE_BASE64
+
 The command receives DULCET_SIGNING_KEYCHAIN and DULCET_SIGNING_IDENTITY_SHA1, plus
 DULCET_INSTALLER_IDENTITY_SHA1 when the installer identity was supplied, and none of the secret
 variables above: they are unset before it starts. Decoded key material is deleted as soon as it is
@@ -274,6 +277,14 @@ validate_and_install_profile \
 validate_and_install_profile \
   DULCET_DEV_TVOS_APP_STORE_PROFILE_BASE64 \
   com.legitimateapps.dulcet.dev
+# Optional so that adding it breaks no other plan while the environment does not hold it yet. A
+# PROD iOS archive without it fails closed: xcodebuild finds no profile named "Dulcet CI iOS App
+# Store", and tools/release/archive-and-export checks the embedded profile's name in any case.
+if [[ -n "${DULCET_IOS_APP_STORE_PROFILE_BASE64:-}" ]]; then
+  validate_and_install_profile \
+    DULCET_IOS_APP_STORE_PROFILE_BASE64 \
+    com.legitimateapps.dulcet
+fi
 
 /usr/bin/security list-keychains -d user > "$original_keychains_path"
 while IFS= read -r existing_keychain; do
@@ -329,6 +340,7 @@ printf 'dulcet-signing: installed identity %s in temporary keychain; installer=%
   "$identity_sha1" "${DULCET_INSTALLER_IDENTITY_SHA1:-none}" "${#created_profiles[@]}"
 
 # The command needs the keychain, never the payloads that built it.
-unset "${REQUIRED_SECRETS[@]}" DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD
+unset "${REQUIRED_SECRETS[@]}" DULCET_CI_INSTALLER_P12_BASE64 DULCET_CI_INSTALLER_P12_PASSWORD \
+  DULCET_IOS_APP_STORE_PROFILE_BASE64
 
 "$@"
