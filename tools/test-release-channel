@@ -104,6 +104,28 @@ impostor = [dict(run, app="some-other-app") if run["name"] == "apple-ci" else ru
 refused(lambda: plan.prod_gate("0.1.0", ["v0.1.0"], impostor, required), "apple-ci=None",
         "a check run of the right name from another app")
 
+# Full-run gate (spec §21.6): every required check AND both apple-ci legs green, or a dry-run waiver.
+full = green + [{"name": name, "conclusion": "success", "app": "github-actions"}
+                for name in ("apple-platform", "apple-conformance")]
+expect("passed" in plan.full_run_gate("true", "false", full, required), "a full green run passes")
+passed += 1
+expect("passed" in plan.full_run_gate("false", "false", full, required), "a dry run is gated too")
+refused(lambda: plan.full_run_gate("true", "false", green, required),
+        "apple-conformance=None", "a run without the conformance leg (a pull request's shape)")
+skipped = [dict(run, conclusion="skipped") if run["name"] == "apple-conformance" else run
+           for run in full]
+refused(lambda: plan.full_run_gate("true", "false", skipped, required),
+        "apple-conformance=skipped", "a planned-out conformance leg")
+refused(lambda: plan.full_run_gate("false", "false", [r for r in full if r["name"] != "core-ci"], required),
+        "core-ci=None", "a missing required check")
+refused(lambda: plan.full_run_gate("true", "false", [], required), "not green", "no check runs at all")
+expect("WAIVED" in plan.full_run_gate("false", "true", None, required), "a dry run may waive")
+refused(lambda: plan.full_run_gate("true", "true", None, required), "dry runs only",
+        "a waiver on an upload")
+for upload, waive in (("", "false"), ("true", ""), ("yes", "false"), ("false", "True")):
+    refused(lambda: plan.full_run_gate(upload, waive, full, required), "exactly 'true' or 'false'",
+            f"inexact spellings {upload!r}/{waive!r}")
+
 # --- App Store Connect helper -----------------------------------------------------------------
 expect(asc.next_build_number([]) == 1, "an empty family starts at 1")
 expect(asc.next_build_number([2, 3, 4]) == 5, "next build after 4 is 5")
@@ -299,6 +321,33 @@ MUTATIONS = [
                                              '  CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \\\n  DULCET_HOME="$X"'),
      "may override CURRENT_PROJECT_VERSION only"),
     ("release.yml deleted", lambda root: (root / WORKFLOW).unlink(), "no delivery channel"),
+    ("the full-run waiver defaulting to true",
+     edit(WORKFLOW, "        type: boolean\n        default: false", "        type: boolean\n        default: true"),
+     "skip_full_run_gate must be a boolean input that defaults to false"),
+    ("no full-run gate", edit(WORKFLOW, "        run: python3 tools/release_plan.py full-run-gate\n",
+                              "        run: true\n"),
+     "exactly one step must run python3 tools/release_plan.py full-run-gate"),
+    ("a conditional full-run gate",
+     edit(WORKFLOW, "      - name: Require a green full CI run on this commit\n",
+          "      - name: Require a green full CI run on this commit\n        if: ${{ inputs.channel == 'prod' }}\n"),
+     "full-run gate step must be unconditional"),
+    ("a full-run gate that may fail",
+     edit(WORKFLOW, "      - name: Require a green full CI run on this commit\n",
+          "      - name: Require a green full CI run on this commit\n        continue-on-error: true\n"),
+     "full-run gate step must be unconditional"),
+    ("a full-run gate after a secret is read",
+     lambda root: (lambda path, text: path.write_text(
+         text.replace(text[text.index("      - name: Require a green full CI run on this commit\n"):
+                           text.index("      - name: Require the PROD cut gate\n")], "", 1)
+         .replace("      - name: Summarise\n",
+                  text[text.index("      - name: Require a green full CI run on this commit\n"):
+                       text.index("      - name: Require the PROD cut gate\n")]
+                  + "      - name: Summarise\n", 1)))(root / WORKFLOW, (root / WORKFLOW).read_text()),
+     "must run before any step reads a secret"),
+    ("a full-run gate that ignores the upload decision",
+     edit(WORKFLOW, "          RELEASE_UPLOAD: ${{ steps.plan.outputs.upload }}\n",
+          "          RELEASE_UPLOAD: 'false'\n"),
+     "must read the plan's upload decision"),
 ]
 for label, mutate, reason in MUTATIONS:
     result = run_policy(mutate)
