@@ -188,7 +188,7 @@ class ApplePlaybackQueueFacadeTest {
             val client = delivery.client
             client.replaceAndStart(queueRequest())
             client.recordReady("attempt:2", 30_000, "seekable")
-            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPlaybackProgressBegan("attempt:2", delivery.startedAt, 0)
             client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
             client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
             client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
@@ -226,7 +226,7 @@ class ApplePlaybackQueueFacadeTest {
             val client = delivery.client
             client.replaceAndStart(queueRequest())
             client.recordReady("attempt:2", 30_000, "seekable")
-            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPlaybackProgressBegan("attempt:2", delivery.startedAt, 0)
             client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
             client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
             client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
@@ -251,7 +251,7 @@ class ApplePlaybackQueueFacadeTest {
         val client = delivery.client
         client.replaceAndStart(queueRequest())
         client.recordReady("attempt:2", 30_000, "seekable")
-        client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+        client.recordPlaybackProgressBegan("attempt:2", delivery.startedAt, 0)
         client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
         client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
         client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
@@ -294,18 +294,24 @@ class ApplePlaybackQueueFacadeTest {
         )
         val reports = mutableListOf<ApplePlaybackDeliveryReportDto>()
         client.setDeliveryReportObserver { reports += it }
+        // The delivery worker reads the real wall clock and drops plays older than the outbox's
+        // retention, so the plays these tests make are made NOW on that same clock. A fixed
+        // instant here passes until it is thirty days old and then fails every delivery test.
+        val startedAt = realWallClockNow()
         client.installDelivery(
             serverId = ServerId("server"),
             sender = ScrobbleEndpointSender(transport),
-            outbox = PersistentScrobbleOutbox(database, OutboxWallClock { 1_788_000_000_000 }),
+            outbox = PersistentScrobbleOutbox(database, OutboxWallClock { startedAt }),
         )
-        return DeliveryFixture(driver, client, reports)
+        return DeliveryFixture(driver, client, reports, startedAt)
     }
 
     private class DeliveryFixture(
         private val driver: app.cash.sqldelight.db.SqlDriver,
         val client: ApplePlaybackQueueClient,
         val reports: MutableList<ApplePlaybackDeliveryReportDto>,
+        /** When the fixture's plays begin, on the wall clock the delivery worker reads. */
+        val startedAt: Long,
     ) {
         fun closeDriver() {
             driver.close()
@@ -521,3 +527,7 @@ class ApplePlaybackQueueFacadeTest {
         val client: ApplePlaybackQueueClient,
     )
 }
+
+/** The wall clock the playback facade's delivery worker reads, in epoch milliseconds. */
+@OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+private fun realWallClockNow(): Long = platform.posix.time(null) * 1_000L
