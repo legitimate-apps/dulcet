@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
@@ -104,9 +106,6 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     val showRequests by requests.show.collectAsState()
     LaunchedEffect(showRequests) { if (showRequests > 0) playerOpen = true }
 
-    BackHandler(enabled = playerOpen) { playerOpen = false }
-    BackHandler(enabled = !playerOpen && routes.isNotEmpty()) { routes.removeAt(routes.lastIndex) }
-
     val provider = account.providerInstanceId
     val actions = PhoneActions(
         openAlbum = { routes += "album:$it" },
@@ -129,53 +128,37 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     }
     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
 
-    Box(Modifier.fillMaxSize()) {
-        Scaffold(
-            contentWindowInsets = WindowInsets(0),
-            bottomBar = {
-                Column {
-                    if (playbackState.hasSession) MiniPlayer(account, playbackState, playback) { playerOpen = true }
-                    NavigationBar {
-                        NavigationBarItem(
-                            selected = tab == PhoneTab.Library && routes.isEmpty(),
-                            onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
-                            icon = { Icon(DulcetIcons.LibraryMusic, null) },
-                            label = { Text(stringResource(R.string.tab_library)) },
-                            modifier = Modifier.testTag("library.open"),
-                        )
-                        NavigationBarItem(
-                            selected = tab == PhoneTab.Search && routes.isEmpty(),
-                            onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
-                            icon = { Icon(DulcetIcons.Search, null) },
-                            label = { Text(stringResource(R.string.tab_search)) },
-                            modifier = Modifier.testTag("search.open"),
-                        )
-                        // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
-                        AccountNavigationItem()
-                    }
-                }
-            },
-        ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                val route = routes.lastOrNull()
-                when {
-                    route?.startsWith("album:") == true ->
-                        AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
-                    route?.startsWith("artist:") == true ->
-                        ArtistScreen(account, library, route.removePrefix("artist:"), actions)
-                    tab == PhoneTab.Library -> LibraryHome(account, library, actions)
-                    else -> MobileSearchRoute(account, dependencies) { result ->
-                        playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
-                    }
-                }
-            }
+    PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, tabs = {
+        NavigationBar {
+            NavigationBarItem(
+                selected = tab == PhoneTab.Library && routes.isEmpty(),
+                onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
+                icon = { Icon(DulcetIcons.LibraryMusic, null) },
+                label = { Text(stringResource(R.string.tab_library)) },
+                modifier = Modifier.testTag("library.open"),
+            )
+            NavigationBarItem(
+                selected = tab == PhoneTab.Search && routes.isEmpty(),
+                onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
+                icon = { Icon(DulcetIcons.Search, null) },
+                label = { Text(stringResource(R.string.tab_search)) },
+                modifier = Modifier.testTag("search.open"),
+            )
+            // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
+            AccountNavigationItem()
         }
-        AnimatedVisibility(
-            visible = playerOpen && playback != null,
-            enter = slideInVertically { it },
-            exit = slideOutVertically { it },
-        ) {
-            if (playback != null) NowPlayingScreen(account, playbackState, playback) { playerOpen = false }
+    }) {
+        val route = routes.lastOrNull()
+        when {
+            route?.startsWith("album:") == true ->
+                AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
+            route?.startsWith("artist:") == true ->
+                ArtistScreen(account, library, route.removePrefix("artist:"), actions)
+            tab == PhoneTab.Library -> LibraryHome(account, library, actions)
+            else -> MobileSearchRoute(account, dependencies) { result ->
+                playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
+            }
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's
@@ -184,6 +167,66 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     // its reconnect's first request — comes before the screens open their windows; each window still
     // paints from the cache before its own read is issued.
     LibraryLifecycle(library)
+}
+
+/**
+ * The phone's frame: the page above the now-playing bar and the tabs, the full player over all of
+ * them while [playerOpen] and there is playback to show, and the skip notice (spec §12.12 rule 5)
+ * on whichever is in front. Back closes the player while it covers the page, and otherwise goes
+ * [back] on the page, when the page has somewhere to go back to.
+ */
+@Composable
+internal fun PhoneFrame(
+    account: SearchAccount,
+    playbackState: AndroidPlaybackState,
+    playback: AndroidPlaybackController?,
+    playerOpen: Boolean,
+    setPlayerOpen: (Boolean) -> Unit,
+    back: (() -> Unit)? = null,
+    tabs: @Composable () -> Unit,
+    page: @Composable () -> Unit,
+) {
+    // The player covers the page only when it is asked open and there is playback to show; a flag
+    // left open with none covers nothing, so Back must not be spent closing it.
+    val covered = playerOpen && playback != null
+    // At most one of these is enabled at a time, so which one Back reaches does not depend on the
+    // order they are registered in (the later registration wins). The `!covered` guard is that
+    // independence: with it, swapping the two lines changes nothing.
+    BackHandler(enabled = !covered && back != null) { back?.invoke() }
+    BackHandler(enabled = covered) { setPlayerOpen(false) }
+    // The player is in front from the moment it is asked open until its exit slide has finished.
+    val player = remember { MutableTransitionState(covered) }.apply { targetState = covered }
+    val inFront = player.currentState || player.targetState
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            // While the full player covers them -- entering, open, or sliding away -- a screen
+            // reader must reach nothing of the page, the now-playing bar or the tabs, so there is
+            // never a second layer to reach: an accessibility action bypasses touch hit testing,
+            // and a hidden row it reached would start a queue the person cannot see.
+            modifier = if (inFront) Modifier.clearAndSetSemantics {} else Modifier,
+            contentWindowInsets = WindowInsets(0),
+            bottomBar = {
+                Column {
+                    if (playbackState.hasSession) MiniPlayer(account, playbackState, playback) { setPlayerOpen(true) }
+                    tabs()
+                }
+            },
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                page()
+                // Inside the content region, so it ends above the now-playing bar and the tabs and
+                // never covers them; the full player shows it itself while it is open.
+                PhoneSkipNotice(playbackState, visible = !covered)
+            }
+        }
+        AnimatedVisibility(
+            visibleState = player,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it },
+        ) {
+            if (playback != null) NowPlayingScreen(account, playbackState, playback) { setPlayerOpen(false) }
+        }
+    }
 }
 
 private fun saveTab(preferences: android.content.SharedPreferences?, tab: PhoneTab) {

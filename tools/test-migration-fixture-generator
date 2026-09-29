@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Prove that the fixture generator's semantic check can fail, and that it fails for the right reason.
+
+tools/generate_migration_fixture.py --all --check-semantic runs in CI with whatever SQLite the
+runner has. A check that always passes would look exactly like one that holds, so each case below
+runs the check on a scratch copy of the files it reads, changes exactly one thing, and requires the
+check to refuse naming what changed. The unmodified copy must pass: the positive control.
+
+It also proves that a seed never lowers the issue sequence an earlier fixture set: with the previous
+fixture's last_issued raised above the seed's own, the regeneration must keep the higher value.
+"""
+
+from __future__ import annotations
+
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TOOL = "tools/generate_migration_fixture.py"
+COPIED = [
+    TOOL,
+    "tools/migration-fixtures/v7",
+    "tools/migration-fixtures/v8",
+    "core/src/commonMain/sqldelight/migrations/7.sqm",
+]
+
+
+def scratch(directory: Path) -> Path:
+    for relative in COPIED:
+        source, target = ROOT / relative, directory / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+    return directory
+
+
+def check(root: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(root / TOOL), "--to", "8", "--check-semantic"],
+        capture_output=True,
+        text=True,
+    )
+
+
+def edit_tool(root: Path, old: str, new: str) -> None:
+    path = root / TOOL
+    text = path.read_text(encoding="utf-8")
+    if text.count(old) != 1:
+        raise SystemExit(f"test-migration-fixture-generator: the anchor {old!r} is not unique in {TOOL}")
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def edit_fixture(root: Path, version: int, sql: str) -> None:
+    connection = sqlite3.connect(root / f"tools/migration-fixtures/v{version}/database.db")
+    try:
+        connection.execute(sql)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+CASES = [
+    (
+        "a changed seed row",
+        lambda root: edit_tool(root, '(500, "first line")', '(500, "first lime")'),
+        "rows of cache_lyrics_line differ",
+    ),
+    (
+        "a changed seeded sequence",
+        lambda root: edit_tool(root, "MAX(last_issued, 44)", "MAX(last_issued, 45)"),
+        "rows of cache_meta differ",
+    ),
+    (
+        "a committed row edited by hand",
+        lambda root: edit_fixture(root, 8, "UPDATE cache_lyrics SET dropped_layers = 3 WHERE raw_id = 'track:download-opaque'"),
+        "rows of cache_lyrics differ",
+    ),
+    (
+        "a committed user_version edited by hand",
+        lambda root: edit_fixture(root, 8, "PRAGMA user_version = 99"),
+        "user_version",
+    ),
+    (
+        "a stray file beside the committed database",
+        lambda root: (root / "tools/migration-fixtures/v8/files/stray").write_bytes(b"not generated"),
+        "files/ differs",
+    ),
+    (
+        "a committed schema edited by hand",
+        lambda root: edit_fixture(root, 8, "CREATE INDEX extra_index ON cache_lyrics(source)"),
+        "schema differs",
+    ),
+    (
+        "a seed that lowers an earlier sequence",
+        lambda root: (
+            edit_fixture(root, 7, "UPDATE cache_meta SET last_issued = 100 WHERE singleton_id = 1"),
+            edit_fixture(root, 8, "UPDATE cache_meta SET last_issued = 100 WHERE singleton_id = 1"),
+            edit_tool(root, "SET last_issued = MAX(last_issued, 44)", "SET last_issued = 44"),
+        ),
+        "rows of cache_meta differ",
+    ),
+]
+
+
+def main() -> None:
+    failures = []
+    with tempfile.TemporaryDirectory(prefix="dulcet-fixture-control-") as directory:
+        root = scratch(Path(directory) / "positive")
+        result = check(root)
+        if result.returncode != 0:
+            failures.append(f"the unmodified copy was refused: {result.stderr.strip()}")
+        # The sequence guard's positive case: an earlier fixture's higher sequence is kept.
+        root = scratch(Path(directory) / "raised")
+        edit_fixture(root, 7, "UPDATE cache_meta SET last_issued = 100 WHERE singleton_id = 1")
+        edit_fixture(root, 8, "UPDATE cache_meta SET last_issued = 100 WHERE singleton_id = 1")
+        result = check(root)
+        if result.returncode != 0:
+            failures.append(f"a seed lowered an earlier fixture's sequence: {result.stderr.strip()}")
+        for index, (name, change, expected) in enumerate(CASES):
+            root = scratch(Path(directory) / f"case-{index}")
+            change(root)
+            result = check(root)
+            if result.returncode == 0:
+                failures.append(f"{name}: accepted")
+            elif expected not in result.stderr:
+                failures.append(f"{name}: refused without naming '{expected}': {result.stderr.strip()}")
+    if failures:
+        for failure in failures:
+            print(f"test-migration-fixture-generator: FAIL {failure}", file=sys.stderr)
+        sys.exit(1)
+    print(
+        f"test-migration-fixture-generator: the committed fixture and a raised sequence accepted; "
+        f"{len(CASES)} single changes refused, each named (SQLite {sqlite3.sqlite_version})"
+    )
+
+
+if __name__ == "__main__":
+    main()

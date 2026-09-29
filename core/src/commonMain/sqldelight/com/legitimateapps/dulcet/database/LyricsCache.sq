@@ -1,0 +1,103 @@
+-- Lyrics in the seen-cache (spec §16.10, §18.4): what this account was shown, so seen lyrics are
+-- readable offline. Scoped by `server_id` like every seen-cache row, and purged with the namespace.
+--
+-- A document is a header plus its layers and lines, normalized rather than stored as a response
+-- blob. A header with NO layers is a fact too: the server said this track has no lyrics.
+-- `raw_id` is the TRACK's opaque id, whichever endpoint answered. Writes are ordered by
+-- `issue_seq` like every other seen-cache write: a slower answer never replaces a newer one.
+-- `dropped_layers` counts the answer's layers that did not fit the caps, so a trimmed document is
+-- never shown as complete; `stored_bytes` is what the document's rows hold, for the byte budget.
+
+CREATE TABLE cache_lyrics (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('songLyrics', 'getLyrics')),
+  fetched_at_wall INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  dropped_layers INTEGER NOT NULL CHECK (dropped_layers >= 0),
+  stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_lyrics_layer (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  layer_ordinal INTEGER NOT NULL CHECK (layer_ordinal >= 0),
+  language TEXT,
+  synced INTEGER NOT NULL CHECK (synced IN (0, 1)),
+  offset_milliseconds INTEGER NOT NULL,
+  kind TEXT,
+  display_artist TEXT,
+  display_title TEXT,
+  PRIMARY KEY (server_id, raw_id, layer_ordinal),
+  FOREIGN KEY (server_id, raw_id) REFERENCES cache_lyrics(server_id, raw_id) ON DELETE CASCADE
+);
+
+CREATE TABLE cache_lyrics_line (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  layer_ordinal INTEGER NOT NULL,
+  line_ordinal INTEGER NOT NULL CHECK (line_ordinal >= 0),
+  start_milliseconds INTEGER,
+  text TEXT NOT NULL,
+  PRIMARY KEY (server_id, raw_id, layer_ordinal, line_ordinal),
+  FOREIGN KEY (server_id, raw_id, layer_ordinal)
+    REFERENCES cache_lyrics_layer(server_id, raw_id, layer_ordinal) ON DELETE CASCADE
+);
+
+CREATE INDEX cache_lyrics_access ON cache_lyrics(server_id, last_access_wall);
+
+selectLyricsHeader:
+SELECT * FROM cache_lyrics WHERE server_id = ? AND raw_id = ?;
+
+selectLyricsLayers:
+SELECT * FROM cache_lyrics_layer WHERE server_id = ? AND raw_id = ? ORDER BY layer_ordinal;
+
+selectLyricsLines:
+SELECT * FROM cache_lyrics_line WHERE server_id = ? AND raw_id = ?
+ORDER BY layer_ordinal, line_ordinal;
+
+insertLyricsHeader:
+INSERT INTO cache_lyrics(
+  server_id, raw_id, source, fetched_at_wall, issue_seq, last_access_wall, dropped_layers, stored_bytes
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+insertLyricsLayer:
+INSERT INTO cache_lyrics_layer(
+  server_id, raw_id, layer_ordinal, language, synced, offset_milliseconds, kind, display_artist,
+  display_title
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertLyricsLine:
+INSERT INTO cache_lyrics_line(server_id, raw_id, layer_ordinal, line_ordinal, start_milliseconds, text)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- Children first, so the delete does not depend on the connection enforcing foreign keys.
+deleteLyrics {
+  DELETE FROM cache_lyrics_line WHERE server_id = :server_id AND raw_id = :raw_id;
+  DELETE FROM cache_lyrics_layer WHERE server_id = :server_id AND raw_id = :raw_id;
+  DELETE FROM cache_lyrics WHERE server_id = :server_id AND raw_id = :raw_id;
+}
+
+touchLyrics:
+UPDATE cache_lyrics SET last_access_wall = ? WHERE server_id = ? AND raw_id = ?;
+
+countLyrics:
+SELECT count(*) FROM cache_lyrics WHERE server_id = ?;
+
+sumLyricsBytes:
+SELECT CAST(coalesce(sum(stored_bytes), 0) AS INTEGER) FROM cache_lyrics WHERE server_id = ?;
+
+-- Lyrics of a pinned track (downloaded, queued, playing) are never evicted: offline use is exactly
+-- when a downloaded track's lyrics are wanted (§16.13). Nor is the document just written. Read in
+-- batches of :limit, least recently accessed first.
+selectEvictableLyrics:
+SELECT raw_id, stored_bytes FROM cache_lyrics AS l
+WHERE l.server_id = :server_id
+  AND l.raw_id != :written
+  AND l.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'track')
+ORDER BY l.last_access_wall, l.raw_id
+LIMIT :limit;

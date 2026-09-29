@@ -692,6 +692,9 @@ WHERE server_id = ? AND owner_kind = ? AND owner_raw_id = ? AND role = ? AND ord
 -- Binding purge (CONF-80): the whole namespace, in one transaction ---------------------------------
 
 purgeNamespace {
+  DELETE FROM cache_lyrics_line WHERE server_id = :server_id;
+  DELETE FROM cache_lyrics_layer WHERE server_id = :server_id;
+  DELETE FROM cache_lyrics WHERE server_id = :server_id;
   DELETE FROM cache_list_member WHERE server_id = :server_id;
   DELETE FROM cache_list WHERE server_id = :server_id;
   DELETE FROM cache_credit WHERE server_id = :server_id;
@@ -715,4 +718,7 @@ SELECT sum(row_count) FROM (
   UNION ALL SELECT count(*) FROM cache_playlist WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_pin WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_epoch WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_lyrics WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_lyrics_layer WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM cache_lyrics_line WHERE server_id = :server_id
 );

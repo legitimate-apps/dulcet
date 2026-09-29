@@ -12,6 +12,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * [FakeReaderServer] plus the endpoints search and favourites need: `search3`, `star`, `unstar`,
@@ -22,6 +24,15 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     data class Request(val endpoint: String, val parameters: Map<String, String>)
 
     val log = mutableListOf<Request>()
+
+    /**
+     * The most requests one test may issue. The request past it fails, and [capHit] is set, so a
+     * mutant that loops on the network ends as a failed test instead of holding a worker.
+     */
+    var requestCap: Int = Int.MAX_VALUE
+    var capHit = false
+        private set
+
     val starredIds = mutableSetOf<String>()
     val ratings = mutableMapOf<String, Int>()
 
@@ -87,6 +98,10 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     }
 
     override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
+        if (log.size >= requestCap) {
+            capHit = true
+            throw IllegalStateException("request cap $requestCap reached: a loop")
+        }
         log += Request(endpoint, parameters)
         failWithError[endpoint]?.let { throw LibraryRequestFailure(it) }
         failWithCode[endpoint]?.let { return envelope(""""error":{"code":$it,"message":"refused"}""") }
@@ -198,13 +213,29 @@ internal class SessionEnv(
     }
 }
 
-internal fun sessionTest(block: suspend TestScope.(SessionEnv) -> Unit) = runTest {
+internal fun sessionTest(block: suspend TestScope.(SessionEnv) -> Unit) = runTest { sessionBody(Int.MAX_VALUE, block) }
+
+/**
+ * [sessionTest] bounded twice over, so a mutant that loops cannot hold a test worker: the test fails
+ * at [timeout] of real time, and at [requestCap] requests — asserted after the body, so a cap met
+ * and swallowed as a failed read still fails the test.
+ */
+internal fun cappedSessionTest(
+    requestCap: Int = 400,
+    timeout: Duration = 45.seconds,
+    block: suspend TestScope.(SessionEnv) -> Unit,
+) = runTest(timeout = timeout) { sessionBody(requestCap, block) }
+
+private suspend fun TestScope.sessionBody(requestCap: Int, block: suspend TestScope.(SessionEnv) -> Unit) {
     val driver = CountingSqlDriver(createTestDriver())
     val scope = CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob())
     try {
         val database = DulcetDatabaseStore.open(driver)
         val clock = ManualWallClock(now = 2_000_000)
-        block(SessionEnv(SessionTestServer(), driver, database, SeenCacheStore(database, clock), clock, scope))
+        val env = SessionEnv(SessionTestServer(), driver, database, SeenCacheStore(database, clock), clock, scope)
+        env.server.requestCap = requestCap
+        block(env)
+        check(!env.server.capHit) { "the test reached its request cap of $requestCap: a loop" }
     } finally {
         scope.cancel()
         driver.close()

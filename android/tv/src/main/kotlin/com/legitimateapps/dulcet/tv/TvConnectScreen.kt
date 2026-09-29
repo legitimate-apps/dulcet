@@ -196,7 +196,7 @@ private fun DomainError.tvConnectMessage(): Int = when (this) {
     is DomainError.Auth.CrossOriginRedirectRejected -> R.string.tv_error_security
     DomainError.Protocol.MalformedEnvelope, is DomainError.Protocol.UnexpectedContentType,
     DomainError.Protocol.UnexpectedBinary, is DomainError.Protocol.Incompatible,
-    DomainError.Protocol.NotASubsonicServer -> R.string.tv_error_protocol
+    DomainError.Protocol.NotASubsonicServer, DomainError.Protocol.TooLarge -> R.string.tv_error_protocol
     is DomainError.Server.Busy, is DomainError.Server.Known, is DomainError.Server.Unknown,
     is DomainError.Server.HttpStatus, DomainError.Playback.NoPlayableSource -> R.string.tv_error_server
     DomainError.Auth.InvalidCredentials, DomainError.Auth.TokenAuthUnsupported, DomainError.Auth.Forbidden,

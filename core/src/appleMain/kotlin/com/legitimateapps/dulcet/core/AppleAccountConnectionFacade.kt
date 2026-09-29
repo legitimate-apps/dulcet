@@ -40,6 +40,7 @@ public enum class AppleAccountErrorKind {
     ProtocolMalformedEnvelope,
     ProtocolIncompatible,
     ProtocolNotASubsonicServer,
+    ProtocolTooLarge,
     ServerKnown,
     ServerUnknown,
     AuthInvalidCredentials,
@@ -140,7 +141,7 @@ private fun AccountConnectionResult.toAppleOutcome(): AppleAccountConnectOutcome
     )
 }
 
-private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentation = when (this) {
+internal fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentation = when (this) {
     is DomainError.Input.InvalidServerUrl -> AppleAccountErrorPresentation(
         kind = "invalidServerURL",
         targetHost = null,
@@ -157,6 +158,8 @@ private fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentatio
     is DomainError.Protocol.UnexpectedContentType,
     DomainError.Protocol.UnexpectedBinary,
     -> applePresentation("malformedEnvelope")
+    // The server did nothing wrong: the answer is well formed and larger than Dulcet reads (§18.4).
+    DomainError.Protocol.TooLarge -> applePresentation("responseTooLarge")
     is DomainError.Protocol.Incompatible -> applePresentation("incompatibleProtocol")
     DomainError.Protocol.NotASubsonicServer -> applePresentation("notASubsonicServer")
     is DomainError.Server.Busy -> applePresentation("knownServerError")
@@ -184,7 +187,7 @@ private fun applePresentation(kind: String): AppleAccountErrorPresentation =
         invalidServerURLIsInternationalized = false,
     )
 
-private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) {
+internal fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) {
     is DomainError.Input.InvalidServerUrl -> AppleAccountErrorKind.InputInvalidServerUrl
     DomainError.Transport.Unreachable -> AppleAccountErrorKind.TransportUnreachable
     DomainError.Transport.Timeout -> AppleAccountErrorKind.TransportTimeout
@@ -196,6 +199,7 @@ private fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this) 
     is DomainError.Protocol.UnexpectedContentType,
     DomainError.Protocol.UnexpectedBinary,
     -> AppleAccountErrorKind.ProtocolMalformedEnvelope
+    DomainError.Protocol.TooLarge -> AppleAccountErrorKind.ProtocolTooLarge
     is DomainError.Protocol.Incompatible -> AppleAccountErrorKind.ProtocolIncompatible
     DomainError.Protocol.NotASubsonicServer -> AppleAccountErrorKind.ProtocolNotASubsonicServer
     is DomainError.Server.Busy -> AppleAccountErrorKind.ServerKnown

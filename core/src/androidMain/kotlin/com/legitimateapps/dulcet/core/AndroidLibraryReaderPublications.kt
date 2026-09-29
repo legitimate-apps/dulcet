@@ -88,6 +88,12 @@ public sealed interface AndroidLibraryCachedReason {
     /** The catalog changed and no live read has landed yet. */
     public data object Stale : AndroidLibraryCachedReason
 
+    /**
+     * Read live, but a "load more" or "load before" this screen owes is still to be made, and did not
+     * fail; the next revalidation makes it (§16.14). Never `live` while one is owed.
+     */
+    public data object Owed : AndroidLibraryCachedReason
+
     /** The reader itself failed while refreshing this screen: a defect on the device, not the server. */
     public data object InternalFailure : AndroidLibraryCachedReason
 }
@@ -416,6 +422,7 @@ internal fun LibraryFreshness.toAndroid(): AndroidLibraryFreshness = when (this)
             LibraryCachedReason.Offline -> AndroidLibraryCachedReason.Offline
             is LibraryCachedReason.Failed -> AndroidLibraryCachedReason.Failed(cause.error)
             LibraryCachedReason.Stale -> AndroidLibraryCachedReason.Stale
+            LibraryCachedReason.Owed -> AndroidLibraryCachedReason.Owed
             LibraryCachedReason.InternalFailure -> AndroidLibraryCachedReason.InternalFailure
         },
     )

@@ -222,6 +222,7 @@ internal fun DomainError.accountFailurePresentation(): AccountFailurePresentatio
     DomainError.Protocol.UnexpectedBinary,
     is DomainError.Protocol.Incompatible,
     DomainError.Protocol.NotASubsonicServer,
+    DomainError.Protocol.TooLarge,
     -> AccountFailurePresentation(
         R.string.error_protocol_title,
         R.string.error_protocol_message,

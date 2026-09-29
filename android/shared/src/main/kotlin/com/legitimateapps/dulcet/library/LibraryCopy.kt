@@ -183,6 +183,7 @@ private fun Resources.reasonPhrase(reason: AndroidLibraryCachedReason): String =
     AndroidLibraryCachedReason.Offline -> getString(R.string.library_reason_offline)
     AndroidLibraryCachedReason.Revalidating -> getString(R.string.library_reason_revalidating)
     AndroidLibraryCachedReason.Stale -> getString(R.string.library_reason_stale)
+    AndroidLibraryCachedReason.Owed -> getString(R.string.library_reason_owed)
     AndroidLibraryCachedReason.InternalFailure -> getString(R.string.library_reason_internal)
     is AndroidLibraryCachedReason.Failed -> errorPhrase(reason.error)
 }

@@ -10,6 +10,7 @@
     <string name="library_reason_offline">you\'re offline</string>
     <string name="library_reason_revalidating">checking your server</string>
     <string name="library_reason_stale">your library has changed since</string>
+    <string name="library_reason_owed">the rest of this list is still to load</string>
     <string name="library_reason_internal">something went wrong on this device</string>
 
     <string name="library_error_unreachable">couldn\'t reach your server</string>
@@ -95,4 +96,10 @@
         <item quantity="one">%1$d track</item>
         <item quantity="other">%1$d tracks</item>
     </plurals>
+
+    <!-- The notice for a track the queue moved past because it could not be played (spec §12.12
+         rule 5). Each is one whole sentence, the same copy the Apple apps use, so it can be
+         translated as written and read aloud in one piece. -->
+    <string name="playback_skipped">Couldn’t play a track. Skipped.</string>
+    <string name="playback_skipped_track">Couldn’t play “%1$s”. Skipped.</string>
 </resources>

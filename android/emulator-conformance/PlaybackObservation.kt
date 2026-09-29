@@ -124,6 +124,13 @@ class PlaybackObserver(private val context: Context) : AutoCloseable {
 
     fun stopPlayback() { instrumentation.runOnMainSync { service?.playback?.stop() } }
 
+    /** Runs [block] on the main thread against the service's production controller. */
+    fun onController(block: (com.legitimateapps.dulcet.core.AndroidPlaybackController) -> Unit) {
+        var ran = false
+        instrumentation.runOnMainSync { service?.playback?.let { block(it); ran = true } }
+        check(ran) { "The playback service has no controller" }
+    }
+
     override fun close() {
         unbind()
         stopPlayback()

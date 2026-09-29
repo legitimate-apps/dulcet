@@ -13,15 +13,26 @@ it are written down. This tool is those steps:
       + VACUUM
     = tools/migration-fixtures/v<N+1>/database.db, with v<N>'s files/ copied beside it
 
-    tools/generate_migration_fixture.py --to 7            # write v7 from v6
-    tools/generate_migration_fixture.py --to 7 --check    # regenerate into a temporary
+    tools/generate_migration_fixture.py --to 8            # write v8 from v7
+    tools/generate_migration_fixture.py --to 8 --check    # regenerate into a temporary
                                                            # directory; exit 1 unless the
-                                                           # committed v7 is byte-identical
+                                                           # committed v8 is byte-identical
+    tools/generate_migration_fixture.py --to 8 --check-semantic
+                                                           # the same, compared by content:
+                                                           # schema and rows, any SQLite
+    tools/generate_migration_fixture.py --all --check-semantic
+                                                           # every version with a seed (CI)
 
-The committed fixtures were written by Python's sqlite3 module linked against SQLite 3.51.0,
-which reserves no bytes per page. The tool refuses to write with any other SQLite version, and
-refuses a result that reserves bytes, because a different build lays pages out differently and a
-regeneration would then differ for reasons that have nothing to do with the schema.
+Fixtures v1-v3 were written with SQLite 3.50.6 and v4-v8 with SQLite 3.51.0, by Python's sqlite3
+module; none reserves bytes per page. Writing and --check refuse any SQLite version but 3.51.0,
+and refuse a result that reserves bytes, because a different build lays pages out differently and a
+regeneration would then differ for reasons that have nothing to do with the schema. --check is
+therefore a local check. --check-semantic runs anywhere, and is what CI runs: it compares the
+normalised schema (sqlite_master, whitespace collapsed), PRAGMA user_version and every table's rows,
+and the files/ tree, between the committed fixture and a regeneration.
+
+A seed only adds to what the fixture before it holds: it never lowers a sequence an earlier seed
+set (last_issued is raised with MAX), so seeds stack when a schema is renumbered.
 """
 
 from __future__ import annotations
@@ -39,6 +50,22 @@ FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
 PAGE_SIZE = 4096
+
+
+def lyrics_stored_bytes(server_id, raw_id, source, layers):
+    """Mirrors lyricsStoredBytes in SeenCacheStore.kt: what the document's rows hold (spec §18.4)."""
+    def utf8(text):
+        return 0 if text is None else len(text.encode("utf-8"))
+    integer = 8
+    keys = 2 * (utf8(server_id) + utf8(raw_id))
+    total = keys + utf8(source) + 5 * integer
+    for layer in layers:
+        ordinal = 2 * integer
+        total += keys + ordinal + 2 * integer
+        total += utf8(layer["language"]) + utf8(layer["kind"])
+        total += utf8(layer["display_artist"]) + utf8(layer["display_title"])
+        total += sum(keys + 2 * ordinal + integer + utf8(text) for _, text in layer["lines"])
+    return total
 
 
 def seed_v7(connection):
@@ -64,12 +91,73 @@ def seed_v7(connection):
             (server_id, raw_id, name, song_count, duration, owner, wall, issue_seq, wall,
              comment, is_public, readonly),
         )
-    # last_issued equals the highest seeded issue number, so the next one the seen-cache hands out
-    # is past every seeded row's.
-    connection.execute("UPDATE cache_meta SET last_issued = 13 WHERE singleton_id = 1")
+    # The next issue number the seen-cache hands out is past every seeded row's; raised with MAX, so
+    # a seed never lowers what an earlier one set (v6 holds 0, so v7 is unchanged by the MAX).
+    connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 13) WHERE singleton_id = 1")
 
 
-SEEDS = {7: seed_v7}
+def seed_v8(connection):
+    """Lyrics (7.sqm): one structured document with a synced layer and one legacy empty one."""
+    documents = [
+        {
+            "server_id": "server:fixture-alpha",
+            "raw_id": "track:download-opaque",
+            "source": "songLyrics",
+            "issue_seq": 43,
+            "dropped_layers": 2,
+            "layers": [
+                {
+                    "language": "eng",
+                    "synced": 1,
+                    "offset": 250,
+                    "kind": "main",
+                    "display_artist": "Fixture Artist",
+                    "display_title": "Fixture Title",
+                    "lines": [(500, "first line"), (2000, "")],
+                },
+            ],
+        },
+        {
+            "server_id": "server:fixture-beta",
+            "raw_id": "track:download-stale",
+            "source": "getLyrics",
+            "issue_seq": 44,
+            "dropped_layers": 0,
+            "layers": [],
+        },
+    ]
+    wall = 1_790_000_000_000
+    for document in documents:
+        stored = lyrics_stored_bytes(
+            document["server_id"], document["raw_id"], document["source"], document["layers"]
+        )
+        connection.execute(
+            "INSERT INTO cache_lyrics (server_id, raw_id, source, fetched_at_wall, issue_seq, "
+            "last_access_wall, dropped_layers, stored_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (document["server_id"], document["raw_id"], document["source"], wall,
+             document["issue_seq"], wall, document["dropped_layers"], stored),
+        )
+        for ordinal, layer in enumerate(document["layers"]):
+            connection.execute(
+                "INSERT INTO cache_lyrics_layer (server_id, raw_id, layer_ordinal, language, synced, "
+                "offset_milliseconds, kind, display_artist, display_title) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (document["server_id"], document["raw_id"], ordinal, layer["language"],
+                 layer["synced"], layer["offset"], layer["kind"], layer["display_artist"],
+                 layer["display_title"]),
+            )
+            for line_ordinal, (start, text) in enumerate(layer["lines"]):
+                connection.execute(
+                    "INSERT INTO cache_lyrics_line (server_id, raw_id, layer_ordinal, line_ordinal, "
+                    "start_milliseconds, text) VALUES (?, ?, ?, ?, ?, ?)",
+                    (document["server_id"], document["raw_id"], ordinal, line_ordinal, start, text),
+                )
+    # The issue sequence the seen-cache hands out next must be past every seeded row's, and must
+    # never be lowered below what an earlier seed set.
+    connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 44) WHERE singleton_id = 1")
+
+
+SEEDS = {7: seed_v7, 8: seed_v8}
 
 
 def fail(message):
@@ -85,7 +173,7 @@ def header(path):
     }
 
 
-def generate(target, output):
+def generate(target, output, require_layout=True):
     source = FIXTURES / f"v{target - 1}"
     migration = MIGRATIONS / f"{target - 1}.sqm"
     if not (source / "database.db").is_file():
@@ -120,8 +208,49 @@ def generate(target, output):
         connection.close()
     shutil.copytree(source / "files", output / "files", dirs_exist_ok=True)
     written = header(database)
-    if written["reserved"] != 0 or written["page_size"] != PAGE_SIZE:
+    if require_layout and (written["reserved"] != 0 or written["page_size"] != PAGE_SIZE):
         fail(f"{database} has page size {written['page_size']} and {written['reserved']} reserved bytes")
+
+
+def semantic(path):
+    """What a fixture holds, independent of how SQLite laid it out: schema, version, rows."""
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        schema = sorted(
+            (kind, name, table, " ".join((sql or "").split()))
+            for kind, name, table, sql in connection.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            )
+        )
+        tables = [name for kind, name, _, _ in schema if kind == "table"]
+        rows = {}
+        for table in tables:
+            fetched = connection.execute(f'SELECT * FROM "{table}"').fetchall()
+            rows[table] = sorted(fetched, key=repr)
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+    return {"schema": schema, "user_version": version, "rows": rows}
+
+
+def semantic_differences(generated, committed):
+    left, right = semantic(generated), semantic(committed)
+    differences = []
+    if left["user_version"] != right["user_version"]:
+        differences.append(f"user_version {right['user_version']} != {left['user_version']}")
+    if left["schema"] != right["schema"]:
+        differences.append("schema differs")
+    for table in sorted(set(left["rows"]) | set(right["rows"])):
+        if left["rows"].get(table) != right["rows"].get(table):
+            differences.append(f"rows of {table} differ")
+    return differences
+
+
+def same_files(left, right):
+    """The files/ trees, byte for byte (they are copied, never written by SQLite)."""
+    if not Path(left).exists() and not Path(right).exists():
+        return True
+    return Path(left).exists() and Path(right).exists() and same_tree(left, right)
 
 
 def same_tree(left, right):
@@ -136,24 +265,61 @@ def same_tree(left, right):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--to", type=int, required=True, help="the schema version to generate")
-    parser.add_argument("--check", action="store_true", help="compare with the committed fixture")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--to", type=int, help="the schema version to generate")
+    target.add_argument("--all", action="store_true", help="every version this tool has a seed for (checks only)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="compare with the committed fixture, byte for byte")
+    mode.add_argument(
+        "--check-semantic",
+        action="store_true",
+        help="compare with the committed fixture by schema and rows; any SQLite version",
+    )
     args = parser.parse_args()
+    if args.all:
+        if not (args.check or args.check_semantic):
+            fail("--all only checks; write one version at a time with --to")
+        for version in sorted(SEEDS):
+            check(version, args.check_semantic)
+        return
+    if args.check or args.check_semantic:
+        check(args.to, args.check_semantic)
+        return
     if sqlite3.sqlite_version != SQLITE_VERSION:
-        fail(f"the committed fixtures were written with SQLite {SQLITE_VERSION}; this is {sqlite3.sqlite_version}")
+        fail(f"fixtures from v4 were written with SQLite {SQLITE_VERSION}; this is {sqlite3.sqlite_version}")
     committed = FIXTURES / f"v{args.to}"
     with tempfile.TemporaryDirectory(prefix="dulcet-fixture-") as directory:
         generated = Path(directory) / f"v{args.to}"
         generate(args.to, generated)
-        if args.check:
-            if not committed.is_dir() or not same_tree(generated, committed):
-                fail(f"{committed} differs from what this tool generates; rerun without --check")
-            print(f"{committed}: byte-identical to its regeneration")
-            return
         if committed.exists():
             shutil.rmtree(committed)
         shutil.copytree(generated, committed)
     print(f"{committed}: written from v{args.to - 1} with SQLite {sqlite3.sqlite_version}")
+
+
+def check(version, semantic_only):
+    committed = FIXTURES / f"v{version}"
+    if semantic_only:
+        with tempfile.TemporaryDirectory(prefix="dulcet-fixture-") as directory:
+            generated = Path(directory) / f"v{version}"
+            generate(version, generated, require_layout=False)
+            if not (committed / "database.db").is_file():
+                fail(f"no committed fixture {committed}")
+            differences = semantic_differences(generated / "database.db", committed / "database.db")
+            if not same_files(generated / "files", committed / "files"):
+                differences.append("files/ differs")
+            if differences:
+                fail(f"{committed} differs from what this tool generates: {'; '.join(differences)}")
+        print(f"{committed}: same schema and rows as its regeneration (SQLite {sqlite3.sqlite_version})")
+        return
+    if sqlite3.sqlite_version != SQLITE_VERSION:
+        fail(f"fixtures from v4 were written with SQLite {SQLITE_VERSION}; this is {sqlite3.sqlite_version}")
+    with tempfile.TemporaryDirectory(prefix="dulcet-fixture-") as directory:
+        generated = Path(directory) / f"v{version}"
+        generate(version, generated)
+        if not committed.is_dir() or not same_tree(generated, committed):
+            fail(f"{committed} differs from what this tool generates; rerun without --check")
+    print(f"{committed}: byte-identical to its regeneration")
 
 
 if __name__ == "__main__":

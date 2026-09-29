@@ -19,7 +19,8 @@ package com.legitimateapps.dulcet.core
  * How current a publication is (§16.14).
  *
  * - [kind]: `live`, `cached`, `loading` or `unavailable`.
- * - [reason]: for `cached` — `revalidating`, `offline`, `failed`, `stale` or `internalFailure`;
+ * - [reason]: for `cached` — `revalidating`, `offline`, `failed`, `stale`, `owed` (read live, but a
+ *   "load more" or "load before" the screen owes is still to be made) or `internalFailure`;
  *   for `unavailable` — `notCachedOffline`, `gone`, `failed` or `internalFailure`; otherwise null.
  * - [errorKind]: set only when [reason] is `failed` (see [readerErrorKind] for the vocabulary).
  * - [asOfEpochMillis]: for `cached`, the wall clock of the live read the content came from, or
@@ -235,6 +236,7 @@ internal fun LibraryFreshness.toApple(): AppleLibraryReaderFreshness = when (thi
             LibraryCachedReason.Offline -> "offline"
             is LibraryCachedReason.Failed -> "failed"
             LibraryCachedReason.Stale -> "stale"
+            LibraryCachedReason.Owed -> "owed"
             LibraryCachedReason.InternalFailure -> "internalFailure"
         },
         errorKind = (reason as? LibraryCachedReason.Failed)?.error?.readerErrorKind(),

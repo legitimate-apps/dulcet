@@ -88,6 +88,7 @@ def encode(
     disc: str | None = None,
     date: str | None = "2026",
     silence: bool = False,
+    extra_metadata: dict[str, str] | None = None,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     source = (
@@ -109,7 +110,7 @@ def encode(
         "disc": disc,
         "date": date,
     }
-    for key, value in metadata.items():
+    for key, value in {**metadata, **(extra_metadata or {})}.items():
         if value is not None:
             arguments.extend(["-metadata", f"{key}={value}"])
 
@@ -230,6 +231,37 @@ def parse_id3v24_text(path: Path) -> dict[str, str]:
     return result
 
 
+# Lyrics fixtures (spec §18.4, CONF-42). Attached to EXISTING tracks so the scanner-visible media
+# count stays 314: sidecars are not media files, and embedded lyrics are tags. Each shape the
+# reference server reads is present once, and one track keeps none as the control.
+SYNCED_SIDECAR_LRC = (
+    "[ar:Dulcet Fixtures]\n"
+    "[ti:Thirty One Seconds]\n"
+    "[offset:+250]\n"
+    "[00:01.00]Dulcet synced line one\n"
+    "[00:05.50]Dulcet synced line two\n"
+    "[00:10.00]\n"
+    "[00:20.25]Dulcet synced line four\n"
+)
+UNSYNCED_SIDECAR_TXT = "Dulcet plain sidecar line one\nDulcet plain sidecar line two\n"
+EMBEDDED_PLAIN_LYRICS = "Dulcet embedded plain line one\nDulcet embedded plain line two"
+# Vorbis comments LYRICS:<lang>: the reference server reads each as its own language layer.
+EMBEDDED_MULTILINGUAL_LYRICS = {
+    "LYRICS:DEU": "[00:02.00]Dulcet deutsche Zeile eins\n[00:07.00]Dulcet deutsche Zeile zwei",
+    "LYRICS:ENG": "[00:02.00]Dulcet English line one\n[00:07.00]Dulcet English line two",
+    "LYRICS:POR": "Dulcet linha portuguesa",
+}
+
+
+def write_sidecar(media: Path, suffix: str, text: str) -> dict[str, object]:
+    sidecar = media.with_suffix(suffix)
+    sidecar.write_text(text, encoding="utf-8")
+    observed = sidecar.read_text(encoding="utf-8")
+    if observed != text:
+        raise SystemExit(f"lyrics sidecar round-trip mismatch: {sidecar.name}")
+    return {"media": media.name, "sidecar": sidecar.name, "lines": len(text.splitlines())}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
@@ -280,6 +312,7 @@ def main() -> None:
         album="Several Album Artists",
         album_artist=";".join(album_artists),
         track="1",
+        extra_metadata={"LYRICS": EMBEDDED_PLAIN_LYRICS},
     )
     no_album_probe = root / "Singles" / "No Album.ogg"
     encode(
@@ -308,6 +341,7 @@ def main() -> None:
     encode(
         tools, boundary_29, duration=29.0, frequency=0, title="Twenty Nine Seconds",
         album="Threshold Boundary", track="1", silence=True,
+        extra_metadata=EMBEDDED_MULTILINGUAL_LYRICS,
     )
     encode(
         tools, boundary_31, duration=31.0, frequency=0, title="Thirty One Seconds",
@@ -317,6 +351,11 @@ def main() -> None:
         tools, ui_playback_canary, duration=31.0, frequency=0, title="UI Playback Canary",
         album="Threshold Boundary", track="3", silence=True,
     )
+
+    lyrics_sidecars = [
+        write_sidecar(boundary_31, ".lrc", SYNCED_SIDECAR_LRC),
+        write_sidecar(ogg_probe, ".txt", UNSYNCED_SIDECAR_TXT),
+    ]
 
     template = root / ".templates" / "paging-template.mp3"
     encode(
@@ -399,6 +438,7 @@ def main() -> None:
             "title": "Shared Credit",
             "album": "Several Album Artists",
             "albumartist": ";".join(album_artists),
+            "lyrics": EMBEDDED_PLAIN_LYRICS,
         },
     )
     observed_album_artists = album_artist_tags["albumartist"].split(";")
@@ -424,7 +464,13 @@ def main() -> None:
     _, observed_29, _ = assert_media(
         tools,
         boundary_29,
-        expected_tags={"title": "Twenty Nine Seconds"},
+        expected_tags={
+            "title": "Twenty Nine Seconds",
+            **{
+                "".join(character for character in key.lower() if character.isalnum()): value
+                for key, value in EMBEDDED_MULTILINGUAL_LYRICS.items()
+            },
+        },
         duration=29.0,
     )
     _, observed_31, _ = assert_media(
@@ -521,6 +567,14 @@ def main() -> None:
                 "duration_seconds": round(observed_ui_playback_duration),
                 "silent": True,
             },
+        },
+        "lyrics": {
+            "sidecars": lyrics_sidecars,
+            "embedded": [
+                {"media": boundary_29.name, "languages": ["deu", "eng", "por"], "synced": ["deu", "eng"]},
+                {"media": album_artist_probe.name, "languages": [], "synced": []},
+            ],
+            "without_lyrics": health_probe.name,
         },
         "verification": "ffprobe-plus-id3v24-round-trip",
     }

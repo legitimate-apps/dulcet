@@ -56,11 +56,29 @@ internal class LibraryReader(
     internal val downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     private val outboxes: ReconnectOutboxes = ReconnectOutboxes.None,
     internal val playlistOverlay: LibraryPlaylistOverlay = LibraryPlaylistOverlay.None,
+    /**
+     * Observed endpoint health for this account (§10.4). The reader holds it because the reader
+     * owns [online], and the breaker is reset on the one offline-to-online transition: a
+     * reconnect's, once its epoch read succeeds — whether the platform's [setOnline] requested it
+     * or [reconnect] was called.
+     */
+    internal val breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
 ) {
     private val owner = currentThreadIdentity()
 
     /** Failures that reached the backstop handler instead of a publication; empty when healthy. */
     internal val uncaughtFailures = mutableListOf<Throwable>()
+
+    /**
+     * This session's lyrics reads (§18.4): the verdicts on answers refused as too large, the
+     * requests that timed out, and the reads in flight that an automatic read of the same track
+     * joins. Held by the reader for the reason [breaker] is: state per lyrics object would start
+     * empty every time a shell asked for one. A reconnect keeps the verdicts — the size belongs to
+     * the file, not the network — and forgets the timeouts, which are stamped with the breaker's
+     * reset generation. After a reconnect no read joins a request admitted before it: flights are
+     * stamped with the same generation.
+     */
+    internal val lyricsReads: LyricsReads = LyricsReads()
 
     /**
      * The reader's own scope: the caller's dispatcher (the reader's thread), a supervisor so one
@@ -94,8 +112,20 @@ internal class LibraryReader(
      * platform reports the server unreachable, or when a step after that reconnect's transition
      * throws. A new reader starts connected.
      */
-    var online: Boolean = true
-        private set
+    val online: Boolean get() = connected
+
+    private var connected = true
+
+    /**
+     * The only way [online] changes. Coming back online resets [breaker]: failures observed before
+     * the network went away say nothing about an endpoint after it came back (§10.4). The one
+     * offline-to-online transition is a reconnect's, whichever entry point requested it; a
+     * reconnect that fails leaves the reader offline and the breaker as it was.
+     */
+    private fun changeOnline(value: Boolean) {
+        if (value && !connected) breaker.reset()
+        connected = value
+    }
 
     /**
      * The platform's latest reachability report, and only that: nothing else writes it — a
@@ -324,7 +354,7 @@ internal class LibraryReader(
             when (val reading = readEpochReporting(reconnectEpochReader)) {
                 is ReaderConnectionOutcome.Read -> {
                     if (!online) {
-                        online = true
+                        changeOnline(true)
                         transitioned = true
                         completingReconnect = true
                         // Every screen says at once that it is coming back, rather than "offline"
@@ -334,6 +364,7 @@ internal class LibraryReader(
                     }
                     visibleHandles().forEach { it.revalidate(RevalidateCause.Reconnect) }
                     revalidateSurfaces()
+                    makeOwedListRereads()
                     if (baseline.epochKey == null || baseline.epochKey != reading.epoch.key) recheckDownloadedAlbums()
                     completedSequence = CompletedSequence(reading.epoch.key)
                     reconnectRetryDelayMillis = config.reconnectRetryInitialMillis
@@ -523,7 +554,7 @@ internal class LibraryReader(
     private fun goOffline() {
         completingReconnect = false
         if (!online) return
-        online = false
+        changeOnline(false)
         lookAhead.cancelAll()
         visibleHandles().forEach { it.republish() }
         revalidateSurfaces()
@@ -586,6 +617,16 @@ internal class LibraryReader(
      * through a detached window that is never published.
      */
     internal suspend fun rereadList(query: LibraryQuery) {
+        // Offline, no window reads (§16.14) — and an outbox flush does run offline: a reconnect's own,
+        // before its epoch read, and one while the platform reports the server reachable and a
+        // reconnect has yet to succeed. The re-read is owed to the reconnect that brings the reader
+        // back; dropped, the playlist the flush just wrote stays unknown here, and an edit of it — the
+        // delete the person confirms of a playlist a lost create may have made — is refused as not
+        // cached.
+        if (!online) {
+            owedListRereads += query
+            return
+        }
         val open = visibleHandles().filter { it.query == query }
         if (open.isNotEmpty()) {
             open.first().revalidate(RevalidateCause.Refresh)
@@ -593,6 +634,27 @@ internal class LibraryReader(
             return
         }
         ListWindow(this, query, ListRequestSpec.of(query)) { }.revalidate(RevalidateCause.Refresh)
+        // Gone offline while it read: whether it was read is unknown, and the detached window that
+        // would owe it is discarded here. Owed, it costs at most one read more.
+        if (!online) owedListRereads += query
+    }
+
+    /**
+     * The one-response lists [rereadList] could not re-read because the reader was offline, each
+     * owed once to the next successful reconnect.
+     */
+    private val owedListRereads = mutableSetOf<LibraryQuery>()
+
+    /**
+     * A successful reconnect's revalidation step makes every owed re-read — after the flush and the
+     * epoch read, as every read of a reconnect is (§16.14). A list with a screen open was revalidated
+     * by that step already, and a one-response list always reads when revalidated, so it is not read
+     * twice. One refused again, the reader gone offline meanwhile, is owed again.
+     */
+    private suspend fun makeOwedListRereads() {
+        val owed = owedListRereads.toList()
+        owedListRereads.clear()
+        owed.filter { query -> visibleHandles().none { it.query == query } }.forEach { rereadList(it) }
     }
 
     // ---- Opening ------------------------------------------------------------------------------------
@@ -647,6 +709,9 @@ internal class LibraryReader(
      * sequence, and the epoch reading it is checked against (its *before*), are both taken once the
      * request holds a slot and is about to be SENT — never while it waits — so a request that waited
      * is ordered by when it went out, and its *before* is provably earlier than the request.
+     * [maxBodyBytes], when given, limits the response body (see [LibraryEndpointTransport.request]).
+     * [issued] learns the sequence as the request goes out, so a caller can order an answer the
+     * transport refused, which returns no [SentResponse].
      *
      * **Offline, nothing is sent (§16.14).** Checked at the same moment, so it holds for a request
      * started before the reader went offline, too: while [online] is false the request is refused
@@ -657,16 +722,25 @@ internal class LibraryReader(
     internal suspend fun send(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
+        maxBodyBytes: Int? = null,
         whileOffline: Boolean = false,
+        issued: (Long) -> Unit = {},
     ): SentResponse =
-        permits.withPermit { issue(whileOffline) { transport.request(endpoint, parameters) } }
+        permits.withPermit {
+            issue(whileOffline, issued) {
+                if (maxBodyBytes == null) {
+                    transport.request(endpoint, parameters)
+                } else {
+                    transport.request(endpoint, parameters, maxBodyBytes)
+                }
+            }
+        }
 
     /** A sent request whose envelope must be `ok`; a failure envelope throws its [DomainError]. */
     internal suspend fun sendChecked(
         endpoint: String,
         parameters: Map<String, String> = emptyMap(),
-        whileOffline: Boolean = false,
-    ): SentResponse = send(endpoint, parameters, whileOffline).requireOk(endpoint, parameters)
+    ): SentResponse = send(endpoint, parameters).requireOk(endpoint, parameters)
 
     /** [sendChecked] for parameters that repeat a name, in order (playlist edits, §18.6). */
     internal suspend fun sendRepeatedChecked(
@@ -706,10 +780,15 @@ internal class LibraryReader(
      * decide them, and the `ping` after a refusal — is an outbox request, as [whileOffline] marks
      * one sent any other way.
      */
-    private suspend fun issue(whileOffline: Boolean, request: suspend () -> LibraryEndpointResponse): SentResponse {
+    private suspend fun issue(
+        whileOffline: Boolean,
+        issued: (Long) -> Unit = {},
+        request: suspend () -> LibraryEndpointResponse,
+    ): SentResponse {
         val outbox = whileOffline || currentCoroutineContext()[OutboxRequestsKey] != null
         if (!online && (!outbox || !canSend)) throw ReaderSendRefused()
         val seq = cache.issue()
+        issued(seq)
         val before = sessionEpoch?.let { ScanStatusReading(it.lastScan, it.scanning) }
         val response = try {
             request()
@@ -1171,6 +1250,13 @@ internal sealed interface LibraryCachedReason {
     data class Failed(val error: DomainError) : LibraryCachedReason
     data object Stale : LibraryCachedReason
 
+    /**
+     * Read live, but a read this screen owes beyond its own pages — a "load more" or "load before"
+     * not yet made, with no failure recorded for it — is still to be made; the next revalidation
+     * makes it (§16.14). Never `live` while one is owed.
+     */
+    data object Owed : LibraryCachedReason
+
     /** The reader itself failed while building or refreshing this screen (a defect, not the server). */
     data object InternalFailure : LibraryCachedReason
 }
@@ -1283,12 +1369,17 @@ internal sealed interface LibraryItem {
 internal interface LibraryWindowHandle {
     val query: LibraryQuery
 
-    /** Reads the next page of a paged list, at most one page beyond the viewport. */
+    /**
+     * Reads the next page of a paged list, at most one page beyond the viewport. One not made —
+     * offline, failed, or discarded by a rebase — is owed: the screen says `failed` or `owed`,
+     * never `live`, and the next revalidation ([refresh], or a reconnect) makes it (§16.14).
+     */
     fun loadMore()
 
     /**
      * Reads the page before a window that does not start at the top (after a rebase), at most one
-     * page before the viewport — the other half of "open on both sides" (§16.12).
+     * page before the viewport — the other half of "open on both sides" (§16.12). Owed when not
+     * made, as [loadMore] is.
      */
     fun loadBefore()
 
@@ -1299,8 +1390,9 @@ internal interface LibraryWindowHandle {
     fun setViewport(firstIndex: Int, lastIndex: Int)
 
     /**
-     * An explicit refresh: re-reads the visible pages whatever their age. It does nothing while the
-     * reader is offline; a "Try again" for an offline screen must call reconnect instead (§16.14).
+     * An explicit refresh: re-reads the visible pages whatever their age, then makes any
+     * [loadMore] or [loadBefore] still owed. It does nothing while the reader is offline; a
+     * "Try again" for an offline screen must call reconnect instead (§16.14).
      */
     fun refresh()
 

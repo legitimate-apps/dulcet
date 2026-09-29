@@ -430,6 +430,10 @@ internal fun DomainError.applePlaybackErrorKind(): String = when (this) {
     is DomainError.Protocol.UnexpectedContentType ->
         "$UNEXPECTED_CONTENT_TYPE_KIND:${actual.name}:${expected.name}"
     DomainError.Protocol.UnexpectedBinary -> UNEXPECTED_BINARY_KIND
+    // Item-scoped, as §12.12 classifies it (the item's own answer is too large), so it travels as
+    // the shell's existing item-scoped spelling rather than "protocol", which comes back as a
+    // malformed envelope and would stop the queue. Playback never raises it today.
+    DomainError.Protocol.TooLarge -> "unsupportedPlan"
     is DomainError.Protocol -> "protocol"
     DomainError.Playback.NoPlayableSource -> "unsupportedPlan"
     is DomainError.Input.InvalidServerUrl -> "protocol"

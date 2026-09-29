@@ -724,7 +724,8 @@ internal class LibraryFavourites(
                     val failure = try {
                         // One of the two kinds of request an offline reader sends — and only while
                         // canSend holds when it reaches the front of the queue, not only when queued.
-                        reader.sendChecked(change.endpoint(), change.parameters(), whileOffline = true)
+                        // It is an outbox request because [flush] runs in [OutboxRequests].
+                        reader.sendChecked(change.endpoint(), change.parameters())
                         null
                     } catch (notSent: ReaderSendRefused) {
                         // Refused unsent after an unreachable report: kept, and not counted as sent.
@@ -864,6 +865,12 @@ internal class LibraryReaderSession(
     formPost: Boolean,
     /** Required: whether the app is in the foreground at construction (§16.14). */
     foreground: Boolean,
+    /**
+     * Observed endpoint health for this session (§10.4), handed to the reader, which owns the
+     * offline-to-online transition that resets it. Not held by a feature object, so a shell that
+     * asks for [lyrics] again does not get a fresh, closed breaker.
+     */
+    breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
@@ -897,6 +904,7 @@ internal class LibraryReaderSession(
             override fun overlayDetail(rawId: String, header: LibraryItem.Playlist?, entries: List<LibraryItem>?) =
                 playlistsRef.overlayDetail(rawId, header, entries)
         },
+        breaker = breaker,
     )
 
     val favourites = LibraryFavourites(reader, outbox).also { favouritesRef = it }
@@ -928,6 +936,14 @@ internal class LibraryReaderSession(
         }
     }
 
+    /**
+     * Lyrics for this account (§18.4). [capabilities] are the account's negotiated set, which the
+     * endpoint gate reads; [preferredLanguages] are the person's, most preferred first.
+     */
+    fun lyrics(capabilities: CapabilitySet, preferredLanguages: List<String>): LibraryLyrics {
+        reader.checkConfined()
+        return LibraryLyrics(reader, capabilities, preferredLanguages)
+    }
     /** For tests: the searches this session still tells about reachability. */
     internal val openSearchCount: Int get() = searches.size
 
@@ -965,7 +981,8 @@ internal class LibraryReaderSession(
      * Reachability, as the platform reports it — [LibraryReader.setOnline]. Unreachable takes the
      * reader offline at once and every open search says `deviceOffline`; reachable while offline
      * requests a [LibraryReader.reconnect], the only way back online, which flushes, reads the epoch
-     * and only then revalidates the windows and the searches.
+     * and only then revalidates the windows and the searches. Coming back online also resets the
+     * §10.4 breaker, in the reader.
      */
     fun setOnline(reachable: Boolean) {
         reader.checkConfined()
