@@ -204,7 +204,13 @@ private fun HomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurfa
 internal fun RowPlaceholder(modifier: Modifier) {
     Row(modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         repeat(3) {
-            Box(Modifier.size(140.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(140.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest))
+                Box(Modifier.width(96.dp).height(12.dp).clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest))
+                Box(Modifier.width(64.dp).height(10.dp).clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh))
+            }
         }
     }
 }

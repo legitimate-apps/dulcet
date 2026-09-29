@@ -112,5 +112,5 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     return image
 }
 
-private const val LOAD_ATTEMPTS = 3
-private const val LOAD_RETRY_DELAY_MILLIS = 700L
+private const val LOAD_ATTEMPTS = 5
+private const val LOAD_RETRY_DELAY_MILLIS = 800L
