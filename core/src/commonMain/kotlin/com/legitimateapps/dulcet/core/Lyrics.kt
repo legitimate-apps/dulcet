@@ -20,7 +20,7 @@ import kotlin.time.Duration.Companion.milliseconds
  * -1 ms is a real time (a line at 0 with an offset of +1 is due at -1 ms).
  *
  * Nothing public here throws, for any value a caller or the store can hold: a Swift caller cannot
- * catch a Kotlin exception (CLAUDE.md trap 17). Times beyond [LYRICS_TIME_BOUND] are not trusted
+ * catch a Kotlin exception (docs/TRAPS.md trap 17). Times beyond [LYRICS_TIME_BOUND] are not trusted
  * (§18.4) — the parser keeps such a layer's text and drops its timing, and the cursor treats a
  * stored one as untimed — so no arithmetic here ever meets an infinite or overflowing duration.
  */

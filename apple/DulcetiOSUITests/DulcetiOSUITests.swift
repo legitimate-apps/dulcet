@@ -528,7 +528,7 @@ final class DulcetiOSUITests: XCTestCase {
             + " diagonal=\(diagonal) short=\(short) previous=\(previous) markers=\(proofMarkers(in: app))")
     }
 
-    /// The experiment this proof needs, asserted rather than assumed (CLAUDE.md traps 31 and 32):
+    /// The experiment this proof needs, asserted rather than assumed (docs/TRAPS.md traps 31 and 32):
     /// a simulator, of the device class the claim is about. It prints what it measured, so each
     /// run's transcript names its own destination.
     @MainActor

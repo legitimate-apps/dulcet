@@ -1,596 +1,159 @@
 # Dulcet — how to work in this repo
 
-This file contains the repository-specific working agreement for Dulcet.
-
-**Phase 0 scaffold exists.** It establishes the Kotlin Multiplatform targets, native Apple shell
-targets, CI baseline, licence audit, and parity gate. No OpenSubsonic production behavior is
-implemented yet.
+The short working agreement a new session must know. Detail lives on demand:
+**`docs/TRAPS.md`** (numbered traps by subsystem), **`docs/MERGING.md`** (branch protection, merge
+methods, commit-email history, local build notes).
 
 ## Read order
 
-1. **`CORPUS.md`** — what Dulcet is, the settled decisions, the lines we never cross. Read it every
-   session, including after a compaction.
-2. **This file** — how to work here.
-3. **`docs/superpowers/specs/2026-08-18-dulcet-design.md`** — the full design. Read the section you are
-   about to touch, not the whole thing. **§28 is the revision record**: it lists the eight foundation
-   contracts revision 1 got wrong. Read it before re-proposing anything that sounds simpler.
-4. **`FEATURES.yml`** — what actually works where, and the unit of work (once it exists).
+1. **`CORPUS.md`** — what Dulcet is, the settled decisions, the lines we never cross. Every session.
+2. **This file.**
+3. **`docs/superpowers/specs/2026-08-18-dulcet-design.md`** — read the section you are touching, not
+   the whole thing. §28 records contract changes; read it before re-proposing anything simpler.
+4. **`FEATURES.yml`** — what works where.
+5. **`docs/TRAPS.md`** — the entries for the subsystem you are about to touch.
 
-Do not re-derive the architecture. If you believe the spec is wrong, say so and change the spec in the
-same session — never work around it silently.
+Do not re-derive the architecture. If the spec is wrong, change it in the same session.
 
-## 🚨 Everything in this repo is PUBLIC — read this before writing a line of it
+## 🚨 Everything in this repo is PUBLIC
 
-`CORPUS.md`, this file, and everything under `docs/` ship in a public repository. So:
+`CORPUS.md`, this file, and everything under `docs/` ship in a public repository.
 
-- **This repo describes THIS project only.** Private context — your global agent instructions,
-  internal doctrine, machine setup, tooling, other projects, other identities — is to be **followed**,
-  never **described**, quoted, paraphrased, or alluded to here.
-- **Never write a forbidden value down in order to forbid it.** A prohibition that names its target
-  publishes its target. State the rule positively instead: say what this project *does* use, and add
-  "never anything else."
-- **The tell, before you write any justification:** *am I explaining WHY using knowledge a reader of
-  this repository does not have?* If yes, keep the rule and rewrite the justification so it stands on
-  public evidence.
-- This has already gone wrong twice in these files. Both times it arrived disguised as a helpful
-  warning, which is the most persuasive possible carrier for a leak. See spec §28, revision 5.
+- **This repo describes THIS project only.** Private context — agent instructions, machine setup,
+  tooling, other projects, other identities — is **followed**, never described, quoted or alluded to.
+- **Never write a forbidden value down in order to forbid it.** State the rule positively: say what
+  the project *does* use, and add "never anything else."
+- **The tell:** am I explaining WHY using knowledge a reader of this repository does not have? If so,
+  keep the rule and rewrite the justification on public evidence.
 
-## Keep the docs living
+## Identity — binding
 
-When you discover anything that extends or contradicts `CORPUS.md` or the design spec — a server
-behavior, a toolchain trap, a changed API — update the doc in the same session and write or update the
-matching file in the project memory dir. Memory holds the deep detail; `CORPUS.md` holds the map. A
-spec claim that turns out to be wrong is corrected in place and recorded in §28, not appended to.
-
-Every technical claim in the spec is marked **OBSERVED** (verified against a named primary source) or
-**ASSUMED**. Preserve those markers. Do not promote ASSUMED to OBSERVED without naming what you
-measured — several CONF tests exist precisely to do that promotion.
-
-## Identity — binding, no exceptions
-
-- Repo: `legitimate-apps/dulcet`. Push via the **`github-legit`** SSH alias.
-- **Commit as `legitimate-apps`, per-command, never global git config:**
+- Repo `legitimate-apps/dulcet`, pushed via the `github-legit` SSH alias. Open pull requests as
+  `legitimate-apps`.
+- Commit per-command, never through global config:
   ```
   git -c user.name='legitimate-apps' \
       -c user.email='309192374+legitimate-apps@users.noreply.github.com' commit -m "..."
   ```
-- Apple signing: **Legitimate LLC, team 3LTL47SJ8C**. Bundle IDs under
-  **`com.legitimateapps.dulcet`** — decided, and **deliberately independent of the marketing domain**,
-  because a bundle identifier is immutable once an App Store Connect record exists and must not be
-  hostage to a domain that could lapse. It matches the namespace already used by the LLC's published
-  applications on a domain the LLC already owns. The Android phone `applicationId` is the same value;
-  Android TV's is `com.legitimateapps.dulcet.tv`.
-- 🚨 **Never publish this app under any other namespace, and never reuse a namespace from an unrelated
-  project that happens to be present in a local build environment.** A bundle id is the most permanent
-  place such a mistake can land.
-- The marketing domain is **`getdulcet.com` — chosen but not yet purchased** (spec OQ-7). It reaches
-  only support/privacy URLs and marketing, and **gates nothing** — not the signing dry run, not an App
-  Store Connect record. `${DOMAIN}` and `${BUNDLE_PREFIX}` are defined in exactly one place, the spec's
-  header block; never hard-code either value anywhere else.
-- Public-safe: `legitimate-apps`, `Legitimate LLC`, the team id, the `com.legitimateapps.*` namespace, and
-  the product domain once purchased.
-- **Never anywhere public** — including code comments, plists, commit metadata, listing copy, DNS and
-  cert metadata: the maintainer's legal name, home address, system username, and any prior online
-  handle. **The literal values are deliberately not written here** — this file ships in the repo, so
-  naming them would publish exactly what the rule forbids. Check against your own agent instructions,
-  never against a copy committed here.
-  Practical consequence: scrub absolute home-directory paths out of anything committed (build logs,
-  `.xcodeproj` derived paths, README snippets) — the system username rides in every one of them.
-- Never sign in to a Dulcet-related service with Google or GitHub SSO from a browser logged in as a
-  different identity; it links the accounts silently.
+- Apple signing: **Legitimate LLC, team 3LTL47SJ8C**. Bundle IDs under **`com.legitimateapps.dulcet`**
+  (Android phone `applicationId` identical; Android TV's is `com.legitimateapps.dulcet.tv`). Never
+  publish under any other namespace, and never reuse one from an unrelated project found in a local
+  build environment. Bundle ids freeze on the first build upload.
+- Marketing domain `getdulcet.com` is chosen, not purchased, and gates nothing. `${DOMAIN}` and
+  `${BUNDLE_PREFIX}` are defined once, in the spec header; never hard-code them elsewhere.
+- **Never anywhere public** (code, comments, plists, commit metadata, listing copy, DNS/cert data):
+  the maintainer's legal name, home address, system username or any prior handle. The values are
+  deliberately not written here. Scrub absolute home-directory paths from anything committed —
+  Apple tool JSON and build logs carry them.
+- Never sign in to a Dulcet service with Google/GitHub SSO from a browser logged in as someone else.
 
-## Commands
+## Product lines that do not move
 
-```sh
-./gradlew :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest :core:bundleAndroidMainAar :core:licensee
-# commonTest compiles for Kotlin/Native too, and neither command above covers that: the first
-# compiles MAIN sources for native, the second compiles commonTest only for the JVM. A JVM-only
-# stdlib call in commonTest falls straight through the gap -- `toSortedMap` did, and cost a full
-# apple-ci cycle to discover. This is seconds locally.
-./gradlew :core:compileTestKotlinIosSimulatorArm64
-# ...and COMPILING for native is not RUNNING on native -- the other half of the same gap, and the
-# one that bites harder. commonTest runs against a different SQLite driver there, where an
-# in-memory database is shared process-wide *by name*, so isolation that holds on the JVM can be
-# absent on native. One missing `driver.close()` failed 26 tests across six unrelated classes in
-# `apple-ci` while every command above stayed green. Seconds locally; a full cycle otherwise.
-./gradlew :core:macosArm64Test
-python3 tools/parity_gate.py
-python3 tools/verify_ci_policy.py
-python3 tools/verify_os_floors.py --configuration-only
-python3 tools/verify_release_policy.py
-python3 tools/test-release-channel
-# macOS only: regenerates apple/ with the pinned XcodeGen and fails on any byte of difference.
-# apple-ci runs it first; `--xcodegen "$(command -v xcodegen)"` skips the download.
-tools/verify_xcodegen_regeneration --self-test
-```
-
-🚨 **`BUILD SUCCESSFUL` is not evidence that tests ran.** An up-to-date Gradle test task prints it in
-seconds having executed nothing, so "I ran it and it passed" and "I ran nothing" look identical. Read
-the **count** out of `core/build/test-results/<task>/*.xml`, and pass `--rerun-tasks` when the point
-of the run is that the tests actually execute. A `--tests` filter that matches nothing is the same
-trap wearing a different hat.
-
-**Xcode builds are not hermetic.** They invoke Gradle through a Run Script phase, so the pinned JDK
-and Gradle wrapper must be present on any build machine. Apple compilation and binary floor evidence
-run in `apple-ci` on the pinned hosted image.
+- **OpenSubsonic `/rest` only**, never anything else.
+- **Validate binary `/rest` responses** (`stream`, `getCoverArt`): detect an XML/JSON Subsonic error
+  envelope first (skip whitespace and BOM), then require a positive endpoint-specific signature —
+  "not an envelope" is never sufficient. Validate inline in the engine's own request, not by preflight.
+  Offsets and tables: `docs/TRAPS.md` 4–5.
+- **Credentials ride in the query string.** Redact the whole query before anything reaches a log,
+  error or diagnostic; wrap engine errors that can carry the URL; strip credentials on cross-origin
+  redirects; never follow HTTPS→HTTP. Test with canary values.
+- **IDs are opaque strings.** **Two clocks**: monotonic for durations, wall clock for timestamps;
+  never persist a monotonic value.
+- **Automated runs** (CI, conformance, any test suite) target the **local disposable Navidrome**,
+  always. **Automated writes to a personal or production instance are forbidden in every case.** A
+  person using a DEV build against their own library is expected.
+- **No physical-device automation** unless the maintainer says so for that session.
 
 ## Release channels — DEV and PROD (spec §22)
 
 | | DEV | PROD |
 |---|---|---|
-| trigger | dispatched by hand on a significant merge to `main` (`release.yml`); the dispatcher tells the maintainer, the workflow sends nothing | a hand-cut `vX.Y.Z` tag, then a dispatch of that commit; never automatic |
-| bundle id (every platform — universal purchase, one ASC record per channel) | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
+| trigger | `release.yml` dispatched by hand on a user-visible merge to `main` | hand-cut `vX.Y.Z` tag, then a dispatch; never automatic |
+| bundle id (all platforms, universal purchase) | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
 | display name | **Dulcet DEV** (distinct icon) | **Dulcet** |
-| TestFlight | **internal** testers, no Beta App Review, minutes | **external** group, Beta App Review, slower **by design** |
-| expectation | expected to break — that is the point | someone else relies on it |
+| TestFlight | internal testers | external group, Beta App Review |
 
-- 🚨 **The `.dev` App Store Connect record must NEVER be submitted for App Store release** — not "not
-  yet", never, for the life of the project. It is a TestFlight-only artifact carrying development
-  logging and possibly a preconfigured server.
-- 🚨 **PROD ships NO preconfigured server URL.** A hardcoded internal address in a published binary
-  leaks a private address to everyone who downloads the app and is broken for every user who is not the
-  person who hardcoded it. The DEV target may ship one for convenience; the build configuration must
-  make it **structurally impossible** for PROD to compile that value in — not a thing someone remembers.
-- **Cutting PROD is gated**: CI green, conformance suite passing, `FEATURES.yml` showing no undeclared
-  regression. A tag failing any of those is deleted and re-cut, never shipped with a note.
-- **`release.yml` is `workflow_dispatch`-only, from `main`, in the approval-gated `release`
-  environment, with `dry_run` defaulting to `true`** (spec §22.6). An upload needs the App Store
-  Connect record for that bundle identifier, which is created in the web UI only. The environment
-  has administrator bypass off; `prevent_self_review` is off because there is one maintainer, so its
-  approval is a deliberate second click, **not** an independent review.
-- **Only these settings differ per channel**: bundle id, display name, icon, logging verbosity,
-  diagnostics visibility, preconfigured server. Everything correctness-relevant is identical — a DEV
-  build that behaves differently because of a build flag is not dogfooding, it is a different program.
-- **Dogfooding vs testing — the line is automation, not the server.** Automated runs (CI, conformance,
-  any test suite, a new sync generation's first pass) target the **local disposable** Navidrome, always.
-  A person manually using a DEV build against their own real library is **expected** and is why DEV
-  exists. **Automated writes to a personal or production instance are forbidden in every case.**
+- 🚨 The `.dev` App Store Connect record is **never** submitted for App Store release.
+- 🚨 **PROD ships no preconfigured server URL**, and the build configuration makes that structurally
+  impossible, not remembered. DEV may ship one.
+- Only bundle id, display name, icon, logging verbosity, diagnostics visibility and preconfigured
+  server differ per channel. Everything correctness-relevant is identical.
+- `release.yml`: `workflow_dispatch` only, from `main`, approval-gated `release` environment,
+  `dry_run` defaults to `true`. Cutting PROD needs green CI, the full conformance and live-server
+  runs, and no undeclared `FEATURES.yml` regression.
+- Mac App Store requires App Sandbox; no self-updater on macOS, ever.
 
-## CI split — binding
+## CI
 
-**This repo is PUBLIC, and that changes the CI economics. Do not apply the global "never hosted
-`macos-*`, 10x multiplier" policy here — it is scoped to private repositories.**
+- The repo is public, so standard hosted runners are free. Apple jobs use `macos-latest` (or a pinned
+  `macos-<version>`) and **never a larger/premium label** — those bill even on public repos.
+  Kotlin core, Android, lint, conformance and the parity gate run on `ubuntu-latest`.
+- No self-hosted runner, except the one §21.3.1 device runner (`workflow_dispatch` on `main` only).
+- Every workflow: `concurrency: cancel-in-progress` and per-job `timeout-minutes`.
+- `main` requires `core-ci`, `parity-gate`, `apple-ci`, with `strict` up-to-date and **no required
+  review**. Merging one PR invalidates the others; land in dependency order. Detail: `docs/MERGING.md`.
+- `apple-ci` on a PR runs only `apple-platform`, and only when the PR changes an Apple input
+  (`tools/ci/plan-apple-legs`); `apple-conformance` runs on push to `main` and on dispatch. A release
+  build requires both legs and every required check green on its commit (spec §21.6).
+- When several unrelated PRs go red together, check Homebrew pin drift first (`docs/TRAPS.md` 36).
 
-- **Apple builds (macOS/iOS/iPadOS/tvOS: build, simulator tests, archive) run on GitHub-hosted
-  `macos-latest`.** **OBSERVED 2026-08-18:** GitHub states "Standard GitHub-hosted or self-hosted
-  runner usage on public repositories will remain free"
-  (https://github.com/resources/insights/2026-pricing-changes-for-github-actions), with the only
-  carve-out being "The larger runners are not free for public repositories"
-  (https://docs.github.com/en/billing/reference/actions-minute-multipliers). **Ordinary Apple CI uses
-  no self-hosted runner** — see spec §21.3, where OQ-1 is closed for the whole build/test matrix.
-  **§21.3.1 admits exactly one exception**: a repository-scoped, `--ephemeral`, distinctly-labelled
-  macOS runner with a physical device attached, which accepts **`workflow_dispatch` on `main` only**
-  — never `pull_request`, never `push`. That trigger is the safety argument, because
-  `workflow_dispatch` requires write access and a fork pull request therefore cannot reach the
-  runner. It exists because a hosted runner has no device attached and so cannot observe behaviour
-  the matrix claims on real hardware. Widening its triggers voids the exception.
-- **Never request a larger or premium macOS runner label.** Those are billed even on public repos and
-  included minutes cannot be applied to them. `runs-on` for Apple jobs is `macos-latest` (or a pinned
-  `macos-<version>` when the toolchain matrix demands it) and nothing else. This is the one place in
-  CI where real money can appear, and it fails as a bill, not as a red build.
-- **Keep the Apple matrix narrow.** Hosted macOS concurrency is capped well below Linux, so a wide
-  matrix queues rather than fans out and makes CI slower. One job per destination that genuinely needs
-  its own; no cross-product over configurations or OS versions. Widening it is a spec change (§21.1).
-- **Kotlin core, Android, lint, the conformance suite and the parity gate run on `ubuntu-latest`.**
-  GitHub Actions **service containers require a Linux runner**, so the `services:`-based Navidrome
-  cannot run in the Apple job — which is why the Apple leg runs Navidrome as a **native pinned binary**
-  instead (spec §20.3).
-- Every workflow: `concurrency: cancel-in-progress` + per-job `timeout-minutes`. On a capped hosted
-  pool these are **queue hygiene** — a superseded or hung job holds a macOS slot away from the run that
-  replaced it.
-- Release signing material lives in Actions secrets scoped to a manual-approval environment, and
-  `release.yml` is `workflow_dispatch`-only. Fork PRs cannot read secrets at all.
-
-## Building locally
-
-CI is entirely hosted, so nothing here depends on a particular workstation. A standard Xcode and
-JDK/Gradle setup builds every target.
-
-**Type-check the XCUITest sources before pushing — it takes seconds, and it is not a gate.**
+## Commands
 
 ```sh
-tools/typecheck-xcuitest-sources --self-test
+./gradlew :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest :core:bundleAndroidMainAar :core:licensee
+./gradlew :core:compileTestKotlinIosSimulatorArm64   # commonTest compiled for native (the JVM run does not)
+./gradlew :core:macosArm64Test                       # native RUN: different SQLite driver, shared in-memory DBs
+python3 tools/parity_gate.py
+python3 tools/verify_ci_policy.py
+python3 tools/verify_os_floors.py --configuration-only
+python3 tools/verify_release_policy.py
+tools/verify_xcodegen_regeneration --self-test       # macOS: generated Xcode files == pinned XcodeGen output
+tools/typecheck-xcuitest-sources --self-test         # seconds; not a gate
 ```
 
-`DulcetiOSUITests` and `DulcetTVUITests` import only system frameworks, so they type-check with no
-Gradle build and no Xcode project. A one-character Swift mistake there otherwise costs a full
-`apple-ci` job to learn about, on a host that may be too loaded to run Xcode at all. It is
-**deliberately not an apple-ci step**: the real build already catches this class there, and the tool
-resolves XCTest's global assertion functions through a shim, so a shim that has fallen behind would
-block merges on a change the compiler accepts. That staleness is reported as `SHIM GAP` — a fault in
-the tool, never as an error in the sources — and `--self-test` proves both that gate and the
-type-check itself can fire. The shim does not retire itself: if a toolchain starts resolving those
-functions standalone, a same-signature declaration in the checked files **shadows** the imported
-one with no ambiguity error (measured), so nothing fails and the stand-ins silently keep answering
-for XCTest. Delete the shim when that happens; nothing here will say so. It scans only the `*UITests` directories under `apple/`; every other
-test directory is outside its scope (the app-hosted ones need a Gradle-built `DulcetCore` framework),
-and a `*UITests` directory that imports one of our modules is listed as NOT COVERED rather than
-silently skipped.
+- 🚨 **`BUILD SUCCESSFUL` is not evidence tests ran.** Read the count from
+  `core/build/test-results/<task>/*.xml`; pass `--rerun-tasks` when execution is the point.
+- **Compile every integration.** A clean textual merge has twice produced code that did not compile.
+- `apple/project.yml` is the source; the committed `apple/Dulcet.xcodeproj` is generated by the
+  pinned XcodeGen (`cd apple && xcodegen generate`). Nothing regenerates it during a build.
+- Xcode builds invoke Gradle through `tools/run-gradle-exclusive`; never a bare `./gradlew` there.
+- A wedged CoreSimulator hangs Xcode silently at `CompileAssetCatalogVariant`; `xcrun simctl list
+  devicetypes | head` returning nothing is the tell. Use `-parallel-testing-enabled NO`.
 
-Two Apple-toolchain failure modes are worth knowing because they present as something else:
+## Traps that most often cost a day
 
-- **A wedged CoreSimulator hangs every Xcode build with no error output** — including device and
-  archive builds — freezing at `CompileAssetCatalogVariant`. It looks like a corrupt asset catalog and
-  is not. `xcrun simctl list devicetypes | head` returning nothing is the tell; run it before any
-  archive.
-- **`xcodebuild test` clones the destination simulator by default.** Where cloning is unavailable the
-  clone fails *after* a successful build, so the run reads as a test failure when no test executed.
-  `-parallel-testing-enabled NO` is the fix.
+Full list with evidence: `docs/TRAPS.md`. The ones sessions hit repeatedly:
 
-Concurrent simulator and Xcode builds are memory-hungry enough to trigger OOM kills on a machine doing
-anything else; serialise them rather than fanning out locally.
+- **The Swift boundary is Objective-C** (17): Kotlin arrives as classes; no Kotlin exception may cross.
+- **Reader, not mirror** (18–19): no change token; offset paging is not a snapshot; `lastScan` is an
+  equality-only scan clock and never covers user state.
+- **Transcoding** (6, 24): `getTranscodeDecision` + opaque `transcodeParams`; 429 + `Retry-After`
+  maps from the status, not the envelope code.
+- **Plays** (7–10, 25): `stream` records nothing; scrobble past threshold from progressing media time;
+  never call `playbackReport`; keep the three playback identities distinct.
+- **A zero result is not a finding** until the query found a known positive (29–32); a test that
+  handles a condition must prove it met the condition.
+- **XCUITest env vars** arrive only as `TEST_RUNNER_*` (34); "Finalize test log" idles after the test
+  finished (35).
+- **TV artifact** is `androidx.tv:tv-material` (21). Resolve every coordinate against a live index.
 
-**If you are working on a shared or managed build machine, follow that machine's own operational rules.
-They are deliberately not reproduced in this repository.**
+## Review, evidence and spec changes
 
-## Traps that will cost real time — read before touching the relevant subsystem
-
-1. **`ios()` / `tvos()` / `watchos()` target shortcuts are gone** (removed in Kotlin 2.2.0). Enumerate:
-   `macosArm64() iosArm64() iosSimulatorArm64() tvosArm64() tvosSimulatorArm64() androidTarget() jvm()`.
-   The `jvm` target exists only for the conformance suite.
-2. **Apple Silicon only.** `macosX64`/`tvosX64` are deprecated; do not add them "just in case."
-3. **The static framework goes in Link Binary With Libraries and NOT in Embed Frameworks.** Embedding a
-   static framework as a runtime payload ships dead bytes and can fail submission validation.
-4. **Binary `/rest` endpoints return an error envelope on failure.** `/rest/stream` and
-   `/rest/getCoverArt` both require unconditional, ordered validation: detect XML or JSON envelopes
-   first (skip whitespace and BOM), then require a positive endpoint-specific signature. "Not an
-   envelope" is never sufficient. A leading `{` or `<` is only an envelope candidate; require a
-   recognizable Subsonic root before classifying it as a malformed envelope, because those byte
-   values occur naturally inside ranged binary media. For audio, get the offsets right — `ftyp` is
-   at **offset 4**, WAV needs `RIFF` at 0 **and** `WAVE` at 8, MP3 sync is a **mask** not a string, and
-   an ID3 tag can precede FLAC. Downloads use the audio table; artwork uses its image-signature table.
-5. **Do not validate with a preflight and call it proof.** The engine makes a *second* request. Inline
-   validation via `AVAssetResourceLoaderDelegate` / a custom `DataSource.Factory` is the mechanism
-   (spec §12.4). This is real Phase-1 Apple work — see OQ-10.
-6. **The `transcoding` extension is not `stream?format=`.** It is `getTranscodeDecision` (POST, a
-   `ClientInfo` body) then `getTranscodeStream` with an **opaque** `transcodeParams` you must never
-   parse or rebuild. Classic `stream?format=&maxBitRate=` is the separate legacy path, and
-   `transcodeOffset` belongs to that legacy path (spec §12.5).
-7. **`stream` does not record a play.** `scrobble submission=true`, past the threshold, measured from
-   *progressing media time* with buffering, pause and forward discontinuities excluded (spec §15.2).
-   Scrobble delivery is **at-least-once**; the local dedupe key does not make the network call
-   idempotent.
-8. **`playbackReport` is not called in v1.** Adopting it without CONF-21 double-counts plays.
-9. **Never collapse the three playback identities.** `QueueEntryId` / `PlaybackSessionId` / `AttemptId`
-   (spec §12.1). A refresh, a retry and a server-offset seek keep the session; a next-item advance and
-   repeat-one end it.
-10. **Nothing is named "audible."** `PlaybackProgressBegan` = media position advancing under an
-    unsuppressed playing state. `timeControlStatus` and Media3 `isPlaying` are transport state and do
-    not prove sound.
-11. **Media3 has no position-progress callback.** The Android adapter owns a periodic sampler on the
-    monotonic clock; "the core never polls" refers to the core, not the adapter.
-12. **Credentials are in the query string.** Redact the whole query string before anything reaches a
-    log, an error or a diagnostic. Fresh CSPRNG salt (16 bytes / 32 hex) per request. Never log
-    password, token or salt. Wrap AVFoundation/ExoPlayer errors before surfacing them — both can carry
-    the URL. **Strip credentials on cross-origin redirects; never follow an HTTPS-to-HTTP downgrade.**
-    Test with **canary values**, not a hex-pattern scan — Navidrome ids are themselves hash-like.
-13. **`apiKeyAuthentication` is not advertised by Navidrome 0.63.2.** Do not design around it and do
-    not speculatively try an API key.
-14. **`getOpenSubsonicExtensions` is unauthenticated and may 404.** A 404 means `legacySubsonic`, not a
-    login failure — **but do not trust that classification until an authenticated `ping` succeeds**, or
-    a reverse-proxy login page becomes a "Subsonic server" you then send credentials to. "Extension
-    list unavailable", "not a Subsonic server", "server unreachable", "TLS untrusted" and "auth failed"
-    are five distinguishable outcomes (spec §10.3).
-15. **Extension discovery is not the only UI gate**, and one failed request never revokes an advertised
-    capability — use the circuit breaker (spec §10.4).
-16. **IDs are opaque strings.** Navidrome's are hashes/UUIDs. Any integer parse is a bug.
-17. **The Swift boundary is Objective-C.** Exported Kotlin arrives as *classes*, not structs; value
-    types are hand-written Swift structs in `DulcetKit`. Async is completion-handler plus a
-    synchronously-returned `OperationHandle`; callbacks on the main thread; no Kotlin exception may
-    cross (it terminates the process). Review the generated ObjC header diff on every facade change.
-18. **There is no change token, and offset paging is not a snapshot.** Dedupe cannot recover an
-    omitted row. Dulcet is a reader, not a mirror (spec §16.8): a page is one server read, and a
-    window of pages is extended only when the scan-status readings taken **before** the page's
-    request and **after** its response **both** show the window's stamp unchanged and
-    `scanning == false` — never on *after* alone, which the race probe
-    (`tools/probes/window-epoch-race`) caught accepting a page read during a scan (spec §16.12;
-    CONF-70 pins the bracketed check). A window whose stored stamp differs from the
-    current one is torn at its first live read and rebased around the viewport — never stitched.
-    While the server scans, pages append marked unverified and the list says so (spec §16.12).
-    Bounded concurrency 4.
-19. **The catalog epoch is a scan clock, not a change feed** (spec §16.11). `lastScan` is compared as
-    a raw string for equality only, together with the `getMusicFolders` id set; the sentinel
-    `0001-01-01T00:00:00Z`, an absent value or a failed read is "no epoch", never "unchanged". It never
-    covers user state (stars, ratings, play counts), so the visible screen is re-read when online.
-    `/rest` has no ETags or conditional requests. Gone-ness comes from a successful `getAlbum` no
-    longer listing a track, or code 70 — **never** from `getSong` answering `ok` or from `songCount`,
-    because a server keeping missing files answers both as if the file still existed.
-20. **Two clocks.** Monotonic for accumulation, timeouts, backoff and cadence; wall clock for scrobble
-    timestamps and retention. Never persist a monotonic value.
-21. 🚨 **The Compose-for-TV artifact is `androidx.tv:tv-material` (1.1.0), NOT `androidx.tv:tv-material3`.**
-    `androidx.tv.material3` is the *package*; there is no such *coordinate* — verified 404 against
-    Google Maven with a positive control. Do not mix it with `androidx.compose.material3:material3` in
-    the TV module (each has its own `MaterialTheme`). TV Lazy Layouts are deprecated out of
-    `tv-foundation`. **Resolve every dependency coordinate against a live index before writing it into
-    a build file** — this one sat wrong in three documents and would have failed the first Gradle sync.
-22. **`ios()`/`tvos()` shortcuts are REMOVED** (2.1.0 error, 2.2.0 removal). Not deprecated — gone.
-23. **The Apple deployment-target override is a raw compiler flag**, not a Gradle DSL property:
-    `freeCompilerArgs += "-Xoverride-konan-properties=minVersion.macos=14.0"`. And
-    `embedAndSignAppleFrameworkForXcode` **only registers if `binaries.framework` is declared** — a
-    scaffold with targets but no framework binaries calls a task that does not exist.
-24. **`getTranscodeStream` fails with standard HTTP status codes; legacy `stream` fails with an
-    envelope at HTTP 200.** They are different conventions. And the reference server returns **HTTP 429
-    + `Retry-After: 5`** with an envelope carrying the *generic* code 0 when its transcode cap is hit —
-    so map `Server.Busy` from the **status**, never the envelope code, and honour `Retry-After` instead
-    of your own backoff. **Preload is the behaviour most likely to trip the limiter** (spec §12.8).
-25. **The seam method is `recordPlaybackEvent`, never `reportPlayback`** — the latter is literally the
-    endpoint v1 forbids calling, and a one-line brief naming it would wire up the wrong thing.
-26. **Bundle identifiers freeze on the first BUILD UPLOAD**, not on app-record creation. Records, App
-    IDs and profiles are freely revisable before that.
-27. **Mac App Store requires App Sandbox** (Guideline 2.4.5(i)). Everything we write lives in the
-    container; security-scoped bookmarks are not needed for v1, and **no self-updater on macOS, ever**
-    (2.4.5(vii)).
-28. **Never let a missing dependency degrade into a pass.** A Navidrome without ffmpeg silently
-    direct-plays instead of erroring, so transcode tests would report green while measuring nothing.
-    Every test depending on a server-side capability asserts that capability first and **fails, never
-    skips** (spec §20.2.2).
-29. **A zero result is not a finding until the query has been validated against a known positive.**
-    A search that must find nothing should first be run once where it *should* find something.
-    Every expensive wrong turn in this project's history has this shape — a correct instrument
-    answering a question nobody asked, returning a clean-looking negative. Grepping `/rest/stream`
-    against a server that logs `msg="Streaming file"`; filtering by `--include='*.py'` when the
-    tools are extensionless; querying SpringBoard for a dialog another process owns.
-30. **Two queries that share a root are one instrument.** Ask what two attempts have in *common* —
-    process, substrate, transport, endpoint — not what differs. Changing `alerts` to `buttons` while
-    keeping the same application root is not a second opinion; it is the same probe twice.
-31. **Ask what the previous run left behind before crediting a change with a pass.** The thing under
-    test can mutate the environment it runs in: a failing run may connect and store a credential, so
-    the next run passes because a prompt no longer appears and the fix under test never executes.
-    Pooled simulators, warm DerivedData, persisted databases and populated caches all carry this.
-    ➡️ **A test whose purpose is to handle a condition must prove it encountered that condition** —
-    a marker the handler itself emits, asserted as part of the pass. "It passed" is not evidence the
-    handled path ran, and the more plausible the fix looks, the less a bare pass tells you.
-32. **Assertions that check the experiment is the one you think you are running earn the most.**
-    Destination, device class, server identity, fixture identity. `("402.0") is not > 700` — an
-    iPhone where an iPad was required — turned a meaningless run into an obviously-invalid one
-    instead of a plausible refutation. A failure that names *why the setup was wrong* is worth far
-    more than one that says the test did not pass.
-33. **The iOS save-password dialog belongs to `com.apple.AuthenticationServicesUI`, not SpringBoard.**
-    `springboard.alerts` and `springboard.buttons` both return nothing while it is plainly on screen,
-    and querying the owning bundle from XCUITest does not reach it either. Do not spend time
-    dismissing it: a UI test that needs an account should configure it through the `#if DEBUG`
-    launch-argument hook in `DulcetiOSApp` instead, so no password is ever typed and the dialog
-    cannot occur. That hook drives `submitAccountConnection()` — the real connector and Keychain
-    store — so it skips the typing, never the connecting.
-34. **Env vars reach an XCUITest runner only as `TEST_RUNNER_*` in xcodebuild's own environment.**
-    Trailing `KEY=value` on the `xcodebuild` line is consumed by the build-settings parser and never
-    arrives. ⚠️ The failure shape is the trap: **fast, confident, several assertions at once**. A run
-    that dies in under two seconds with three "Missing …" failures is missing variables, not a broken
-    product. (A process under `simctl spawn` needs `SIMCTL_CHILD_` instead — same idea, not
-    interchangeable.)
-35. **`xcodebuild` often idles 8+ minutes in "Finalize test log" AFTER the test has finished.** You
-    do not have to wait: the full transcript is already plain text at
-    `$BUNDLE/Staging/StandardOutputAndStandardError*` (use `grep -a`). Screen recordings in these
-    bundles have broken timestamps, so `-ss` and `-sseof` silently produce nothing — use
-    `ffmpeg -fflags +genpts -i <mp4> -vf scale=740:-1 -update 1 out.png`. ⚠️ Killing a hung
-    `xcodebuild` destroys the recording, which is frequently the only instrument that distinguishes
-    *occlusion* from *unreachability* — an assertion naming reachability can be reporting a dialog
-    on top, with the accessibility tree looking entirely normal underneath.
-
-36. **A pinned Homebrew formula drifting upstream fails 100% of Apple CI, and presents as an unrelated
-    red on whatever pull request runs next.** The Darwin conformance closure resolves through `brew`,
-    so `brew update` + `brew fetch` install the *live* formula — a pin that disagrees with live
-    verifies nothing, and the check is right to fail closed. Four drifts so far (openssl, x265, an
-    ffmpeg revision, sdl3). Refresh the pin from `https://formulae.brew.sh/api/formula/<name>.json`,
-    not from the CI error text, and update both the url digest and the `sha256`. ➡️ **Check this
-    first when several unrelated pull requests go red together** — it looks like flakiness and is
-    deterministic. `pins.json` already records each bottle's ghcr blob digest, and fetching that blob
-    directly does retire pin drift — but **installing from the fetched path is a different thing and
-    reintroduces a worse failure**. A package-path install makes Homebrew parse the formula embedded in
-    the bottle, which fails on any Homebrew generation that rejects a keyword argument appearing in it.
-    OBSERVED 2026-09-05: the pinned `openssl@3` 3.6.4 bottle embeds
-    `symlink "…", "…", overwrite: true`; a package-path install failed with
-    `openssl@3: unknown keyword: :overwrite` and then a misleading
-    `Cellar/openssl@3/<older version> is not a directory` on 4 of 4 runs on one runner-image generation,
-    while a by-name install succeeded on that same image. **The digest fetch is not the problem; the
-    package-path install is.** Retiring this class therefore needs a way to pour a digest-fetched bottle
-    *without* routing through Homebrew's own formula parse — not simply fetching by digest.
-37. **The capture step runs BEFORE the iPadOS steps, so a capture divergence SKIPS them.** Measured:
-    capture at step 25 `failure`, iPadOS boot and layout at 31-32 `skipped`. A ~20%-per-pair capture
-    flake therefore gates every later step in the job, and an iPadOS fix cannot be validated at all
-    while capture is red — regardless of whether the fix works. Read the *step* conclusions, not just
-    the job's, before concluding a downstream fix failed.
-38. **A readiness probe that gives each attempt "the remaining deadline" is not a poll.** Measured:
-    `attempts=1 elapsed=76.08s` against a 60s budget — the first attempt consumed the whole window.
-    Per-attempt timeout must be small and bounded **independently** of the total. And bound the
-    cleanup too: a `communicate()` after `SIGKILL` silently restores the unbounded wait.
-    ➡️ **Assert the attempt COUNT in the control.** Every existing control passed while the poll made
-    exactly one attempt, because they all verified the outcome and none verified the process.
-39. **`simctl spawn <udid> /usr/bin/true` runs the HOST's binary, not the simulator's** — a leading
-    `/` is a path on the host root. The iOS 26.5 runtime has `bin/launchctl` and **no**
-    `usr/bin/true`, and bare `true` is not on the device PATH either. Worse, `simctl spawn` may never
-    return on a hosted runner even after `bootstatus -b` succeeds, while XCUITest launches the app
-    fine — different paths. **Do not gate a job on a process-launch probe without evidence the runner
-    can satisfy one**; a gate that blocks runs which would otherwise pass is a false blocker, not
-    safety.
-40. **Reason about the capture flake from a SOAK, never from a single failure.** `capture-soak.yml`
-    (`workflow_dispatch`, 30 independent pairs, ~40 min) draws in one run what weeks of merges would.
-    Measured base rate is **20% per pair**, not the ~15% inferred from CI failure classification —
-    that undercounts, because runs dying earlier never reach the capture step. Two findings were
-    invisible to single-failure analysis: `dy` and the differing-region start are **perfectly
-    correlated** (`-3`↔`y=208`, `+3`↔`y=168`, 3 of 3 each), which rules out one mechanism with a
-    random direction; and at least **two distinct divergence kinds** exist — a 3-point translation
-    whose mechanism is still unknown, and a **focus/control-state** difference where glyphs do not
-    move at all and the field *background* differs. Do not average them together.
-41. **A negative control must be able to prove it fired.** Twice in one session a control passed
-    while the thing it guarded was broken — the poll that made one attempt, and an assertion
-    satisfiable by an earlier identical event. Where a control checks an outcome, add one that checks
-    the *process*: the attempt count, the ordered suffix after a recorded index, the marker the
-    handler itself emits.
-42. 🚨 **`apple/project.yml` is the SOURCE; `apple/Dulcet.xcodeproj` is generated from it by the
-    pinned XcodeGen and committed. Nothing regenerates it during a build.** Editing project.yml alone
-    changes what the repository documents and NOT what Xcode runs — and
-    `tools/verify_dulcet_core_build_order.py` reads the **pbxproj**, so it keeps reporting PASS about
-    the old script. Regenerate with `cd apple && xcodegen generate` (version pinned in
-    `docs/TOOLCHAIN.md`; 2.46.0 reproduces the committed project byte-for-byte), and note that a
-    rebase may textually merge the pbxproj into something XcodeGen would not produce.
-    `tools/verify_xcodegen_regeneration` (first step of apple-ci's platform leg) now fails on
-    exactly that: any generated file that is not the pinned XcodeGen's output, byte for byte.
-    `tools/verify_xcode_script_phases.py` (parity-gate, stdlib-only, no Xcode) compares multisets of
-    literal script bodies including duplicate counts; it does not verify target attachment, ordering,
-    shellPath, dependency flags or input/output files — the build-order guard covers attachment and
-    ordering, and the rest needs regeneration plus review of the generated diff.
-43. **Nine Apple targets each own the `Compile Kotlin Framework` phase and Xcode builds independent
-    targets in parallel**, so two Gradle invocations start together. Gradle does queue behind its own
-    locks, but only for about 60 s: if the owner has not yielded by then it FAILS the build. Most
-    pairs finish inside that window (a tvOS pair on green run 34596556005 ran concurrently for over
-    four minutes and both succeeded); the failure is the long tail. Two different locks have lost
-    that race on `main`: the checkout-scoped **configuration cache** (`.gradle/configuration-cache`, run
-    34635969077, `Timeout waiting to lock Configuration Cache`) and the user-home-scoped **journal**
-    (`caches/journal-1`, run 34127121022), both with `DulcetiOS` and `DulcetKitIOSTests` building
-    together. It reads as a red required check on a product-unrelated commit. Every phase goes
-    through `tools/run-gradle-exclusive`, which holds one flock beside each resource for the whole
-    invocation; do not reintroduce a bare `./gradlew` there, and do not key a replacement lock on
-    only one of the two resources.
-
-42. **Robolectric's TLS provider differs by host architecture.** It disables Conscrypt on macOS
-    Apple Silicon and enables it on Linux. **OBSERVED 2026-09-08:** the Android playback downgrade
-    fixture passed on ARM JDK 17/21 but failed on x64 Temurin 21 before recording a request:
-    Conscrypt reflected into `java.net.InetAddress.holder()` and hit `InaccessibleObjectException`.
-    The host-socket fixture uses method-scoped `@ConscryptMode(OFF)` to retain ordinary certificate
-    and hostname checks without opening JDK modules. Keep the exact source-request-count assertion:
-    a TLS failure also throws the expected playback exception and would otherwise counterfeit a pass.
-
-43. **A freshly installed Android app can have its foreground notification cancelled mid-test.**
-    The notification service answers `PACKAGE_ADDED` by cancelling *every* notification the
-    package holds, foreground-service ones included, and the service stays in the foreground with
-    no notification record. On a freshly booted emulator the app's own install broadcast can land
-    15 s into the first test. It presents as a flaky "no foreground notification" with the session
-    still playing. Device proofs wait on `am wait-for-broadcast-barrier` before playing
-    (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
-    (docs/verification/android-playback-surfaces.md).
-
-## Review and delegation
-
-**Architecture decisions and verification stay with the maintainer; implementation of a
-`FEATURES.yml` row is delegable.**
-
-**Every change gets an independent adversarial review before merge**, and the reviewer is asked to
-check the **commit message and comments against the code**, not only the code — nothing verifies a
-sentence, so claims about ordering, recoverability and impossibility rot first, and a wrong comment
-does not merely fail, it stops the check that would have caught the failure. Reviewing your own diff
-is the weakest check available. This is not ceremony: revision 2 of the spec exists because such a pass
-found eight wrong foundation contracts in revision 1, and revision 5 exists because one caught a
-disclosure defect in revision 4.
-
-A work brief is one `FEATURES.yml` row: *"Implement row `<id>` on `<platform>`. Contract: spec
-§`<n>`. Must satisfy `<CONF-ids>`. When done, move the cell to `shipped` and fill `evidence` with one
-workflow, job and test identity per declared CONF id."* Batch the whole ask into one brief rather than trickling
-follow-ups — a reviewer or implementer who sees the whole job decides coherently across it, where
-isolated asks produce locally-sensible answers that do not fit together.
-
-### Merging
-
-**What `main` actually enforces — OBSERVED 2026-08-26, read from
-`GET /repos/{owner}/{repo}/branches/main/protection` with an admin token:**
-
-| setting | live value |
-|---|---|
-| required status checks | `core-ci`, `parity-gate`, `apple-ci` |
-| `strict` (branch must be up to date with `main`) | **true** |
-| `required_pull_request_reviews` | **null — no review is required** |
-| `enforce_admins` | **true** — admin bypass is off |
-| force pushes to `main` | disabled |
-
-🚨 **Correction, 2026-08-26.** This section previously stated that `main` "requires a code-owner
-review" and that "an approval must post-date the last push by a different actor." **Neither is
-enforced.** `required_pull_request_reviews` is null, so `CODEOWNERS` advertises ownership and
-requests reviewers — it gates nothing. A pull request showing an empty `reviewDecision` and
-`mergeStateStatus: BLOCKED` is blocked on **status checks alone**; reading that as a review deadlock
-sends you looking for a second approving account that the branch never asked for. Re-measure before
-re-asserting either claim.
-
-**`strict: true` is the setting that shapes day-to-day work.** Every pull request must be rebased or
-updated onto the current `main` before it can merge, and `apple-ci` is the slow leg. With more than
-one pull request in flight this **serialises**: merging one invalidates the others' up-to-date
-status and each must re-run. Land them deliberately in dependency order, and tell the other branches
-when `main` moves so they rebase once instead of twice.
-
-**History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20
-an approving review from a pull request's own author was refused with
-`422 Unprocessable Entity — "Review Can not approve your own pull request"`, and the workaround was
-to have one maintainer account open the pull request and the other approve it. That cost real time
-and is worth remembering — but it was a workaround for a **required review that is no longer
-configured**, so the dance is obsolete, not merely optional. If you meet the 422 again you have gone
-looking for an approval nothing asked you for. **Do not "fix" a blocked pull request by enabling
-required reviews.**
-
-**Which account opens matters, and not only for the review.** GitHub attributes a **squash-merge**
-commit to the *pull request's* author, not to the commit author, and it uses that account's **profile
-email** — the `noreply` address only when the account has email privacy enabled. **Open pull requests
-as `legitimate-apps`.**
-
-🚨 **Corrected 2026-09-06, and the previous correction was itself understated twice over.** It said
-"31 of 103" and that *zero* of our own commits were affected. Re-measured across all of `origin/main`
-by classifying **both** the author and committer email of every commit:
-
-```
-199 commits total
- 31  the account's profile address as AUTHOR       (GitHub-synthesized squash merges)
- 97  the account's profile address as COMMITTER    (committer name: legitimate-apps)
----
-128 exposed on at least one side  =  64% of main, one single address throughout
-```
-
-**Both earlier claims were wrong in the same direction.** The exposure is 64%, not 30%; and it is not
-confined to GitHub-synthesized commits, because 97 commits carry the address as *committer* while
-naming `legitimate-apps` as the committer. Reading only `%ae` finds 31 and looks like a contained
-problem. **Classify both sides, or the measurement flatters the answer.**
-
-❌ **Withdrawn: "Rebase-merge is CONFIRMED to fix it."** That claim, carrying a ✅ and an OBSERVED
-date, is false and was load-bearing — it is the reason rebase was chosen deliberately, and rebase is
-what produced the 97. GitHub's rebase-merge replays each commit with its **original author** and sets
-the **committer** to the account performing the merge, using that account's commit email. So rebase
-did exactly what the note said — the `noreply` address is on the author line — while moving the
-private address onto the committer line, where nobody was looking. The earlier evidence was not
-faked; it inspected `%ae` and stopped there.
-
-➡️ **A ✅CONFIRMED that only ever checked one field is worse than no note at all**, because it ends
-the investigation. Neither merge method avoids this: squash exposes the author, rebase exposes the
-committer.
-
-✅ **The durable fix is done — OBSERVED 2026-09-06.** "Keep my email addresses private" is now
-enabled on the account that opens pull requests. Verified two independent ways: the setting's toggle
-reads `aria-pressed="true"` on a fresh page load, and the public API returns `email: null` for the
-account, where it previously returned the profile address. It is an account-owner setting, not
-anything a repository can configure, which is why no commit-time convention ever substituted for it.
-
-**What that does and does not settle.**
-- ✅ **Going forward is now OBSERVED, not assumed.** The first squash merge after the setting change
-  is commit `31a7962`, and it is clean on both fields — author `legitimate-apps` with the `noreply`
-  address, committer `GitHub` with `noreply@github.com`. The exposed count stayed at 128 while the
-  total went 199 → 200. Squash merge is safe again, and the merge method no longer has to be chosen
-  around this.
-- The 128 commits already on `main` are unchanged. Rewriting them is a destructive history operation
-  and is the repository owner's decision, not a cleanup task to be picked up.
-- `git commit` identity is still bound by *Identity* above. It was never the cause here, and it is
-  still what keeps every commit we author ourselves correct on the author line — a majority of
-  `main`, and a figure that moves with every merge, so run the command below rather than quoting one.
-
-**Re-measure before restating any figure here.** Every number above grows with each merge, and each
-previous version of this paragraph was accurate when written and wrong within days. The command is
-
-```sh
-git log --format='%ae%x09%ce' origin/main | awk -F'\t' \
-  '{a=($1 ~ /users\.noreply\.github\.com$/); c=($2 ~ /users\.noreply\.github\.com$/ || $2=="noreply@github.com"); n++; if(!a||!c) x++} END{print x" of "n" exposed"}'
-```
-
-Pull-request authorship and commit authorship are separate fields. Commits are authored
-`legitimate-apps` by the convention in *Identity* above; that is an instruction here, not something
-GitHub enforces.
-
-`@legitimate-apps` is a GitHub **User** account, not an Organization, so there are no teams —
-`CODEOWNERS` entries must resolve to individual collaborators while ownership stays as it is.
-
-⚠️ **Nothing in this repository's configuration provides independent review.** Branch protection
-requires no approval at all, and ownership sits with a single maintainer. The adversarial review
-demanded above is therefore an obligation the maintainer owes the code, not something the merge
-button verifies — a green pull request means the checks passed and nothing more.
+- **One independent review, only for risky changes**: data loss, server writes, sync, playback
+  correctness, auth, signing and release. Fix its **blockers**, re-check only those fixes, merge. Log
+  should-fix items as follow-ups (`state/` backlog or an issue). Everything else merges on green checks.
+- Ask the reviewer to check comments and the commit message against the code, not only the code.
+- **Mutation testing is not a routine gate.** Use it where a core choke point justifies it.
+- **Evidence is proportionate.** A `FEATURES.yml` cell needs a test or proof that shows it working on
+  that platform — a core unit test does not evidence platform UI, and iPhone does not evidence iPad.
+  Trust a delegate's summary and spot-check it. Never claim "verified" while a link is assumed.
+- Spec claims stay marked **OBSERVED** (with the named source) or **ASSUMED**.
+- **Spec changes**: record a real contract change as a dated §28 entry, newest first, headed
+  `**YYYY-MM-DD — <what changed>**`. The numbered series closed at revision 113; do not add numbered
+  revisions or item numbers, and fix a wrong claim in place.
 
 ## Definition of done
 
-A feature is done when the real trigger has been driven to the real observed effect on a real device or
-simulator, and the `FEATURES.yml` cell carries evidence at the granularity of the claim — a core unit
-test does not evidence a platform UI capability, and an iPhone run does not evidence iPad layout. Trace
-each link **OBSERVED** or **ASSUMED**; never claim "verified" or "end-to-end" while any link is assumed
-— name the assumed ones instead. A delegate's report is not evidence.
+A feature is done when the real trigger has been driven to the real observed effect on a simulator,
+emulator or real host app, and the `FEATURES.yml` cell carries a test or proof at the granularity of
+the claim.
