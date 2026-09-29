@@ -43,6 +43,32 @@ def mapping_entry(line: str) -> tuple[int, str, str] | None:
     return len(match.group("indent")), key, match.group("value").strip()
 
 
+# spec §21.6: the one job condition a gating leg may carry -- run when a plan job said so. The
+# aggregator then checks the leg against the plan (plan-apple-legs require-leg) instead of requiring
+# `success` outright: a planned leg must succeed and an unplanned one must be skipped. Any other
+# job condition on a leg is one the aggregator cannot reason about.
+PLAN_CONDITION = re.compile(r"^\$\{\{ needs\.([\w-]+)\.outputs\.([\w-]+) == 'true' \}\}$")
+LEG_CHECK = ["python3", "tools/ci/plan-apple-legs", "require-leg"]
+
+
+def plan_condition(condition: str, needs: object) -> tuple[str, str] | None:
+    """(plan job, output) when `condition` is exactly a plan condition on a job in `needs`."""
+    text = condition.strip().strip("'\"")
+    text = re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda m: "${{ " + " ".join(m[1].split()) + " }}", text)
+    if not text.startswith("${{"):
+        text = "${{ " + " ".join(text.split()) + " }}"
+    match = PLAN_CONDITION.match(text)
+    if not match:
+        return None
+    if isinstance(needs, str):
+        inner = needs.strip()
+        inner = inner[1:-1] if inner.startswith("[") and inner.endswith("]") else inner
+        needs = [item.strip().strip("'\"") for item in inner.split(",") if item.strip()]
+    if not isinstance(needs, list) or match[1] not in needs:
+        return None
+    return match[1], match[2]
+
+
 def block_end(lines: list[str], start: int, parent_indent: int) -> int:
     for index in range(start, len(lines)):
         code = code_before_comment(lines[index]).rstrip()
@@ -205,7 +231,10 @@ def workflow_run_steps(text: str) -> list[dict[str, str]]:
                     properties[key] = value
                 i += 1
             properties.setdefault("shell", job["inherited-shell"])
-            if job.get("continue-on-error", "false") != "false" or "if" in job:
+            # A leg that runs when its plan says so still blocks: the required job fails unless a
+            # planned leg succeeded (spec §21.6). Any other job condition can silence the control.
+            conditional = "if" in job and plan_condition(job["if"], job.get("needs", "")) is None
+            if job.get("continue-on-error", "false") != "false" or conditional:
                 properties["continue-on-error"] = "job is not unconditionally blocking"
             steps.append(properties)
     return steps
@@ -827,6 +856,12 @@ def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
     paths that call reads, and read every attempt output its producers export for it. No job it
     needs, and not the aggregator itself, may set job-level `continue-on-error`.
 
+    spec §21.6 admits one job condition on a leg: `if: ${{ needs.<plan>.outputs.<key> == 'true' }}`,
+    where <plan> is an unconditional leg it needs. Such a leg is checked, before any download, with
+    `python3 tools/ci/plan-apple-legs require-leg "$PLANNED" "$RESULT"` (planned and succeeded, or
+    unplanned and skipped), and every download and the verify call must then carry exactly the
+    conjunction of every such condition, so evidence is read only on a run that planned every leg.
+
     What this cannot see, because it reads the workflow text and does not execute it: artifact
     reads inside a script a step invokes, through a composite or local action, via `curl` with a
     computed URL, or via actions/upload-artifact/merge. Shell reads it can recognise -- `gh run
@@ -891,6 +926,7 @@ def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
         environment = props.get("env") if isinstance(props.get("env"), dict) else {}
         # Where each `test "$X" = success` is: only unconditional, blocking shell steps count.
         tested_at: dict[str, int] = {}
+        leg_checked_at: dict[tuple[str, str], int] = {}
         for index, step in enumerate(agg_steps):
             if "if" in step or step.get("continue-on-error", "false") != "false":
                 continue
@@ -900,11 +936,44 @@ def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
                 if (len(words) == 4 and words[0] == "test" and words[2] in {"=", "=="}
                         and words[3] == "success"):
                     tested_at.setdefault(words[1].strip("${}"), index)
+                if len(words) == 5 and words[:3] == LEG_CHECK:
+                    leg_checked_at.setdefault((words[3].strip("${}"), words[4].strip("${}")), index)
         download_steps = [index for index, step in enumerate(agg_steps) if downloads(step)]
         first_download = min(download_steps, default=len(agg_steps))
+        # spec §21.6: legs that run only when a plan job says so. Every evidence step must then be
+        # gated on ALL of their conditions, so evidence is read only on a run that planned every leg,
+        # and each such leg is checked against its plan instead of against `success` alone.
+        full_plan: set[str] = set()
         for leg in legs:
             bound = {name for name, value in environment.items()
                      if expression(value) == f"${{{{ needs.{leg}.result }}}}"}
+            if "if" in properties[leg]:
+                planned = plan_condition(str(properties[leg]["if"]), properties[leg].get("needs"))
+                if planned is None or planned[0] not in legs or "if" in properties[planned[0]]:
+                    found.append(
+                        f"{workflow}: job {leg} carries a condition {aggregator} cannot check; a "
+                        "gating leg may only run if: ${{ needs.<plan>.outputs.<key> == 'true' }}, "
+                        "where <plan> is an unconditional job it needs",
+                    )
+                    continue
+                full_plan.add(f"needs.{planned[0]}.outputs.{planned[1]} == 'true'")
+                plans = {name for name, value in environment.items()
+                         if expression(value) == f"${{{{ needs.{planned[0]}.outputs.{planned[1]} }}}}"}
+                checked = [index for (plan_name, result_name), index in leg_checked_at.items()
+                           if plan_name in plans and result_name in bound]
+                if not checked:
+                    found.append(
+                        f"{workflow}: job {aggregator} must check needs.{leg}.result against "
+                        f"needs.{planned[0]}.outputs.{planned[1]} with "
+                        f"{' '.join(LEG_CHECK)} in an unconditional step; a planned leg must "
+                        "succeed and an unplanned one must be skipped",
+                    )
+                elif min(checked) > first_download:
+                    found.append(
+                        f"{workflow}: job {aggregator} checks needs.{leg}.result only after "
+                        "downloading evidence; check every result first",
+                    )
+                continue
             positions = [tested_at[name] for name in bound if name in tested_at]
             if not positions:
                 found.append(
@@ -936,12 +1005,24 @@ def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
             )
         for index in verify_steps + download_steps:
             step = agg_steps[index]
-            if "if" in step or step.get("continue-on-error", "false") != "false":
+            gate = expression(str(step.get("if", "")))
+            gate = gate[4:-3] if gate.startswith("${{ ") and gate.endswith(" }}") else gate
+            gated = bool(full_plan) and {term.strip() for term in gate.split("&&")} == full_plan
+            if (("if" in step and not gated)
+                    or step.get("continue-on-error", "false") != "false"):
                 found.append(
                     f"{workflow}: job {aggregator} step "
                     f"{step.get('name') or step.get('uses')!r} must be unconditional and blocking "
                     f"(no if:, no continue-on-error); otherwise {aggregator} passes with the "
-                    "evidence unchecked",
+                    "evidence unchecked" + (
+                        f" -- the one condition allowed is every plan together: "
+                        f"{' && '.join(sorted(full_plan))}" if full_plan else ""),
+                )
+            elif full_plan and not gated:
+                found.append(
+                    f"{workflow}: job {aggregator} step "
+                    f"{step.get('name') or step.get('uses')!r} must run only when every leg was "
+                    f"planned ({' && '.join(sorted(full_plan))}); a skipped leg uploaded nothing",
                 )
         if verify_steps and download_steps and max(download_steps) > min(verify_steps):
             found.append(
@@ -1405,13 +1486,21 @@ if Path("core-conformance").is_dir():
     aggregator_needs: list[str] = []
     if "apple-ci" in spans:
         aggregator_needs = listed(job_properties(apple_lines, *spans["apple-ci"]).get("needs"))
+    def gates(start: int, end: int) -> bool:
+        properties = job_properties(apple_lines, start, end)
+        if "continue-on-error" in properties:
+            return False
+        # A leg that runs when the plan says so still gates: apple-ci fails unless a planned leg
+        # succeeded. It runs on push to main, on dispatch and before any release (spec §21.6).
+        return "if" not in properties or plan_condition(
+            str(properties["if"]), properties.get("needs")) is not None
+
     gating_legs = [
         name for name, (start, end) in spans.items()
         if name in aggregator_needs
         and re.match(r"macos-", runners.get(name, "").strip())
-        and not {"if", "continue-on-error"} & set(job_properties(apple_lines, start, end))
+        and gates(start, end)
     ]
-    pull_request = "pull_request" in workflow_triggers(apple_lines)
     for control in DIAGNOSTIC_CONTROLS:
         invoked = any(
             "if" not in step and "continue-on-error" not in step
@@ -1419,10 +1508,10 @@ if Path("core-conformance").is_dir():
             for name in gating_legs
             for step in job_steps(apple_lines, *spans[name])
         )
-        if not Path(control).is_file() or not invoked or not pull_request:
+        if not Path(control).is_file() or not invoked:
             errors.append(f".github/workflows/apple-ci.yml: required diagnostic control {control} "
                           "must exist and run unconditionally in a macOS leg that the required "
-                          "apple-ci job needs, on pull requests")
+                          "apple-ci job needs")
 
 # A control that no workflow names never runs. There is no glob runner here -- every control is
 # wired by an explicit `run: python3 tools/test-<name>` line -- so an unwired control is INERT while
