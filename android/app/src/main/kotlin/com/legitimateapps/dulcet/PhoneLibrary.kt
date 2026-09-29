@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -326,8 +327,10 @@ private fun FavouritesList(account: SearchAccount, session: LibrarySession, acti
                             AlbumCard(account, album, Modifier.fillMaxWidth().testTag("library.favourites.album.$position")) {
                                 actions.openAlbum(album.rawId)
                             }
+                            // A badge, so the heart reads on the artwork rather than hanging off its corner.
                             FavouriteButton(album.isFavourite(), "library.favourites.album.$position.favourite",
-                                Modifier.align(Alignment.TopEnd)) {
+                                Modifier.align(Alignment.TopEnd).padding(6.dp)
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape)) {
                                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
                             }
                         }
@@ -762,9 +765,11 @@ internal fun Artwork(account: SearchAccount, key: String?, title: String, size: 
     val shape = RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
     val sized = if (size != null) modifier.size(size) else modifier
     Box(sized.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
-        if (image != null) Image(image, stringResource(R.string.artwork_description, title), Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop)
-        else Icon(DulcetIcons.Album, null, Modifier.fillMaxSize(0.4f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Crossfade(image, label = "artwork") { loaded ->
+            if (loaded != null) Image(loaded, stringResource(R.string.artwork_description, title), Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop)
+            else Icon(DulcetIcons.Album, null, Modifier.fillMaxSize(0.4f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
