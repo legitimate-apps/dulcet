@@ -108,7 +108,13 @@ class LyricsConformanceTest {
             val neverRead = session.read(NEVER_READ_ID, ARTIST, "Never")
             assertEquals(LyricsControlFreshness.Unavailable, neverRead.freshness)
             assertEquals(emptyList(), neverRead.endpoints)
-            // Every one of the six requests above went out with the §18.4 response size limit,
+
+            // Reachable again: the reconnect the report requests has finished when setOnline
+            // returns, so the next read is live and sends its own request only.
+            session.setOnline(true)
+            val back = session.read(ids.getValue(SYNCED_LRC), ARTIST, SYNCED_LRC).requireLive("after reconnect")
+            assertEquals(synced.lyrics, back.lyrics, "CONF-42 lyrics read again after a reconnect must equal the first read")
+            // Every one of the seven requests above went out with the §18.4 response size limit,
             // through the real transport that stops reading at it.
             assertEquals(0, session.requestsWithoutSizeLimit, "CONF-42 a lyrics request was sent without its size limit")
 

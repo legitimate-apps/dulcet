@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.database.DulcetDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -209,7 +210,9 @@ internal sealed interface DeliveryDecision {
  *   that may be this device's own earlier send, not another client's: the change is sent.
  * - When it shows the value the change was made over, the server did not change: the change is sent.
  * - Otherwise the server changed after this device last saw it, and **the server wins**. ASSUMED,
- *   and stated: a value first seen after the change was set after it.
+ *   and stated: a value first seen after the change was set after it. That is weaker for a change
+ *   made offline whose send then failed: the first read after an offline period can show a value
+ *   set at any time during it, possibly before the change (§18.3).
  */
 internal fun decideDelivery(
     change: PendingMutation,
@@ -245,7 +248,14 @@ internal class MutationOutbox(
             decode(row.target_id, row.field_, row.value_, row.local_sequence, row.wall_clock)
         }
 
-    fun pendingCount(): Long = all().size.toLong()
+    /**
+     * Every favourites row this account has queued — including a row [all] cannot decode, which is
+     * never sent and would be lost at sign-out just the same, so the count is never lower than what
+     * the person would lose. Playlist editing's rows share the table under [PLAYLIST_FIELD_PREFIX]
+     * and are counted by its own outbox, never here.
+     */
+    fun pendingCount(): Long =
+        queries.selectPendingMutations(cache.serverId).executeAsList().count { !it.field_.startsWith(PLAYLIST_FIELD_PREFIX) }.toLong()
 
     fun pendingFor(target: LibraryEntityRef, field: MutationField): PendingMutation? =
         queries.selectPendingMutation(cache.serverId, target.rawId, mutationKey(target.kind, field)).executeAsOneOrNull()?.let { row ->
@@ -519,6 +529,15 @@ internal class LibraryFavourites(
         changeListeners += listener
     }
 
+    /** Removes a listener [addChangeListener] added — by identity — so a closed search is not kept. */
+    fun removeChangeListener(listener: (Set<String>) -> Unit) {
+        reader.checkConfined()
+        changeListeners.removeAll { it === listener }
+    }
+
+    /** For tests: how many change listeners are registered. */
+    internal val changeListenerCount: Int get() = changeListeners.size
+
     /** The favourite state a publication shows: the pending change, else the server's last value. */
     fun isFavourite(target: LibraryEntityRef): Boolean? = confined { guarded(null) {
         (outbox.pendingFor(target, MutationField.Starred)?.value ?: outbox.serverState(target, MutationField.Starred)?.first)
@@ -543,8 +562,12 @@ internal class LibraryFavourites(
     /** Sets a 1–5 rating, or removes it with 0. Any other value is [MutationRecord.Invalid]. */
     fun setRating(target: LibraryEntityRef, rating: Int): MutationRecord = change(target, MutationField.Rating, rating)
 
-    /** For the sign-out offer of §14.7: changes that have not reached the server. */
-    fun pendingCount(): Long = confined { guarded(0L) { outbox.pendingCount() } }
+    /**
+     * For the sign-out offer of §14.7: changes that have not reached the server, or null when the
+     * outbox cannot be read. Never a guessed zero — zero tells the person nothing will be lost. A
+     * queued row that cannot be decoded is counted: it will never be sent, so it is lost too.
+     */
+    fun pendingCount(): Long? = confined { guarded(null) { outbox.pendingCount() } }
 
     /**
      * Every change not yet on the server, oldest first — the order they are sent in — so a shell can
@@ -593,7 +616,10 @@ internal class LibraryFavourites(
             if (record == MutationRecord.CompactedAway) endRunIfIdle()
             // Synchronously, before any send is launched: the tap's publication carries the change.
             changed(setOf(target.rawId))
-            if (reader.online) launchFlush(reader.scope)
+            // Not merely online: a change made while a reconnect runs is sent too, by that
+            // reconnect's flush or right behind it (the flush lock orders them). Never while the
+            // platform's last report says unreachable and no reconnect is running.
+            if (reader.canSend) launchFlush(reader.scope)
         }
         return record
     }
@@ -649,12 +675,16 @@ internal class LibraryFavourites(
      *   wait (§18.6 "Failures"); a change made meanwhile does not send early. Then one flush of every
      *   outbox runs.
      * - When the server cannot be reached at all, the flush stops and keeps every change, in order,
-     *   for the next flush — the next change made online, or the reconnect of §16.14.
+     *   for the next flush — the next change made while reachable, or the reconnect of §16.14.
      * - A failure of the device's own database is thrown, never reported as the server's; every
      *   change is kept.
-     * - Offline it does nothing.
+     * - It runs while [LibraryReader.canSend]: the platform reports the server reachable, the reader
+     *   is online, or a reconnect is running — its first step, before the reader is online again.
+     *   Otherwise (the platform's last report says unreachable) it does nothing.
      */
-    suspend fun flush(): MutationFlushReport = confined { lock.withLock {
+    suspend fun flush(): MutationFlushReport = withContext(OutboxRequests) { flushInContext() }
+
+    private suspend fun flushInContext(): MutationFlushReport = confined { lock.withLock {
         var sent = 0
         var saved = 0
         var adopted = 0
@@ -666,7 +696,7 @@ internal class LibraryFavourites(
         // This flush met a 429 of its own: the run of them goes on.
         var met429 = false
         var stoppedBy: DomainError? = null
-        while (reader.online) {
+        while (reader.canSend) {
             // The server asked for quiet (a 429): nothing is sent until the wait has passed. Checked
             // before each change, not once, so a wait the playlist flush's 429 sets meanwhile stops
             // this flush too.
@@ -692,8 +722,15 @@ internal class LibraryFavourites(
                     // Only a failure of the request is the server's; the device's own database failing
                     // propagates, with every change kept.
                     val failure = try {
+                        // One of the two kinds of request an offline reader sends — and only while
+                        // canSend holds when it reaches the front of the queue, not only when queued.
+                        // It is an outbox request because [flush] runs in [OutboxRequests].
                         reader.sendChecked(change.endpoint(), change.parameters())
                         null
+                    } catch (notSent: ReaderSendRefused) {
+                        // Refused unsent after an unreachable report: kept, and not counted as sent.
+                        sent -= 1
+                        notSent.error
                     } catch (thrown: LibraryRequestFailure) {
                         thrown.error
                     }
@@ -809,6 +846,12 @@ private fun PendingMutation.parameters(): Map<String, String> = when (field) {
  * changes, then [otherOutboxes] (the scrobble outbox) — before the epoch read (§16.14 step 1). This
  * is the assembly the shells' facades construct (R2a, R3). [formPost]: the account's server
  * advertises the OpenSubsonic `formPost` extension (§18.6).
+ *
+ * [foreground] is whether the app is in the foreground NOW, as the shell's lifecycle says at
+ * construction. It is required, with no default: the reader reads on a timer — the epoch cadence,
+ * a reconnect's automatic retry — only in the foreground, so a default would fail silently one way
+ * (no retry for a shell that forgot) or the other (reads in the background). The shell still
+ * reports every later change through [LibraryReader.setForeground].
  */
 internal class LibraryReaderSession(
     database: DulcetDatabase,
@@ -820,6 +863,8 @@ internal class LibraryReaderSession(
     otherOutboxes: ReconnectOutboxes = ReconnectOutboxes.None,
     /** Required: whether the account's server advertises the OpenSubsonic `formPost` extension (§18.6). */
     formPost: Boolean,
+    /** Required: whether the app is in the foreground at construction (§16.14). */
+    foreground: Boolean,
     /**
      * Observed endpoint health for this session (§10.4), handed to the reader, which owns the
      * offline-to-online transition that resets it. Not held by a feature object, so a shell that
@@ -869,6 +914,18 @@ internal class LibraryReaderSession(
 
     private val searches = mutableListOf<LibrarySearchSession>()
 
+    /**
+     * For the sign-out offer of §14.7: every change of this account that has not reached the
+     * server — favourites and ratings, and playlist edits — or null when either outbox cannot be
+     * read. Never a partial sum or a guessed zero: either tells the person less will be lost than
+     * will be.
+     */
+    fun pendingChangeCount(): Long? {
+        val favourites = favourites.pendingCount() ?: return null
+        val playlists = playlists.pendingCount() ?: return null
+        return favourites + playlists
+    }
+
     private suspend fun flushRecordingFailure(flush: suspend () -> Unit) {
         try {
             flush()
@@ -887,29 +944,48 @@ internal class LibraryReaderSession(
         reader.checkConfined()
         return LibraryLyrics(reader, capabilities, preferredLanguages)
     }
+    /** For tests: the searches this session still tells about reachability. */
+    internal val openSearchCount: Int get() = searches.size
 
-    /** A search over this reader whose rows carry the same overlaid favourite state (§16.15). */
+    init {
+        reader.setForeground(foreground)
+        // The reader, not this session, owns reachability: it revalidates the searches when it goes
+        // offline and when a reconnect revalidates the screen, whichever entry point the shell called.
+        reader.addVisibleSurface {
+            searches.removeAll { it.isClosed }
+            searches.toList().forEach(LibrarySearchSession::revalidate)
+        }
+    }
+
+    /**
+     * A search over this reader whose rows carry the same overlaid favourite state (§16.15). Closing
+     * it unregisters everything registered here, so a closed search is not kept alive by the session.
+     */
     fun openSearch(
         config: LibrarySearchConfig = LibrarySearchConfig(),
         listener: (LibrarySearchPublication) -> Unit,
     ): LibrarySearchSession {
         reader.checkConfined()
-        val session = LibrarySearchSession(reader, config, listener)
-        favourites.addChangeListener(session::republishPendingChanges)
+        lateinit var session: LibrarySearchSession
+        val changes: (Set<String>) -> Unit = { rawIds -> session.republishPendingChanges(rawIds) }
+        session = LibrarySearchSession(reader, config, listener) {
+            favourites.removeChangeListener(changes)
+            searches -= session
+        }
+        favourites.addChangeListener(changes)
         searches += session
         return session
     }
 
     /**
-     * Reachability, as the platform reports it: the reader republishes its windows, and every open
-     * search re-runs so its scope says `deviceOffline` (or merges the server again) without waiting
-     * for a keystroke. Coming back online also resets the §10.4 breaker, in the reader.
+     * Reachability, as the platform reports it — [LibraryReader.setOnline]. Unreachable takes the
+     * reader offline at once and every open search says `deviceOffline`; reachable while offline
+     * requests a [LibraryReader.reconnect], the only way back online, which flushes, reads the epoch
+     * and only then revalidates the windows and the searches. Coming back online also resets the
+     * §10.4 breaker, in the reader.
      */
     fun setOnline(reachable: Boolean) {
         reader.checkConfined()
-        val changed = reader.online != reachable
         reader.setOnline(reachable)
-        searches.removeAll { it.isClosed }
-        if (changed) searches.toList().forEach(LibrarySearchSession::refresh)
     }
 }

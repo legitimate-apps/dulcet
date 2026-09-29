@@ -188,7 +188,8 @@ class PlaylistEditingThirdReviewTest {
         session.setOnline(true)
         session.playlists.flush()
         advanceUntilIdle()
-        assertTrue(env.server.log.isEmpty(), "${env.server.log}")
+        // The reachable report's reconnect reads the epoch (§16.14 step 2); nothing else is sent.
+        assertEquals(listOf("getScanStatus", "getMusicFolders"), env.server.log.map { it.endpoint }, "${env.server.log}")
         assertEquals(0L, session.playlists.pendingCount())
     }
 
@@ -314,6 +315,7 @@ class PlaylistEditingThirdReviewTest {
         env.server.httpStatus["updatePlaylist"] = 429
         env.server.retryAfter = "30"
         session.playlists.flush()
+        runCurrent() // the reachable report's reconnect: its flushes are stopped by the wait, and it reads on
         env.server.httpStatus.clear()
         val requests = env.server.log.size
         session.playlists.rename(other.id, "Morning")
@@ -468,7 +470,7 @@ class PlaylistEditingThirdReviewTest {
             }
             val session = LibraryReaderSession(
                 database.database, SeenCacheStore(database, clock).bind(PlaylistEnv.BINDING), wrapper, scope,
-                LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = true,
+                LibraryReaderConfig(lookAheadMaxPerViewport = 0), formPost = true, foreground = false,
             )
             val outcomes = mutableListOf<PlaylistEditOutcome>()
             session.playlists.addOutcomeListener(outcomes::add)

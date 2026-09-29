@@ -12,6 +12,13 @@ internal class CountingSqlDriver(private val delegate: SqlDriver) : SqlDriver by
     /** When set, a write whose SQL matches throws, as a full disk or a corrupt page would. */
     var failWrite: ((String) -> Boolean)? = null
 
+    /** When set, a read whose SQL matches throws, as a corrupt page or a locked database would. */
+    var failRead: ((String) -> Boolean)? = null
+
+    /** Reads [failRead] refused: a test asserts this to prove its injected failure fired. */
+    var failedReads = 0
+        private set
+
     override fun <R> executeQuery(
         identifier: Int?,
         sql: String,
@@ -20,6 +27,10 @@ internal class CountingSqlDriver(private val delegate: SqlDriver) : SqlDriver by
         binders: (SqlPreparedStatement.() -> Unit)?,
     ): QueryResult<R> {
         statements += sql
+        if (failRead?.invoke(sql) == true) {
+            failedReads += 1
+            throw IllegalStateException("injected read failure")
+        }
         return delegate.executeQuery(identifier, sql, mapper, parameters, binders)
     }
 

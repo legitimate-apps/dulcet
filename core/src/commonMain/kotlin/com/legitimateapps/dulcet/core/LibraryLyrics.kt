@@ -118,7 +118,8 @@ internal const val MAX_LYRICS_RESPONSE_BYTES = 8 * 1_048_576
  *
  * The §10.4 breaker is the reader's, never this object's: a breaker created per lyrics object
  * would start closed every time a shell asked for one, and would never hold; and the reader owns
- * the one offline-to-online transition that resets it, whichever entry point takes it.
+ * the one offline-to-online transition that resets it: a reconnect's, once its epoch read
+ * succeeds (§16.14).
  */
 internal class LibraryLyrics(
     private val reader: LibraryReader,
@@ -276,6 +277,13 @@ internal class LibraryLyrics(
             breaker.abandon(name, admission)
             return fromCache(track, LibraryCachedReason.InternalFailure, LibraryUnavailableReason.InternalFailure)
         }
+        if (answer is LyricsAnswer.Refused) {
+            // Refused unsent because the reader went offline after this read was admitted (§16.14):
+            // nothing was asked, so the endpoint is neither charged nor cleared, a trial gives its
+            // slot back, and the read is what an offline read is — never a failure of the server.
+            breaker.abandon(name, admission)
+            return fromCache(track, LibraryCachedReason.Offline, LibraryUnavailableReason.NotCachedOffline)
+        }
         // The endpoint's health is decided by the server's answer alone, before anything touches
         // the device's store: a local database failure below is not the server's.
         if (answer is LyricsAnswer.Failed) {
@@ -292,6 +300,7 @@ internal class LibraryLyrics(
             is LyricsAnswer.Failed -> if (answer.error == DomainError.Transport.Timeout) {
                 reads.recordTimeout(key, answer.issueSeq, breaker.periodMark(admission))
             }
+            LyricsAnswer.Refused -> Unit
         }
         return when (answer) {
             is LyricsAnswer.Document ->
@@ -307,6 +316,7 @@ internal class LibraryLyrics(
             is LyricsAnswer.TooLarge -> if (reads.isTooLarge(key)) tooLarge(track) else served(track)
             is LyricsAnswer.Failed ->
                 fromCache(track, LibraryCachedReason.Failed(answer.error), LibraryUnavailableReason.Failed(answer.error))
+            LyricsAnswer.Refused -> error("returned above")
         }
     }
 
@@ -353,7 +363,9 @@ internal class LibraryLyrics(
      * Null when what failed is not the request: the device's own store — the issue sequence is
      * written before anything is sent, so its failure sends nothing — or a defect of this client.
      * The classification is the reader's, as its windows and the outbox use it: only a
-     * [LibraryRequestFailure] is the request's failure, so only it is ever the server's.
+     * [LibraryRequestFailure] is the request's failure, so only it is ever the server's — save a
+     * [ReaderSendRefused], a request the reader refused unsent because it went offline, which is
+     * [LyricsAnswer.Refused] and nobody's failure (§16.14).
      */
     private suspend fun ask(track: LyricsTrack): LyricsAnswer? {
         var issueSeq = 0L
@@ -368,6 +380,9 @@ internal class LibraryLyrics(
             LyricsAnswer.Document(issueSeq, source, trimmed.kept, trimmed.dropped)
         } catch (failure: CancellationException) {
             throw failure
+        } catch (_: ReaderSendRefused) {
+            // Never sent: the reader went offline before it reached the front (§16.14).
+            LyricsAnswer.Refused
         } catch (failure: LibraryRequestFailure) {
             val error = failure.error
             when {
@@ -437,6 +452,9 @@ private sealed interface LyricsAnswer {
 
     /** [issueSeq] is 0 when the request never went out. */
     class Failed(val issueSeq: Long, val error: DomainError) : LyricsAnswer
+
+    /** Refused unsent: the reader went offline first ([ReaderSendRefused]). Not the endpoint's answer. */
+    data object Refused : LyricsAnswer
 }
 
 /**
