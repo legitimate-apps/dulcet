@@ -96,6 +96,7 @@ private struct DulcetLibrarySessionChrome: ViewModifier {
         content
             .dulcetLibraryNotices(store: store)
             .dulcetSignOutOffer(store: store)
+            .dulcetPlaylistSheets(store: store)
             // Foreground is "not in the background": an inactive app -- another window in
             // front, a system sheet -- still shows its library and keeps it current (§16.14).
             .onChange(of: scenePhase) { _, phase in

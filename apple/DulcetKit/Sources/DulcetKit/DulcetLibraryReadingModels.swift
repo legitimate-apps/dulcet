@@ -218,6 +218,15 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
     /// from one whose tracks were never read -- never `songCount` (§16.11).
     public let detailComplete: Bool
     public let metadataMissing: Bool
+    /// Playlists only (§18.6): the account may edit it. False for another user's playlist, which
+    /// is drawn read-only with its owner shown -- no edit affordance at all.
+    public let editable: Bool
+    /// Playlists only: edits made on this device the server has not yet confirmed are shown.
+    public let pendingChanges: Bool
+    /// Playlists only: made on this device and not yet on the server; its id is a local one.
+    public let local: Bool
+    public let comment: String?
+    public let isPublic: Bool?
 
     /// Returns nil for a kind outside the vocabulary: the core never publishes one, and an item
     /// that cannot be named is not drawn as some other kind.
@@ -245,7 +254,12 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
         playCount: Int64?,
         playability: String?,
         detailComplete: Bool,
-        metadataMissing: Bool
+        metadataMissing: Bool,
+        editable: Bool = false,
+        pendingChanges: Bool = false,
+        local: Bool = false,
+        comment: String? = nil,
+        isPublic: Bool? = nil
     ) {
         guard let itemKind = DulcetReaderItemKind(rawValue: kind) else { return nil }
         self.kind = itemKind
@@ -271,6 +285,11 @@ public struct DulcetReaderItem: Identifiable, Sendable, Hashable {
         self.playability = DulcetReaderPlayability(coreName: playability)
         self.detailComplete = detailComplete
         self.metadataMissing = metadataMissing
+        self.editable = itemKind == .playlist && editable
+        self.pendingChanges = itemKind == .playlist && pendingChanges
+        self.local = itemKind == .playlist && local
+        self.comment = comment
+        self.isPublic = isPublic
     }
 
     /// The name to draw. A genre's name is its id; an item whose name the server never gave says

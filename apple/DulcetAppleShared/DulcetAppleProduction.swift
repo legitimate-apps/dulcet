@@ -845,7 +845,11 @@ final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
 /// delivers on the main thread; the listeners assert it rather than hop.
 @MainActor
 final class DulcetCoreLibraryReader: DulcetLibraryReading {
-    private let client: AppleLibraryReaderClient
+    /// Read by the playlist and lyrics adapters (DulcetCorePlaylistsLyrics.swift).
+    let client: AppleLibraryReaderClient
+    /// Made on first use, one per reader (DulcetCorePlaylistsLyrics.swift).
+    var playlistClient: AppleLibraryPlaylistClient?
+    var lyricsClient: AppleLibraryLyricsClient?
 
     init(client: AppleLibraryReaderClient) {
         self.client = client
@@ -997,7 +1001,12 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
             playCount: item.playCount?.int64Value,
             playability: item.playability,
             detailComplete: item.detailComplete,
-            metadataMissing: item.metadataMissing
+            metadataMissing: item.metadataMissing,
+            editable: item.editable,
+            pendingChanges: item.pendingChanges,
+            local: item.local,
+            comment: item.comment,
+            isPublic: item.isPublic?.boolValue
         )
     }
 

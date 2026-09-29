@@ -172,6 +172,8 @@ public final class DulcetLibrarySession {
     public private(set) var knownFavourites: [DulcetProviderItemID: Bool] = [:]
     /// The latest statement about a change or an unplayable row, for the shell to show briefly.
     public private(set) var notice: DulcetLibraryNotice?
+    /// Playlist editing for the current reader, when it can edit playlists (§18.6).
+    public private(set) var playlists: DulcetPlaylistEditor?
     /// Receives the playable tracks of every screen publication, for queue restoration.
     @ObservationIgnored public var onTracksSeen: (@MainActor ([DulcetTrack]) -> Void)?
 
@@ -267,6 +269,7 @@ public final class DulcetLibrarySession {
         outcomeSubscription = made.subscribeFavouriteOutcomes { [weak self] outcome in
             self?.receive(outcome)
         }
+        playlists = (made as? any DulcetPlaylistEditing).map { DulcetPlaylistEditor(editing: $0, session: self) }
         if requested == .connected {
             startReachability()
             made.connect { [weak self] connection in
@@ -321,6 +324,8 @@ public final class DulcetLibrarySession {
         stopReachability()
         outcomeSubscription?.cancel()
         outcomeSubscription = nil
+        playlists?.close()
+        playlists = nil
         for window in windows.allObjects {
             window.dropSubscription()
         }

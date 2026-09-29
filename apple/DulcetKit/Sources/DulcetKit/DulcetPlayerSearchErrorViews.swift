@@ -140,6 +140,8 @@ struct DulcetNowPlayingView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrubPosition: Double?
     @State private var showingQueue = false
+    /// The lyrics panel in place of the queue beside the player, or of the cover in one column.
+    @State private var showingLyrics = false
     /// The side-by-side player's own height, cover to footer, once laid out.
     @State private var sideBySidePlayerHeight: CGFloat?
     let player: DulcetNowPlaying
@@ -184,7 +186,7 @@ struct DulcetNowPlayingView: View {
                     // The artwork's shadow reaches past the column; clipping it drew a band.
                     .scrollClipDisabled()
                     .frame(maxWidth: 520)
-                    queueColumn
+                    sideColumn
                         .frame(maxWidth: 390)
                         .frame(height: Self.sideBySideQueueHeight(
                             windowHeight: geometry.size.height,
@@ -192,6 +194,16 @@ struct DulcetNowPlayingView: View {
                         ))
                 }
                 .padding(.horizontal, padding)
+                .frame(maxWidth: .infinity)
+            } else if showingLyrics {
+                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    lyricsPanel
+                        .padding(.horizontal, padding)
+                    footer(alignment: .leading, showsQueueToggle: true)
+                        .padding(.horizontal, padding)
+                        .padding(.bottom, DulcetSpacing.md)
+                }
+                .frame(maxWidth: 600)
                 .frame(maxWidth: .infinity)
             } else if showingQueue {
                 // The queue replaces the artwork; the footer stays, so the control that opened it
@@ -270,6 +282,33 @@ struct DulcetNowPlayingView: View {
 
     private func horizontalPadding(for width: CGFloat) -> CGFloat {
         width < 500 ? Self.minimumHorizontalPadding : DulcetSpacing.xl
+    }
+
+    /// Beside the player: the lyrics when shown, else Up Next.
+    @ViewBuilder
+    private var sideColumn: some View {
+        if showingLyrics { lyricsPanel } else { queueColumn }
+    }
+
+    private var lyricsPanel: some View {
+        DulcetLyricsPanel(track: player.current, elapsed: player.elapsed, isPlaying: player.isPlaying)
+    }
+
+    private var lyricsToggle: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : .snappy) {
+                showingLyrics.toggle()
+                if showingLyrics { showingQueue = false }
+            }
+        } label: {
+            Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
+                .font(.title3)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .dulcetMediaButtonStyle()
+        .accessibilityLabel(showingLyrics ? DulcetStrings.lyricsHide : DulcetStrings.lyricsShow)
+        .accessibilityIdentifier("dulcet.now-playing.lyrics")
     }
 
     /// Up Next, editable, when the queue carries entry identities -- a track can be queued twice,
@@ -433,9 +472,13 @@ struct DulcetNowPlayingView: View {
                 formatBadge
                 Spacer(minLength: 0)
                 DulcetAirPlayRoutePicker(tint: .dulcetAccent)
+                lyricsToggle
                 if showsQueueToggle {
                     Button {
-                        withAnimation(reduceMotion ? nil : .snappy) { showingQueue.toggle() }
+                        withAnimation(reduceMotion ? nil : .snappy) {
+                            showingQueue.toggle()
+                            if showingQueue { showingLyrics = false }
+                        }
                     } label: {
                         Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
                             .font(.title3)
@@ -465,7 +508,7 @@ struct DulcetNowPlayingView: View {
 #if os(tvOS)
         false
 #else
-        !player.queueEntries.isEmpty && (!showsQueueToggle || showingQueue)
+        !player.queueEntries.isEmpty && !showingLyrics && (!showsQueueToggle || showingQueue)
 #endif
     }
 

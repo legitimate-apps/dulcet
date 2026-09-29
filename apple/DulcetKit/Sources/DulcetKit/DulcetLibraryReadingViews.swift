@@ -553,7 +553,8 @@ struct DulcetReaderListRow: View {
         switch item.kind {
         case .artist: item.albumCount.map { DulcetStrings.readerCount(.albums, $0) } ?? ""
         case .playlist:
-            [item.songCount.map { DulcetStrings.readerCount(.tracks, $0) }, item.owner]
+            // Whose it is when not the person's, and what has yet to reach the server (§18.6).
+            [item.songCount.map { DulcetStrings.readerCount(.tracks, $0) }, DulcetPlaylistPresentation.status(of: item)]
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
         case .genre: DulcetStrings.readerGenreSummary(albums: item.albumCount, songs: item.songCount)
         case .album: item.albumSubtitle
@@ -671,6 +672,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
                 store.showReaderPage(.artist(artistID))
             }
         }
+        DulcetPlaylistItemMenuItems(item: item)
     }
 #endif
 }
@@ -853,7 +855,7 @@ struct DulcetReaderSectionView: View {
         case .albums: DulcetReaderAlbumsView()
         case .artists: DulcetReaderSimpleListView(query: .artists, title: section.title)
         case .genres: DulcetReaderSimpleListView(query: .genres, title: section.title)
-        case .playlists: DulcetReaderSimpleListView(query: .playlists, title: section.title)
+        case .playlists: DulcetPlaylistsView()
         case .favourites: DulcetReaderFavouritesView()
         }
     }
@@ -1169,7 +1171,7 @@ struct DulcetReaderRouteView: View {
         switch route {
         case let .section(section): DulcetReaderSectionView(section: section)
         case let .album(id): DulcetReaderTrackListPage(query: .album(rawID: id.rawID), kind: .album, id: id)
-        case let .playlist(id): DulcetReaderTrackListPage(query: .playlist(rawID: id.rawID), kind: .playlist, id: id)
+        case let .playlist(id): DulcetPlaylistPage(id: id)
         case let .artist(id): DulcetReaderArtistPage(id: id)
         case let .genre(name): DulcetReaderTrackListPage(query: .songsByGenre(name), kind: .genre, id: nil, genreName: name)
         case let .albumList(type): DulcetReaderAlbumGridView(type: type, title: type.title)
