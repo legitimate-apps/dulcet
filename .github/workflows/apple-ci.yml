@@ -1495,6 +1495,82 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # The automatic-skip proofs on iPhone (spec §12.12): an undecodable track is skipped with a
+          # notice and the next one plays, and the server counts a play for the next track and never
+          # for the skipped one; at the largest text size the notice clears navigation, and for a
+          # 70-character title it gives way to its shorter sentence. They need the opt-in Skip Probe
+          # albums, which tools/seed-skip-probe adds to this server, waiting until its rescan lists
+          # them. The default corpus is counted exactly, so this is the LAST phase: nothing after it
+          # reads the library. The account comes from the app's debug launch arguments, never typed.
+          tools/seed-skip-probe \
+            --music "$ROOT/music" \
+            --runtime native \
+            --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+            --base-url http://127.0.0.1:4533
+          python3 tools/ci/isolate-simulator --phase skip-probe-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-skip-probe.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-skip-probe.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testAnUnplayableTrackIsSkippedWithANoticeAndTheNextPlays
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheSkipNoticeStaysClearOfNavigationAtTheLargestTextSize
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testALongTitledSkipNoticeGivesWayToItsShorterSentenceAtTheLargestTextSize 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testALongTitledSkipNoticeGivesWayToItsShorterSentenceAtTheLargestTextSize
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
       # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
@@ -1661,6 +1737,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-search-junit" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
+            "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \
             "$RUNNER_TEMP/dulcet-tvos-swift-testing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-mac-app-test-junit" \

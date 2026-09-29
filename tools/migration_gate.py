@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -52,6 +53,9 @@ SCHEMA_INTENT_TABLES = {
     "cache_list",
     "cache_list_member",
     "cache_pin",
+    "cache_lyrics",
+    "cache_lyrics_layer",
+    "cache_lyrics_line",
 }
 REQUIRED_IMPLEMENTED_TABLES = {
     "music_folder",
@@ -351,6 +355,211 @@ def protected_schema(connection: sqlite3.Connection, version: int) -> dict[str, 
         )
     ]
     return {"tables": tables, "triggers": triggers}
+
+
+SQ_OBJECT_ORDER = {"table": 0, "index": 1, "view": 2, "trigger": 3}
+SQ_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+
+
+def sq_create_statements() -> list[str]:
+    """Every unlabeled CREATE statement in the current .sq files, in file order.
+
+    Those are what SQLDelight's generated schema executes on a fresh install. A labeled query
+    (`name:`) and a grouped statement (`name { ... }`) are not schema and are skipped; a statement
+    ends at the first `;` outside a BEGIN/CASE ... END, so a trigger body stays whole.
+    """
+    statements: list[str] = []
+    for path in sorted(SQLDELIGHT_ROOT.rglob("*.sq")):
+        text = path.read_text()
+        tokens = [
+            match
+            for match in SQL_TOKEN.finditer(text)
+            if not match.group(0).startswith(("--", "/*"))
+        ]
+        index = 0
+        while index < len(tokens):
+            first = tokens[index].group(0)
+            following = tokens[index + 1].group(0) if index + 1 < len(tokens) else None
+            if following == "{" and SQ_IDENTIFIER.fullmatch(first):
+                depth = 0
+                while index < len(tokens):
+                    token = tokens[index].group(0)
+                    if token == "{":
+                        depth += 1
+                    elif token == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    index += 1
+                index += 1
+                continue
+            labeled = following == ":" and SQ_IDENTIFIER.fullmatch(first) is not None
+            start = index + 2 if labeled else index
+            end = start
+            depth = 0
+            while end < len(tokens):
+                token = tokens[end].group(0).lower()
+                if token in ("begin", "case"):
+                    depth += 1
+                elif token == "end":
+                    depth -= 1
+                elif token == ";" and depth == 0:
+                    break
+                end += 1
+            if not labeled and start < end and tokens[start].group(0).lower() == "create":
+                statements.append(text[tokens[start].start() : tokens[end - 1].end()])
+            index = end + 1
+    return statements
+
+
+def schema_from_sq() -> sqlite3.Connection:
+    """A fresh in-memory database built from the current .sq files alone."""
+    ordered: list[tuple[int, str]] = []
+    for statement in sq_create_statements():
+        words = (normalized_sql(statement) or "").split()
+        kind = next((word for word in words[1:4] if word in SQ_OBJECT_ORDER), None)
+        if kind is None:
+            raise MigrationGateError(f"unrecognised CREATE in the .sq files: {statement[:80]}")
+        ordered.append((SQ_OBJECT_ORDER[kind], statement))
+    connection = sqlite3.connect(":memory:")
+    # Tables before what refers to them; a stable sort keeps file order within each kind.
+    for _, statement in sorted(ordered, key=lambda item: item[0]):
+        connection.execute(statement)
+    return connection
+
+
+def schema_sql(sql: str | None) -> str | None:
+    """[normalized_sql] with quoting of plain identifiers removed: SQLite writes a table it renamed
+    as `"name"`, and a table rebuilt by a migration is the same table as the one the .sq creates."""
+    normalized = normalized_sql(sql)
+    if normalized is None:
+        return None
+    tokens = []
+    for match in SQL_TOKEN.finditer(normalized):
+        token = match.group(0)
+        if token[:1] in ('"', "`", "[") and SQ_IDENTIFIER.fullmatch(token[1:-1]):
+            token = token[1:-1].lower()
+        tokens.append(token)
+    return " ".join(tokens)
+
+
+def full_schema(connection: sqlite3.Connection) -> dict[str, dict[str, object]]:
+    """Every schema object: its normalized SQL and, for tables and indexes, its structure."""
+    schema: dict[str, dict[str, object]] = {}
+    for kind, name, table, sql in connection.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master "
+        "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+    ).fetchall():
+        entry: dict[str, object] = {"on": table, "sql": schema_sql(sql)}
+        if kind == "table":
+            entry["columns"] = [
+                list(column) for column in connection.execute(f'PRAGMA table_xinfo("{name}")')
+            ]
+            entry["foreign_keys"] = sorted(
+                list(foreign_key)[2:]
+                for foreign_key in connection.execute(f'PRAGMA foreign_key_list("{name}")')
+            )
+        elif kind == "index":
+            entry["columns"] = [
+                list(column) for column in connection.execute(f'PRAGMA index_xinfo("{name}")')
+            ]
+        schema[f"{kind} {name}"] = entry
+    return schema
+
+
+def schema_differences(
+    expected: dict[str, dict[str, object]],
+    actual: dict[str, dict[str, object]],
+) -> list[str]:
+    errors: list[str] = []
+    for key in sorted(set(expected) | set(actual)):
+        if key not in actual:
+            errors.append(f"{key}: missing")
+            continue
+        if key not in expected:
+            errors.append(f"{key}: not in the .sq schema")
+            continue
+        for field in sorted(set(expected[key]) | set(actual[key])):
+            wanted, found = expected[key].get(field), actual[key].get(field)
+            if wanted == found:
+                continue
+            if field == "columns" and key.startswith("table "):
+                wanted_names = [column[1] for column in wanted or []]
+                found_names = [column[1] for column in found or []]
+                missing = [name for name in wanted_names if name not in found_names]
+                extra = [name for name in found_names if name not in wanted_names]
+                if missing:
+                    errors.append(f"{key}: missing columns {missing}")
+                if extra:
+                    errors.append(f"{key}: extra columns {extra}")
+                if not missing and not extra:
+                    errors.append(f"{key}: column definitions differ: sq={wanted} actual={found}")
+            else:
+                errors.append(f"{key}: {field} differs: sq={wanted} actual={found}")
+    return errors
+
+
+def validate_latest_fixture_matches_sq(version: int, fixture: Path) -> int:
+    """The newest fixture must be the schema the current .sq files create, object for object.
+
+    Migrating the newest fixture runs no migration at all, and the protected-table comparison sees
+    only protected tables, so without this a fixture missing an unprotected column passes the
+    gate. Returns the object count.
+    """
+    with closing(schema_from_sq()) as fresh:
+        expected = full_schema(fresh)
+    # The positive control: the parse above reproduces SQLDelight's own snapshot of the .sq files,
+    # so an empty difference below is the instrument agreeing, not the instrument reading nothing.
+    with closing(sqlite3.connect(f"file:{SCHEMA_SNAPSHOTS / f'{version}.db'}?mode=ro", uri=True)) as snapshot:
+        errors = schema_differences(expected, full_schema(snapshot))
+    if errors:
+        raise MigrationGateError(
+            f"the .sq schema as parsed differs from SQLDelight's snapshot {version}.db:\n"
+            + "\n".join(errors)
+        )
+    with closing(sqlite3.connect(f"file:{fixture / 'database.db'}?mode=ro", uri=True)) as connection:
+        errors = schema_differences(expected, full_schema(connection))
+    if errors:
+        raise MigrationGateError(
+            f"fixture v{version} schema differs from the current .sq files:\n" + "\n".join(errors)
+        )
+    return len(expected)
+
+
+def prove_latest_fixture_drift_is_rejected(version: int, fixture: Path) -> None:
+    """Negative control: the newest fixture with one column dropped must fail the check above."""
+    with tempfile.TemporaryDirectory(prefix="dulcet-fixture-drift-") as temp:
+        drifted = Path(temp) / fixture.name
+        shutil.copytree(fixture, drifted)
+        dropped = None
+        with closing(sqlite3.connect(drifted / "database.db")) as connection:
+            # The first column SQLite lets go of (not a key, not indexed, not in a constraint).
+            for table in sorted(table_names(connection)):
+                for column in connection.execute(f'PRAGMA table_info("{table}")').fetchall():
+                    try:
+                        connection.execute(f'ALTER TABLE "{table}" DROP COLUMN "{column[1]}"')
+                    except sqlite3.OperationalError:
+                        continue
+                    dropped = (table, column[1])
+                    break
+                if dropped is not None:
+                    break
+            connection.commit()
+        if dropped is None:
+            raise MigrationGateError("negative control latest_fixture_drift found no column to drop")
+        marker = f"table {dropped[0]}: missing columns ['{dropped[1]}']"
+        try:
+            validate_latest_fixture_matches_sq(version, drifted)
+        except MigrationGateError as failure:
+            if marker not in str(failure):
+                raise MigrationGateError(
+                    f"negative control latest_fixture_drift failed for incomplete reasons; "
+                    f"missing {marker!r}\n{failure}"
+                ) from failure
+            return
+    raise MigrationGateError(
+        f"negative control latest_fixture_drift was unexpectedly accepted: dropped {dropped}"
+    )
 
 
 def reconcile_download_files(
@@ -1027,6 +1236,8 @@ def main() -> None:
             f"fixture versions differ from released schemas: "
             f"expected={sorted(expected_versions)} actual={sorted(fixtures)}"
         )
+    latest_objects = validate_latest_fixture_matches_sq(current, fixtures[current])
+    prove_latest_fixture_drift_is_rejected(current, fixtures[current])
     for version, fixture in sorted(fixtures.items()):
         migrate_and_assert_fixture(version, fixture, current)
     compared_since = COMPARED_CACHE_ROWS_SINCE_VERSION["cache_playlist"]
@@ -1066,6 +1277,7 @@ def main() -> None:
         + len(UPGRADE_NEGATIVE_CONTROLS)
         + len(CACHE_ROW_NEGATIVE_CONTROLS)
         + len(STRUCTURE_NEGATIVE_CONTROLS)
+        + 1  # latest_fixture_drift
     )
     print(
         f"Migration gate valid: {len(fixtures)} fixture database(s), "
@@ -1076,6 +1288,7 @@ def main() -> None:
         f"indexes and CHECK constraints), "
         f"cache_playlist rows compared from v{compared_since} ({len(compared_rows)} rows, "
         f"{len(stated)} with the added fields stated), "
+        f"fixture v{current} equal to the .sq schema ({latest_objects} objects), "
         f"download file reconciliation, and {control_count} explicit destructive "
         "negative controls"
     )

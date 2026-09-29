@@ -338,9 +338,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     /// Try Again. The core decides what that is (spec §12.1): after a failure before start, a new
-    /// attempt inside the same session; after a track that stopped partway, a new play of it from
-    /// where it stopped, because that failure already evaluated its session; with no session, the
-    /// selected entry's start. A session that has not failed has nothing to try again.
+    /// attempt inside the same session; after a track that stopped partway, a new attempt inside
+    /// the same session, resuming from where it stopped, with the accumulator carried across;
+    /// with no session, the selected entry's start. A session that has not failed has nothing to
+    /// try again.
     private func retryCurrentEntry() {
         guard account != nil else { return }
         let transition = queueClient.retryCurrent()

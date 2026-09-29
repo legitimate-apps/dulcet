@@ -510,8 +510,88 @@ struct AVPlayerEngineTests {
     /// The gapless boundary must keep the music "requested". The sampler samples only a context
     /// whose play was requested, so an incoming item that did not inherit the request would play
     /// audibly and never report PlaybackProgressBegan -- and so never be scrobbled.
+    ///
+    /// The boundary is real: a real `AVQueuePlayer` holds both items and changes its current item,
+    /// and the engine's own observation of that change makes the advance. What this test does not
+    /// wait for is media time. The items' bytes never arrive, so the player can neither reach a
+    /// natural end nor advance a clock by itself; every media-time sample is one supplied here, and
+    /// the audio session is a recording one, so no system interruption can withdraw the request.
+    /// Waiting for real media time instead made this test measure the simulator's audio clock: on
+    /// hosted iPhone simulators a 1 s item did not end within 60 s, and a 2 s preloaded item went
+    /// 60 s without PlaybackProgressBegan, in each case with the engine queue still responsive.
+    /// Progress is defined as media time advancing, so where media time does not advance the engine
+    /// must report none. The real-media form runs on the macOS host below.
     @Test
     func aPreloadedAdvanceInheritsThePlayRequestAndReportsItsOwnProgress() async throws {
+        let boundary = try await PreloadBoundary.start()
+        let (engine, clock, events, first, next) =
+            (boundary.engine, boundary.clock, boundary.events, boundary.first, boundary.next)
+
+        try await boundary.advance()
+
+        // Below the outgoing item's last position, as an incoming item's first sample is: only the
+        // incoming context can report it, because credited to the outgoing one it does not advance.
+        // The supplied sample is the whole transport state the sampler reads; the real player is
+        // meanwhile waiting for bytes, which the sampler does not consult.
+        clock.tick(isPlaying: true, mediaPosition: 0.25, monotonicUptimeNanoseconds: 1_500_000_000)
+        #expect(events.progressBeganAttemptIDs == [first.attemptID, next.attemptID])
+
+        let snapshot = events.snapshot
+        let ended = try #require(snapshot.firstIndex {
+            if case let .endedNaturally(attemptID, _) = $0 { attemptID == first.attemptID } else { false }
+        })
+        let advanced = try #require(snapshot.firstIndex(of: .advancedToPreloaded(
+            oldAttemptID: first.attemptID,
+            newAttemptID: next.attemptID
+        )))
+        let incomingProgress = try #require(snapshot.firstIndex {
+            if case let .playbackProgressBegan(attemptID, _, _) = $0 { attemptID == next.attemptID } else { false }
+        })
+        #expect(ended < advanced, "the outgoing session ends before the boundary")
+        #expect(advanced < incomingProgress)
+        #expect(!snapshot.contains { if case .skipped = $0 { true } else { false } },
+                "a gapless advance is not a stop")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    /// The incoming item inherits the request; it is not granted one. An engine that marked every
+    /// advanced-into item as requested would pass the test above, and would start reporting
+    /// progress for music the listener had paused.
+    @Test
+    func aPreloadedAdvanceWhilePausedInheritsNoPlayRequest() async throws {
+        let boundary = try await PreloadBoundary.start()
+        let (engine, clock, events, first, next) =
+            (boundary.engine, boundary.clock, boundary.events, boundary.first, boundary.next)
+        #expect(await execute(engine, .pause(commandID: .init("pause")))
+            == .completed(commandID: .init("pause"), result: .withoutData))
+
+        try await boundary.advance()
+
+        clock.tick(isPlaying: true, mediaPosition: 0.25, monotonicUptimeNanoseconds: 1_500_000_000)
+        #expect(events.progressBeganAttemptIDs == [first.attemptID],
+                "an item advanced into while paused was sampled as if play had been requested")
+
+        // Positive control: the same sample path reaches the incoming item once play IS requested,
+        // so the silence above was the missing request and not an instrument that cannot reach it.
+        #expect(await execute(engine, .play(commandID: .init("resume"))) == .accepted(commandID: .init("resume")))
+        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 2_000_000_000)
+        #expect(events.progressBeganAttemptIDs == [first.attemptID, next.attemptID])
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    #if os(macOS)
+    /// The same boundary end to end on real media time: a natural end, the player's own advance,
+    /// and the system clock's sampler reading the incoming item. It runs on the macOS host only.
+    /// On hosted iPhone simulators these same waits ran out at 60 s with the engine queue
+    /// responsive, twice alongside logged audio IO overload -- consistent with a stalled audio
+    /// clock, though no run there reported the player's own media time. The tvOS simulator is left
+    /// out too: its clean record (0 of 24) is what the iPhone rate (3 of 57) produces about a
+    /// quarter of the time, so it does not show tvOS is different. The engine source itself has no
+    /// platform conditionals.
+    /// On failure the player's own media state is reported, so a clock that never moved and an
+    /// engine that ignored one that did cannot be mistaken for each other.
+    @Test
+    func aNaturalEndIntoThePreloadReportsTheIncomingProgressFromRealMediaTime() async throws {
         let player = AVQueuePlayer()
         let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
@@ -531,20 +611,27 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .play(commandID: .init("play")))
         #expect(await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
             == .accepted(commandID: .init("preload")))
+        let queued = player.items()
+        try #require(queued.count == 2, "the real player must hold the current and the preloaded item")
+        let mediaState = PlayerMediaState(player: player, first: queued[0], next: queued[1])
 
         try await waitUntil(
             "the first item never reached its natural end and advanced",
             engine: engine,
-            timeout: realAVFoundationProgressTimeout
+            timeout: realAVFoundationProgressTimeout,
+            mediaState: { mediaState.describe() }
         ) {
-            events.containsAdvance(old: first.attemptID, new: next.attemptID)
+            mediaState.observe()
+            return events.containsAdvance(old: first.attemptID, new: next.attemptID)
         }
         try await waitUntil(
             "the preloaded item played but never reported progress",
             engine: engine,
-            timeout: realAVFoundationProgressTimeout
+            timeout: realAVFoundationProgressTimeout,
+            mediaState: { mediaState.describe() }
         ) {
-            events.progressBeganAttemptIDs.contains(next.attemptID)
+            mediaState.observe()
+            return events.progressBeganAttemptIDs.contains(next.attemptID)
         }
         let snapshot = events.snapshot
         let ended = try #require(snapshot.firstIndex {
@@ -559,6 +646,7 @@ struct AVPlayerEngineTests {
                 "a gapless advance is not a stop")
         _ = await execute(engine, .release(commandID: .init("release")))
     }
+    #endif
 
     @Test
     func aDiscardedPreloadIsNotAdvancedIntoAndCannotBeDiscardedTwice() async throws {
@@ -581,6 +669,7 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .play(commandID: .init("play")))
         _ = await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
         #expect(player.items().count == 2)
+        let mediaState = PlayerMediaState(player: player, first: try #require(player.items().first), next: nil)
 
         #expect(await execute(engine, .discardPreloaded(
             commandID: .init("discard"),
@@ -592,12 +681,16 @@ struct AVPlayerEngineTests {
             attemptID: next.attemptID
         )) == .rejected(commandID: .init("discard-again"), reason: .invalidState))
 
+        // This wait still depends on real media time on every destination, so if it runs out the
+        // report says whether the player's own clock moved.
         try await waitUntil(
             "the first item never ended",
             engine: engine,
-            timeout: realAVFoundationProgressTimeout
+            timeout: realAVFoundationProgressTimeout,
+            mediaState: { mediaState.describe() }
         ) {
-            events.snapshot.contains {
+            mediaState.observe()
+            return events.snapshot.contains {
                 if case let .endedNaturally(attemptID, _) = $0 { attemptID == first.attemptID } else { false }
             }
         }
@@ -1258,10 +1351,14 @@ private let realAVFoundationProgressTimeout: TimeInterval = 60
 // second `waitFailureDiagnostic` spends classifying an already-failed wait. See the call site.
 private let blockedQueueProbeTimeout: TimeInterval = 5
 
+/// `mediaState`, when given, is appended to a failure. A responsive engine queue says only that
+/// the engine could have acted; for a wait on real media time it cannot say whether media time
+/// moved, and without that a frozen player clock reads exactly like an engine that ignored one.
 private func waitUntil(
     _ failure: String,
     engine: DulcetAVPlayerEngine,
     timeout: TimeInterval = 20,
+    mediaState: (@Sendable () -> String)? = nil,
     condition: @escaping @Sendable () -> Bool
 ) async throws {
     let clock = ContinuousClock()
@@ -1272,12 +1369,15 @@ private func waitUntil(
     }
     guard !condition() else { return }
 
-    let diagnostic = await waitFailureDiagnostic(
+    var diagnostic = await waitFailureDiagnostic(
         failure,
         engine: engine,
         waitBudget: timeout,
         waited: durationSeconds(started.duration(to: clock.now))
     )
+    if let mediaState {
+        diagnostic += "; media_state=\(mediaState())"
+    }
     #expect(Bool(false), Comment(rawValue: diagnostic))
 }
 
@@ -1909,6 +2009,123 @@ private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecke
         let handler = handler
         lock.unlock()
         handler?(event)
+    }
+}
+
+/// A real `AVQueuePlayer` holding a current and a preloaded item whose bytes never arrive, under an
+/// engine whose media-time samples all come from a manual clock. Play has been requested and the
+/// outgoing item has reported progress through that clock -- the positive control that the
+/// supplied-sample path reaches the engine -- before `advance()` makes the real player move on.
+private struct PreloadBoundary {
+    let player: AVQueuePlayer
+    let engine: DulcetAVPlayerEngine
+    let clock: ManualAVPlayerEngineClock
+    let events: PlaybackEventRecorder
+    let first: DulcetPlaybackPlan
+    let next: DulcetPlaybackPlan
+    let incomingItem: AVPlayerItem
+
+    static func start() async throws -> PreloadBoundary {
+        let player = AVQueuePlayer()
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(
+            player: player,
+            clock: clock,
+            usesAVFoundationMediaStack: true,
+            audioSession: RecordingAudioSession(),
+            systemMediaControls: RecordingSystemMediaControls()
+        )
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan(resource: SuspendedPlaybackResource(), session: "gapless-a", attempt: "gapless-attempt-a")
+        let next = plan(resource: SuspendedPlaybackResource(), session: "gapless-b", attempt: "gapless-attempt-b")
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
+        #expect(await execute(engine, .play(commandID: .init("play"))) == .accepted(commandID: .init("play")))
+        #expect(await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
+            == .accepted(commandID: .init("preload")))
+        let queued = player.items()
+        try #require(queued.count == 2, "the real player must hold the current and the preloaded item")
+
+        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 1_000_000_000)
+        try #require(events.progressBeganAttemptIDs == [first.attemptID],
+                     "the supplied sample did not reach the engine for the outgoing item")
+        return PreloadBoundary(
+            player: player,
+            engine: engine,
+            clock: clock,
+            events: events,
+            first: first,
+            next: next,
+            incomingItem: queued[1]
+        )
+    }
+
+    func advance() async throws {
+        player.advanceToNextItem()
+        let (events, first, next) = (events, first, next)
+        try await waitUntil(
+            "the real AVQueuePlayer changed its current item but the engine made no boundary",
+            engine: engine
+        ) {
+            events.containsAdvance(old: first.attemptID, new: next.attemptID)
+        }
+        try #require(player.currentItem === incomingItem, "the boundary under test is the preloaded item's")
+    }
+}
+
+/// What the player itself says about media time, read independently of the engine's sampler.
+///
+/// `observe()` runs on each 20 ms poll of a wait and keeps, per item, the furthest media time seen
+/// while that item was the player's current item; `describe()` reports those marks and the state
+/// at the deadline. A clock that never moved leaves its item current at about zero. An item that
+/// played to its end and one removed or failed without playing both leave `current_item=none`, and
+/// only the marks tell those apart.
+private final class PlayerMediaState: @unchecked Sendable {
+    private let player: AVQueuePlayer
+    private let first: AVPlayerItem
+    private let next: AVPlayerItem?
+    private let lock = NSLock()
+    private var firstHighWater: TimeInterval?
+    private var nextHighWater: TimeInterval?
+
+    init(player: AVQueuePlayer, first: AVPlayerItem, next: AVPlayerItem?) {
+        self.player = player
+        self.first = first
+        self.next = next
+    }
+
+    func observe() {
+        guard let item = player.currentItem, item === first || item === next else { return }
+        let seconds = CMTimeGetSeconds(item.currentTime())
+        guard seconds.isFinite else { return }
+        lock.lock()
+        if item === first {
+            firstHighWater = max(firstHighWater ?? 0, seconds)
+        } else {
+            nextHighWater = max(nextHighWater ?? 0, seconds)
+        }
+        lock.unlock()
+    }
+
+    func describe() -> String {
+        let item = player.currentItem
+        let which = item == nil ? "none" : item === first ? "first" : item === next ? "preloaded" : "other"
+        let transport = switch player.timeControlStatus {
+        case .paused: "paused"
+        case .playing: "playing"
+        case .waitingToPlayAtSpecifiedRate:
+            "waiting(\(player.reasonForWaitingToPlay?.rawValue ?? "unknown"))"
+        @unknown default: "unknown"
+        }
+        let timebaseRate = item?.timebase.map { formatSeconds(CMTimebaseGetRate($0)) } ?? "none"
+        lock.lock()
+        let firstMark = firstHighWater.map(formatSeconds) ?? "never_seen_current"
+        let nextMark = next == nil ? "no_preload" : nextHighWater.map(formatSeconds) ?? "never_seen_current"
+        lock.unlock()
+        return "current_item=\(which) media_time=\(formatSeconds(CMTimeGetSeconds(player.currentTime()))) " +
+            "transport=\(transport) timebase_rate=\(timebaseRate) " +
+            "first_media_time_high_water=\(firstMark) preloaded_media_time_high_water=\(nextMark)"
     }
 }
 

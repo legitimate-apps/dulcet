@@ -19,7 +19,9 @@ class PlaylistColumnsMigrationTest {
     @Test
     fun anUpgradeFromSchemaSixKeepsTheCachedPlaylistWithItsNewFieldsUnknown() = withUpgraded { driver ->
         val store = DulcetDatabaseStore.open(driver)
-        assertEquals(7L, store.metadata().schemaVersion)
+        // The upgrade runs every migration from schema 6 to the current schema, `6.sqm` among them, so
+        // it ends at the current version rather than at 7.
+        assertEquals(DULCET_SCHEMA_VERSION, store.metadata().schemaVersion)
         assertEquals(listOf("pl-1|Road|<null>|<null>|<null>"), driver.strings(PLAYLIST_ROWS), "the cached playlist did not survive")
         val cached = assertNotNull(SeenCacheStore(store, ManualWallClock()).bind(BINDING).playlist("pl-1"))
         assertEquals(CachePlaylistRecord("pl-1", "Road", songCount = 2, owner = "listener"), cached.record)

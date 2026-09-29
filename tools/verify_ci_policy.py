@@ -485,6 +485,505 @@ def method_emission_associations(source: str, cited: dict[str, set[str]]) -> set
     return resolved
 
 
+
+# --- Artifact names across partial re-runs -------------------------------------------------------
+# "Re-run failed jobs" (and "Re-run this job") re-runs only the chosen jobs and their dependents, as a
+# new attempt; the jobs it leaves alone keep what their earlier attempt uploaded. So a job that
+# downloads another job's artifact must name the attempt that PRODUCED it, carried as an output of
+# the producing job -- never its own `github.run_attempt`. The pairing below is checked by evaluating
+# each upload name the way Actions would, for the matrix member the attempt output reports, because
+# a name that is merely similar can pair one surface's evidence with another surface's attempt.
+
+class Opaque:
+    """A value only the runner knows. It may appear in a name, and nothing may compute with it."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class Unresolved(Exception):
+    pass
+
+
+EXPRESSION_TOKEN = re.compile(
+    r"\s*(?:(?P<string>'(?:[^']|'')*')|(?P<number>-?\d+(?:\.\d+)?)|(?P<op>&&|\|\||==|!=|[!(),])"
+    r"|(?P<ident>[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*))",
+)
+
+
+def evaluate_expression(source: str, bindings: dict[str, object]) -> object:
+    """Evaluate the small subset of Actions expressions that artifact names use.
+
+    Literals, context paths, ==, !=, !, &&, || and format(). An unbound context path is Opaque and
+    may only stand alone; any operator applied to it raises Unresolved, so an expression this cannot
+    decide never passes as decided.
+    """
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(source):
+        if not source[position:].strip():
+            break
+        match = EXPRESSION_TOKEN.match(source, position)
+        if not match:
+            raise Unresolved(source)
+        kind = match.lastgroup or ""
+        tokens.append((kind, match.group(kind)))
+        position = match.end()
+    index = 0
+
+    def peek() -> tuple[str, str] | None:
+        return tokens[index] if index < len(tokens) else None
+
+    def take(value: str | None = None) -> tuple[str, str]:
+        nonlocal index
+        token = peek()
+        if token is None or (value is not None and token[1] != value):
+            raise Unresolved(source)
+        index += 1
+        return token
+
+    def known(value: object) -> object:
+        if isinstance(value, Opaque):
+            raise Unresolved(value.text)
+        return value
+
+    def truthy(value: object) -> bool:
+        return known(value) not in (False, 0, "", None)
+
+    def number(value: object) -> float:
+        if value is None:
+            return 0.0
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(str(value).strip() or 0)
+        except ValueError:
+            return float("nan")
+
+    def equal(left: object, right: object) -> bool:
+        left, right = known(left), known(right)
+        if isinstance(left, str) and isinstance(right, str):
+            return left.lower() == right.lower()
+        return number(left) == number(right)
+
+    def text(value: object) -> str:
+        value = known(value)
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    def primary() -> object:
+        kind, value = take()
+        if kind == "string":
+            return value[1:-1].replace("''", "'")
+        if kind == "number":
+            return float(value)
+        if value == "(":
+            result = either()
+            take(")")
+            return result
+        if kind != "ident":
+            raise Unresolved(source)
+        if value in ("true", "false"):
+            return value == "true"
+        if value == "null":
+            return None
+        if peek() == ("op", "("):
+            take("(")
+            arguments = [either()]
+            while peek() == ("op", ","):
+                take(",")
+                arguments.append(either())
+            take(")")
+            if value != "format":
+                raise Unresolved(value)
+            template = text(arguments[0])
+            return re.sub(r"\{(\d+)\}", lambda m: text(arguments[1 + int(m[1])]), template)
+        return bindings.get(value, Opaque(value))
+
+    def unary() -> object:
+        if peek() == ("op", "!"):
+            take("!")
+            return not truthy(unary())
+        return primary()
+
+    def comparison() -> object:
+        left = unary()
+        while peek() in (("op", "=="), ("op", "!=")):
+            operator = take()[1]
+            same = equal(left, unary())
+            left = same if operator == "==" else not same
+        return left
+
+    def conjunction() -> object:
+        left = comparison()
+        while peek() == ("op", "&&"):
+            take("&&")
+            right = comparison()
+            left = right if truthy(left) else left
+        return left
+
+    def either() -> object:
+        left = conjunction()
+        while peek() == ("op", "||"):
+            take("||")
+            right = conjunction()
+            left = left if truthy(left) else right
+        return left
+
+    result = either()
+    if index != len(tokens):
+        raise Unresolved(source)
+    return result
+
+
+def evaluate_template(value: str, bindings: dict[str, object]) -> str:
+    """Substitute every ${{ }} in a workflow string. An Opaque result is written back unevaluated."""
+    def one(match: re.Match[str]) -> str:
+        result = evaluate_expression(match[1], bindings)
+        if isinstance(result, Opaque):
+            return "${{ " + result.text + " }}"
+        if result is None:
+            return ""
+        if isinstance(result, bool):
+            return "true" if result else "false"
+        if isinstance(result, float) and result.is_integer():
+            return str(int(result))
+        return str(result)
+
+    return re.sub(r"\$\{\{\s*(.*?)\s*\}\}", one, value)
+
+
+ATTEMPT_CONTEXT = "github.run_attempt"
+# The download-artifact inputs that choose WHICH artifact is read. `path` only says where it lands.
+SELECTING_INPUTS = ("name", "pattern", "artifact-ids")
+# Inputs that point download-artifact at another run or repository.
+CROSS_RUN_INPUTS = {"run-id", "github-token", "repository"}
+ATTEMPT_OUTPUT = re.compile(r"^\$\{\{ (?:(?P<guard>.+?) && )?github\.run_attempt(?: \|\| '')? \}\}$")
+MATRIX_TERM = re.compile(
+    r"^matrix\.(?P<key>[\w-]+) == (?P<value>'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false)$",
+)
+
+
+def attempt_output_bindings(value: str, matrix: bool) -> dict[str, object] | str:
+    """The matrix bindings under which an attempt output reports, or why it cannot be one.
+
+    A plain job reports `${{ github.run_attempt }}`. A matrix job combines every member's outputs
+    into one set, so it needs one output per member it reports for, each guarded to that member:
+    `${{ matrix.surface == 'tv' && github.run_attempt || '' }}`.
+    """
+    match = ATTEMPT_OUTPUT.match(expression(value))
+    if not match:
+        return "is not an attempt output (${{ github.run_attempt }}, guarded per matrix member)"
+    guard = match["guard"]
+    if not matrix:
+        return {} if guard is None and "||" not in expression(value) else (
+            "guards an attempt output in a job without a matrix")
+    if guard is None:
+        return ("reports ${{ github.run_attempt }} from EVERY matrix member, so it holds whichever "
+                "member finished last; guard it to one member")
+    bindings: dict[str, object] = {}
+    for term in guard.split(" && "):
+        term_match = MATRIX_TERM.match(term.strip())
+        if not term_match:
+            return f"guards on {term.strip()!r}; only matrix.<key> == <literal> terms are understood"
+        bindings["matrix." + term_match["key"]] = evaluate_expression(term_match["value"], {})
+    return bindings
+
+
+def partial_rerun_errors(workflow: Path, lines: list[str]) -> list[str]:
+    found: list[str] = []
+    spans = {name: (start, end) for name, start, end in job_spans(lines)}
+    properties = {name: job_properties(lines, start, end) for name, (start, end) in spans.items()}
+    steps = {name: job_steps(lines, start, end) for name, (start, end) in spans.items()}
+
+    def uses(step: dict[str, object], action: str) -> bool:
+        return str(step.get("uses", "")).startswith(f"actions/{action}@")
+
+    for job, job_steps_list in steps.items():
+        for step in job_steps_list:
+            if not uses(step, "upload-artifact"):
+                continue
+            name = expression(str((step.get("with") or {}).get("name", "")))
+            if ATTEMPT_CONTEXT not in name:
+                found.append(
+                    f"{workflow}: job {job} uploads {name or 'an unnamed artifact'} without "
+                    "${{ github.run_attempt }} in its name; a re-run of the job can collide with "
+                    "the earlier attempt's artifact (upload-artifact@v4 documents a failure when the "
+                    "name already exists), and overwrite: true would delete that attempt's "
+                    "evidence",
+                )
+
+    for job, job_steps_list in steps.items():
+        needed = listed(properties[job].get("needs"))
+        for step in job_steps_list:
+            if not uses(step, "download-artifact"):
+                continue
+            inputs = {key: expression(str(value))
+                      for key, value in (step.get("with") or {}).items()}
+            label = step.get("name") or step.get("uses")
+            foreign = sorted(set(inputs) & CROSS_RUN_INPUTS)
+            if foreign:
+                found.append(
+                    f"{workflow}: job {job} step {label!r} sets {', '.join(foreign)}, so it can read "
+                    "another run's artifacts; evidence for this run's check must come from this run",
+                )
+                continue
+            if any(ATTEMPT_CONTEXT in inputs.get(key, "") for key in SELECTING_INPUTS):
+                found.append(
+                    f"{workflow}: job {job} step {label!r} downloads by its OWN attempt; "
+                    "\"Re-run failed jobs\" does not re-run the job that passed, so that name was "
+                    "never uploaded -- name the producing job's attempt output instead",
+                )
+                continue
+            name = inputs.get("name", "")
+            references = re.findall(r"needs\.([\w-]+)\.outputs\.([\w-]+)", name)
+            if not name or not references:
+                found.append(
+                    f"{workflow}: job {job} step {label!r} must download by an exact name that "
+                    "carries the producing job's attempt output (needs.<job>.outputs.<attempt>); "
+                    "every upload is attempt-scoped",
+                )
+                continue
+            for producer, output in references:
+                if producer not in spans or producer not in needed:
+                    found.append(
+                        f"{workflow}: job {job} step {label!r} reads needs.{producer}, which it "
+                        "does not need; the output is empty and the name matches nothing",
+                    )
+                    continue
+                outputs = properties[producer].get("outputs")
+                value = outputs.get(output, "") if isinstance(outputs, dict) else ""
+                # job_properties reads a strategy whose matrix has an `include:` list as a list,
+                # so look for the `matrix:` key under `strategy:` directly.
+                producer_start, producer_end = spans[producer]
+                matrix = "strategy" in properties[producer] and any(
+                    (entry := mapping_entry(line)) is not None and entry[1] == "matrix"
+                    for line in lines[producer_start + 1:producer_end])
+                bindings = attempt_output_bindings(value, matrix) if value else (
+                    "is not defined")
+                if isinstance(bindings, str):
+                    found.append(
+                        f"{workflow}: job {producer} output {output} {bindings}, so {job} cannot "
+                        "name the artifact that job's latest execution uploaded",
+                    )
+                    continue
+                bindings = {
+                    **bindings,
+                    "github.job": producer,
+                    ATTEMPT_CONTEXT: Opaque(f"needs.{producer}.outputs.{output}"),
+                }
+                produced = set()
+                for upload in steps[producer]:
+                    if not uses(upload, "upload-artifact"):
+                        continue
+                    try:
+                        produced.add(evaluate_template(
+                            expression(str((upload.get("with") or {}).get("name", ""))), bindings))
+                    except Unresolved:
+                        continue
+                if name not in produced:
+                    found.append(
+                        f"{workflow}: job {job} step {label!r} downloads {name}, which no upload "
+                        f"in {producer} produces for the member its {output} output reports",
+                    )
+    return found
+
+
+# The checks branch protection requires, matched on a job's id or its name. One that needs other
+# jobs or downloads artifacts gates a merge on their outcome, so it is held to the aggregator rules
+# below whether or not it currently verifies anything. One that does neither (parity-gate today)
+# checks its own work and is not an aggregator.
+REQUIRED_CHECKS = {"apple-ci", "core-ci", "parity-gate"}
+# Shell reads of Actions artifacts: `gh run download`, or the artifacts REST API by its path. Local
+# paths that merely contain "artifacts" (`ls build/artifacts/1`) are not reads and do not match.
+ARTIFACT_READ_IN_SHELL = re.compile(
+    r"\bgh\s+run\s+download\b|\brepos/\S+/actions/(?:runs/\S+/)?artifacts\b")
+# A verify call anywhere in a run block, direct or not: a call wrapped in `|| true` must not stop
+# the job counting as an aggregator, or defanging the call would also exempt it from the rules.
+VERIFY_MENTION = re.compile(r"\bpython3\s+tools/verify-parity-evidence\b")
+
+
+def aggregator_errors(workflow: Path, lines: list[str]) -> list[str]:
+    """The gate every evidence-reading job must be: results first, then evidence, no escape hatch.
+
+    An aggregator is a job that runs `tools/verify-parity-evidence`, or a required check
+    (REQUIRED_CHECKS, by job id or name) that needs other jobs or downloads artifacts. A job that
+    only downloads -- a summary, or one half of a split release -- is not an aggregator: it is held
+    to the naming and attempt rules in partial_rerun_errors(), and to nothing here but the shell-read
+    ban, because nothing it does certifies evidence. An aggregator's
+    evidence-reading is sound only if the jobs it reads from SUCCEEDED in the execution whose
+    artifact it downloads, so for every job it needs it must test `needs.<job>.result` equal to
+    `success`, in an unconditional, blocking step, BEFORE its first download: evidence from an
+    execution that did not succeed is then never read at all. It must run `if: always()` (a failed
+    job would otherwise skip it, and a skipped required check does not block a merge), make exactly
+    one direct, unconditional verify call after every download, download unconditionally into the
+    paths that call reads, and read every attempt output its producers export for it. No job it
+    needs, and not the aggregator itself, may set job-level `continue-on-error`.
+
+    What this cannot see, because it reads the workflow text and does not execute it: artifact
+    reads inside a script a step invokes, through a composite or local action, via `curl` with a
+    computed URL, or via actions/upload-artifact/merge. Shell reads it can recognise -- `gh run
+    download`, or an artifacts REST path -- are rejected in ANY job of any workflow, because the
+    rules above cannot reason about them; use actions/download-artifact by exact name instead.
+    """
+    found: list[str] = []
+    spans = {name: (start, end) for name, start, end in job_spans(lines)}
+    properties = {name: job_properties(lines, start, end) for name, (start, end) in spans.items()}
+    steps = {name: job_steps(lines, start, end) for name, (start, end) in spans.items()}
+
+    def downloads(step: dict[str, object]) -> bool:
+        return str(step.get("uses", "")).startswith("actions/download-artifact@")
+
+    for job, job_steps_list in steps.items():
+        for step in job_steps_list:
+            if ARTIFACT_READ_IN_SHELL.search(code_before_comment(str(step.get("run", "")))):
+                found.append(
+                    f"{workflow}: job {job} step {step.get('name') or 'run'!r} reads artifacts "
+                    "from the shell (gh run download or the artifacts API), which the aggregator "
+                    "rules cannot check; use actions/download-artifact by exact name",
+                )
+
+    def required_check(job: str) -> bool:
+        return (job in REQUIRED_CHECKS
+                or str(properties[job].get("name", "")).strip("'\"") in REQUIRED_CHECKS)
+
+    def verifies(job: str) -> bool:
+        return any(VERIFY_MENTION.search(code_before_comment(line))
+                   for step in steps[job] for line in str(step.get("run", "")).splitlines())
+
+    aggregators = sorted(
+        job for job in spans
+        if verifies(job)
+        or (required_check(job) and (listed(properties[job].get("needs"))
+                                     or any(downloads(step) for step in steps[job]))))
+    for aggregator in aggregators:
+        props = properties[aggregator]
+        agg_steps = steps[aggregator]
+        needed = listed(props.get("needs"))
+        required = required_check(aggregator)
+        legs = sorted(set(spans) - {aggregator}) if required else sorted(needed)
+        if required:
+            if aggregator in REQUIRED_CHECKS and str(props.get("name", "")).strip("'\"") != aggregator:
+                found.append(
+                    f"{workflow}: job {aggregator} must be named exactly {aggregator}; branch "
+                    "protection matches the check by name",
+                )
+            if sorted(needed) != legs:
+                found.append(
+                    f"{workflow}: job {aggregator} must need every leg {legs}, "
+                    f"and needs {sorted(needed)}",
+                )
+        # Without always(), a failed leg SKIPS the aggregator, and a skipped required check does not
+        # block a merge. `!cancelled()` fails the same way for a cancelled run, and success() is the
+        # default this replaces.
+        if expression(str(props.get("if", ""))) not in ("${{ always() }}", "always()"):
+            found.append(
+                f"{workflow}: job {aggregator} must run if: ${{{{ always() }}}}; otherwise a "
+                "failed leg skips it, and a skipped required check does not block a merge",
+            )
+        environment = props.get("env") if isinstance(props.get("env"), dict) else {}
+        # Where each `test "$X" = success` is: only unconditional, blocking shell steps count.
+        tested_at: dict[str, int] = {}
+        for index, step in enumerate(agg_steps):
+            if "if" in step or step.get("continue-on-error", "false") != "false":
+                continue
+            if str(step.get("shell", "bash")) not in {"bash", "sh"}:
+                continue
+            for words in direct_commands(str(step.get("run", ""))):
+                if (len(words) == 4 and words[0] == "test" and words[2] in {"=", "=="}
+                        and words[3] == "success"):
+                    tested_at.setdefault(words[1].strip("${}"), index)
+        download_steps = [index for index, step in enumerate(agg_steps) if downloads(step)]
+        first_download = min(download_steps, default=len(agg_steps))
+        for leg in legs:
+            bound = {name for name, value in environment.items()
+                     if expression(value) == f"${{{{ needs.{leg}.result }}}}"}
+            positions = [tested_at[name] for name in bound if name in tested_at]
+            if not positions:
+                found.append(
+                    f"{workflow}: job {aggregator} must require needs.{leg}.result to "
+                    "equal success in an unconditional step; any other test lets a cancelled or "
+                    "skipped leg pass",
+                )
+            elif min(positions) > first_download:
+                found.append(
+                    f"{workflow}: job {aggregator} tests needs.{leg}.result only after downloading "
+                    "evidence; test every result first, so evidence from an execution that did not "
+                    "succeed is never read",
+                )
+
+        # The evidence check is the other half of what the aggregator is for, and it is as easy to
+        # defang as the result test: `continue-on-error`, a step `if:`, `|| true`, or a position
+        # before the downloads each leave the aggregator green with the evidence unchecked. So
+        # exactly one step makes the verify call as a direct command, unconditionally, after every
+        # download -- and no download may be made optional either, or the call would read an empty
+        # directory.
+        verify_steps = [index for index, step in enumerate(agg_steps)
+                        if any(words[:2] == ["python3", "tools/verify-parity-evidence"]
+                               for words in direct_commands(str(step.get("run", ""))))]
+        if len(verify_steps) != 1:
+            found.append(
+                f"{workflow}: job {aggregator} must make exactly one direct "
+                f"python3 tools/verify-parity-evidence call, and makes {len(verify_steps)}; a call "
+                "inside a condition, a list or a pipeline cannot fail the job",
+            )
+        for index in verify_steps + download_steps:
+            step = agg_steps[index]
+            if "if" in step or step.get("continue-on-error", "false") != "false":
+                found.append(
+                    f"{workflow}: job {aggregator} step "
+                    f"{step.get('name') or step.get('uses')!r} must be unconditional and blocking "
+                    f"(no if:, no continue-on-error); otherwise {aggregator} passes with the "
+                    "evidence unchecked",
+                )
+        if verify_steps and download_steps and max(download_steps) > min(verify_steps):
+            found.append(
+                f"{workflow}: job {aggregator} verifies evidence before every download "
+                "has run; the verify call would read directories that are not there yet",
+            )
+        download_paths = {expression(str((agg_steps[index].get("with") or {}).get("path", "")))
+                          for index in download_steps}
+        download_names = " ".join(expression(str((agg_steps[index].get("with") or {})
+                                                 .get("name", "")))
+                                  for index in download_steps)
+        for argument in [argument
+                         for step in agg_steps
+                         for words in evidence_commands(str(step.get("run", "")))
+                         if words[:2] == ["python3", "tools/verify-parity-evidence"]
+                         for argument in words[2:]]:
+            if not argument.startswith("$RUNNER_TEMP/") and argument not in download_paths:
+                found.append(
+                    f"{workflow}: verify-parity-evidence reads {argument}, which "
+                    f"{aggregator} never downloads; it would be empty on that machine",
+                )
+        # A producer exports an attempt output only so that this job can name its evidence. One the
+        # aggregator never reads is a surface whose evidence nobody checks.
+        for leg in legs:
+            outputs = properties[leg].get("outputs")
+            for output, value in (outputs.items() if isinstance(outputs, dict) else []):
+                if (ATTEMPT_CONTEXT in value
+                        and f"${{{{ needs.{leg}.outputs.{output} }}}}" not in download_names):
+                    found.append(
+                        f"{workflow}: job {leg} exports attempt output {output}, which no "
+                        f"{aggregator} download names; that evidence is never read",
+                    )
+        for job_name in [aggregator, *legs]:
+            if job_name in properties and properties[job_name].get(
+                    "continue-on-error", "false") != "false":
+                found.append(
+                    f"{workflow}: job {job_name} sets continue-on-error; a required "
+                    "job that cannot fail the run is not a gate",
+                )
+    return found
+
+
 errors: list[str] = []
 workflows = sorted(Path(".github/workflows").glob("*.yml"))
 if not workflows:
@@ -552,6 +1051,15 @@ for workflow in workflows:
     for action, ref in re.findall(r"uses:\s+([^@\s]+)@([^\s#]+)", text):
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             errors.append(f"{workflow}: {action} is not pinned to an immutable commit")
+    # OBSERVED in core-ci run 36238393531: its required job downloaded every artifact by its own
+    # attempt, so a "Re-run failed jobs" of one emulator leg could never go green -- the jobs it
+    # left alone had uploaded under attempt 1. Checked in every workflow, not only the two known
+    # aggregators, so a new aggregator cannot reintroduce it.
+    errors.extend(partial_rerun_errors(workflow, lines))
+    # core-ci's stale-evidence argument rests on its result check running before any download.
+    # That was enforced only for apple-ci, and twelve edits to the real core-ci.yml that defeat it
+    # were all accepted -- so the aggregator rules now apply to every evidence-reading job.
+    errors.extend(aggregator_errors(workflow, lines))
 
 # Every JUnit directory an Apple step writes must reach verify-parity-evidence, and every
 # directory it reads must be written by a step. PR #65 failed apple-ci with "evidence test did not
@@ -678,86 +1186,11 @@ if apple_ci:
         )
         aggregator_steps: list[dict[str, object]] = []
     else:
+        # The aggregator's own gate -- its name, if: always(), needing and testing every leg before
+        # any download, the verify call's position and the absence of escape hatches -- is checked
+        # for every workflow by aggregator_errors(). What stays here is apple-ci's evidence handoff.
         start, end = apple_jobs[APPLE_AGGREGATOR]
-        aggregator = job_properties(apple_lines, start, end)
         aggregator_steps = job_steps(apple_lines, start, end)
-        if str(aggregator.get("name", "")).strip("'\"") != APPLE_AGGREGATOR:
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must be named exactly {APPLE_AGGREGATOR}; "
-                "branch protection matches the check by name",
-            )
-        # Without always(), a failed leg SKIPS the aggregator, and a skipped required check does not
-        # block a merge. `!cancelled()` fails the same way for a cancelled run, and success() is the
-        # default this replaces.
-        if expression(str(aggregator.get("if", ""))) not in ("${{ always() }}", "always()"):
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must run if: ${{{{ always() }}}}; otherwise a "
-                "failed leg skips it, and a skipped required check does not block a merge",
-            )
-        needed = listed(aggregator.get("needs"))
-        if sorted(needed) != legs:
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must need every leg {legs}, "
-                f"and needs {sorted(needed)}",
-            )
-        environment = aggregator.get("env") if isinstance(aggregator.get("env"), dict) else {}
-        required = {
-            words[1].strip("${}")
-            for step in aggregator_steps
-            if "if" not in step and step.get("continue-on-error", "false") == "false"
-            and str(step.get("shell", "bash")) in {"bash", "sh"}
-            for words in direct_commands(str(step.get("run", "")))
-            if len(words) == 4 and words[0] == "test" and words[2] in {"=", "=="}
-            and words[3] == "success"
-        }
-        for leg in legs:
-            bound = {name for name, value in environment.items()
-                     if expression(value) == f"${{{{ needs.{leg}.result }}}}"}
-            if not bound & required:
-                errors.append(
-                    f"{apple_ci_path}: job {APPLE_AGGREGATOR} must require needs.{leg}.result to "
-                    "equal success in an unconditional step; any other test lets a cancelled or "
-                    "skipped leg pass",
-                )
-
-        # The evidence check is the other half of what the aggregator is for, and it is as easy to
-        # defang as the result test: `continue-on-error`, a step `if:`, `|| true`, or a position
-        # before the downloads each leave apple-ci green with the evidence unchecked. So exactly one
-        # step makes the verify call as a direct command, unconditionally, after every download --
-        # and no download may be made optional either, or the call would read an empty directory.
-        verify_steps = [index for index, step in enumerate(aggregator_steps)
-                        if any(words[:2] == ["python3", "tools/verify-parity-evidence"]
-                               for words in direct_commands(str(step.get("run", ""))))]
-        download_steps = [index for index, step in enumerate(aggregator_steps)
-                          if str(step.get("uses", "")).startswith("actions/download-artifact@")]
-        if len(verify_steps) != 1:
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} must make exactly one direct "
-                f"python3 tools/verify-parity-evidence call, and makes {len(verify_steps)}; a call "
-                "inside a condition, a list or a pipeline cannot fail the job",
-            )
-        for index in verify_steps + download_steps:
-            step = aggregator_steps[index]
-            if "if" in step or step.get("continue-on-error", "false") != "false":
-                errors.append(
-                    f"{apple_ci_path}: job {APPLE_AGGREGATOR} step "
-                    f"{step.get('name') or step.get('uses')!r} must be unconditional and blocking "
-                    "(no if:, no continue-on-error); otherwise apple-ci passes with the evidence "
-                    "unchecked",
-                )
-        if verify_steps and download_steps and max(download_steps) > min(verify_steps):
-            errors.append(
-                f"{apple_ci_path}: job {APPLE_AGGREGATOR} verifies evidence before every download "
-                "has run; the verify call would read directories that are not there yet",
-            )
-        for job_name in [APPLE_AGGREGATOR, *legs]:
-            job_start, job_end = apple_jobs[job_name]
-            if job_properties(apple_lines, job_start, job_end).get(
-                    "continue-on-error", "false") != "false":
-                errors.append(
-                    f"{apple_ci_path}: job {job_name} sets continue-on-error; a required Apple "
-                    "job that cannot fail the run is not a gate",
-                )
 
     # Evidence is verified in the required job, and only there: FEATURES.yml cites job apple-ci,
     # and verify-parity-evidence resolves citations against GITHUB_JOB.
@@ -838,21 +1271,6 @@ if apple_ci:
         elif name not in produced:
             errors.append(
                 f"{apple_ci_path}: {APPLE_AGGREGATOR} downloads {name}, which no leg uploads",
-            )
-    verify_arguments = [
-        argument
-        for step in aggregator_steps
-        for words in evidence_commands(str(step.get("run", "")))
-        if words[:2] == ["python3", "tools/verify-parity-evidence"]
-        for argument in words[2:]
-    ]
-    for argument in verify_arguments:
-        if argument.startswith("$RUNNER_TEMP/"):
-            continue
-        if argument not in download_names.values():
-            errors.append(
-                f"{apple_ci_path}: verify-parity-evidence reads {argument}, which "
-                f"{APPLE_AGGREGATOR} never downloads; it would be empty on that machine",
             )
 
 # The directory wiring above is necessary and was not sufficient. verify-parity-evidence matches on

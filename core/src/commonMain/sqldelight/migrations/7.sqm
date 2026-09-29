@@ -1,0 +1,43 @@
+-- Lyrics in the seen-cache (spec §18.4, §16.10): additive. Three new tables and an index; no
+-- existing table is touched and nothing is seeded, because the mirror never held lyrics.
+-- Lyrics are re-derivable from the server, so they are not protected data (§11.4).
+
+CREATE TABLE cache_lyrics (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('songLyrics', 'getLyrics')),
+  fetched_at_wall INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  last_access_wall INTEGER NOT NULL,
+  dropped_layers INTEGER NOT NULL CHECK (dropped_layers >= 0),
+  stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+  PRIMARY KEY (server_id, raw_id)
+);
+
+CREATE TABLE cache_lyrics_layer (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  layer_ordinal INTEGER NOT NULL CHECK (layer_ordinal >= 0),
+  language TEXT,
+  synced INTEGER NOT NULL CHECK (synced IN (0, 1)),
+  offset_milliseconds INTEGER NOT NULL,
+  kind TEXT,
+  display_artist TEXT,
+  display_title TEXT,
+  PRIMARY KEY (server_id, raw_id, layer_ordinal),
+  FOREIGN KEY (server_id, raw_id) REFERENCES cache_lyrics(server_id, raw_id) ON DELETE CASCADE
+);
+
+CREATE TABLE cache_lyrics_line (
+  server_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  layer_ordinal INTEGER NOT NULL,
+  line_ordinal INTEGER NOT NULL CHECK (line_ordinal >= 0),
+  start_milliseconds INTEGER,
+  text TEXT NOT NULL,
+  PRIMARY KEY (server_id, raw_id, layer_ordinal, line_ordinal),
+  FOREIGN KEY (server_id, raw_id, layer_ordinal)
+    REFERENCES cache_lyrics_layer(server_id, raw_id, layer_ordinal) ON DELETE CASCADE
+);
+
+CREATE INDEX cache_lyrics_access ON cache_lyrics(server_id, last_access_wall);
