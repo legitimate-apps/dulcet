@@ -584,7 +584,7 @@ androidTarget(); jvm()   // jvm exists only for the conformance suite (S20)
   they require a JDK and the Gradle wrapper on the build machine. GitHub's macOS runner images ship
   both, so this is free in CI; it is a stated contributor prerequisite in `CLAUDE.md`.
 - **Every Run Script phase invokes Gradle through `tools/run-gradle-exclusive`, never a bare
-  `./gradlew`.** OBSERVED: eight targets own the phase, Xcode builds independent targets in parallel,
+  `./gradlew`.** OBSERVED: eight targets own the phase (nine since the 2026-09-29 ship-readiness change added `DulcetiOSRelease`), Xcode builds independent targets in parallel,
   and Gradle queues behind its own locks for only about 60 s before failing the build if the owner
   has not yielded — most pairs fit inside that window (green run 34596556005 ran a tvOS pair
   concurrently for over four minutes), and the failure is the long tail. Run
@@ -1862,9 +1862,10 @@ Playing is updated after `Ready` and after each `AttemptReplaced`, never specula
 so the system UI never shows a track that failed to start. Commands arriving for a stale session are
 rejected, not applied to the current one.
 
-**Revision 106.** Rating and like are **not registered** with the system command centre until the
-favourites outbox (§18.3) exists: a lock-screen heart whose handler answers "failed" is worse than
-none. **Artwork** reaches the system entry as image bytes that already passed the core's artwork
+**Revision 106.** Rating and like are **not registered** with the system command centre until a
+shell can reach the favourites outbox (§18.3): a lock-screen heart whose handler answers "failed" is
+worse than none. *Ship readiness (2026-09-29):* the outbox exists in the core (`MutationOutbox.kt`); what is
+missing is a shell that reaches it, so the condition is reachability, not existence. **Artwork** reaches the system entry as image bytes that already passed the core's artwork
 validation, keyed by playback session so a late image cannot land on a later track — never as a
 URL, because every artwork URL this client can build carries credentials. Every start stops the
 engine, and the stop clears its artwork, so an attempt that keeps its session -- Try Again (§12.1) --
@@ -2644,6 +2645,24 @@ Dulcet ships no third-party crash reporter and no analytics SDK. This is a secur
 a privacy one: the likeliest way a signed stream URL leaves a device is inside a crash report. Apple's
 own opt-in crash reporting is acceptable — the user consents at OS level and it does not carry our log
 buffer — and we still keep URLs out of log buffers (§13.4).
+
+**Privacy manifests (ship readiness, 2026-09-29).** Each Apple app target — `DulcetMac`, `DulcetMacRelease`,
+`DulcetiOS`, `DulcetiOSRelease`, `DulcetTV` — and the `DulcetKit` package resource bundle ships a
+`PrivacyInfo.xcprivacy` declaring no tracking, no tracking domains and no collected data, which is
+what this section commits to. The required-reason API list is declared from what the binaries
+actually link, not from what the source appears to call, because the Kotlin/Native framework is
+invisible to a Swift grep: okio's Darwin file system brings `fstat` and `lstat` in. OBSERVED
+2026-09-26 by `nm -u` and selector strings on the Release binaries of the macOS PROD, iOS DEV, iOS
+PROD and tvOS DEV builds, which agree: `fstat`, `lstat`, `NSFileModificationDate`,
+`NSURLContentModificationDateKey`, `attributesOfItemAtPath:error:` (file timestamp), `NSUserDefaults`
+(user defaults) and `systemUptime` (system boot time). No disk-space API and no
+`mach_absolute_time` is linked. Declared reasons, each read from Apple's
+`NSPrivacyAccessedAPITypes` documentation on 2026-09-26 rather than recalled: user defaults
+**CA92.1** (the app's own defaults), file timestamp **C617.1** (files inside the app container) and
+system boot time **35F9.1** (elapsed time between in-app events). A Debug macOS build links more,
+volume-capacity keys among them, through its debug dylib; that is not what ships, and the scan is of
+Release binaries for that reason. Any change that adds a listed API — a free-space check before a
+download, say — adds its category and reason to all four files in the same change.
 
 ---
 
@@ -3429,7 +3448,7 @@ of the key.
 | home (§ below) | one activity-ordered or `newest` list per row, plus `getStarred2` | each row a single page | one list window per row |
 | search | `search3` (§16.15) | per-type offsets (§18.1) | **entities only**; result lists are not cached |
 | artwork | `getCoverArt` (§18.2) | — | the artwork cache, keyed by the whole versioned `coverArt` id |
-| lyrics | `getLyricsBySongId` / `getLyrics` (§18.4) | — | not cached in v1 |
+| lyrics | `getLyricsBySongId` / `getLyrics` (§18.4) | — | the seen-cache: one normalized document per track (`LyricsCache.sq`), purged with the namespace (§18.4; ship readiness, 2026-09-29) |
 
 Rules the table does not show:
 
@@ -4098,7 +4117,7 @@ itself is retried by itself:
   answered. Transient are exactly these (item 29, round 7):
   - a timeout, or `unreachable` while the platform reports the server reachable;
   - HTTP 429, named `busy` from the STATUS whatever the body says. The reference server's limiter
-    answers it with an envelope carrying only the generic code 0 (CLAUDE.md trap 24). Its
+    answers it with an envelope carrying only the generic code 0 (docs/TRAPS.md trap 24). Its
     `Retry-After` is the floor under the wait, read as at most 5 minutes, as an outbox reads it
     (§18.6). The reconnect and the outboxes keep separate waits, each honouring the `Retry-After`
     of the 429 it met: a 429 on the reconnect's epoch read does not delay an outbox flush, and an
@@ -4114,7 +4133,7 @@ itself is retried by itself:
   - an error code the protocol does not define.
 
   The reconnect runs again after 2 s, the wait doubling to a cap of 60 s (both figures ASSUMED).
-  The wait is measured by the monotonic clock and never persisted (CLAUDE.md trap 20). The retry runs
+  The wait is measured by the monotonic clock and never persisted (docs/TRAPS.md trap 20). The retry runs
   only while the app is in the foreground and the platform reports the server reachable: a move to
   the background, an unreachable report or closing the reader stops it, and a reconnect that reads
   the epoch resets the wait. Until then every screen says `offline`. The shell states whether the app
@@ -5491,8 +5510,10 @@ A sealed hierarchy in the core, mapped from the wire in exactly one place:
   production constructions are library sync's, for a server that cannot enumerate the whole library
   or a walk that will not terminate; every other production use is a type match in a mapping. In
   account setup it is reserved vocabulary, not a missing mapping for absent extension discovery
-  (§10.3 requires baseline login to proceed), and §10.4's circuit breaker has no production
-  implementation to supply one. Presentation tests that inject it do not make it a reachable
+  (§10.3 requires baseline login to proceed), and nothing on the account-connect path uses §10.4's
+  circuit breaker, so nothing there can supply one. *Ship readiness (2026-09-29):* the breaker itself exists
+  (`EndpointCircuitBreaker.kt`) and serves the lyrics read, the reader and the favourites outbox,
+  none of which a shell on `main` reaches yet. Presentation tests that inject it do not make it a reachable
   account-connect state; `docs/CONFORMANCE.md` records the audit.
 - `Playback.NoPlayableSource | ValidationFailed(reason) | EngineFailed(reason) | CommandRejected(reason)`
   — every reason is a closed semantic value rather than retained platform/server text.
@@ -6149,7 +6170,7 @@ freshly booted simulator (SUPPORTED, n=23).
 
 1. **Deterministic environment checks run before any build.** The Homebrew closure install and its
    drift check run immediately after Xcode selection. A pin drift fails every run by construction
-   (§20, CLAUDE.md trap 36) and used to be discovered after ~55 minutes of builds.
+   (§20, docs/TRAPS.md trap 36) and used to be discovered after ~55 minutes of builds.
 2. **At most one simulator is booted while a phase talks to the loopback fixtures, and it is fully
    booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
    does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
@@ -6258,7 +6279,7 @@ alone took 42.4 and 30.7. The aggregator took 6 to 13 seconds. Both legs held a 
 seconds of the run starting, in every run. The partial reds, all outside the split: run 36036076261's
 platform leg hit the iPad destination failure ("Unable to find a device matching the provided
 destination specifier", zero concrete simulators listed). Run 36178175847's conformance leg stopped
-at minute 3 on a Homebrew `ca-certificates` pin drift (CLAUDE.md trap 36; rule 1 placed it there,
+at minute 3 on a Homebrew `ca-certificates` pin drift (docs/TRAPS.md trap 36; rule 1 placed it there,
 where the single job used to reach it after its builds). Run 36188503621 attempt 1's conformance
 leg hit a 10-second loopback read timeout in `DarwinProxyAuthenticationConformanceTest` on
 iosSimulatorArm64, with one simulator booted and host pressure comparable to a green single-job run.
@@ -6430,7 +6451,8 @@ to everyone who downloads the app, and it is wrong for every user who is not the
 it. **Anything of that shape belongs to the DEV target only, and never to a build that leaves the
 maintainer's own devices.** The build configuration must make this structurally impossible rather than
 relying on someone remembering — the field is read from a DEV-only configuration file that the PROD
-target does not compile.
+target does not compile. *Ship readiness (2026-09-29)* names that file and key (§22.6): the Info.plist key
+`DulcetPreconfiguredServer`, only ever in a DEV-only plist.
 
 Optimization level, assertions, and every correctness-relevant flag are **identical** across channels.
 A DEV build that behaves differently from PROD because of a build setting is not dogfooding, it is
@@ -6492,12 +6514,20 @@ gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_r
 |---|---|---|---|---|
 | dev / macos | `DulcetMac` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Mac Dev App Store | signed `.pkg`, internal-only |
 | dev / ios | `DulcetiOS` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Dev iOS App Store | `.ipa`, internal-only |
+| dev / tvos | `DulcetTV` | `${BUNDLE_PREFIX}.dev` | Dulcet CI Dev tvOS App Store | `.ipa`, internal-only |
 | prod / macos | `DulcetMacRelease` | `${BUNDLE_PREFIX}` | Dulcet CI Mac App Store | signed `.pkg` |
+| prod / ios | `DulcetiOSRelease` | `${BUNDLE_PREFIX}` | Dulcet CI iOS App Store | `.ipa` |
 
-Refused, with the reason printed: `prod/ios` (no PROD iOS target exists yet; it will ship as
-`${BUNDLE_PREFIX}` on the PROD record) and `dev/tvos` (App Store Connect requires a layered tvOS icon
-and a top-shelf image, which `DulcetTV` does not have; its profile, Dulcet CI Dev tvOS App Store,
-already exists). Internal-only is read back from the packaged `Info.plist` (`TFInternalTestingOnly`),
+Refused, with the reason printed: `prod/tvos` (no PROD tvOS target exists; tvOS ships to DEV only).
+*Ship readiness (2026-09-29)* added `dev/tvos` — `DulcetTV` now carries the layered app icon and both top-shelf
+images App Store Connect requires, in one brand-assets set. As first committed it could not pass the
+archive step, which required the iOS icon shape (a dictionary naming the icon) on every non-macOS
+platform. actool writes tvOS's primary icon as a bare string (OBSERVED in a Release `DulcetTV`
+build). The check now accepts that shape, and also requires both top-shelf images. `dev/tvos` has
+not yet run end to end, so it is ASSUMED deliverable until its first dispatch. Ship readiness (2026-09-29) also
+added `prod/ios`, a `DulcetiOSRelease`
+target built like `DulcetMacRelease`: its own plist in a directory no other target reads, the same
+sources as `DulcetiOS` minus DEV's partial plist, and the production icon. Internal-only is read back from the packaged `Info.plist` (`TFInternalTestingOnly`),
 not assumed from the export options. The pairs
 live in `tools/release_plan.py`, which also refuses a plan whose profile differs from the target's
 `PROVISIONING_PROFILE_SPECIFIER` in `apple/project.yml`.
@@ -6528,29 +6558,170 @@ cancelled upload may already have reached App Store Connect and the next run wou
 
 **App Store Connect records.** Records cannot be created through the API (it answers that `apps` does
 not allow `CREATE`), so each is a one-time web-UI step: one DEV record, `${BUNDLE_PREFIX}.dev`, with
-macOS and iOS platforms, and the existing PROD record with iOS added when PROD iOS exists. An upload run
-whose record is absent fails in seconds, before the archive, naming the missing record.
+macOS and iOS platforms, and the existing PROD record. An upload run whose record is absent fails in
+seconds, before the archive, naming the missing record. *Ship readiness (2026-09-29):* a record must also carry the
+platform being uploaded, so the first `dev/tvos` upload needs tvOS added to the DEV record and the
+first `prod/ios` upload needs iOS added to the PROD record. The number step matches the record by
+bundle identifier only (OBSERVED in `tools/app_store_connect.py`, `matching_app`), so a missing
+platform is not caught before the archive; ASSUMED, not yet observed: that App Store Connect then
+refuses the validation or the upload.
 
 **The preconfigured-server guard (§22.3).** No build carries a preconfigured server today. What
-exists is the guard, and its reach is stated exactly:
+exists is the guard, and its reach is stated exactly. *Ship readiness (2026-09-29)* rebuilt it after review showed
+the earlier version read only `apple/project.yml` while Xcode builds the committed `.pbxproj`: an
+xcconfig attached through `configFiles`, a template, a setting group, a quoted or flow-style key, an
+extra source folder, or a hand edit of the project all passed it, and an xcconfig carrying a server
+value and a compile condition was shown to reach a Release build of `DulcetiOSRelease` (the same
+routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now holds:
 
-- **Structural for configuration.** The two Mac targets no longer share a plist: PROD reads
-  `apple/DulcetMacRelease/Info.plist`, DEV reads `apple/DulcetMacDev/Info.plist`, and neither directory
-  is a source folder of the other channel. A DEV convenience value belongs in the DEV plist, which no
-  PROD build reads.
-- **Allowlists, not name matching.** `verify_release_policy.py` holds the PROD plist to an exact key
-  set, the PROD target's build settings and the project-level settings it inherits to allowlisted
-  names, forbids project-level `configs`, and rejects any URL on that path; `release.yml` may pass no
-  server, URL, `-xcconfig` or `INFOPLIST_KEY_` setting, and the archive may override only the build
-  number. The archive step then holds the built PROD `Info.plist` to the same allowlist plus the keys
-  Xcode stamps into every build, with no URL-valued entry.
-- **Not covered:** a URL literal compiled into Swift or Kotlin shared by both channels. No build
-  configuration can exclude that, so it remains a review obligation.
+- **Separate plists.** PROD reads `apple/DulcetMacRelease/Info.plist` or
+  `apple/DulcetiOSRelease/Info.plist`, each in a directory no other target reads; the DEV targets read
+  `apple/DulcetMacDev/Info.plist` and `apple/DulcetiOS/BackgroundAudio.plist`, which `DulcetiOSRelease`
+  excludes from its sources. Each PROD plist is held to an exact key set with no URL anywhere.
+- **The project source, as a shape it can read.** `project.yml` may use only the top-level, `options`
+  and per-target keys the policy knows; `configFiles`, `settingGroups`, `targetTemplates`, `include`,
+  target `templates` and setting presets are refused rather than parsed, as are quoted keys,
+  flow-style mappings, anchors, aliases and merge keys. PROD settings are allowlisted by name, a PROD
+  target must compile exactly its DEV twin's source folders (excludes may only remove) with exactly
+  its dependencies, and project-level settings are allowlisted by name.
+- **The committed project, which is what builds.** Parsed without Xcode, so the gate still runs on
+  Linux: no configuration anywhere is based on an xcconfig; project-level settings are allowlisted
+  per configuration; each PROD configuration's settings are allowlisted by name and hold no URL, and
+  linker flags, which can read a file into the binary, are held to their exact values. The committed
+  settings of both channels' targets, and the project-level ones `project.yml` declares, must equal
+  what `project.yml` declares, so an edit that was never regenerated fails too.
+- **DEV and PROD twins (§22.3's list, enforced).** In the committed project each PROD target must
+  build exactly its DEV twin's files, script phases, packages and dependencies, and their Release
+  settings must be identical except for the channel settings (bundle identifier, product name, icon,
+  provisioning profile, plist route, entitlements file, build number). The Info.plist each declares
+  (its plist file plus its `INFOPLIST_KEY_*` settings) must agree key for key except name, icon and
+  the server key, and the entitlements must match apart from the bundle identifier. That rule exists
+  because PROD iOS's first plist omitted the queue's drag type.
+- **Where a DEV server goes.** The one sanctioned spelling is the Info.plist key
+  `DulcetPreconfiguredServer`, set in a DEV-only plist: `apple/DulcetMacDev/Info.plist`,
+  `apple/DulcetiOS/BackgroundAudio.plist`, or `apple/DulcetTV/BackgroundAudio.plist`. The parity rule
+  exempts exactly that key, and the key's bytes may appear in no other file under `apple/`: not in
+  shared code, a PROD plist or a build setting. The code that reads it therefore has to live in a
+  DEV-only source directory, which the twins rule does not yet admit. Adding the first DEV server is
+  a reviewed change to that rule, and none exists today.
+- **Generated files are generated (ship readiness 2026-09-29, review round 3).** Review showed three PROD-only routes
+  through hand edits to generated files, two of them reaching a real Release build: a scheme
+  pre-action, a synchronized folder attached to the PROD target alone, and a PROD package product
+  re-pointed at another package exporting the same product name. `apple-ci`'s platform leg now runs
+  `tools/verify_xcodegen_regeneration` first: it regenerates `apple/` with the pinned XcodeGen (its
+  release archive checked against a SHA-256 before it runs), fails on any byte of difference in the
+  project, its schemes, its workspace or a plist XcodeGen writes, and fails on a committed file
+  XcodeGen no longer writes. It then proves it fires on three such edits. That closes the class,
+  since none of those states is one XcodeGen emits from an accepted `project.yml`. It is macOS-only,
+  so the policy also refuses each route by name, on Linux: PROD schemes may hold only the elements
+  XcodeGen writes (`SCHEME_ELEMENTS`) and never a pre- or post-action; a twin target may carry only
+  the keys XcodeGen writes (`TARGET_OBJECT_KEYS`); twins must resolve synchronized folders (with the
+  exceptions that apply to each) and package products (by the package's location and requirement,
+  not the product name) to the same things; and a duplicated object id or an unbalanced file is
+  refused by name.
+- **Scripts cannot branch on the channel.** Every script phase, in `project.yml` and in the committed
+  project, may read only the variables in `SCRIPT_VARIABLES` and no command that dumps the
+  environment. A script shared identically by both twins passes the twins rule, so it could otherwise
+  write something into PROD alone by testing the bundle identifier, configuration, product or target
+  name, or a value from the build machine. The shell must be `/bin/sh`. What a script's *invoked*
+  file reads is not followed by this rule, and one invoked file is a real PROD-only route:
+  `tools/run-gradle-exclusive` runs Gradle with Xcode's whole environment, which carries
+  `PRODUCT_BUNDLE_IDENTIFIER` and product-named paths that differ between PROD and its DEV twin. A
+  build script keyed on one could compile a value into the PROD framework alone (the policy accepted
+  such a read before the ship-readiness review's round 4 (2026-09-29); that it would compile is ASSUMED, not built). The
+  environment cannot be scrubbed, because `embedAndSignAppleFrameworkForXcode` reads the per-target
+  product paths from it. So the policy polices the reader instead: Gradle build logic (`*.gradle.kts`,
+  `*.gradle`, `buildSrc`, `build-logic`) may read environment variables only by a literal name in
+  `GRADLE_ENVIRONMENT`, which is empty, and may not read the environment whole, start a process,
+  apply another script or include another build. The Kotlin Gradle plugin's own reads of the
+  product paths are the one remaining use, and they only locate the framework it writes.
+- **The artifact.** `release.yml` may set only the environment names in `RELEASE_ENV`, by `env:` or
+  `export` (the full-run gate step's `RELEASE_UPLOAD` and `RELEASE_SKIP_FULL_RUN_GATE` among them, two
+  booleans read by a step that builds nothing), and may not use `$GITHUB_ENV`, `$GITHUB_PATH` or a repository variable (`vars.`), since
+  the environment reaches the archive and every script phase. It may pass no URL, `-xcconfig` or
+  `INFOPLIST_KEY_` setting, and the archive may override only the build number. After archiving,
+  `tools/release/validate-app-bundle` holds the built PROD `Info.plist` to its platform's allowlist
+  plus the keys Xcode stamps into every build, with no URL-valued entry. It also fails the release if
+  any file in the PROD bundle contains the server key, in UTF-8 or UTF-16, whichever route put it
+  there, or an `http://` or `https://` address whose host is not in `URL_HOSTS`, in UTF-8 or either
+  UTF-16 byte order. That list was read from every file of Release builds of both PROD targets
+  (OBSERVED 2026-09-26): the bare scheme prefixes in UI copy, `www.apple.com` (plist DTDs),
+  `support.apple.com`, `music.example.com` (a placeholder), `music.example.invalid` and
+  `query.invalid` (reserved names in shared code), `localhost` and `127.0.0.1` (Ktor's default and a
+  loopback pattern), and `ktor.io` and `youtrack.jetbrains.com` (library diagnostics). The authority
+  is captured, then parsed rather than merely matched: userinfo up to the last `@` is dropped, a
+  bracketed IPv6 literal is a host of its own, percent-escapes are decoded, and a *captured*
+  authority that parses to neither a hostname nor an IP literal is refused. The capture is an
+  RFC 3986 character class and stops at the first character outside it, so the character after a
+  non-empty authority is not checked (see the limits below). A bare scheme passes only where the
+  string ends after `//`; a Kotlin/Native literal is length-prefixed rather than terminated, so there
+  the count in its header says so (OBSERVED in both PROD Release builds).
+  The scan catches an address the build stores contiguously, in UTF-8 or UTF-16 — **not every
+  address.** On arm64 a Swift string of 15 UTF-8 bytes or fewer is built from instruction
+  immediates: OBSERVED 2026-09-26, `"http://10.0.0.5"` compiled with `swiftc -O` left no contiguous
+  copy in the binary, while the 16-byte `"http://nas.lan:1"` was found. The source scan below covers
+  that case.
+- **The sources PROD compiles.** Every `http://` or `https://` address in a file under `apple/` or
+  `core/src/` must name a host the bundle scan allows, or one of `SOURCE_HOSTS` (documentation links in
+  comments), parsed exactly as the bundle scan parses. Only the test directories in
+  `SOURCE_TEST_DIRECTORIES` and the DEV-only plists are skipped, so a directory added later is scanned
+  until review lists it. An address built at run time from the user's own server, such as
+  `"https://$trimmed"`, is unclassifiable and is exempted only by its exact source line in
+  `SOURCE_ADDRESS_LINES`. Editing that line re-opens review, and an entry whose line is gone is itself
+  refused.
+- **Limits of the guard — a scan for accidental routes, not a proof against a deliberate one.**
+  Review of the ship-readiness change (round 4, 2026-09-29) found no accidental route, and accepted
+  these deliberate ones as review's job rather than the gate's:
+  - *A non-ASCII character after a real host.* Both scans stop the authority at the first character
+    outside RFC 3986 and classify what came before, so `"http://localhost\u{3002}mydomain.net"`
+    reads as `localhost` while Foundation's IDNA mapping turns U+3002 and U+FF0E into `.` (and
+    deletes U+00AD) and connects to `localhost.mydomain.net` (OBSERVED in the review).
+  - *Code in a skipped test directory.* The source scan skips `SOURCE_TEST_DIRECTORIES` by name;
+    nothing yet refuses a non-test SwiftPM target, a local package, a non-test Xcode target or a
+    Gradle source set that takes sources from one.
+  - *The Gradle reader rule is a spelling blocklist.* It refuses the direct spellings of an
+    environment read, a process and another script. Reflection, a Groovy `execute`, a custom wrapper
+    distribution, a `-javaagent` in `gradle.properties`, and a literal address in a build script are
+    not refused.
+  - *Other forms an address can take.* A `ws://` or `wss://` address, a scheme-less host or IP
+    literal (the core completes a bare host with `https://`, §10.2), an address assembled at run time
+    from pieces, and one stored compressed, encoded or in UTF-32.
+  Every one needs a reviewable change to code that also ships in DEV or to build logic; none is a way
+  for the DEV plist value to reach PROD by accident. Closing the cheap ones is a follow-up.
+- **No per-user Xcode state is tracked.** Xcode reads schemes from `xcuserdata/`, which neither this
+  policy nor the regeneration check inspects, so any tracked file under it is refused. `verify_ci_policy`
+  pins the regeneration step itself: exactly `python3 tools/verify_xcodegen_regeneration --self-test`,
+  unconditional, in a macOS leg the required `apple-ci` job needs, on pull requests. That leg may
+  carry §21.6's plan condition and no other: every generated Xcode file and `project.yml` is an Apple
+  input, so a pull request touching one plans the leg, and `release.yml`'s full-run gate means no
+  release archives a commit whose full run did not regenerate cleanly.
+- **Remedies.** Every refusal ends by naming where the rules live and spec §22.3, and every allowlist
+  refusal names its constant and says that extending it is a §22.3 decision made in review. A
+  refusal with no path forward invites a workaround, so none is silent about how to proceed.
+  What the policy parses — `project.yml`, the committed project, a plist — fails closed with a
+  message when it cannot read it, rather than being skipped. The text scans refuse the spellings they
+  name and nothing more (see the limits above).
+- **Not covered:** a server address compiled into Swift or Kotlin shared by both channels and
+  assembled at run time from pieces rather than written out as an address, in source or in the
+  bundle. No build configuration can exclude that, so it remains a review obligation. A value added
+  to shared code ships in DEV too, so it is a hardcoded server rather than a DEV/PROD divergence.
+- **No CI job builds either PROD target (OBSERVED 2026-09-26: neither `DulcetMacRelease` nor
+  `DulcetiOSRelease` appears in any workflow).** The first build of a PROD target is the archive step
+  of a `release.yml` dispatch, so a change that compiles for DEV and breaks PROD is found only then,
+  at the cost of one approved hosted run. The policy above makes that less likely, because the twins
+  rule keeps the two targets' inputs identical, but it does not make it impossible. A build of
+  `DulcetiOSRelease` beside the existing Debug `DulcetMac` build step would reuse that step's
+  DerivedData and Kotlin framework and cost roughly one to two minutes (ASSUMED, from local warm
+  builds). It was not added: `apple-ci` is close to its time caps and its matrix stays narrow
+  (§21.1).
 
 **Signing material** is the CI-only Apple Distribution certificate, a CI-only Mac Installer
 Distribution certificate (a macOS App Store package must be installer-signed), the `Dulcet CI …`
-profiles (Mac App Store, Mac Dev App Store, Dev iOS App Store, Dev tvOS App Store) and the App Store
-Connect API key, all as `release`-environment secrets. Revoking the CI certificates breaks only CI.
+profiles (Mac App Store, Mac Dev App Store, Dev iOS App Store, Dev tvOS App Store, and — ship readiness, 2026-09-29 —
+iOS App Store) and the App Store Connect API key, all as `release`-environment secrets. The iOS App
+Store profile is optional to the signing wrapper, so a `release` environment that does not hold it
+yet breaks no other plan; a `prod/ios` run without it fails at the archive, which finds no profile of
+that name. Revoking the CI certificates breaks only CI.
 The signing wrapper deletes decoded key files as soon as they are imported and unsets every secret
 variable before the archive runs.
 
@@ -6637,8 +6808,11 @@ not be produced is a support burden that arrives immediately.
   bundle ids, so **both are free and both must be created** — and creating them is the first CREATE
   operation the Phase-2 dry run exercises (§23.1).
 - Bundle identifiers under `${BUNDLE_PREFIX}` = **`com.legitimateapps.dulcet`** (header constants):
-  `${BUNDLE_PREFIX}.mac`, `${BUNDLE_PREFIX}.ios`, `${BUNDLE_PREFIX}.tv`, plus `${BUNDLE_PREFIX}.dev`
-  for the DEV channel (§22.2). Android `applicationId` `${BUNDLE_PREFIX}` and `${BUNDLE_PREFIX}.tv`.
+  exactly two Apple application identifiers, `${BUNDLE_PREFIX}` for PROD and `${BUNDLE_PREFIX}.dev`
+  for DEV, each shared by macOS, iOS, iPadOS and tvOS (universal purchase, §22.2; ship readiness 2026-09-29
+  corrects the per-platform `.mac`/`.ios`/`.tv` list this line carried). Android `applicationId`
+  `${BUNDLE_PREFIX}` for the phone (with `.dev` appended by its DEV flavour) and `${BUNDLE_PREFIX}.tv`
+  for Android TV, which has no DEV flavour yet.
 - 🚨 **A bundle identifier freezes on the first BUILD UPLOAD, not on app-record creation.** Revision 2
   said "once an App Store Connect app record exists," which is wrong and removes a real escape hatch.
   **OBSERVED**, Apple verbatim: *"A unique identifier for your app that is used throughout the system…
@@ -6952,6 +7126,141 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-09-29 — Ship readiness: privacy manifests, PROD iOS, tvOS DEV delivery, launcher icons and a PROD-server guard.** Ship readiness for the App Store and Google Play: privacy manifests,
+a PROD iOS target, tvOS DEV delivery, launcher icons, and the documentation corrections the
+completion audit listed.
+
+1. **Privacy manifests** on every Apple app target and the `DulcetKit` bundle, declared from a
+   symbol scan of the Release binaries rather than from source (§13.7). The Kotlin/Native framework
+   is where `fstat` and `lstat` come from, so a grep of the Swift would have under-declared.
+2. **PROD iOS exists.** `DulcetiOSRelease` builds `${BUNDLE_PREFIX}` with display name "Dulcet" and
+   the production icon, under the same guard as `DulcetMacRelease` (§22.6): its own plist in a
+   PROD-only directory, an exact key set, no URL anywhere, and allowlisted settings. PROD's first
+   plist omitted the queue drag type (`UTExportedTypeDeclarations`), which was found by diffing the
+   built DEV and PROD `Info.plist`s and is why the twins rule in item 8 exists. `release_plan.py`
+   plans `prod/ios`, and the signing wrapper installs the iOS App Store profile when the environment
+   holds it.
+3. **tvOS DEV is planned; it is deliverable only once its first dispatch passes.** `DulcetTV` carries
+   a brand-assets set: a three-layer app icon, its App Store counterpart, and both top-shelf images,
+   all rendered from the one source mark by `tools/icon/build-platform-icons`. An image stack lists
+   its layers front to back, and actool requires the last one to be opaque. A stack listed back to
+   front is reported as an error while the build still returns 0, so the build's exit code is not
+   evidence the icon is valid. `release_plan.py` plans `dev/tvos`, and only `prod/tvos` is refused.
+   *Corrected in review:* as first committed, this item said "tvOS DEV is deliverable". It was not.
+   The archive step required the iOS icon shape on tvOS, where actool writes a string, so every
+   `dev/tvos` dispatch would have failed after archiving. Item 8 records the fix.
+4. **The archive-time PROD plist check was wrong for macOS, and now covers both platforms.** It is
+   held to a per-platform allowlist. The macOS list lacked `NSLocalNetworkUsageDescription`, which
+   the PROD plist has carried since the channel was built. OBSERVED 2026-09-26: `main`'s check,
+   run against a Release build of `DulcetMacRelease`, exits 1 with "unexpected keys
+   ['NSLocalNetworkUsageDescription']". The first `prod/macos` dispatch would therefore have failed
+   at the archive step. The corrected check accepts that build.
+5. **The iOS launch screen was already fixed** (`INFOPLIST_KEY_UILaunchScreen_Generation`, before
+   this revision). Both iOS channels' built plists now carry a `UILaunchScreen`.
+6. **Android launcher icons.** The phone app now has adaptive icons with a monochrome layer and
+   legacy fallbacks for every density; the DEV flavour overrides only the foreground and legacy
+   bitmaps, with a DEV band. The adaptive XML stays in `mipmap-anydpi-v26`, although lint calls the
+   qualifier obsolete at minSdk 26. From a plain `mipmap-anydpi` folder the XML never reached the APK:
+   OBSERVED 2026-09-26, `aapt2 dump resources` listed only the density PNGs for `mipmap/ic_launcher`.
+   The TV app has the same icon, and a real banner, 160x90dp at every density, replaces a
+   placeholder rectangle.
+7. **Documentation corrections.**
+   - `CORPUS.md` said DEV ships on every merge; it is dispatched by hand.
+   - `CORPUS.md` said no self-hosted runner exists, while §21.3.1 admits one. It now says none builds
+     or tests the project, and names the exception.
+   - The working agreement said Android has one `applicationId`; Android TV's is `.tv`.
+   - §16.9 said lyrics are not cached; §18.4 caches them in the seen-cache.
+   - §12.10 made rating and like wait for an outbox that now exists; the condition is a shell that
+     reaches it.
+   - §18.12 said the circuit breaker had no production implementation. It has one, which no shell
+     reaches yet.
+   - §23.2 listed per-platform Apple bundle identifiers. There are two, shared across platforms.
+   - "Eight" targets running the Kotlin phase are now nine.
+8. **Corrections from the adversarial review of this revision.**
+   - **The artifact check moved into `tools/release/validate-app-bundle`, with controls.** It now
+     accepts tvOS's string-form icon and requires both top-shelf images, while iOS still requires the
+     dictionary form. The PROD allowlists moved with it, and so did a new scan that fails any PROD
+     bundle containing the server key. The policy requires the archive script to call it.
+   - **The preconfigured-server guard is enforced on the committed project, not only on its
+     source** (§22.6). The review showed configuration routes that bypassed the old guard, and the
+     bypass reached a Release build. Each route that review listed is now refused, and each refusal
+     has a mutation control in `tools/test-release-channel`. That claim covers the routes tested
+     then; the second review found more, which item 9 records.
+   - **DEV/PROD parity covers build settings, not only DEV's partial plist.** Twins must match in
+     Release settings, declared Info.plist, entitlements and build membership, except for §22.3's
+     list. A DEV iOS build gaining `UIRequiresFullScreen`, building with `-Onone`, or dropping its
+     launch screen each now fails, where each passed before.
+   - **A DEV server has a named home** (§22.3, §22.6): the key `DulcetPreconfiguredServer`, only
+     in a DEV-only plist. That home is proven to pass, and every other place the key could appear
+     is proven to fail.
+   - **Recorded, not fixed:** no CI job builds a PROD target, so a `release.yml` archive is the first
+     PROD build (§22.6).
+   - **Counts:** the release-channel policy mutations went from 25 on `main` to 35 in the first
+     commit of this revision, which claimed eight new ones and added ten, and to 68 after the first
+     review, which added 33. There were also 17 bundle-validation controls and 2 controls that must
+     be accepted. Item 9 gives the counts after the second review.
+9. **Corrections from the second adversarial review of this revision.** Each item below was a route
+   the first round's guard accepted, replayed from the reviewer's probes and now refused.
+   - **Hand edits to generated files.** A PROD scheme pre-action (it ran in a real `xcodebuild` of
+     `DulcetiOSRelease`), a synchronized folder attached to PROD alone (Xcode copied its file into
+     the app), and a PROD package product re-pointed at another package of the same product name
+     were all accepted. That Xcode would then link the other package is ASSUMED; it was not built. `apple-ci` now regenerates the project with the pinned XcodeGen and fails on
+     any difference, which closes the class, and the policy refuses each route by name (§22.6).
+   - **A shared script that branches on the channel.** The twins rule compared script phases for
+     equality, so one script added identically to every target could still write an address into
+     PROD alone by testing `$PRODUCT_BUNDLE_IDENTIFIER`, or copy one from the build machine. Scripts
+     may now read only an allowlist of variables.
+   - **`release.yml`'s environment.** A name that did not say "server", such as
+     `DULCET_LOCAL_ENDPOINT: ${{ vars.X }}`, passed the old denylist. It is now an allowlist, and
+     `$GITHUB_ENV`, `$GITHUB_PATH` and repository variables are refused.
+   - **The artifact scan finds addresses, not only the key.** A PROD bundle carrying an address on
+     a host outside an allowlist read from real Release builds now fails the release (§22.6).
+   - **Refusals name their remedy.** Each names where the rules live and §22.3, and each allowlist
+     refusal names its constant. `INFOPLIST_KEY_UIApplicationSceneManifest_Generation` now maps to
+     the key Xcode writes, `UIApplicationSceneManifest`, where the old message named a key nobody can
+     add. The refusal then says to declare that key in both plists. A duplicated object id and a file
+     whose braces do not balance are named as such, where both used to report `list index out of
+     range`. A `project.yml` key the reader cannot parse, such as a conditional `KEY[sdk=…]`, now
+     fails closed where it was skipped.
+   - **Counts:** 95 policy mutations (27 added, each shown to be accepted by the first round's
+     policy), 23 bundle-validation controls (6 added) and the 2 controls that must be accepted.
+     Five more controls assert that an allowlist refusal names its constant and §22.3, and every
+     rejection is checked for the remedy line. `tools/verify_xcodegen_regeneration --self-test`
+     proves that the regeneration check fails on a scheme pre-action, a hand-added scheme and an
+     edited generated plist.
+
+10. **Corrections from the third adversarial review of this revision.** Each route below was accepted by
+   the second round's guard, and each is replayed from the reviewer's probes and now refused.
+   - **The artifact scan's host capture was bypassable** (§22.6). It stopped at the first character
+     outside `[A-Za-z0-9.\-\\]`, and an empty host was allowlisted. So `http://localhost@192.168.1.10:4533`
+     (also in UTF-16), `https://www.apple.com@music.mydomain.net`, `http://[fd00::10]:4533`,
+     `http://%31%39%32.168.1.10:4533` and `https://_x.mydomain.net` all passed. The authority is now
+     parsed, and each of them fails. The parser was checked against Release builds of both PROD
+     targets: its first version refused both, because a Kotlin/Native literal is length-prefixed, so a
+     bare `http://` there is followed by the next object's type pointer. The literal's own count is now
+     what marks its end.
+   - **"By any route" was false.** A Swift literal of 15 bytes or fewer never reaches the binary whole
+     on arm64. §22.6 now says what the byte scan sees, and a source scan of `apple/` and `core/src/`
+     backs it up.
+   - **Gradle could read the channel from the environment.** `tools/run-gradle-exclusive` hands Gradle
+     Xcode's environment, and `System.getenv("PRODUCT_BUNDLE_IDENTIFIER")` in `core/build.gradle.kts`
+     was accepted. §22.6 had called this route harmless. Build logic may now read no variable outside
+     `GRADLE_ENVIRONMENT`, which is empty, and may not read the environment whole or run a process.
+   - **Nits:** a tracked file under `xcuserdata/` is refused. The regeneration step is pinned in
+     `verify_ci_policy`, so `|| true`, `continue-on-error`, `if:` or deleting it is refused;
+     `tools/test-verify-ci-policy` carries 12 such mutations and the accepted baseline.
+   - **Counts:** 107 policy mutations (12 added) and 37 bundle-validation controls (14 added: the
+     reviewer's six strings, five more malformed authorities, two accepted forms and a Kotlin/Native
+     header control).
+   - **Round 4** found no BLOCKER and three routes that need a deliberate change (an IDNA dot after
+     a real host, code in a skipped test directory, an obfuscated Gradle read). §22.6 now states them
+     as the guard's limits rather than claiming the scans refuse anything unclassifiable; closing the
+     cheap ones is a follow-up.
+11. **Integrated with §21.6** (merged the same day). The regeneration pin accepts a platform leg that
+    runs on its plan, and no other job condition (`tools/test-verify-ci-policy` adds that mutation);
+    `RELEASE_ENV` admits the full-run gate's two booleans; `tools/release/validate-app-bundle` is a
+    release tool, not an Apple input, so the planner excludes it.
+
 **2026-09-29 — apple-ci runs a fast check on pull requests and the full run before a release
 (§21.6).** Maintainer decision. §21.5 had every pull request run both Apple legs, about 64 minutes
 per landing. Now a pull request runs `apple-platform` only when it changes an Apple input and never
@@ -6959,6 +7268,8 @@ runs `apple-conformance`; a push to `main` and a dispatch run both; `apple-ci` c
 against the plan and resolves evidence only on a full run; and `release.yml` refuses to archive a
 commit without every required check and both legs green, except for a dry run that waives it
 explicitly. §21.1's table, §21.5 rule 6 and §21.5's "not adopted" note are amended in place.
+
+**2026-09-29 — Records are dated from here on.** The numbered series closes at revision 113. Parallel branches kept claiming the same next number and renumbering at every merge, so a contract change is now recorded as a dated entry, newest first, above the numbered records, with no item numbers. Earlier revisions keep their numbers, and references to them stay valid.
 
 **2026-09-29 — Android playlists and lyrics: the shells over the core editor and lyrics (§18.4,
 §18.6)** — the Android phone lists playlists in the Library, opens a playlist page that plays and
@@ -7480,7 +7791,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
    `tools/probes/window-epoch-race`, racing page reads against a toggling album directory, took
    42,051 samples (976 during scans, 60 stamps) with zero violations — an independent review run took
    27,957. The CORPUS text and §2's "one sync engine" were changed in this revision on the
-   maintainer's decision, and CLAUDE.md traps 18–19 rewritten to match.
+   maintainer's decision, and docs/TRAPS.md traps 18–19 rewritten to match.
 6. **Gone-ness that holds whatever the server does with missing files (§16.11).** OBSERVED
    2026-09-22 under both `PurgeMissing` settings: with the fixture's `"always"`, a removed album's
    `getAlbum` and `getSong` answer code 70, and restoring the files keeps the album id but mints new
@@ -7657,7 +7968,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     with the unit read from the probe (§16.12).
     §16.12's bracketed check rejects it; an after-only check, which is how the race probe had
     counted and how item 5 summarises the window rule, does not. §16.12 says so, the probe and
-    CONF-70 count both, and CLAUDE.md trap 18 now names both readings. OBSERVED 2026-09-24 while
+    CONF-70 count both, and docs/TRAPS.md trap 18 now names both readings. OBSERVED 2026-09-24 while
     landing, against private disposable native 0.63.2 servers in both configurations: CONF-70..75
     passed 8 of 8 on three runs per leg (JVM and `macosArm64`); each of the six in-suite races
     toggled 4–5 times, accepted 5 stamps and had 16–69 samples whose *after* reading showed a scan,

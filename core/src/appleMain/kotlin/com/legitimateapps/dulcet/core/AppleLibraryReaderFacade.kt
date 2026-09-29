@@ -42,7 +42,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *
  * **Credentials.** The account is held only to build the transport; nothing this facade publishes
  * has a field that can carry a URL, a query string, server error text or an exception message:
- * errors cross as a closed kind (CORPUS §4 line 5, CLAUDE.md trap 12).
+ * errors cross as a closed kind (CORPUS §4 line 5, docs/TRAPS.md trap 12).
  *
  * **Reachability — the one supported pattern.** Call [setOnline] on EVERY reachability change the
  * platform reports, and [reconnect] when the app returns to the foreground online. Nothing else is

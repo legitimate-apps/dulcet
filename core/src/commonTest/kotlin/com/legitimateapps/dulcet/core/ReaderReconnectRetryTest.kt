@@ -167,7 +167,7 @@ class ReaderReconnectRetryTest {
 
     // ---- What the server actually answers, through the checked request path (round-6 review, R6-1) ----
 
-    /** The reference server's own busy answer (CLAUDE.md trap 24): HTTP 429, `Retry-After`, and a code-0 envelope. */
+    /** The reference server's own busy answer (docs/TRAPS.md trap 24): HTTP 429, `Retry-After`, and a code-0 envelope. */
     private fun busy(retryAfter: String) = LibraryEndpointResponse(
         429,
         """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"busy"}}}""",
@@ -211,7 +211,7 @@ class ReaderReconnectRetryTest {
 
     /**
      * The reference server's busy answer — HTTP 429 with only the generic code 0 in its envelope —
-     * is `busy` from its STATUS, and its `Retry-After` is the floor of the wait (CLAUDE.md trap 24).
+     * is `busy` from its STATUS, and its `Retry-After` is the floor of the wait (docs/TRAPS.md trap 24).
      * Until round 7 this test threw `Server.Busy` from the fixture, which no production path
      * produced: the real answer read as code 0, a failure no timer retries.
      */

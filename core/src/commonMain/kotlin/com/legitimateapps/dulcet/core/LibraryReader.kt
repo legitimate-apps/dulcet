@@ -1075,7 +1075,7 @@ internal sealed interface ReaderStandstill {
  * - a timeout, and `unreachable` (the caller retries only while the platform reports the server
  *   reachable);
  * - `Server.Busy`: an HTTP 429, named from its STATUS whatever the body says — the reference
- *   server's limiter answers with an envelope carrying only the generic code 0 (CLAUDE.md trap 24).
+ *   server's limiter answers with an envelope carrying only the generic code 0 (docs/TRAPS.md trap 24).
  *   Its `Retry-After` is the floor, read as at most [LIBRARY_BUSY_CAP], as an outbox reads it;
  * - `Server.HttpStatus` from a gateway that could not reach the server
  *   ([gatewayCannotReachServer]: 502, 503, 504, and a CDN's origin errors), typically a reverse

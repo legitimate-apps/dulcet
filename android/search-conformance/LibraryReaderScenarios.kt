@@ -1136,7 +1136,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     // ---- Instruments ------------------------------------------------------------------------------
 
-    /** Credentials ride in the query string; nothing the app logged may carry them (CLAUDE.md trap 12). */
+    /** Credentials ride in the query string; nothing the app logged may carry them (docs/TRAPS.md trap 12). */
     private fun assertNoCredentialLeak() {
         val logged = org.robolectric.shadows.ShadowLog.getLogs().joinToString("\n") { "${it.tag} ${it.msg} ${it.throwable}" }
         for (canary in listOf(ProductionLibraryEnvironment.USERNAME, ProductionLibraryEnvironment.PASSWORD)) {
@@ -1201,7 +1201,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // row draws nothing below its title until its first publication arrives. That publication
         // is built on the reader's thread, which no idling waits for: a finder run straight after
         // the return could see the row empty. Wait for the row's items (a finder, so the main
-        // looper is idled as the wait polls; CLAUDE.md trap 44).
+        // looper is idled as the wait polls; docs/TRAPS.md trap 46).
         await("the first home row's items on screen") { compose.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(row).performScrollToNode(hasText(title))
         ui.activate(compose.onAllNodes(hasText(title) and hasAnyAncestor(row)).onFirst())

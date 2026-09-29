@@ -323,7 +323,7 @@ that no longer existed in any published history.
 
 Adversarial review of this PR found that `focusSectionBar()` pressed Up up to eight times and
 fell back to Menu only if those failed, with neither the helper nor its two call sites recording
-which one actually moved focus -- CLAUDE.md trap 41 (a control that cannot prove it fired is not
+which one actually moved focus -- docs/TRAPS.md trap 41 (a control that cannot prove it fired is not
 a control). Both call sites reach the bar from shallow surfaces (Connection, Now Playing), so the
 Menu branch was suspected dead code, making the one test that touches the exit-command mechanism
 this PR is centrally about a test that would plausibly still pass with that mechanism reverted.
