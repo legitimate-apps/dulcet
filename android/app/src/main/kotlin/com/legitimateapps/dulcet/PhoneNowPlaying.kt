@@ -46,6 +46,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -508,6 +509,8 @@ private fun Scrubber(state: AndroidPlaybackState, playback: AndroidPlaybackContr
             if (target != null && duration != null) playback.seek((target * duration).toLong())
         },
         enabled = state.seekable && duration != null,
+        // The stock inactive track washes out on the player's tinted gradient.
+        colors = SliderDefaults.colors(inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.24f)),
         modifier = Modifier.fillMaxWidth().testTag("player.scrubber"),
     )
     Row(Modifier.fillMaxWidth()) {
