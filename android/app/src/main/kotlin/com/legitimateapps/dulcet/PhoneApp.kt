@@ -41,6 +41,7 @@ import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
 import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
+import com.legitimateapps.dulcet.library.playTracks
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.titledTracks
@@ -115,6 +116,9 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         // Up Next rows take their titles from albums already on screen, every titled track whether or
         // not it can play right now; no request is made for them.
         rememberAlbum = { album -> playback?.rememberTracks(album.titledTracks(provider)) },
+        playTracks = { items, rawId, source ->
+            if (playTracks(playback, provider, items, rawId, source)) playerOpen = true
+        },
     )
     // A restored Up Next row with no title takes it from what this device has seen, as it did from the
     // whole-library mirror: a seen-cache read, never a request.
@@ -133,7 +137,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     }
 
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
-        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, tabs = {
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
         NavigationBar {
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
@@ -159,7 +163,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
             route?.startsWith("artist:") == true ->
                 ArtistScreen(account, library, route.removePrefix("artist:"), actions)
-            tab == PhoneTab.Library -> LibraryHome(account, library, actions)
+            tab == PhoneTab.Library -> LibraryHome(account, library, actions, playingRawId)
             else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account) { result ->
                 playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
             }
@@ -187,6 +191,7 @@ internal fun PhoneFrame(
     playerOpen: Boolean,
     setPlayerOpen: (Boolean) -> Unit,
     back: (() -> Unit)? = null,
+    library: LibrarySession? = null,
     tabs: @Composable () -> Unit,
     page: @Composable () -> Unit,
 ) {
@@ -228,7 +233,7 @@ internal fun PhoneFrame(
             enter = slideInVertically { it },
             exit = slideOutVertically { it },
         ) {
-            if (playback != null) NowPlayingScreen(account, playbackState, playback) { setPlayerOpen(false) }
+            if (playback != null) NowPlayingScreen(account, playbackState, playback, library) { setPlayerOpen(false) }
         }
     }
 }
@@ -249,6 +254,8 @@ internal class PhoneActions(
      */
     val playArtist: (AndroidLibraryPublication, Boolean, (ArtistPlayResult) -> Unit) -> AutoCloseable?,
     val rememberAlbum: (AndroidLibraryPublication) -> Unit = {},
+    /** A list's playable tracks queued from the one with the id, as a library queue with the name. */
+    val playTracks: (List<AndroidLibraryItem>, String, String) -> Unit = { _, _, _ -> },
 )
 
 /** [position] indexes the album's rows; the queue skips rows with no metadata to play. */

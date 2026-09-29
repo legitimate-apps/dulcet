@@ -59,6 +59,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -84,12 +85,14 @@ import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
+import com.legitimateapps.dulcet.library.favouriteTarget
+import com.legitimateapps.dulcet.library.isFavourite
+import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
 import com.legitimateapps.dulcet.library.orderLine
-import com.legitimateapps.dulcet.library.outcomeLine
 import com.legitimateapps.dulcet.library.rememberHomeRows
 import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.library.titleResource
@@ -106,11 +109,11 @@ import com.legitimateapps.dulcet.ui.rememberArtwork
  * file draws them with the shared words in `LibraryCopy.kt`, the same words the TV app uses.
  */
 
-private enum class LibraryView { Home, Albums, Artists }
+private enum class LibraryView { Home, Albums, Artists, Favourites }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun LibraryHome(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
+internal fun LibraryHome(account: SearchAccount, session: LibrarySession, actions: PhoneActions, playingRawId: String? = null) {
     var view by rememberSaveable { mutableStateOf(LibraryView.Home) }
     val observation by session.observation.collectAsState()
     Column(Modifier.fillMaxSize().testTag("library.surface").semantics { this[LibraryObservation] = observation }) {
@@ -131,6 +134,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
                     LibraryView.Home -> R.string.library_view_home
                     LibraryView.Albums -> R.string.library_view_albums
                     LibraryView.Artists -> R.string.library_view_artists
+                    LibraryView.Favourites -> R.string.library_view_favourites
                 })) },
                 modifier = Modifier.testTag("library.view.${option.name.lowercase()}"),
             )
@@ -140,6 +144,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
             LibraryView.Home -> HomeRows(account, session, actions)
             LibraryView.Albums -> AlbumsGrid(account, session, actions)
             LibraryView.Artists -> ArtistsList(session, actions)
+            LibraryView.Favourites -> FavouritesList(account, session, actions, playingRawId)
         }
     }
 }
@@ -175,7 +180,13 @@ private fun HomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurfa
                     contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                         AlbumCard(account, item, Modifier.width(140.dp).testTag("library.home.$index.item.$position")) {
-                            if (item is AndroidLibraryItem.Album) actions.openAlbum(item.rawId)
+                            when (item) {
+                                is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
+                                is AndroidLibraryItem.Artist -> actions.openArtist(item.rawId)
+                                is AndroidLibraryItem.Track ->
+                                    actions.playTracks(current.items, item.rawId, resources.getString(row.row.titleResource()))
+                                else -> Unit
+                            }
                         }
                     }
                 }
@@ -259,6 +270,85 @@ private fun ArtistsList(session: LibrarySession, actions: PhoneActions) {
 }
 
 /**
+ * The account's favourites (§16.9 `getStarred2`): songs, albums and artists, each with its heart.
+ * A heart taken off here stays in the list, hollow, until the list is next read — so a slip is
+ * undone where it happened; a favourite added elsewhere appears when this list is read again.
+ */
+@Composable
+private fun FavouritesList(account: SearchAccount, session: LibrarySession, actions: PhoneActions, playingRawId: String?) {
+    val surface = rememberSurface(session, "favourites") { openFavourites() }
+    val publication by surface.state.collectAsState()
+    val current = publication
+    val resources = libraryResources()
+    val items = current?.items.orEmpty()
+    val tracks = items.filterIsInstance<AndroidLibraryItem.Track>()
+    val albums = items.filterIsInstance<AndroidLibraryItem.Album>()
+    val artists = items.filterIsInstance<AndroidLibraryItem.Artist>()
+    val outcomeLines = rememberOutcomeLines(session, items.mapNotNull { it.favouriteTarget() })
+    var note by remember { mutableStateOf<String?>(null) }
+    val title = resources.getString(SharedR.string.library_home_favourites)
+    LazyColumn(Modifier.fillMaxSize().testTag("library.favourites")) {
+        if (current != null) item {
+            // An empty list says how to fill it, not the generic "nothing here".
+            if (current.items.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&
+                current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
+                FreshnessLine(current.freshness, "library.favourites", session::retry)
+                StatementText(resources.getString(SharedR.string.library_favourites_empty), "library.favourites.empty")
+            } else {
+                ListStatus(current, "library.favourites", session::retry)
+            }
+            OutcomeLines(outcomeLines, null, "library.favourites.outcome")
+            note?.let { StatementText(it, "library.favourites.note") }
+        }
+        if (tracks.isNotEmpty()) {
+            item { SectionHeading(SharedR.string.library_favourites_songs, "library.favourites.songs") }
+            itemsIndexed(tracks, key = { _, track -> "track:" + track.rawId }) { position, track ->
+                TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag("library.favourites.track.$position"),
+                    onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
+                    favouriteTag = "library.favourites.track.$position.favourite") {
+                    note = null
+                    actions.playTracks(tracks, track.rawId, title)
+                }
+            }
+        }
+        if (albums.isNotEmpty()) {
+            item { SectionHeading(SharedR.string.library_favourites_albums, "library.favourites.albums") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
+                        Box(Modifier.width(140.dp)) {
+                            AlbumCard(account, album, Modifier.fillMaxWidth().testTag("library.favourites.album.$position")) {
+                                actions.openAlbum(album.rawId)
+                            }
+                            FavouriteButton(album.isFavourite(), "library.favourites.album.$position.favourite",
+                                Modifier.align(Alignment.TopEnd)) {
+                                session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (artists.isNotEmpty()) {
+            item { SectionHeading(SharedR.string.library_favourites_artists, "library.favourites.artists") }
+            itemsIndexed(artists, key = { _, artist -> "artist:" + artist.rawId }) { position, artist ->
+                ArtistRow(artist, Modifier.testTag("library.favourites.artist.$position"),
+                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, artist.rawId)) },
+                    favouriteTag = "library.favourites.artist.$position.favourite") { actions.openArtist(artist.rawId) }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun SectionHeading(text: Int, tag: String) {
+    Text(stringResource(text), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp).testTag(tag),
+        style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+}
+
+/**
  * A list's freshness, coverage and order lines, or the statement shown instead of it. A detail's
  * list (an artist's albums) can be loading or unavailable under a cached header: that is said, never
  * "Nothing here yet".
@@ -329,11 +419,10 @@ internal fun AlbumScreen(
     val surface = rememberSurface(session, "album:$rawId") { openAlbum(rawId) }
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
-    val outcomes by session.outcomes.collectAsState()
-    // Only an outcome about this album is said here, and it goes when the screen does.
+    // Only outcomes about this album and its tracks are said here, and they go when the screen does.
     val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)
-    val outcome = outcomes[target]
-    DisposableEffect(session, target) { onDispose { session.dismissOutcome(target) } }
+    val outcomeLines = rememberOutcomeLines(session,
+        listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     LaunchedEffect(publication) { publication?.let(actions.rememberAlbum) }
@@ -347,7 +436,7 @@ internal fun AlbumScreen(
                 Icon(DulcetIcons.Refresh, stringResource(R.string.library_refresh))
             }
             val album = publication?.header as? AndroidLibraryItem.Album
-            if (album != null) FavouriteButton(album.favourite == true) {
+            if (album != null) FavouriteButton(album.favourite == true, "album.favourite") {
                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
             }
         })
@@ -361,7 +450,7 @@ internal fun AlbumScreen(
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     FreshnessLine(current.freshness, "album", session::retry)
-                    resources.outcomeLine(outcome)?.let { StatementText(it, "album.outcome") }
+                    OutcomeLines(outcomeLines, target, "album.outcome")
                     note?.let { StatementText(it, "album.note") }
                     (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
                         StatementText(resources.unavailableLine(unavailable.reason, LibrarySubject.Album), "album.unavailable")
@@ -405,7 +494,9 @@ internal fun AlbumScreen(
                 AndroidLibraryItemsState.Present -> itemsIndexed(current.items, key = { position, item -> item.rawId + "#" + position }) { position, item ->
                     if (item is AndroidLibraryItem.Track) {
                         TrackRow(item, position + 1, item.rawId == playingRawId, Modifier.testTag("album.track.$position"),
-                            onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) }) {
+                            onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                            onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
+                            favouriteTag = "album.track.$position.favourite") {
                             note = null
                             actions.playAlbum(current, position, false)
                         }
@@ -417,13 +508,29 @@ internal fun AlbumScreen(
     }
 }
 
+/**
+ * The heart. Filled is a favourite — with any change made here already in it, sent or not: offline, a
+ * favourite is a favourite and is labelled nowhere (§16.20); only an outcome that needs words is said,
+ * by [OutcomeLines]. Its description is the action, and its state is `selected`.
+ */
 @Composable
-private fun FavouriteButton(favourite: Boolean, onClick: () -> Unit) {
+internal fun FavouriteButton(favourite: Boolean, tag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val resources = libraryResources()
-    IconButton(onClick = onClick, modifier = Modifier.testTag("album.favourite")) {
-        Icon(if (favourite) DulcetIcons.Star else DulcetIcons.StarBorder,
+    IconButton(onClick = onClick, modifier = modifier.testTag(tag).semantics { selected = favourite }) {
+        Icon(if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
             resources.getString(if (favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add),
             tint = if (favourite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * The outcome lines of a screen's hearts: [primary]'s under [tag], any other's under `tag.<kind>.<id>`,
+ * so a test can tell which entity a line is about.
+ */
+@Composable
+private fun OutcomeLines(lines: List<Pair<AndroidLibraryEntity, String>>, primary: AndroidLibraryEntity?, tag: String) {
+    for ((target, line) in lines) {
+        StatementText(line, if (target == primary) tag else "$tag.${target.kind.name.lowercase()}.${target.rawId}")
     }
 }
 
@@ -437,6 +544,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
     val current = publication
     val artist = current?.header as? AndroidLibraryItem.Artist
     val resources = libraryResources()
+    val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, rawId)
+    val outcomeLines = rememberOutcomeLines(session, listOf(target))
     // Playing an artist opens each album first; leaving the screen abandons that, so nothing starts
     // playing after the person has gone, and a second tap while it runs does nothing.
     var collecting by remember(rawId) { mutableStateOf<AutoCloseable?>(null) }
@@ -462,6 +571,10 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         TopAppBar(title = { Text(artist?.name.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             navigationIcon = {
                 IconButton(onClick = actions.back) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
+            }, actions = {
+                if (artist != null) FavouriteButton(artist.favourite == true, "artist.favourite") {
+                    session.toggleFavourite(target)
+                }
             })
         ConnectionNotices(session, accountNotices = false)
         if (current == null) return@Column
@@ -486,6 +599,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                         PlayShuffleButtons(onPlay = { play(current, false) }, onShuffle = { play(current, true) },
                             enabled = listed && albums.isNotEmpty() && collecting == null, tagPrefix = "artist")
                         note?.let { StatementText(it, "artist.note") }
+                        OutcomeLines(outcomeLines, target, "artist.outcome")
                     }
                 }
             }
@@ -536,7 +650,13 @@ private fun AlbumCard(account: SearchAccount, item: AndroidLibraryItem, modifier
 }
 
 @Composable
-private fun ArtistRow(item: AndroidLibraryItem.Artist, modifier: Modifier, onClick: () -> Unit) {
+private fun ArtistRow(
+    item: AndroidLibraryItem.Artist,
+    modifier: Modifier,
+    onFavourite: (() -> Unit)? = null,
+    favouriteTag: String? = null,
+    onClick: () -> Unit,
+) {
     ListItem(
         headlineContent = { Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
@@ -545,7 +665,10 @@ private fun ArtistRow(item: AndroidLibraryItem.Artist, modifier: Modifier, onCli
                 else stringResource(R.string.library_artist_kind))
         },
         leadingContent = { Monogram(item.name, 48.dp) },
-        trailingContent = { Icon(DulcetIcons.ChevronRight, null) },
+        trailingContent = {
+            if (onFavourite != null) FavouriteButton(item.favourite == true, favouriteTag ?: "artist.favourite", onClick = onFavourite)
+            else Icon(DulcetIcons.ChevronRight, null)
+        },
         modifier = modifier.clickable(onClick = onClick),
     )
 }
@@ -562,6 +685,8 @@ internal fun TrackRow(
     playing: Boolean,
     modifier: Modifier,
     onUnavailable: () -> Unit,
+    onFavourite: (() -> Unit)? = null,
+    favouriteTag: String? = null,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
@@ -584,8 +709,14 @@ internal fun TrackRow(
                     style = MaterialTheme.typography.bodyMedium)
             }
         },
-        trailingContent = track.durationMilliseconds?.let { duration ->
-            { Text(formatDuration(duration), style = MaterialTheme.typography.bodySmall) }
+        trailingContent = if (track.durationMilliseconds == null && onFavourite == null) null else {
+            {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    track.durationMilliseconds?.let { Text(formatDuration(it), style = MaterialTheme.typography.bodySmall) }
+                    // A heart on a track that cannot play offline still works: a favourite is sent on reconnect.
+                    if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
+                }
+            }
         },
         modifier = modifier.clickable { if (unavailable) onUnavailable() else onClick() },
     )

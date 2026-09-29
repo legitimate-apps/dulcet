@@ -7,9 +7,11 @@ import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.core.AndroidLibraryChangeField
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
 import com.legitimateapps.dulcet.core.AndroidLibraryConnection
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
+import com.legitimateapps.dulcet.core.AndroidLibraryFavouriteWatch
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryHomeRow
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
@@ -134,6 +136,13 @@ public class LibrarySession internal constructor(
 
     private val outcomeRegistration: AndroidLibraryOutcomeRegistration =
         reader.addChangeOutcomeListener { outcome ->
+            // The server's favourites changed. The favourites list is user state, which the catalog
+            // epoch never covers (§16.11), so a list read live earlier in this session no longer
+            // says what the server holds: the next favourites list opened reads it again.
+            if (outcome.field == AndroidLibraryChangeField.Favourite &&
+                (outcome is AndroidLibraryChangeOutcome.Saved || outcome is AndroidLibraryChangeOutcome.Superseded)) {
+                favouritesStale = true
+            }
             latestOutcomes.update { it + (outcome.target to outcome) }
             observationState.update { it.copy(changeOutcomes = (it.changeOutcomes + outcome).takeLast(MAX_FRAMES)) }
         }
@@ -153,7 +162,9 @@ public class LibrarySession internal constructor(
 
     /** The home screen: N independent single-page rows (§16.9, CONF-86). The caller closes each. */
     public fun openHome(): List<LibraryHomeRowSurface> = HOME_ROWS.mapIndexed { index, row ->
-        LibraryHomeRowSurface(row, openSurface("home.$index") { listener -> reader.openHomeRow(row, listener) })
+        LibraryHomeRowSurface(row, openSurface("home.$index", favourites = row == AndroidLibraryHomeRow.Favourites) { listener ->
+            reader.openHomeRow(row, listener)
+        })
     }
 
     /** The album grid, `alphabeticalByName`, windowed (§16.12). The caller closes it. */
@@ -164,6 +175,14 @@ public class LibrarySession internal constructor(
     /** Every artist, one response (§16.9). The caller closes it. */
     public fun openArtists(): LibrarySurface = openSurface("artists") { listener ->
         reader.openWindow(AndroidLibraryQuery.Artists(), listener)
+    }
+
+    /**
+     * The account's favourites (`getStarred2`, one response, §16.9): artists, then albums, then
+     * songs, each carrying any pending change. The caller closes it.
+     */
+    public fun openFavourites(): LibrarySurface = openSurface("favourites", favourites = true) { listener ->
+        reader.openWindow(AndroidLibraryQuery.Starred, listener)
     }
 
     /** One album's detail. The caller closes it when the screen goes. */
@@ -226,8 +245,30 @@ public class LibrarySession internal constructor(
 
     /** Makes [target] a favourite or not; it shows in the next publication, before any request. */
     public fun toggleFavourite(target: AndroidLibraryEntity) {
-        reader.toggleFavourite(target)
+        if (!closed) reader.toggleFavourite(target)
     }
+
+    /**
+     * The favourite state of an entity no open window shows — Now Playing's track — as this device
+     * knows it, on the main thread: at once, then with every change to it (see
+     * [AndroidLibraryReader.watchFavourite]). The caller closes it; [close] closes any still open.
+     */
+    public fun watchFavourite(target: AndroidLibraryEntity, listener: (Boolean?) -> Unit): AutoCloseable {
+        if (closed) {
+            listener(null)
+            return AutoCloseable {}
+        }
+        lateinit var handle: AutoCloseable
+        val watch: AndroidLibraryFavouriteWatch = reader.watchFavourite(target, listener)
+        handle = AutoCloseable {
+            watch.close()
+            watches -= handle
+        }
+        watches += handle
+        return handle
+    }
+
+    private val watches = mutableListOf<AutoCloseable>()
 
     // ---- Lifecycle ----------------------------------------------------------------------------------
 
@@ -297,6 +338,8 @@ public class LibrarySession internal constructor(
         outcomeRegistration.close()
         collections.toList().forEach(AutoCloseable::close)
         collections.clear()
+        watches.toList().forEach(AutoCloseable::close)
+        watches.clear()
         surfaces.toList().forEach(LibrarySurface::close)
         surfaces.clear()
     }
@@ -440,10 +483,31 @@ public class LibrarySession internal constructor(
 
     // ---- Surfaces ---------------------------------------------------------------------------------------
 
-    private fun openSurface(key: String, open: ((AndroidLibraryPublication) -> Unit) -> AndroidLibraryWindow): LibrarySurface {
+    /**
+     * A favourite change the server took since the favourites list was last read in this session.
+     * A list surface opened while this holds is re-read once, if its first publication is a live
+     * one from earlier in the session; one that reads anyway (nothing cached, a revalidation) needs no
+     * second read. A list already on screen is not re-read, so a heart taken off there leaves its row
+     * in place, hollow, where it can be put back.
+     */
+    private var favouritesStale = false
+
+    private fun openSurface(
+        key: String,
+        favourites: Boolean = false,
+        open: ((AndroidLibraryPublication) -> Unit) -> AndroidLibraryWindow,
+    ): LibrarySurface {
         lateinit var surface: LibrarySurface
+        var first = favourites
         val window = open { publication ->
             surface.deliver(publication)
+            if (first) {
+                first = false
+                if (favouritesStale) {
+                    favouritesStale = false
+                    if (publication.freshness == AndroidLibraryFreshness.Live) surface.refresh()
+                }
+            }
             // Live content means the reader is reading again while this session still says it
             // reads nothing. A screen says `live` only once a reconnect has run every step (§16.14).
             // - Offline: the reader's own reconnect brought it back — its retry, or the one an

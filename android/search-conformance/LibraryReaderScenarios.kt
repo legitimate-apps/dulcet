@@ -28,6 +28,8 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
+import com.legitimateapps.dulcet.core.AndroidLibraryEntity
+import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -816,6 +818,67 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             "echo-adopted-without-a-read=true outbox-after=0 compacted-3-taps-to=$sends " +
             "body-ms=${started.elapsedNow().inWholeMilliseconds} cover-art=${coverArt()}")
     }
+
+    // ---- Favourites beyond albums ------------------------------------------------------------------
+
+    /**
+     * A song's heart in an album goes to the server as `star` for that song, the server holds it,
+     * and the Favourites screen reads it back from the server (`getStarred2`) with its heart filled;
+     * taken off there, the server lets it go and the row stays, hollow, until the list is read again.
+     */
+    fun aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack() {
+        ui.openLibrary()
+        awaitHomeLive()
+        val album = server.albumId(OPENED_ALBUM)
+        val song = server.get("getAlbum", mapOf("id" to album)).getJSONObject("album").getJSONArray("song").getJSONObject(0)
+        val songId = song.getString("id")
+        val title = song.getString("title")
+        assertEquals(false, server.songStarred(songId), "setup: the run starts with no favourites")
+        openHomeAlbum(OPENED_ALBUM)
+        await("the album live with its tracks") {
+            last("album:$album").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
+        }
+        awaitQuiet()
+        val song0 = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, songId)
+        fun saved() = observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target == song0 }
+        val mark = proxy.size()
+        assertEquals(false, selected("album.track.0.favourite"), "setup: the song's heart starts hollow")
+        ui.activate(compose.onNodeWithTag("album.track.0.favourite"))
+        await("the song's heart to fill") { selected("album.track.0.favourite") }
+        await("the song's star saved") { saved() == 1 }
+        awaitQuiet()
+        val sends = readerRequests(mark).filter { it.endpoint == "star" || it.endpoint == "unstar" }
+        assertEquals(listOf("star" to songId), sends.map { it.endpoint to it.parameters["id"] }, "one star, for that song")
+        assertTrue(server.songStarred(songId), "the server holds the song's favourite")
+        assertEquals(false, server.albumStarred(album), "and not the album's: the heart was the song's")
+        assertEquals(true, selected("album.track.0.favourite"), "the saved heart stays filled")
+
+        // The list's membership comes only from the server's `getStarred2`: the song can appear in it
+        // only from a read made after the star. The home's own favourites row, re-opened on the way
+        // back, may be the read that brings it, which the screen then shows as it is (same list).
+        ui.backFromAlbum()
+        ui.activate(compose.onNodeWithTag("library.view.favourites"))
+        await("the favourites live") { frames("favourites").lastOrNull()?.freshness == AndroidLibraryFreshness.Live }
+        await("the song on the favourites screen") { exists("library.favourites.track.0") }
+        val starredReads = readerRequests(mark).filter { it.endpoint == "getStarred2" }
+        assertTrue(starredReads.isNotEmpty(), "the list was read from the server after the star: ${readerRequests(mark).map { it.endpoint }}")
+        compose.onNodeWithTag("library.favourites.track.0").assertTextContains(title, substring = true)
+        assertEquals(true, selected("library.favourites.track.0.favourite"))
+
+        ui.activate(compose.onNodeWithTag("library.favourites.track.0.favourite"))
+        await("the heart emptied") { !selected("library.favourites.track.0.favourite") }
+        await("the removal saved") { saved() == 2 }
+        assertEquals(false, server.songStarred(songId), "the server let it go")
+        assertTrue(exists("library.favourites.track.0"), "the row stays until the list is read again, so it can be put back")
+        assertNoCredentialLeak()
+        println("FAVOURITES OBSERVED $platform song-star-sent=1 server-starred=true getStarred2-after-star=${starredReads.size} " +
+            "unstar-from-list=true cover-art=${coverArt()}")
+    }
+
+    private fun selected(tag: String): Boolean =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Selected) { false }
+
+    private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     // ---- CONF-86 ----------------------------------------------------------------------------------
 

@@ -64,6 +64,7 @@
     <string name="library_view_home">Home</string>
     <string name="library_view_albums">Albums</string>
     <string name="library_view_artists">Artists</string>
+    <string name="library_view_favourites">Favourites</string>
     <string name="library_artist_kind">Artist</string>
     <string name="library_refresh">Refresh</string>
     <string name="action_play">Play</string>

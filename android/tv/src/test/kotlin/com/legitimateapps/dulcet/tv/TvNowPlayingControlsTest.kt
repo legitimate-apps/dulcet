@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
@@ -106,6 +107,43 @@ class TvNowPlayingControlsTest {
         key("tv.player.upnext.${at + 1}", Key.DirectionCenter)
         assertEquals(listOf("jump=e${at + 2}"), actions.calls)
     }
+
+    /**
+     * The heart is the transport's last control, RIGHT of Repeat: its state is its fill and its
+     * description the action; centre toggles it; a change that needs words says them beneath the title.
+     */
+    @Test fun theHeartIsRightOfRepeatAndSaysItsStateAndAnyOutcome() {
+        var favourite by mutableStateOf(false)
+        var line by mutableStateOf<String?>(null)
+        val toggles = mutableListOf<Boolean>()
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvNowPlayingScreen(null, playing(), actions, TvPlayerFavourite(favourite, line) { toggles += !favourite; favourite = !favourite })
+            }
+        }
+        compose.waitForIdle()
+        key("tv.player.playpause", Key.DirectionRight)
+        key("tv.player.next", Key.DirectionRight)
+        key("tv.player.repeat", Key.DirectionRight)
+        assertTrue(focused("tv.player.favourite"), "RIGHT three times from Play/Pause reaches the heart")
+        assertFalse(selected("tv.player.favourite"))
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_favourite_add), description("tv.player.favourite"))
+        key("tv.player.favourite", Key.DirectionCenter)
+        assertEquals(listOf(true), toggles)
+        assertTrue(selected("tv.player.favourite"), "the heart fills with the press")
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_favourite_remove), description("tv.player.favourite"))
+        assertTrue(focused("tv.player.favourite"), "focus stays on the heart")
+        assertEquals(emptyList(), actions.calls, "the heart changes the track, not playback")
+        assertFalse(exists("tv.player.favourite.outcome"))
+        line = "Couldn't save that change — the server"
+        compose.waitForIdle()
+        assertEquals(line, compose.onNodeWithTag("tv.player.favourite.outcome").fetchSemanticsNode()
+            .config.getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString())
+    }
+
+    private fun sharedString(id: Int): String = resources.getString(id)
+
+    private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun playing() = AndroidPlaybackState(
         title = "Track 2", phase = "Playing", playbackSessionId = "s", playWhenReady = true,

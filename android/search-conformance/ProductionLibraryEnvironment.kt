@@ -184,6 +184,8 @@ class DisposableServer(private val baseUrl: String) {
 
     fun albumStarred(albumId: String): Boolean = get("getAlbum", mapOf("id" to albumId)).getJSONObject("album").has("starred")
 
+    fun songStarred(songId: String): Boolean = get("getSong", mapOf("id" to songId)).getJSONObject("song").has("starred")
+
     fun unstarEverything() {
         val starred = get("getStarred2").optJSONObject("starred2") ?: return
         for (kind in listOf("artist", "album", "song")) {

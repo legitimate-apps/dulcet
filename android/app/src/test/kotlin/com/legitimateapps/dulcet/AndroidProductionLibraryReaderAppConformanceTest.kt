@@ -70,6 +70,9 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     @Test fun conf84StarShowsWithTheTapSurvivesARevalidationCompactsAndAdoptsTheEcho() =
         scenarios.conf84StarShowsWithTheTapSurvivesARevalidationAndAdoptsTheEcho()
 
+    @Test fun aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack() =
+        scenarios.aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack()
+
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =
         scenarios.conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive()
 

@@ -6894,6 +6894,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-09-29 — Android favourites: hearts everywhere, and a Favourites list that re-reads after a
+change (§16.20)** — the Android phone and TV apps put a heart on song rows, album and artist pages and
+Now Playing, and add a Favourites screen over `getStarred2`. Two facts learned while doing it, both
+now rules. (1) A saved star for a track this device never cached has no row for the echo to be
+adopted into, so the overlay retires and the state reads *unknown*; a heart watching that track
+must keep the acknowledged value, or it fills, then empties once the server agrees. The Android
+facade's favourite watch remembers the last acknowledged value per watch for exactly this. (2) The
+favourites list is user state, which the scan epoch never covers (§16.11), so a list read earlier in
+the session and served Live would not show a heart just added; after a Saved or Superseded favourite
+change the next favourites surface that opens re-reads the server. A pending change stays unlabelled
+(this section: "a favourite is a favourite"); only outcomes that need words are said. The Media3
+notification carries no like command, as on Apple: a service-owned reader would sit outside the
+sign-out and foreground rules.
+
 **2026-09-29 — Android on the reader, and sign-out (§14.7)** — the Android phone and TV apps move
 off the whole-library mirror onto the reader (R3), and gain sign-out and account removal. §14.5,
 §14.7, §16.14 and §16.18 are corrected in place; this entry records what changed and why.

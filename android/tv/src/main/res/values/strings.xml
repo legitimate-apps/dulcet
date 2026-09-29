@@ -40,6 +40,7 @@
     <string name="tv_library_title">Library</string>
     <string name="tv_library_albums">Albums</string>
     <string name="tv_library_artists">Artists</string>
+    <string name="tv_library_favourites">Favourites</string>
     <string name="tv_library_loading">Loading…</string>
     <string name="tv_play">Play</string>
     <string name="tv_shuffle">Shuffle</string>

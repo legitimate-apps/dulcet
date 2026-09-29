@@ -4,12 +4,17 @@ import android.annotation.SuppressLint
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.RememberObserver
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.core.AndroidLibraryEntity
+import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryHomeRow
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.shared.R
@@ -98,4 +103,52 @@ public fun AndroidLibraryItem.subtitle(): String? = when (this) {
     is AndroidLibraryItem.Album -> artistName
     is AndroidLibraryItem.Track -> artistName ?: albumTitle
     else -> null
+}
+
+/**
+ * The favourite state of [target] as this device knows it, for a surface no window backs (Now
+ * Playing): null while unknown, before the first answer, and for a null [target].
+ */
+@Composable
+public fun rememberWatchedFavourite(session: LibrarySession, target: AndroidLibraryEntity?): Boolean? {
+    val state = remember(session, target) { mutableStateOf<Boolean?>(null) }
+    DisposableEffect(session, target) {
+        val watch = target?.let { session.watchFavourite(it) { value -> state.value = value } }
+        onDispose { watch?.close() }
+    }
+    return state.value
+}
+
+/** What a heart on this row changes: an album, an artist or a track; null for anything else. */
+public fun AndroidLibraryItem.favouriteTarget(): AndroidLibraryEntity? = when (this) {
+    is AndroidLibraryItem.Album -> AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)
+    is AndroidLibraryItem.Artist -> AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, rawId)
+    is AndroidLibraryItem.Track -> AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId)
+    else -> null
+}
+
+/** Whether this row is shown as a favourite: the core's value, with any pending change already in it. */
+public fun AndroidLibraryItem.isFavourite(): Boolean = when (this) {
+    is AndroidLibraryItem.Album -> favourite == true
+    is AndroidLibraryItem.Artist -> favourite == true
+    is AndroidLibraryItem.Track -> favourite == true
+    else -> false
+}
+
+/**
+ * The outcome lines (§16.20) about [targets] — the entities a screen shows a heart for — in the
+ * order the targets are given, each once. They are dismissed when the screen goes, so an outcome is
+ * only ever said on a screen that shows its entity.
+ */
+@Composable
+public fun rememberOutcomeLines(session: LibrarySession, targets: List<AndroidLibraryEntity>): List<Pair<AndroidLibraryEntity, String>> {
+    val outcomes by session.outcomes.collectAsState()
+    val resources = libraryResources()
+    val shown = targets.distinct()
+    // Every target this screen has shown, dismissed when it goes: a list that changes while the
+    // screen stays (a track list arriving) must not dismiss an outcome that is still to be read.
+    val seen = remember(session) { mutableSetOf<AndroidLibraryEntity>() }
+    seen += shown
+    DisposableEffect(session) { onDispose { seen.forEach(session::dismissOutcome) } }
+    return shown.mapNotNull { target -> resources.outcomeLine(outcomes[target])?.let { target to it } }
 }

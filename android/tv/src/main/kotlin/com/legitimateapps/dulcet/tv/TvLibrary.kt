@@ -71,6 +71,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
 import androidx.tv.material3.Icon
+import androidx.tv.material3.IconButton
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -96,12 +97,14 @@ import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
+import com.legitimateapps.dulcet.library.isFavourite
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
-import com.legitimateapps.dulcet.library.outcomeLine
+import com.legitimateapps.dulcet.library.favouriteTarget
+import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.playTracks
@@ -134,6 +137,7 @@ internal const val ROUTE_SEARCH = "search"
 internal const val ROUTE_LIBRARY = "library"
 internal const val ROUTE_ALBUMS = "albums"
 internal const val ROUTE_ARTISTS = "artists"
+internal const val ROUTE_FAVOURITES = "favourites"
 private const val ALBUM = "album:"
 private const val ARTIST = "artist:"
 
@@ -200,6 +204,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
+                        top == ROUTE_FAVOURITES -> TvFavouritesScreen(account, session, playback, playingRawId, navigator)
                         top.startsWith(ALBUM) ->
                             TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator)
                         top.startsWith(ARTIST) ->
@@ -354,6 +359,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
                 Text(stringResource(R.string.tv_library_title), style = MaterialTheme.typography.displaySmall)
                 TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
                 TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
+                TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
                 TvAction(stringResource(R.string.tv_refresh), "library.refresh", onClick = session::refresh)
             }
         }
@@ -561,11 +567,10 @@ private fun TvAlbumScreen(
     val context = LocalContext.current
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
-    val outcomes by session.outcomes.collectAsState()
-    // Only an outcome about this album is said here, and it goes when the screen does.
+    // Only outcomes about this album and its tracks are said here, and they go when the screen does.
     val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)
-    val outcome = outcomes[target]
-    DisposableEffect(session, target) { onDispose { session.dismissOutcome(target) } }
+    val outcomeLines = rememberOutcomeLines(session,
+        listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     val provider = account.providerInstanceId
@@ -632,11 +637,11 @@ private fun TvAlbumScreen(
                                     "album.favourite",
                                     description = resources.getString(
                                         if (favourite) SharedR.string.library_favourite_on else SharedR.string.library_favourite_add),
-                                    icon = if (favourite) DulcetIcons.Star else DulcetIcons.StarBorder,
+                                    icon = if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
                                 ) { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId)) }
                             }
                         }
-                        resources.outcomeLine(outcome)?.let { TvStatement(it, "album.outcome") }
+                        TvOutcomeLines(outcomeLines, target, "album.outcome")
                         note?.let { TvStatement(it, "album.note") }
                     }
                 }
@@ -666,9 +671,126 @@ private fun TvAlbumScreen(
                         else play(current, item.rawId, false)
                     },
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
                 )
             }
         }
+    }
+}
+
+/**
+ * The account's favourites (§16.9 `getStarred2`): songs, then albums and artists as rows of cards.
+ * A song keeps its heart beside it; a heart taken off here leaves the song in the list, hollow,
+ * until the list is next read, so it can be put back where it was taken off.
+ */
+@Composable
+private fun TvFavouritesScreen(
+    account: SearchAccount,
+    session: LibrarySession,
+    playback: AndroidPlaybackController?,
+    playingRawId: String?,
+    navigator: TvNavigator,
+) {
+    EnterRoute()
+    val surface = rememberSurface(session, ROUTE_FAVOURITES) { openFavourites() }
+    val publication by surface.state.collectAsState()
+    val observation by session.observation.collectAsState()
+    val context = LocalContext.current
+    val resources = libraryResources()
+    val current = publication
+    val items = current?.items.orEmpty()
+    val tracks = items.filterIsInstance<AndroidLibraryItem.Track>()
+    val albums = items.filterIsInstance<AndroidLibraryItem.Album>()
+    val artists = items.filterIsInstance<AndroidLibraryItem.Artist>()
+    val outcomeLines = rememberOutcomeLines(session, items.mapNotNull { it.favouriteTarget() })
+    var note by remember { mutableStateOf<String?>(null) }
+    val shown by rememberUpdatedState(publication)
+    val title = resources.getString(SharedR.string.library_home_favourites)
+    LazyColumn(
+        Modifier.fillMaxSize().testTag("library.favourites").semantics { this[LibraryObservation] = observation },
+        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.tv_library_favourites), style = MaterialTheme.typography.displaySmall)
+                    TvAction(stringResource(R.string.tv_back), "library.favourites.back", onClick = navigator.back)
+                    TvAction(stringResource(R.string.tv_refresh), "library.favourites.refresh", onClick = session::refresh)
+                }
+                TvConnectionNotices(session, accountNotices = false)
+                if (current != null) {
+                    if (current.items.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&
+                        current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
+                        resources.freshnessLine(current.freshness)?.let { TvStatement(it, "library.favourites.freshness") }
+                        TvStatement(resources.getString(SharedR.string.library_favourites_empty), "library.favourites.empty")
+                    } else {
+                        TvListStatus(current, "library.favourites", session::retry)
+                    }
+                }
+                TvOutcomeLines(outcomeLines, null, "library.favourites.outcome")
+                note?.let { TvStatement(it, "library.favourites.note") }
+            }
+        }
+        if (tracks.isNotEmpty()) {
+            item { Text(stringResource(SharedR.string.library_favourites_songs), style = MaterialTheme.typography.headlineSmall) }
+            itemsIndexed(tracks, key = { _, track -> "track:" + track.rawId }) { position, track ->
+                TvTrackRow(track, position, playing = track.rawId == playingRawId, tagPrefix = "library.favourites.track",
+                    default = position == 0,
+                    onPlay = {
+                        note = null
+                        val list = shown?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+                        if (playTracks(playback, account.providerInstanceId, list, track.rawId, title)) showNowPlaying(context)
+                    },
+                    onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
+                )
+            }
+        }
+        if (albums.isNotEmpty()) {
+            item { Text(stringResource(SharedR.string.library_favourites_albums), style = MaterialTheme.typography.headlineSmall) }
+            item {
+                LazyRow(contentPadding = PaddingValues(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
+                        TvCard(account, album, "library.favourites.album.$position", default = tracks.isEmpty() && position == 0) {
+                            navigator.openAlbum(album.rawId)
+                        }
+                    }
+                }
+            }
+        }
+        if (artists.isNotEmpty()) {
+            item { Text(stringResource(SharedR.string.library_favourites_artists), style = MaterialTheme.typography.headlineSmall) }
+            item {
+                LazyRow(contentPadding = PaddingValues(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    itemsIndexed(artists, key = { _, artist -> artist.rawId }) { position, artist ->
+                        TvCard(account, artist, "library.favourites.artist.$position",
+                            default = tracks.isEmpty() && albums.isEmpty() && position == 0) { navigator.openArtist(artist.rawId) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The outcome lines of a screen's hearts: [primary]'s under [tag], any other's under `tag.<kind>.<id>`. */
+@Composable
+private fun TvOutcomeLines(lines: List<Pair<AndroidLibraryEntity, String>>, primary: AndroidLibraryEntity?, tag: String) {
+    for ((target, line) in lines) {
+        TvStatement(line, if (target == primary) tag else "$tag.${target.kind.name.lowercase()}.${target.rawId}")
+    }
+}
+
+/**
+ * The heart beside a row or on a card's line: its own focus target, so the row keeps its one action
+ * (play). Filled is a favourite, with any pending change in it (§16.20).
+ */
+@Composable
+private fun TvFavouriteButton(favourite: Boolean, tag: String, onClick: () -> Unit) {
+    val resources = libraryResources()
+    IconButton(onClick = onClick, modifier = Modifier.tvFocus(tag).semantics { selected = favourite }) {
+        Icon(if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
+            resources.getString(if (favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add))
     }
 }
 
@@ -681,7 +803,23 @@ private fun TvAlbumScreen(
  */
 @Composable
 private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
-                       onUnavailable: () -> Unit) {
+                       onUnavailable: () -> Unit, onFavourite: (() -> Unit)? = null, tagPrefix: String = "album.track",
+                       default: Boolean = false) {
+    if (onFavourite == null) {
+        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth())
+        return
+    }
+    // The heart is beside the row, a focus target of its own: RIGHT from the row reaches it, and the
+    // row stays one target whose action is play.
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.weight(1f))
+        TvFavouriteButton(track.isFavourite(), "$tagPrefix.$position.favourite", onFavourite)
+    }
+}
+
+@Composable
+private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
+                           onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -689,7 +827,7 @@ private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: 
     var focused by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     Row(
-        Modifier.fillMaxWidth().tvFocus("album.track.$position")
+        modifier.tvFocus("$tagPrefix.$position", default)
             // One accessibility node whatever the playability: focusable() does not merge the row's
             // texts, so this does. A row that cannot play is described as such.
             .semantics(mergeDescendants = true) {
@@ -722,7 +860,7 @@ private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: 
             else -> colors.onSurface
         }
         Box(Modifier.width(32.dp)) {
-            if (playing) Icon(DulcetIcons.Play, nowPlaying, Modifier.size(20.dp).testTag("album.track.$position.playing"), tint = content)
+            if (playing) Icon(DulcetIcons.Play, nowPlaying, Modifier.size(20.dp).testTag("$tagPrefix.$position.playing"), tint = content)
             else Text((track.trackNumber ?: position + 1).toString(), color = content)
         }
         Text(track.title.orEmpty(), Modifier.weight(1f), color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -749,6 +887,8 @@ private fun TvArtistScreen(
     val resources = libraryResources()
     val current = publication
     val artist = current?.header as? AndroidLibraryItem.Artist
+    val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, rawId)
+    val outcomeLines = rememberOutcomeLines(session, listOf(target))
     // Playing an artist opens each album first; leaving the screen abandons that, so nothing starts
     // playing after the person has gone, and a second press while it runs does nothing.
     var collecting by remember(rawId) { mutableStateOf<AutoCloseable?>(null) }
@@ -804,7 +944,18 @@ private fun TvArtistScreen(
                                     enabled = collecting == null) { shown?.let { play(it, true) } }
                             }
                         }
+                        if (artist != null) {
+                            val favourite = artist.favourite == true
+                            TvAction(
+                                resources.getString(if (favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add),
+                                "artist.favourite",
+                                description = resources.getString(
+                                    if (favourite) SharedR.string.library_favourite_on else SharedR.string.library_favourite_add),
+                                icon = if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
+                            ) { session.toggleFavourite(target) }
+                        }
                         note?.let { TvStatement(it, "artist.note") }
+                        TvOutcomeLines(outcomeLines, target, "artist.outcome")
                     }
                 }
             }

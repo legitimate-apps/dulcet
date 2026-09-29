@@ -44,7 +44,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import com.legitimateapps.dulcet.core.AndroidLibraryEntity
+import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
+import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.rememberOutcomeLines
+import com.legitimateapps.dulcet.library.rememberWatchedFavourite
+import com.legitimateapps.dulcet.shared.R as SharedR
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -150,13 +158,42 @@ private class ControllerActions(private val controller: AndroidPlaybackControlle
     override fun jumpTo(queueEntryId: String) = controller.jumpTo(queueEntryId)
 }
 
+/**
+ * The playing track's heart on the TV player: its state as this device knows it, [toggle] to change
+ * it, and the words for a change that needs them ([line]), the library screens' own (§16.20).
+ */
+internal class TvPlayerFavourite(val favourite: Boolean, val line: String?, val toggle: () -> Unit)
+
 @Composable
-internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) =
-    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) })
+internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
+    val context = LocalContext.current
+    // The account's process reader, for the heart alone. This session is never started: the library
+    // activity's session reports the foreground and reachability, and a second one here would tell
+    // the reader the app went to the background whenever that activity stops behind this one.
+    val library = remember(account) {
+        account?.let { runCatching { LibrarySession(context, it, foreground = false) }.getOrNull() }
+    }
+    DisposableEffect(library) { onDispose { library?.close() } }
+    val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId
+    val target = remember(rawId) { rawId?.let { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, it) } }
+    val favourite = if (library != null && target != null) {
+        val value = rememberWatchedFavourite(library, target)
+        val line = rememberOutcomeLines(library, listOf(target)).firstOrNull()?.second
+        TvPlayerFavourite(value == true, line) { library.toggleFavourite(target) }
+    } else {
+        null
+    }
+    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite)
+}
 
 /** Lean-back Now Playing for [state]; null [playback] before the service is bound or without an account. */
 @Composable
-internal fun TvNowPlayingScreen(account: SearchAccount?, state: AndroidPlaybackState, playback: TvPlayerActions?) {
+internal fun TvNowPlayingScreen(
+    account: SearchAccount?,
+    state: AndroidPlaybackState,
+    playback: TvPlayerActions?,
+    favourite: TvPlayerFavourite? = null,
+) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(playback != null) { if (playback != null) runCatching { playFocus.requestFocus() } }
     Surface(Modifier.fillMaxSize()) {
@@ -186,12 +223,16 @@ internal fun TvNowPlayingScreen(account: SearchAccount?, state: AndroidPlaybackS
                     Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
                         style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    favourite?.line?.let {
+                        Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp).testTag("tv.player.favourite.outcome"))
+                    }
                     Spacer(Modifier.height(20.dp))
                     TvScrubber(state, playback)
                     if (state.error != null) Text(stringResource(R.string.tv_player_failed),
                         color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
                     Spacer(Modifier.height(20.dp))
-                    TvTransport(state, playback, playFocus)
+                    TvTransport(state, playback, playFocus, favourite)
                     Spacer(Modifier.height(24.dp))
                     if (state.queue.size > 1) TvUpNext(state, playback)
                 }
@@ -202,7 +243,7 @@ internal fun TvNowPlayingScreen(account: SearchAccount?, state: AndroidPlaybackS
 
 /** Shuffle, Previous, Play/Pause, Next and Repeat, left to right, as on the phone. */
 @Composable
-private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?, playFocus: FocusRequester) {
+private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?, playFocus: FocusRequester, favourite: TvPlayerFavourite?) {
     val live = playback != null
     // tv-material buttons can keep an onClick from an earlier composition: read the modes live.
     val current by rememberUpdatedState(state)
@@ -231,6 +272,13 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
         TvToggle(if (state.repeatMode == AndroidRepeatMode.One) DulcetIcons.RepeatOne else DulcetIcons.Repeat,
             stringResource(repeat), on = state.repeatMode != AndroidRepeatMode.Off, enabled = live,
             tag = "tv.player.repeat") { playback?.cycleRepeatMode() }
+        // After Repeat, so the transport's order is the phone's; the heart changes the track, not playback.
+        if (favourite != null) {
+            val latest by rememberUpdatedState(favourite)
+            TvToggle(if (favourite.favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
+                stringResource(if (favourite.favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add),
+                on = favourite.favourite, enabled = true, tag = "tv.player.favourite") { latest.toggle() }
+        }
     }
 }
 

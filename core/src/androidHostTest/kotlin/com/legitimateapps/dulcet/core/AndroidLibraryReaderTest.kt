@@ -464,6 +464,61 @@ class AndroidLibraryReaderTest {
         assertEquals(2L, pending.poll(30, TimeUnit.SECONDS), "a pending playlist edit was not counted")
     }
 
+    /**
+     * Now Playing's heart: a track outside any window. The watch tells the cached state at once, the
+     * change with the tap (offline, so before any request), the server's value once it is adopted,
+     * and nothing after it is closed — and a change to another entity is never told to it.
+     */
+    @Test
+    fun aWatchedFavouriteFollowsTheTapTheSendAndStopsWhenClosed() {
+        val reader = reader()
+        val album = CountDownLatch(1)
+        val tracks = AtomicReference<List<AndroidLibraryItem.Track>>(emptyList())
+        val seen = Seen()
+        reader.openRecording(AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Newest), seen)
+        assertTrue(seen.live.await(30, TimeUnit.SECONDS))
+        reader.openWindow(AndroidLibraryQuery.Album(seen.all.last().first.items.first().rawId)) { publication ->
+            if (publication.freshness == AndroidLibraryFreshness.Live && publication.itemsState == AndroidLibraryItemsState.Present) {
+                tracks.set(publication.items.filterIsInstance<AndroidLibraryItem.Track>())
+                album.countDown()
+            }
+        }
+        assertTrue(album.await(30, TimeUnit.SECONDS), "fixture: an album's tracks are cached")
+        val (track, other) = tracks.get().let { assertTrue(it.size >= 2, "fixture: two tracks"); it[0] to it[1] }
+        assertTrue(track.favourite != true, "fixture: the track starts as no favourite")
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)
+        val told = Collections.synchronizedList(mutableListOf<Boolean?>())
+        val watch = reader.watchFavourite(target) { told += it }
+        pollUntil("the first value") { told.snapshot().isNotEmpty() }
+        assertEquals(listOf(track.favourite), told.snapshot(), "the cached state is told at once")
+
+        reader.setOnline(false)
+        val requests = server.log.size
+        assertTrue(reader.setFavourite(target, true))
+        pollUntil("the tap") { told.snapshot().size == 2 }
+        assertEquals(true, told.snapshot().last(), "the change is told with the tap")
+        assertEquals(requests, server.log.size, "offline: nothing was sent")
+
+        assertTrue(reader.setFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, other.rawId), true))
+        val reconnected = CountDownLatch(1)
+        reader.setOnline(true)
+        reader.reconnect { reconnected.countDown() }
+        assertTrue(reconnected.await(30, TimeUnit.SECONDS))
+        pollUntil("the star sent") { server.count("star") >= 2 }
+        pollUntil("the adoption told") { told.snapshot().size >= 3 }
+        assertTrue(told.snapshot().drop(1).all { it == true }, "the star stands through the send: ${told.snapshot()}")
+
+        watch.close()
+        val afterClose = told.snapshot().size
+        assertTrue(reader.setFavourite(target, false))
+        val probe = LinkedBlockingQueue<Boolean?>()
+        val control = reader.watchFavourite(target) { probe.put(it ?: false) }
+        assertEquals(false, probe.poll(30, TimeUnit.SECONDS), "control: the unstar was recorded")
+        control.close()
+        Thread.sleep(200)
+        assertEquals(afterClose, told.snapshot().size, "nothing is told after close")
+    }
+
     /** A copy taken under the list's lock: the reader's thread appends while the test reads. */
     private fun <T> MutableList<T>.snapshot(): List<T> = synchronized(this) { toList() }
 
