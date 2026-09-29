@@ -123,6 +123,41 @@ class NowPlayingFavouriteTest {
         assertEquals(listOf(TRACK, "track-next"), server.requests("star").map { it["id"] })
     }
 
+    /**
+     * The track has no cache row, so after the saved star the cache reads it as unknown. A toggle
+     * would flip that unknown to `star` again; the heart sends the opposite of what it shows.
+     */
+    @Test fun aSavedHeartOnAnUncachedTrackTappedAgainSendsUnstar() {
+        compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
+        compose.waitForIdle()
+        compose.onNodeWithTag("player.favourite").performClick()
+        settle("the star saved") { server.answered("star") == 1 }
+        compose.waitForIdle()
+        assertTrue(heartSelected(), "fixture: the saved star is shown")
+        compose.onNodeWithTag("player.favourite").performClick()
+        settle("the unstar sent") { server.answered("unstar") == 1 }
+        assertEquals(listOf("star", "unstar"), server.all().filter { it == "star" || it == "unstar" },
+            "the second tap removes the favourite; it does not star again")
+        assertEquals(listOf(TRACK), server.requests("unstar").map { it["id"] })
+        compose.waitForIdle()
+        settle("the heart to empty") { !heartSelected() }
+    }
+
+    /** The saved value belongs to the reader, not the watch: skipping away and back keeps the heart filled. */
+    @Test fun aSavedHeartOnAnUncachedTrackStaysFilledAfterSkippingAwayAndBack() {
+        val state = androidx.compose.runtime.mutableStateOf(playing(TRACK))
+        compose.setContent { MaterialTheme { NowPlayingScreen(account, state.value, controller, session) {} } }
+        compose.onNodeWithTag("player.favourite").performClick()
+        settle("the star saved") { server.answered("star") == 1 }
+        state.value = playing("track-next")
+        settle("the next track's own heart") { !heartSelected() }
+        state.value = playing(TRACK)
+        settle("the saved star shown again") { heartSelected() }
+        compose.onNodeWithTag("player.favourite").performClick()
+        settle("the unstar sent") { server.answered("unstar") == 1 }
+        assertEquals(1, server.requests("star").size, "no second star was sent")
+    }
+
     /** Answers `ok` — or, when [refuse], error 70 to `star` — and records every request. */
     private class RecordingServer : AutoCloseable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
