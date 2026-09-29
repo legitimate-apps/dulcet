@@ -92,6 +92,9 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - Every workflow: `concurrency: cancel-in-progress` and per-job `timeout-minutes`.
 - `main` requires `core-ci`, `parity-gate`, `apple-ci`, with `strict` up-to-date and **no required
   review**. Merging one PR invalidates the others; land in dependency order. Detail: `docs/MERGING.md`.
+- `apple-ci` on a PR runs only `apple-platform`, and only when the PR changes an Apple input
+  (`tools/ci/plan-apple-legs`); `apple-conformance` runs on push to `main` and on dispatch. A release
+  build requires both legs and every required check green on its commit (spec §21.6).
 - When several unrelated PRs go red together, check Homebrew pin drift first (`docs/TRAPS.md` 36).
 
 ## Commands
