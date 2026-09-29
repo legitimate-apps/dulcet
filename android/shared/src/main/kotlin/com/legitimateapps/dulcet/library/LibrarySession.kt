@@ -317,6 +317,15 @@ public class LibrarySession internal constructor(
     }
 
     /**
+     * Sets [target]'s favourite state to [favourite]. For a heart showing a watched value (Now
+     * Playing): a toggle flips the state the CACHE knows, which for a track with no cache row is
+     * unknown even after a saved star, so it would send `star` again where the heart asked for `unstar`.
+     */
+    public fun setFavourite(target: AndroidLibraryEntity, favourite: Boolean) {
+        if (!closed) reader.setFavourite(target, favourite)
+    }
+
+    /**
      * The favourite state of an entity no open window shows — Now Playing's track — as this device
      * knows it, on the main thread: at once, then with every change to it (see
      * [AndroidLibraryReader.watchFavourite]). The caller closes it; [close] closes any still open.

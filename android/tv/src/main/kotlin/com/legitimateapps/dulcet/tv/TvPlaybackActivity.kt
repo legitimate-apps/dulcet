@@ -179,7 +179,7 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     val favourite = if (library != null && target != null) {
         val value = rememberWatchedFavourite(library, target)
         val line = rememberOutcomeLines(library, listOf(target)).firstOrNull()?.second
-        TvPlayerFavourite(value == true, line) { library.toggleFavourite(target) }
+        TvPlayerFavourite(value == true, line) { library.setFavourite(target, value != true) }
     } else {
         null
     }

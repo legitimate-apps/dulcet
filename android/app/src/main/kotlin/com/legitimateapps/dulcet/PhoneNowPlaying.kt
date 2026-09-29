@@ -578,5 +578,5 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
             session.dismissOutcome(target)
         }
     }
-    FavouriteButton(favourite, "player.favourite", Modifier.size(TOUCH_TARGET)) { session.toggleFavourite(target) }
+    FavouriteButton(favourite, "player.favourite", Modifier.size(TOUCH_TARGET)) { session.setFavourite(target, !favourite) }
 }

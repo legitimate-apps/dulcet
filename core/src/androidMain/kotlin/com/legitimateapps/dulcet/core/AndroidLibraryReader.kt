@@ -158,6 +158,13 @@ public class AndroidLibraryReader internal constructor(
     /** Playlist editing (§18.6) over this reader's session. */
     public val playlists: AndroidLibraryPlaylists = AndroidLibraryPlaylists(this)
 
+    /**
+     * Reader thread. What the server last acknowledged for each favourite this reader changed, by
+     * kind and raw id: kept by the reader rather than by a watch, so a watch opened later — Now
+     * Playing after a skip away and back — still knows a star saved for a track with no cache row.
+     */
+    private val acknowledgedFavourites = mutableMapOf<Pair<AndroidLibraryEntityKind, String>, Boolean>()
+
     /** Completed by [close], so a reader closed while it waits for its predecessor stops waiting. */
     private val closeRequested = CompletableDeferred<Unit>()
 
@@ -301,8 +308,8 @@ public class AndroidLibraryReader internal constructor(
 
     /**
      * The favourite state of one entity as this device knows it — the pending change if there is one,
-     * else the server's last value in the seen-cache, else the value the server acknowledged for it
-     * while watched (an entity with no cache row keeps no acknowledgement), null when none is known — for a surface that
+     * else the server's last value in the seen-cache, else the value the server acknowledged to this
+     * reader (an entity with no cache row keeps no acknowledgement there), null when none is known — for a surface that
      * shows an entity outside any window: Now Playing's track. Read from the cache alone, never a
      * request. [listener] hears it once at once, then again on the main thread each time a change to
      * [target] is made, sent, adopted, refused or withdrawn, until [AndroidLibraryFavouriteWatch.close].
@@ -325,11 +332,11 @@ public class AndroidLibraryReader internal constructor(
     /**
      * Reader thread. The favourite state a publication would show for the watched target; when the
      * seen-cache holds no row for it — a track only ever seen in a queue — what the server last
-     * acknowledged here, since an acknowledgement is adopted into a cache row and there is none.
+     * acknowledged to this reader, since an acknowledgement is adopted into a cache row and there is none.
      */
     private fun favouriteOf(watch: AndroidLibraryFavouriteWatch): Boolean? = try {
         composed()?.session?.favourites?.isFavourite(LibraryEntityRef(watch.target.kind.toCore(), watch.target.rawId))
-            ?: watch.acknowledged
+            ?: acknowledgedFavourites[watch.target.kind to watch.target.rawId]
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Throwable) {
@@ -353,12 +360,11 @@ public class AndroidLibraryReader internal constructor(
             is MutationOutcome.Superseded -> outcome.serverValue == 1
             else -> return
         }
-        favouriteWatches.toList()
+        val watched = favouriteWatches.toList()
             .filter { it.target.rawId == outcome.target.rawId && it.target.kind.toCore() == outcome.target.kind }
-            .forEach { watch ->
-                watch.acknowledged = known
-                watch.emit(favouriteOf(watch))
-            }
+        AndroidLibraryEntityKind.entries.firstOrNull { it.toCore() == outcome.target.kind }
+            ?.let { acknowledgedFavourites[it to outcome.target.rawId] = known }
+        watched.forEach { it.emit(favouriteOf(it)) }
     }
 
     internal fun unregister(watch: AndroidLibraryFavouriteWatch) {
@@ -543,6 +549,7 @@ public class AndroidLibraryReader internal constructor(
                         outcomeListeners.clear()
                         favouriteWatches.clear()
                         playlistOutcomeListeners.clear()
+                        acknowledgedFavourites.clear()
                         closing?.session?.reader?.setForeground(false)
                     } catch (_: Throwable) {
                         // Closing is best effort and exports nothing.
@@ -1359,9 +1366,6 @@ public class AndroidLibraryFavouriteWatch internal constructor(
     listener: (Boolean?) -> Unit,
 ) : AutoCloseable {
     private val listener = AtomicReference<((Boolean?) -> Unit)?>(listener)
-
-    /** Reader thread. What the server last acknowledged for [target] while watched; see watchFavourite. */
-    internal var acknowledged: Boolean? = null
 
     override fun close() {
         if (listener.getAndSet(null) == null) return

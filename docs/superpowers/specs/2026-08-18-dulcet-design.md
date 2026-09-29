@@ -6900,7 +6900,10 @@ Now Playing, and add a Favourites screen over `getStarred2`. Two facts learned w
 now rules. (1) A saved star for a track this device never cached has no row for the echo to be
 adopted into, so the overlay retires and the state reads *unknown*; a heart watching that track
 must keep the acknowledged value, or it fills, then empties once the server agrees. The Android
-facade's favourite watch remembers the last acknowledged value per watch for exactly this. (2) The
+reader keeps the last acknowledged favourite value per entity (not per watch, so skipping away and
+back still shows a saved star), and a heart showing a watched value sends the explicit opposite of
+what it shows rather than a toggle: the core's toggle flips what the cache knows, which for such a
+track is unknown, so a second tap would send `star` again instead of `unstar`. (2) The
 favourites list is user state, which the scan epoch never covers (§16.11), so a list read earlier in
 the session and served Live would not show a heart just added; after a Saved or Superseded favourite
 change the next favourites surface that opens re-reads the server. A pending change stays unlabelled
