@@ -256,6 +256,7 @@ public class ApplePlaybackQueueClient private constructor(
         serverId: ServerId,
         sender: ScrobbleEndpointSender,
         outbox: PersistentScrobbleOutbox,
+        wallClock: OutboxWallClock = ApplePlaybackWallClock,
     ) {
         delivery?.sender?.close()
         val monotonicOrigin = TimeSource.Monotonic.markNow()
@@ -263,7 +264,7 @@ public class ApplePlaybackQueueClient private constructor(
             serverId = serverId,
             outbox = outbox,
             sender = sender,
-            wallClock = ApplePlaybackWallClock,
+            wallClock = wallClock,
             monotonicClock = OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
             diagnosticSink = ScrobbleOutboxDiagnosticSink { event ->
                 if (event is ScrobbleOutboxDiagnosticEvent.DeliveryFailed) {

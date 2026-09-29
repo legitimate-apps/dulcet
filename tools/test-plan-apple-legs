@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Prove tools/ci/plan-apple-legs plans conservatively and its leg check fails closed (spec §21.6)."""
+
+from __future__ import annotations
+
+from importlib.machinery import SourceFileLoader
+import importlib.util
+from pathlib import Path
+import os
+import subprocess
+import sys
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOL = ROOT / "tools" / "ci" / "plan-apple-legs"
+_spec = importlib.util.spec_from_loader("plan_apple_legs", SourceFileLoader("plan_apple_legs", str(TOOL)))
+planner = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(planner)
+checks = 0
+
+
+def expect(condition: bool, message: str) -> None:
+    global checks
+    if not condition:
+        raise AssertionError(message)
+    checks += 1
+
+
+# --- Classification. Positive and negative cases side by side, so a planner that answers the same
+# thing for every path cannot pass.
+APPLE = (
+    "apple/DulcetKit/Sources/DulcetKit/Player.swift",
+    "core/src/commonMain/kotlin/com/legitimateapps/dulcet/Queue.kt",
+    "core-conformance/src/commonTest/kotlin/X.kt",
+    "core/src/appleMain/kotlin/X.kt",
+    "core/src/appleTest/kotlin/X.kt",
+    "core/src/commonTest/kotlin/X.kt",
+    "core-conformance/src/macosArm64Test/kotlin/X.kt",
+    "core-conformance/src/appleTest/kotlin/X.kt",
+    "core/src/commonMain/sqldelight/com/legitimateapps/dulcet/core/db/8.sqm",
+    "build.gradle.kts",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "gradle/libs.versions.toml",
+    "gradlew",
+    "android/app/build.gradle.kts",
+    ".github/workflows/apple-ci.yml",
+    "tools/ci/plan-apple-legs",
+    "tools/ci/isolate-simulator",
+    "tools/seed-corpus",
+    "tools/conformance-env/prepare-darwin",
+    "tools/swift-testing-junit",
+    "tools/run-gradle-exclusive",
+    "a-directory-nobody-has-classified-yet/file.txt",
+)
+NOT_APPLE = (
+    "docs/superpowers/specs/2026-08-18-dulcet-design.md",
+    "CLAUDE.md",
+    "CORPUS.md",
+    "FEATURES.yml",
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/android/Player.kt",
+    "android/tv/src/main/res/values/strings.xml",
+    "core/src/androidMain/kotlin/X.kt",
+    "core/src/androidHostTest/kotlin/X.kt",
+    "core/src/jvmMain/kotlin/X.kt",
+    "core/src/jvmTest/kotlin/X.kt",
+    "core-conformance/src/jvmTest/kotlin/X.kt",
+    "core-conformance/src/androidDeviceTest/kotlin/X.kt",
+    "core-conformance/src/androidHostTest/kotlin/X.kt",
+    ".github/workflows/core-ci.yml",
+    ".github/workflows/release.yml",
+    ".github/required-checks.json",
+    "tools/verify_ci_policy.py",
+    "tools/test-verify-ci-policy",
+    "tools/release_plan.py",
+)
+for path in APPLE:
+    expect(planner.apple_affecting(path), f"{path} must be Apple-affecting")
+for path in NOT_APPLE:
+    expect(not planner.apple_affecting(path), f"{path} must not be Apple-affecting")
+
+# --- Plans by event.
+for event in ("push", "workflow_dispatch", "schedule", "merge_group", ""):
+    expect(planner.plan(event, ["docs/a.md"])[:2] == (True, True),
+           f"event {event!r} must run every leg")
+expect(planner.plan("pull_request", ["docs/a.md", "android/app/src/X.kt"])[:2] == (False, False),
+       "a docs and Android pull request runs no Apple leg")
+expect(planner.plan("pull_request", ["docs/a.md", "core/src/X.kt"])[:2] == (True, False),
+       "one Apple-affecting path runs the platform leg")
+expect(planner.plan("pull_request", None)[:2] == (True, False),
+       "an unreadable diff runs the platform leg")
+expect(planner.plan("pull_request", [])[:2] == (True, False),
+       "an empty diff runs the platform leg")
+for changed in (["core/X.kt"], ["docs/a.md"], None, []):
+    expect(planner.plan("pull_request", changed)[1] is False,
+           "a pull request never runs the conformance leg")
+
+# --- require-leg: exactly two accepted pairs, everything else refused.
+ACCEPTED = {("true", "success"), ("false", "skipped")}
+for planned in ("true", "false", "", "TRUE", "1", "True"):
+    for result in ("success", "skipped", "failure", "cancelled", ""):
+        code = subprocess.run([sys.executable, str(TOOL), "require-leg", planned, result],
+                              capture_output=True, text=True, check=False).returncode
+        expect((code == 0) == ((planned, result) in ACCEPTED),
+               f"require-leg {planned!r} {result!r} exited {code}")
+
+# --- The CLI's step outputs, end to end.
+with tempfile.TemporaryDirectory() as directory:
+    listing = Path(directory) / "changed"
+    listing.write_text("docs/a.md\nCLAUDE.md\n")
+    out = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "pull_request",
+                          "--changed-files", str(listing)],
+                         capture_output=True, text=True, check=True).stdout
+    expect(out == "platform=false\nconformance=false\n", f"docs-only outputs: {out!r}")
+    listing.write_text("apple/project.yml\n")
+    out = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "pull_request",
+                          "--changed-files", str(listing)],
+                         capture_output=True, text=True, check=True).stdout
+    expect(out == "platform=true\nconformance=false\n", f"Apple outputs: {out!r}")
+    out = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "push"],
+                         capture_output=True, text=True, check=True).stdout
+    expect(out == "platform=true\nconformance=true\n", f"push outputs: {out!r}")
+
+# --- The diff read from a real merge commit, and the fail-safe on a checkout that is not one.
+with tempfile.TemporaryDirectory() as directory:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", directory, *args], check=True, capture_output=True, env=env)
+
+    def plan_here() -> str:
+        return subprocess.run([sys.executable, str(TOOL), "plan", "--event", "pull_request"],
+                              cwd=directory, capture_output=True, text=True, check=True).stdout
+
+    git("init", "-q", "-b", "main")
+    (Path(directory) / "README.md").write_text("base\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "base")
+    expect(plan_here() == "platform=true\nconformance=false\n",
+           "a checkout that is not a merge commit must run the platform leg")
+    git("checkout", "-q", "-b", "topic")
+    (Path(directory) / "docs").mkdir()
+    (Path(directory) / "docs" / "note.md").write_text("docs\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "docs")
+    git("checkout", "-q", "main")
+    (Path(directory) / "LICENSE").write_text("moved on\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "main moved")
+    git("merge", "-q", "--no-ff", "-m", "merge", "topic")
+    expect(planner.merge_diff is not None, "merge_diff exists")
+    expect(plan_here() == "platform=false\nconformance=false\n",
+           "a docs-only merge commit runs no Apple leg")
+    (Path(directory) / "core").mkdir()
+    (Path(directory) / "core" / "X.kt").write_text("x\n")
+    git("checkout", "-q", "topic")
+    git("add", ".")
+    git("commit", "-q", "-m", "core")
+    git("checkout", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "merge 2", "topic")
+    expect(plan_here() == "platform=true\nconformance=false\n",
+           "a merge commit carrying a core change runs the platform leg")
+
+# --- Closure: no excluded tool is named by anything the Apple legs read. An excluded tool that an
+# Apple-affecting file mentions in code (by path, file name or module stem) would let a pull request change
+# an Apple input without running the Apple legs.
+tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
+                         check=True).stdout.splitlines()
+# The planner itself names every excluded tool, as data; that is the list, not a dependency.
+readers = [path for path in tracked
+           if planner.apple_affecting(path) and path != "tools/ci/plan-apple-legs"]
+texts: dict[str, str] = {}
+for path in readers:
+    try:
+        # A comment cannot make a file read a tool, so only code lines count. Several Apple files
+        # explain that a release or policy tool checks them, which is not a dependency.
+        texts[path] = "\n".join(
+            line for line in (ROOT / path).read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith(("#", "//", "*", "/*")))
+    except (UnicodeDecodeError, OSError):
+        continue
+expect(".github/workflows/apple-ci.yml" in texts, "apple-ci.yml must be scanned")
+expect(len(texts) > 100, f"only {len(texts)} Apple-affecting files were read")
+for tool in planner.NOT_APPLE_TOOLS:
+    expect((ROOT / tool).is_file(), f"{tool} is excluded but does not exist; drop it from the list")
+    name = Path(tool).name
+    stem = name[:-3] if name.endswith(".py") else name
+    for path, text in texts.items():
+        expect(stem not in text,
+               f"{path} names {stem!r}, so {tool} is an Apple input and must not be excluded")
+# The scan's positive control: a tool the Apple legs DO read is found by the same search.
+expect(any("seed-corpus" in text for text in texts.values()),
+       "the closure scan cannot find a tool apple-ci is known to name")
+
+print(f"plan-apple-legs control passed: {checks} checks over {len(texts)} Apple-affecting files")

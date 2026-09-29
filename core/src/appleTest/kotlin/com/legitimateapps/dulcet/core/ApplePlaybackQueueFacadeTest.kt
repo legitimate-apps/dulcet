@@ -294,10 +294,14 @@ class ApplePlaybackQueueFacadeTest {
         )
         val reports = mutableListOf<ApplePlaybackDeliveryReportDto>()
         client.setDeliveryReportObserver { reports += it }
+        // One fixed clock for the outbox and the worker: the worker drops entries past retention, so
+        // a real clock expired these fixed-time plays 30 days after the fixture date.
+        val wallClock = OutboxWallClock { 1_788_000_000_000 }
         client.installDelivery(
             serverId = ServerId("server"),
             sender = ScrobbleEndpointSender(transport),
-            outbox = PersistentScrobbleOutbox(database, OutboxWallClock { 1_788_000_000_000 }),
+            outbox = PersistentScrobbleOutbox(database, wallClock),
+            wallClock = wallClock,
         )
         return DeliveryFixture(driver, client, reports)
     }

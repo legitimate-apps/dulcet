@@ -6006,9 +6006,9 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 |---|---|---|
 | `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `macos-26` for the two legs; `ubuntu-latest` for the aggregator | two parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, and the app-host, download, playback and `core-conformance` legs on macOS, iOS/iPadOS and tvOS. `apple-ci`: resolves every Apple `FEATURES.yml` evidence identity against both legs' JUnit, then passes only when both legs report `success`. Future Apple-only measurements and tests join one of the two legs, never a third macOS job without a §21.5 change |
+| `apple-ci.yml` | pinned standard `macos-26` for the two legs; `ubuntu-latest` for the aggregator | two parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, and the app-host, download, playback and `core-conformance` legs on macOS, iOS/iPadOS and tvOS. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned both legs resolves every Apple `FEATURES.yml` evidence identity against both legs' JUnit. Future Apple-only measurements and tests join one of the two legs, never a third macOS job without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
-| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. The only workflow able to read signing secrets |
+| `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. Before any secret is read it requires every required check and both `apple-ci` legs green on the commit it archives (§21.6). The only workflow able to read signing secrets |
 
 **Note on the Linux-only claim:** GitHub Actions **service containers** require a Linux runner, so the
 `services:`-based Navidrome cannot run in an Apple job. That is a statement about the Actions feature,
@@ -6237,7 +6237,9 @@ because the median is above 75 minutes. Either reading adopts the split.
    evidence-verification call, in an unconditional, blocking step that runs after every download,
    and those downloads may not be optional either. No leg may verify evidence, and no Apple job may
    set `continue-on-error`. There may be at most two macOS jobs. Runners must use standard labels only. Every job needs a timeout,
-   and every workflow needs `cancel-in-progress` concurrency.
+   and every workflow needs `cancel-in-progress` concurrency. *Amended by §21.6:* a leg the plan may
+   skip is checked against the plan instead of against `success` alone, and the downloads and the
+   verification call run only on a run that planned both legs.
 
 **Projection, ASSUMED until measured.** It sums the per-step timings of the 12 green runs above by
 leg. The platform leg projects to median 49.5 and max 58.7 minutes, with its framework link costed
@@ -6289,7 +6291,9 @@ the aggregator, so two legs at these figures finish in 45–75 minutes, against 
   post-merge run and the head pull request's run both in flight it would need 6 slots against the
   documented cap of 5 (§21.1). **Not adopted.** It becomes worth measuring only if the composite
   step itself is divided, which is a change to the conformance design (§20) and not a CI edit.
-- **Moving legs off the pull-request gate to a scheduled or dispatch-only soak.** Every leg except
+- **Moving legs off the pull-request gate to a scheduled or dispatch-only soak.** *Superseded
+  2026-09-29 by §21.6, which moves the conformance leg off the pull-request gate to `main` and to
+  the release gate, by maintainer decision; what follows is the reasoning as of 2026-09-22.* Every leg except
   two carries `FEATURES.yml` evidence or a product assertion, and the corpus rule is that CI fails on
   an undeclared regression; moving those would let a regression merge. The two measurement-only
   candidates — the §12.4 resource-loader recording (~1.5 min, 1 failure in 63) and the
@@ -6298,6 +6302,53 @@ the aggregator, so two legs at these figures finish in 45–75 minutes, against 
   standing automation, which this project adds only by explicit maintainer decision. Soaks remain
   `workflow_dispatch` instruments (`capture-soak`, `apple-contention-soak`) for measuring flake
   rates, never a place to move an assertion.
+
+### 21.6 A fast check on every pull request; the full run before a release — 2026-09-29
+
+**Maintainer decision, 2026-09-29:** "A fast check on every PR; the full conformance and live-server
+runs before a release build." `main` requires `apple-ci` with strict up-to-date checks, so under
+§21.5 every landing waited for one full run, about 64 minutes (platform leg ~49, conformance leg ~63,
+in parallel), and a docs-only or Android-only pull request paid it too.
+
+**Normative:**
+
+1. **`apple-plan` decides the legs**, on `ubuntu-latest`, with `tools/ci/plan-apple-legs`. A push to
+   `main`, a manual dispatch and any other event plan both legs. A pull request never plans
+   `apple-conformance`, and plans `apple-platform` when it changes an Apple input. Apple inputs are
+   defined by exclusion: every path counts except documentation, `FEATURES.yml`, Android sources, the
+   other workflows and repository metadata, the Kotlin source sets no Apple target compiles
+   (`android*` and `jvm*` under `core/src` and `core-conformance/src`), and a named list of tools no
+   Apple leg reads. Gradle
+   build files count wherever they are, and `apple-ci.yml` always counts. A new directory or tool
+   therefore runs the platform leg until someone decides otherwise, and anything the planner cannot
+   establish (a checkout that is not a two-parent merge, a failed or empty diff) plans the platform
+   leg. `tools/test-plan-apple-legs` proves the classification in both directions, and that no
+   excluded tool is named in code by any Apple input.
+2. **The legs are skipped by a job condition, never by a workflow `paths:` filter.** **OBSERVED**
+   (GitHub Docs, *Troubleshooting required status checks*, fetched 2026-09-29): a workflow skipped by
+   path filtering leaves its checks "Pending" and blocks merging, while "a job is skipped by a
+   conditional" reports "Success". So the workflow always runs, each leg carries exactly
+   `if: ${{ needs.apple-plan.outputs.<leg> == 'true' }}`, and the required job named `apple-ci`
+   always runs (`if: always()`) and decides.
+3. **`apple-ci` checks each leg against the plan:** the plan job must succeed, a planned leg must
+   report `success`, and an unplanned leg must report `skipped`. Anything else fails, including an
+   empty plan output. It downloads and resolves `FEATURES.yml` evidence only on a run that planned
+   both legs, so a pull request's Apple citations are resolved after merge, on `main`.
+4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
+   full-run-gate` before any step reads a secret. It refuses unless every required check and both
+   `apple-platform` and `apple-conformance` concluded `success` on the exact commit being archived.
+   A skipped leg reports `skipped`, so a run that planned less cannot satisfy it. Only a dry run may
+   waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
+5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
+   minutes), so the Linux and Android live-server conformance still gates every merge.
+
+**What this gives up, stated so it is not rediscovered as a defect.** A pull request can merge with
+a change that breaks Darwin conformance, a conformance-only control (`tools/test-darwin-*` and the
+other steps in that leg) or an Apple `FEATURES.yml` citation; `main`'s push run finds it, `main-health`
+reports it, and no release can ship it. A pull request that changes the conformance leg's own
+machinery can be proved before merge by dispatching `apple-ci` on its branch, which plans both legs.
+A dispatch's checks do not appear on the pull request (same GitHub page), so this is evidence for the
+reviewer, not a merge gate.
 
 ---
 
@@ -6900,6 +6951,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-09-29 — apple-ci runs a fast check on pull requests and the full run before a release
+(§21.6).** Maintainer decision. §21.5 had every pull request run both Apple legs, about 64 minutes
+per landing. Now a pull request runs `apple-platform` only when it changes an Apple input and never
+runs `apple-conformance`; a push to `main` and a dispatch run both; `apple-ci` checks each leg
+against the plan and resolves evidence only on a full run; and `release.yml` refuses to archive a
+commit without every required check and both legs green, except for a dry run that waives it
+explicitly. §21.1's table, §21.5 rule 6 and §21.5's "not adopted" note are amended in place.
 
 **2026-09-29 — Android playlists and lyrics: the shells over the core editor and lyrics (§18.4,
 §18.6)** — the Android phone lists playlists in the Library, opens a playlist page that plays and

@@ -74,6 +74,8 @@ jobs:
       - name: Prove self-hosted runners require workflow_dispatch isolation
         timeout-minutes: 3
         run: python3 tools/test-verify-ci-policy
+      - name: Prove the Apple leg planner plans conservatively and its leg check fails closed
+        run: python3 tools/test-plan-apple-legs
       - name: Verify CI policy
         run: python3 tools/verify_ci_policy.py
       - name: Prove the release channel's planner, uploader logic and policy gate

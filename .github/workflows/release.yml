@@ -13,6 +13,8 @@ name: release
 # asks App Store Connect to validate the package when the app record exists, but uploads nothing.
 #
 # Dispatch:  gh workflow run release.yml --ref main -f channel=dev -f platform=macos -f dry_run=false
+# The commit must already have a green full CI run (the push to main runs one). A dry run of a commit
+# that has none can pass -f skip_full_run_gate=true; an upload never can.
 on:
   workflow_dispatch:
     inputs:
@@ -37,6 +39,11 @@ on:
         required: true
         type: boolean
         default: true
+      skip_full_run_gate:
+        description: Dry runs only -- archive even if this commit has no green full CI run
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -74,6 +81,17 @@ jobs:
           RELEASE_DRY_RUN: ${{ inputs.dry_run }}
           RELEASE_REF: ${{ github.ref }}
         run: python3 tools/release_plan.py >> "$GITHUB_OUTPUT"
+
+      # spec §21.6: pull requests do not run the live-server conformance leg, so this is where it
+      # becomes a precondition. Every required check and both apple-ci legs must be green on this
+      # exact commit (a push to main runs them all). Unconditional, and before any secret is read or
+      # anything is archived; only a dry run may waive it, and only by the explicit input.
+      - name: Require a green full CI run on this commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_UPLOAD: ${{ steps.plan.outputs.upload }}
+          RELEASE_SKIP_FULL_RUN_GATE: ${{ inputs.skip_full_run_gate }}
+        run: python3 tools/release_plan.py full-run-gate
 
       - name: Require the PROD cut gate
         if: ${{ steps.plan.outputs.channel == 'prod' }}
