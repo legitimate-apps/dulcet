@@ -1631,8 +1631,27 @@ final class DulcetiOSUITests: XCTestCase {
         }
         rename.tap()
         let alert = app.alerts.firstMatch
-        guard alert.waitForExistence(timeout: 5),
-              replaceText(in: alert.textFields.firstMatch, with: renamed, name: "playlist name") else { return }
+        let field = alert.textFields.firstMatch
+        guard alert.waitForExistence(timeout: 5), field.waitForExistence(timeout: 5) else {
+            XCTFail("Rename must ask for the new name: " + app.debugDescription)
+            return
+        }
+        // The field opens holding the current name. Command-A is not reliable in an alert's field
+        // (it selected nothing on one run of two), so the name is deleted character by character.
+        // A plain tap puts the cursor where it lands -- mid-name, OBSERVED 3 of 3 -- and deletes
+        // only take what is before it, so the tap is at the trailing edge, and the field is
+        // cleared until it reads empty (an empty field reports its placeholder as its value).
+        for _ in 0..<3 {
+            let current = field.value as? String ?? ""
+            if current.isEmpty || current == field.placeholderValue { break }
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+        field.typeText(renamed)
+        guard (field.value as? String) == renamed else {
+            XCTFail("The name field must hold exactly the new name; value=\(String(describing: field.value))")
+            return
+        }
         alert.buttons["Rename"].firstMatch.tap()
         XCTAssertTrue(waitForLabel(renamed, of: title, timeout: 5),
             "The page must show the new name before the server answers; title=\(title.label)")
