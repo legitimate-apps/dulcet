@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Start, reuse or stop the disposable Navidrome that the design tours photograph.
+
+    tools/design-tour-server up   --root DIR [--port 4861] [--navidrome BIN] [--corpus DIR]
+    tools/design-tour-server down --root DIR
+
+`up` prints one line, `DESIGN TOUR SERVER url=<base url> started=<yes|no>`, and exits 0 only once
+the server answers an authenticated `ping` and has finished scanning a non-empty library. It is
+idempotent: a server this tool left running under the same root is reused, never restarted.
+`down` stops only a server whose pid this tool recorded under that root, and only if that pid is
+still a Navidrome.
+
+Everything lives under --root: the pinned binary (fetched and verified by
+conformance-env/prepare-darwin unless --navidrome names one), the deterministic corpus (generated
+by seed-corpus unless --corpus names a seeded one), the rendered configuration, the database and
+a log. The account is the conformance fixture's published admin, created on a fresh database. This
+server is disposable by construction; never point a tour at any other server.
+
+The conformance health check is deliberately not run: it also pins the ffmpeg version, which a
+screenshot tour has no reason to require.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import secrets
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+TOOLS = Path(__file__).resolve().parent
+ADMIN_USER = "dulcet-admin"
+ADMIN_PASSWORD = "dulcet-ci-canary-password"
+
+
+def rest(base: str, endpoint: str, **query: str) -> dict | None:
+    salt = secrets.token_hex(16)
+    token = hashlib.md5((ADMIN_PASSWORD + salt).encode()).hexdigest()
+    params = {"u": ADMIN_USER, "t": token, "s": salt, "v": "1.16.1", "c": "dulcet-design-tour", "f": "json", **query}
+    url = f"{base}/rest/{endpoint}?{urllib.parse.urlencode(params)}"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            envelope = json.load(response)["subsonic-response"]
+    except (OSError, ValueError, KeyError):
+        return None
+    return envelope if envelope.get("status") == "ok" else None
+
+
+def reachable(base: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{base}/ping", timeout=2):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except OSError:
+        return False
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    command = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout
+    return "navidrome" in command
+
+
+def read_pid(root: Path) -> int | None:
+    try:
+        return int((root / "navidrome.pid").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def ensure_binary(root: Path, override: str | None) -> Path:
+    if override:
+        return Path(override).resolve()
+    binary = root / "bin" / "navidrome"
+    if not binary.is_file():
+        subprocess.run([str(TOOLS / "conformance-env" / "prepare-darwin"), "--output", str(root / "bin")], check=True)
+    return binary
+
+
+def ensure_corpus(root: Path, override: str | None, ffmpeg: str) -> Path:
+    if override:
+        return Path(override).resolve()
+    music = root / "music"
+    if not (music / "corpus-manifest.json").is_file():
+        staging = root / "music.partial"
+        subprocess.run(["rm", "-rf", str(staging)], check=True)
+        subprocess.run(
+            [str(TOOLS / "seed-corpus"), "--output", str(staging), "--runtime", "native", "--ffmpeg", ffmpeg],
+            check=True,
+        )
+        subprocess.run(["rm", "-rf", str(music)], check=True)
+        staging.rename(music)
+    return music
+
+
+def create_admin(base: str) -> None:
+    request = urllib.request.Request(
+        f"{base}/auth/createAdmin",
+        data=json.dumps({"username": ADMIN_USER, "password": ADMIN_PASSWORD}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(request, timeout=10).close()
+    except urllib.error.HTTPError:
+        pass  # An admin already exists on a reused database; the ping below decides.
+
+
+def await_ready(base: str, deadline: float) -> None:
+    attempts = 0
+    while time.monotonic() < deadline:
+        attempts += 1
+        if reachable(base):
+            if rest(base, "ping") is None:
+                create_admin(base)
+            status = rest(base, "getScanStatus")
+            scan = (status or {}).get("scanStatus", {})
+            if status and not scan.get("scanning") and int(scan.get("count", 0)) > 0:
+                return
+        time.sleep(1)
+    raise SystemExit(f"design tour server not ready at {base} after {attempts} attempts")
+
+
+def up(args: argparse.Namespace) -> None:
+    root = Path(args.root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    base = f"http://127.0.0.1:{args.port}"
+    pid = read_pid(root)
+    if pid and pid_alive(pid) and rest(base, "ping") is not None:
+        await_ready(base, time.monotonic() + 60)
+        print(f"DESIGN TOUR SERVER url={base} started=no")
+        return
+    if reachable(base):
+        raise SystemExit(f"port {args.port} is served by something this root did not start; choose --port")
+    ffmpeg = args.ffmpeg
+    binary = ensure_binary(root, args.navidrome)
+    music = ensure_corpus(root, args.corpus, ffmpeg)
+    for name in ("data", "cache", "config"):
+        (root / name).mkdir(exist_ok=True)
+    config = root / "config" / "navidrome.toml"
+    subprocess.run(
+        [
+            str(TOOLS / "conformance-env" / "render-config"),
+            "--output", str(config), "--music-folder", str(music),
+            "--data-folder", str(root / "data"), "--cache-folder", str(root / "cache"),
+            "--address", "127.0.0.1", "--ffmpeg-path", ffmpeg, "--port", str(args.port),
+        ],
+        check=True,
+    )
+    log = (root / "navidrome.log").open("ab")
+    process = subprocess.Popen(
+        [str(binary), "--configfile", str(config)],
+        stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
+    )
+    (root / "navidrome.pid").write_text(f"{process.pid}\n")
+    try:
+        await_ready(base, time.monotonic() + args.timeout_seconds)
+    except SystemExit:
+        process.terminate()
+        raise
+    print(f"DESIGN TOUR SERVER url={base} started=yes")
+
+
+def down(args: argparse.Namespace) -> None:
+    root = Path(args.root).resolve()
+    pid = read_pid(root)
+    if pid and pid_alive(pid):
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            if not pid_alive(pid):
+                break
+            time.sleep(0.1)
+        print(f"DESIGN TOUR SERVER stopped pid={pid}")
+    else:
+        print("DESIGN TOUR SERVER none running under this root")
+    (root / "navidrome.pid").unlink(missing_ok=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    start = sub.add_parser("up")
+    start.add_argument("--root", required=True)
+    start.add_argument("--port", type=int, default=4861)
+    start.add_argument("--navidrome")
+    start.add_argument("--corpus")
+    start.add_argument("--ffmpeg", default=os.environ.get("DULCET_FFMPEG", "/opt/homebrew/bin/ffmpeg"))
+    start.add_argument("--timeout-seconds", type=float, default=180)
+    stop = sub.add_parser("down")
+    stop.add_argument("--root", required=True)
+    args = parser.parse_args()
+    up(args) if args.command == "up" else down(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

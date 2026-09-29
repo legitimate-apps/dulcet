@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import android.app.Application
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -89,7 +90,7 @@ internal fun TvAccountHost(signOut: AccountSignOut, account: Any?, content: @Com
     // A row of its own above the screen, so it covers nothing, and UP from a screen's topmost
     // control reaches it. A text field keeps UP for its cursor, so a screen whose topmost control is
     // one hands UP to [LocalTvAccountEntry] itself.
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         if (saved) {
             Row(Modifier.fillMaxWidth().padding(start = 56.dp, top = 16.dp, end = 56.dp)) {
                 Button(

@@ -42,13 +42,16 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -171,10 +174,14 @@ internal fun NowPlayingScreen(
         // one label, and could not reach the notice on its own. The frame hides the pages beneath
         // from a screen reader while the player is open (`PhoneFrame`).
         .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }) {
-        // The app locks no orientation and runs in split screen, so the player lays itself out for
-        // the window it is given (`PlayerLayout`).
-        PlayerLayout(account, state, playback, close, { showQueue = true }, heart,
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
+        // The player paints its own gradient, not a Surface, so the content colour is set for it —
+        // the default is black, unreadable on the dark gradient.
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+            // The app locks no orientation and runs in split screen, so the player lays itself out for
+            // the window it is given (`PlayerLayout`).
+            PlayerLayout(account, state, playback, close, { showQueue = true }, heart,
+                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
+        }
     }
     if (showQueue) UpNextSheet(account, state, playback) { showQueue = false }
     if (showLyrics && library != null) LyricsSheet(library, state, playback) { showLyrics = false }
@@ -502,6 +509,8 @@ private fun Scrubber(state: AndroidPlaybackState, playback: AndroidPlaybackContr
             if (target != null && duration != null) playback.seek((target * duration).toLong())
         },
         enabled = state.seekable && duration != null,
+        // The stock inactive track washes out on the player's tinted gradient.
+        colors = SliderDefaults.colors(inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.24f)),
         modifier = Modifier.fillMaxWidth().testTag("player.scrubber"),
     )
     Row(Modifier.fillMaxWidth()) {

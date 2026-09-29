@@ -473,10 +473,11 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
     var naming by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val addedTemplate = stringResource(R.string.playlist_added)
     fun finished(name: String, result: AndroidPlaylistEditResult) {
         val line = resources.playlistEditLine(result)
         if (line == null) {
-            Toast.makeText(context, context.getString(R.string.playlist_added, name), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, addedTemplate.format(name), Toast.LENGTH_SHORT).show()
             dismiss()
         } else {
             note = line
