@@ -454,6 +454,28 @@ They are deliberately not reproduced in this repository.**
     (`awaitQueuedBroadcastsDelivered`). Measured: phone 11/12 without the wait, 12/12 with it
     (docs/verification/android-playback-surfaces.md).
 
+44. **In a Robolectric host test, a wait whose condition reads app state directly never idles the
+    main looper.** Compose's `waitUntil` advances Compose's clock and does not idle the looper; only
+    a condition that goes through a Compose finder does (fetching semantics nodes waits for idle).
+    Anything delivered by a message posted to the main looper from another thread then never
+    arrives. `AndroidPlaybackController` runs on the main dispatcher, and its song read resumes by
+    such a message, so a wait on `playback.state.value` saw the read answered (HTTP 200 at the
+    forwarder) while the controller showed nothing — no queue, no error — with every dispatcher
+    thread idle. It is timing-dependent, so it reads as a flake: 2 of 8 album-play runs passed.
+    Idle the main looper inside such a condition (`shadowOf(Looper.getMainLooper()).idle()`), as a
+    device's always runs: 8 of 8. The reader's publications also arrive by the main looper; its
+    waits work only because they read the screen through finders (spec §28 revision 104 item 36).
+    ➡️ The converse trap: a finder on an activity moved to `CREATED` fails at once with "No compose
+    hierarchies found", not with the state you wanted. Take any counts read through the screen
+    before stopping the activity; while stopped, count at the forwarder and idle the looper directly.
+    ➡️ And what no idling reaches: work on the reader's own thread. A screen composed afresh
+    (the home, on every return from an album) has rows that draw nothing below their titles until
+    their first publication, which that thread builds; a finder straight after the return can run
+    first and find nothing. Wait for the content through a finder before acting on it. OBSERVED:
+    CONF-76 failed 2 of 30 inside the TV suite, and 10 of 10 on each app with the reader's thread
+    slowed; with the wait, 0 of 10 failed on each app with it still slowed, and 0 of 360 tests
+    over 30 unslowed TV suite runs (spec §28 revision 104 item 37).
+
 ## Review and delegation
 
 **Architecture decisions and verification stay with the maintainer; implementation of a

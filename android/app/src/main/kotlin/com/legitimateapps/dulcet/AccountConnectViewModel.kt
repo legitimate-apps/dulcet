@@ -60,6 +60,9 @@ internal class AccountConnectViewModel internal constructor(
     private val gateway: AccountConnectionGateway,
     private val credentialStore: AccountCredentialStore,
     defaults: ChannelDefaults,
+    accountData: AccountDataGateway = CoreAccountDataGateway(application),
+    playbackRelease: PlaybackRelease = ServicePlaybackRelease(application),
+    removalJournal: AccountRemovalJournal = AccountRemovalJournal(application),
 ) : AndroidViewModel(application) {
     constructor(application: Application) : this(
         application = application,
@@ -68,14 +71,27 @@ internal class AccountConnectViewModel internal constructor(
         defaults = ActiveChannelDefaults,
     )
 
-    private val mutableState = MutableStateFlow(
-        AccountConnectUiState(serverUrl = defaults.preconfiguredServerUrl.orEmpty()),
-    )
+    private val initialServerUrl = defaults.preconfiguredServerUrl.orEmpty()
+    private val mutableState = MutableStateFlow(AccountConnectUiState(serverUrl = initialServerUrl))
     val state: StateFlow<AccountConnectUiState> = mutableState.asStateFlow()
     private var connectionJob: Job? = null
     private var connectionGeneration: Long = 0
 
+    /** Signing out and removing the account (spec §14.7). */
+    val signOut = AccountSignOut(
+        scope = viewModelScope,
+        credentials = credentialStore,
+        accountData = accountData,
+        playback = playbackRelease,
+        journal = removalJournal,
+        onSignedOut = ::clearAfterSignOut,
+    )
+
     init {
+        // Before anything is restored: a credential whose sign-out the previous process began is
+        // deleted here, synchronously, so no screen reads it. The rest of that removal, and the sweep
+        // of other accounts' data, run in the background (AccountSignOut.resumeInterrupted).
+        signOut.resumeInterrupted()
         restoreSavedAccount()
     }
 
@@ -140,6 +156,17 @@ internal class AccountConnectViewModel internal constructor(
         } catch (_: CredentialStoreException) {
             mutableState.update { it.copy(status = AccountConnectStatus.PersistenceFailed) }
         }
+    }
+
+    /**
+     * The signed-out account leaves nothing in the form: the restored password in particular would
+     * otherwise stay in memory, and a later Connect would send it again.
+     */
+    private fun clearAfterSignOut() {
+        connectionGeneration += 1
+        connectionJob?.cancel()
+        connectionJob = null
+        mutableState.value = AccountConnectUiState(serverUrl = initialServerUrl)
     }
 
     private fun updateFields(transform: AccountConnectUiState.() -> AccountConnectUiState) {

@@ -127,6 +127,9 @@ JOIN download_policy_state AS p USING (server_id, raw_id, transcode_profile)
 WHERE d.server_id = ?
 ORDER BY p.enqueue_sequence, d.download_id;
 
+selectDownloadFileNames:
+SELECT download_id, file_relative_path FROM download;
+
 selectAllDownloads:
 SELECT
   d.server_id,

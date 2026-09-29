@@ -61,7 +61,12 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.media3.session)
+    // The library proof finds screens by their semantics; every key it sends is a real key event.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(kotlin("test-junit"))
+    // The album-play proof binds the production playback service, a Media3 session service.
+    testImplementation(libs.media3.session)
     testImplementation(libs.robolectric)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
@@ -72,10 +77,11 @@ dependencies {
 val productionSearchConformance = providers.gradleProperty("dulcet.productionSearchConformance").isPresent
 tasks.withType<Test>().configureEach {
     if (productionSearchConformance) {
-        filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibrarySyncAppConformanceTest") }
+        filter { includeTestsMatching("*ProductionSearchAppConformanceTest"); includeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
         outputs.upToDateWhen { false }
+        usesService(gradle.sharedServices.registrations.getByName("disposableServerAccount").service)
     } else {
-        filter { excludeTestsMatching("*ProductionSearchAppConformanceTest"); excludeTestsMatching("*ProductionLibrarySyncAppConformanceTest") }
+        filter { excludeTestsMatching("*ProductionSearchAppConformanceTest"); excludeTestsMatching("*ProductionLibraryReaderAppConformanceTest") }
     }
     maxParallelForks = 1
 }

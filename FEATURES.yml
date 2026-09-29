@@ -1,6 +1,9 @@
 {
   "schema_version": 2,
-  "accepted_regressions": [],
+  "accepted_regressions": [
+    {"id": "library.sync", "platform": "android", "reason": "The Android apps no longer synchronize the library; they read it live (spec 16.8). The cell stops citing the removed sync app proofs and is n/a until phase R5 retires the row (spec 16.18).", "pr": "#0"},
+    {"id": "library.sync", "platform": "androidtv", "reason": "The Android apps no longer synchronize the library; they read it live (spec 16.8). The cell stops citing the removed sync app proofs and is n/a until phase R5 retires the row (spec 16.18).", "pr": "#0"}
+  ],
   "accepted_promotions": [],
   "features": [
     {
@@ -628,64 +631,143 @@
           "reason": "apple-ci executes the platform-specific app-host test on tvos, with its own execution guard and JUnit directory. DulcetCoreLibraryBrowser invokes production AppleLibrarySyncClient against the disposable fixture using a fresh platform-prefixed UUID database. The test independently reads SQLDelight generations 1 and 2, compares displayed opaque identifiers, asserts and emits the real monotonic scheduled-refresh firing, then asserts connection refusal before reopening saved metadata offline with zero connector or sync starts. This proves the production persistence and presentation integration on this destination; it does not claim physical-device or interaction coverage."
         },
         "android": {
-          "status": "shipped",
-          "evidence": [
-            {
-              "conformance": "CONF-31",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
-            },
-            {
-              "conformance": "CONF-32",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
-            },
-            {
-              "conformance": "CONF-33",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
-            },
-            {
-              "observes": "the real app library surface starts production sync, displays committed AndroidSqliteDriver generations 1 then 2 with the second started by a monotonic scheduler; no refresh fires while stopped, and after connection refusal a recreated activity browses identical saved generation-2 metadata with zero sync starts",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "AndroidProductionLibrarySyncAppConformanceTest/librarySyncSchedulesSecondGenerationAndReopensOffline"
-            }
-          ],
-          "reason": "The disposable Linux job executes the app library lifecycle proof with production AndroidLibraryDatabase sync and committed reads. It asserts the refresh callback marker, foreground lifecycle behavior, generations 1 and 2, a connection refusal, and saved metadata rendered after activity/store reopen without synchronization. JUnit is consumed by the required core-ci evidence verifier. This is Compose/Robolectric AndroidSqliteDriver evidence; Keystore cryptography is host-shadowed. It does not claim physical-device execution."
+          "status": "n/a",
+          "reason": "The Android apps do not synchronize the library: they read it live and keep what was seen (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with the sync shells. The core sync contract (CONF-31, CONF-32, CONF-33) is still exercised by the core tests, which core-ci also runs on the Android host runtime, and is evidenced on the Apple cells, until this row is retired through accepted_removals in phase R5 (spec 16.18)."
         },
         "androidtv": {
-          "status": "shipped",
+          "status": "n/a",
+          "reason": "The Android apps do not synchronize the library: they read it live and keep what was seen (spec 16.8, 16.18), which library.browse records, and their sync-backed app proofs were removed with the sync shells. The core sync contract (CONF-31, CONF-32, CONF-33) is still exercised by the core tests, which core-ci also runs on the Android host runtime, and is evidenced on the Apple cells, until this row is retired through accepted_removals in phase R5 (spec 16.18)."
+        }
+      }
+    },
+    {
+      "id": "library.browse",
+      "title": "Browse the library, live and from what this device has seen",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1614-offline-the-presentation-states-and-reconnect",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-76", "CONF-77", "CONF-82", "CONF-86", "CONF-87"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"}, "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives them through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+          },
           "evidence": [
-            {
-              "conformance": "CONF-31",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf31GenerationPinnedReads"
-            },
-            {
-              "conformance": "CONF-32",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf32AtomicSyncGenerationCommit"
-            },
-            {
-              "conformance": "CONF-33",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "LibrarySyncConformanceTest/conf33BoundedStabilityWitness"
-            },
-            {
-              "observes": "the real app library surface starts production sync, displays committed AndroidSqliteDriver generations 1 then 2 with the second started by a monotonic scheduler; no refresh fires while stopped, and after connection refusal a recreated activity browses identical saved generation-2 metadata with zero sync starts; TV remote activation and row focus are asserted",
-              "workflow": "core-ci",
-              "job": "core-ci",
-              "test": "AndroidTvProductionLibrarySyncAppConformanceTest/librarySyncSchedulesSecondGenerationAndReopensOffline"
-            }
+            {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
+            {"conformance": "CONF-77", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77ReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElse"},
+            {"conformance": "CONF-86", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive"},
+            {"observes": "with the phone app stopped, nothing is read while the main thread's clock is advanced sixteen minutes (the reader's own timers run in real time; the cadence test covers them), and returning to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly"},
+            {"observes": "the core's epoch cadence runs while the phone app is in the foreground with a library screen open, reads only the epoch while it is unchanged, and stops in the background",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf77EpochCadenceRunsInTheForegroundOnly"},
+            {"observes": "a reconnect answered after the platform reported the network gone leaves the phone app's library offline: the session counts the answer, starts no second reconnect, and nothing more is read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline"},
+            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the phone app's reader offline; the session's record of what it tells the reader shows the online reader taken offline with an unreachable report and then told reachable again, a later return to the foreground and the album screen's refresh (a retry while offline) each telling it reachable exactly once while the server is still unreachable, and the album live again once the server answers",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack"},
+            {"observes": "with every getScanStatus connection closed unanswered while the platform reports a network, the phone app's reader retries the failed reconnect by itself in the foreground (at least two retries after the session's one reconnect), makes no library request for twelve seconds once the app is in the background, and after a return to the foreground brings the library back by its own retry once the server answers, the session following it online without a reconnect of its own",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aTransientReconnectFailureIsRetriedInTheForegroundOnly"},
+            {"observes": "a return to the foreground whose getScanStatus read, held at the forwarder, has its connection closed only after the phone app has left the foreground leaves the session telling the online reader only that the server is unreachable: no library request other than cover art in the three seconds after the close, and the next return tells the platform's view once",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/anUnreachableAnswerArrivingInTheBackgroundStartsNoRead"},
+            {"observes": "a playable track tapped on the phone's album screen queues the album in the server's order, current at that track, in the production playback service",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aTrackTappedPlaysTheAlbumFromThatTrack"}
           ],
-          "reason": "The disposable Linux job executes the app library lifecycle proof with production AndroidLibraryDatabase sync and committed reads. It asserts the refresh callback marker, foreground lifecycle behavior, generations 1 and 2, a connection refusal, and saved metadata rendered after activity/store reopen without synchronization. JUnit is consumed by the required core-ci evidence verifier. This is Compose/Robolectric AndroidSqliteDriver evidence; Keystore cryptography is host-shadowed. It does not claim physical-device execution."
+          "promotion_condition": {"status": "blocked", "blocked_on": "android-app-level-window-and-lookahead-proofs", "reason": "CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests; no test in this repository drives them through the phone app, so no workflow, job or test can be named yet."},
+          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence."
+        },
+        "androidtv": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives them through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+          },
+          "evidence": [
+            {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
+            {"conformance": "CONF-77", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77ReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElse"},
+            {"conformance": "CONF-86", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive"},
+            {"observes": "with the TV app stopped, nothing is read while the main thread's clock is advanced sixteen minutes (the reader's own timers run in real time; the cadence test covers them), and returning to the foreground reads the catalog epoch and re-reads only the visible screen, by counted requests at a loopback forwarder",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77ForegroundReturnReadsTheEpochAndTheVisibleScreenOnly"},
+            {"observes": "the core's epoch cadence runs while the TV app is in the foreground with a library screen open, reads only the epoch while it is unchanged, and stops in the background",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf77EpochCadenceRunsInTheForegroundOnly"},
+            {"observes": "a reconnect answered after the platform reported the network gone leaves the TV app's library offline: the session counts the answer, starts no second reconnect, and nothing more is read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline"},
+            {"observes": "a reconnect that finds the server unreachable while the platform reports a network takes the TV app's reader offline; the session's record of what it tells the reader shows the online reader taken offline with an unreachable report and then told reachable again, a later return to the foreground and the album screen's refresh (a retry while offline) each telling it reachable exactly once while the server is still unreachable, and the album live again once the server answers",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/anUnreachableServerTakesTheReaderOfflineAndTryingAgainTellsItTheNetworkIsBack"},
+            {"observes": "with every getScanStatus connection closed unanswered while the platform reports a network, the TV app's reader retries the failed reconnect by itself in the foreground (at least two retries after the session's one reconnect), makes no library request for twelve seconds once the app is in the background, and after a return to the foreground brings the library back by its own retry once the server answers, the session following it online without a reconnect of its own",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aTransientReconnectFailureIsRetriedInTheForegroundOnly"},
+            {"observes": "a return to the foreground whose getScanStatus read, held at the forwarder, has its connection closed only after the TV app has left the foreground leaves the session telling the online reader only that the server is unreachable: no library request other than cover art in the three seconds after the close, and the next return tells the platform's view once",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/anUnreachableAnswerArrivingInTheBackgroundStartsNoRead"},
+            {"observes": "a playable track selected with the remote on the TV album screen queues the album in the server's order, current at that track, in the production playback service, and opens the TV's own Now Playing activity",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aTrackSelectedWithTheRemotePlaysTheAlbumFromThatTrackAndOpensNowPlaying"},
+            {"observes": "with remote keys only (focus moves and the centre key, no semantic click), the TV app's albums and artists screens open from the library, a card opens its album or artist through the reader, each detail screen puts focus on Play, and every Back returns focus to the element that opened the screen it leaves, down to search",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/albumsAndArtistsOpenFromTheRemoteAndBackReturnsFocusToWhatOpenedThem"},
+            {"observes": "Play on a TV album screen queues every track of the album in the server's order in the production playback service and opens Now Playing; the playing row says so and, selected, opens Now Playing without restarting; the navigation row reaches Now Playing from the library and from search; Play on an artist queues every album's tracks in the artist's order",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/albumAndArtistPlayQueueEveryTrackAndNowPlayingIsReachableFromEveryScreen"},
+            {"observes": "on an API 34 Android TV emulator in core-ci, remote key events alone reach Library from the launch screen, open the albums screen and an album with several tracks, and the centre key on Play queues every track in the server's order in the production Media3 service, current at the first, with media time advancing and the TV's Now Playing in front",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvEmulatorLibraryAlbumPlayProofTest/anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "android-app-level-window-and-lookahead-proofs", "reason": "CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests; no test in this repository drives them through the TV app, so no workflow, job or test can be named yet."},
+          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence."
+        }
+      }
+    },
+    {
+      "id": "library.favourites",
+      "title": "Favourite what is in the library, shown at once",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#1620-favourites-and-ratings-in-a-reader-the-local-change-is-shown-at-once",
+      "gates": ["account:authenticated"],
+      "conformance": ["CONF-84"],
+      "platforms": {
+        "macos": {"status": "planned"}, "ios": {"status": "planned"}, "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-84", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf84StarShowsWithTheTapSurvivesARevalidationCompactsAndAdoptsTheEcho"},
+            {"observes": "through the production app against the disposable server, a song's heart in an album sends one star for that song and the server holds it (the album's does not change), the Favourites screen reads getStarred2 again after the change and lists the song with its heart filled, and taking the heart off there unstars it on the server while the row stays, hollow, until the list is read again", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack"},
+            {"observes": "on the phone player, over the production session and reader with a loopback server, the playing track's heart fills with the tap, one star names that track, the saved heart stays filled for a track the device never cached, and a refused change empties it again with the library's words", "workflow": "core-ci", "job": "core-ci",
+             "test": "NowPlayingFavouriteTest/theHeartFillsWithTheTapAndSendsStarForThePlayingTrack"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "android-rating-ui", "reason": "The phone app offers a favourite on songs, albums, artists and Now Playing, and no rating at all, so CONF-84's rating overlay cannot be driven through the app until a rating control exists."},
+          "reason": "The conformance-env-linux job runs the phone app's favourite proof against the disposable server and exports its JUnit to the required core-ci execution verifier: an album's star shows in the first publication after the tap, survives a revalidation that lands before the send is answered, and the send's acknowledgement is adopted into the cache with no read; three taps made offline are one pending change, sent once at reconnect. The server is read directly to check each. A heart is also on every song row (album and Favourites), the artist page and Now Playing, and a Favourites screen lists what the server holds; the live proof stars a song and reads it back from the server and through that screen. A change that needs words (refused, held, superseded, not recorded) is said where its heart is, in the shared copy; a pending change is shown as the change itself and labelled nowhere (spec §16.20). The system media notification has no like button (none on Apple either). The cell is partial because there is no rating control; CONF-84's rating overlay is exercised by core tests alone. Compose/Robolectric evidence, not a physical-device claim."
+        },
+        "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {"conformance": "CONF-84", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf84StarShowsWithTheTapSurvivesARevalidationCompactsAndAdoptsTheEcho"},
+            {"observes": "through the production app against the disposable server, a song's heart in an album sends one star for that song and the server holds it (the album's does not change), the Favourites screen reads getStarred2 again after the change and lists the song with its heart filled, and taking the heart off there unstars it on the server while the row stays, hollow, until the list is read again", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack"},
+            {"observes": "on the TV player, driven with D-pad keys, the heart is reached RIGHT of Repeat, says its state and action, toggles with the centre key without touching playback, and shows an outcome line beneath the title; the control is given its state, so this does not prove the reader behind it", "workflow": "core-ci", "job": "core-ci",
+             "test": "TvNowPlayingControlsTest/theHeartIsRightOfRepeatAndSaysItsStateAndAnyOutcome"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "android-rating-ui", "reason": "The TV app offers a favourite on songs, albums, artists and Now Playing, and no rating at all, so CONF-84's rating overlay cannot be driven through the app until a rating control exists."},
+          "reason": "The conformance-env-linux job runs the TV app's favourite proof against the disposable server and exports its JUnit to the required core-ci execution verifier: an album's star shows in the first publication after the tap, survives a revalidation that lands before the send is answered, and the send's acknowledgement is adopted into the cache with no read; three taps made offline are one pending change, sent once at reconnect. The server is read directly to check each. A heart is also on every song row (album and Favourites), the artist page and Now Playing, and a Favourites screen lists what the server holds; the live proof stars a song and reads it back from the server and through that screen. A change that needs words (refused, held, superseded, not recorded) is said where its heart is, in the shared copy; a pending change is shown as the change itself and labelled nowhere (spec §16.20). The system media notification has no like button (none on Apple either). The cell is partial because there is no rating control; CONF-84's rating overlay is exercised by core tests alone. Compose/Robolectric evidence, not a physical-device claim."
         }
       }
     },
@@ -695,6 +777,10 @@
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#181-search",
       "gates": ["account:authenticated"],
       "conformance": ["CONF-41"],
+      "platform_conformance": {
+        "android": ["CONF-79"],
+        "androidtv": ["CONF-79"]
+      },
       "platforms": {
         "macos": {
           "status": "shipped",
@@ -743,28 +829,32 @@
           "evidence": [
             {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
              "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"},
-            {"observes": "the Android app's production Compose search field and shared presenter render the ranked merged rows and route an activated row into the production SearchDetailIntent with its opaque id unchanged and no credential canaries; the ranked rows are supplied by RankedMergedFixtureSearchDataSource, so the production merge and wire path is not exercised here",
+            {"observes": "the Android app's production Compose search field and shared presenter render the ranked merged rows and open an album result's and an artist result's library pages in the same activity (Back returns to the same query and results under one presenter) and play a track result through the production PlaybackIntents play-track entry with its opaque id unchanged and no credential canaries; the ranked rows are supplied by RankedMergedFixtureSearchSource, so the production merge and wire path is not exercised here",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidSearchAppConformanceTest/conf41QueryRendersMergedRankingAndActivationRoutesToDetail"},
-            {"observes": "the real MainActivity accepts Compose text input, uses ProductionSearchHostDependencies and CoreSearchDataSource with the committed-generation SQLDelight library search through AndroidLibrarySearchSource and common-core LocalLibrarySearch and live disposable Navidrome ServerSearch, renders an in-place cached-row refresh, retained local-only row and appended server-only row through mergeSearchResults, and activates through SearchIntentRouter preserving a nonnumeric opaque id; credential and whole-query redaction canaries pass",
+            {"conformance": "CONF-79", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf79SearchPublishesEachScopeWithSeenCountsOffline"},
+            {"observes": "the real MainActivity accepts Compose text input and searches through ProductionSearchHostDependencies and AndroidLibrarySearchSource on the process's AndroidLibraryReader: the device's rows come from the reader's seen-cache, written by an earlier production search and then made stale, and the server's from live disposable Navidrome search3; it renders the server's row replacing the cached one at index 0, the device-only row at index 1 and a server-only row of the core's stable ranking at index 2, and activates the device-only track row through SearchActivation into the production play-track intent preserving its nonnumeric opaque id; credential and whole-query redaction canaries pass",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionSearchAppConformanceTest/conf41ProductionQueryMergesAndRoutesOpaqueId"}
           ],
-          "reason": "The conformance-env-linux job selects the production app proof explicitly and exports its JUnit report to the required core-ci execution verifier. The proof first asserts that one character returns local rows, then uses the real activity, stored account, production dependencies, stored normalized library index, live ServerSearch and mergeSearchResults. It observes ranked replacement/retention/append behavior and an unchanged opaque detail-intent id. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The older fixture control remains as a separate UI regression test."
+          "reason": "The conformance-env-linux job selects the production app proofs explicitly and exports their JUnit report to the required core-ci execution verifier. The CONF-41 proof first asserts that one character returns device rows, then uses the real activity, stored account, production dependencies, the reader's search over its seen-cache and the live server. It observes ranked replacement/retention/append behavior and an unchanged opaque id in the play-track intent. The CONF-79 proof drives the same app's search through each of its scopes, the offline one with the seen-cache's counts read independently from the app's database. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The fixture control remains as a separate UI regression test."
         },
         "androidtv": {
           "status": "shipped",
           "evidence": [
             {"conformance": "CONF-41", "workflow": "core-ci", "job": "core-ci",
              "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"},
-            {"observes": "the Android TV app's production tv-material surface accepts TV text entry, moves focus across successive result cards under real DirectionDown key events with focus asserted, and routes a DirectionCenter activation into the production SearchDetailIntent with its opaque artist id unchanged and no credential canaries; the ranked rows are supplied by TvRankedMergedFixtureSearchDataSource, so the production merge and wire path is not exercised here",
+            {"observes": "the Android TV app's production tv-material surface accepts TV text entry, moves focus across successive result cards under real DirectionDown key events with focus asserted, starts with focus on the navigation row rather than the query field, and on DirectionCenter opens an artist result's and an album result's library screens once each (one Back returns to the same query, results and focused row under one presenter) and plays a track result through the production PlaybackIntents play-track entry with its opaque id unchanged and no credential canaries; the ranked rows are supplied by TvRankedMergedFixtureSearchSource, so the production merge and wire path is not exercised here",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvSearchAppConformanceTest/conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail"},
-            {"observes": "the real TvSearchActivity accepts hardware letter-key input and asserts successive D-pad focus movement, uses ProductionSearchHostDependencies and CoreSearchDataSource with the committed-generation SQLDelight library search through AndroidLibrarySearchSource and common-core LocalLibrarySearch and live disposable Navidrome ServerSearch, renders an in-place cached-row refresh, retained local-only row and appended server-only row through mergeSearchResults, and activates through SearchIntentRouter preserving a nonnumeric opaque id; credential and whole-query redaction canaries pass",
+            {"conformance": "CONF-79", "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf79SearchPublishesEachScopeWithSeenCountsOffline"},
+            {"observes": "the real TvSearchActivity accepts hardware letter-key input and asserts successive D-pad focus movement, and searches through ProductionSearchHostDependencies and AndroidLibrarySearchSource on the process's AndroidLibraryReader: the device's rows come from the reader's seen-cache, written by an earlier production search and then made stale, and the server's from live disposable Navidrome search3; it renders the server's row replacing the cached one at index 0, the device-only row at index 1 and a server-only row of the core's stable ranking at index 2, and activates the device-only track row through SearchActivation into the production play-track intent preserving its nonnumeric opaque id; credential and whole-query redaction canaries pass",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionSearchAppConformanceTest/conf41ProductionQueryMergesAndRoutesOpaqueId"}
           ],
-          "reason": "The conformance-env-linux job selects the production app proof explicitly and exports its JUnit report to the required core-ci execution verifier. The proof first asserts that one character returns local rows, then uses the real activity, stored account, production dependencies, stored normalized library index, live ServerSearch and mergeSearchResults. It observes ranked replacement/retention/append behavior and an unchanged opaque detail-intent id. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The older fixture control remains as a separate UI regression test."
+          "reason": "The conformance-env-linux job selects the production app proofs explicitly and exports their JUnit report to the required core-ci execution verifier. The CONF-41 proof first asserts that one character returns device rows, then uses the real activity, stored account, production dependencies, the reader's search over its seen-cache and the live server. It observes ranked replacement/retention/append behavior and an unchanged opaque id in the play-track intent. The CONF-79 proof drives the same app's search through each of its scopes, the offline one with the seen-cache's counts read independently from the app's database. Android Keystore cryptography alone is shadowed for the host runtime; search dependencies and transport are not replaced. This is executed Compose/Robolectric evidence, not a physical-device or audio claim. The fixture control remains as a separate UI regression test."
         }
       }
     },
@@ -884,7 +974,11 @@
             {"observes": "the lean-back player shows the skip notice naming the skipped track as a polite live region and shows no failure line; a Robolectric composition of the production TV player, not a device", "workflow": "core-ci", "job": "core-ci", "test": "TvSkipNoticeTest/theTvPlayerAnnouncesTheSkippedTrackAndShowsNoFailureLine"},
             {"observes": "a connection-owned failure on the lean-back player still shows the failure line and no skip notice; a Robolectric composition", "workflow": "core-ci", "job": "core-ci", "test": "TvSkipNoticeTest/aConnectionFailureStillShowsTheFailureLineAndNoNotice"},
             {"observes": "on a 960 x 540 dp television with three Up Next entries the skip notice lies on the cover and overlaps no focusable node, with the transport, the list and its first three rows among those checked; a Robolectric composition with native graphics", "workflow": "core-ci", "job": "core-ci", "test": "TvSkipNoticePlacementTest/theNoticeCoversNoFocusableControlWithThreeUpNextEntries"},
-            {"observes": "the same with eight Up Next entries; a Robolectric composition with native graphics", "workflow": "core-ci", "job": "core-ci", "test": "TvSkipNoticePlacementTest/theNoticeCoversNoFocusableControlWithEightUpNextEntries"}
+            {"observes": "the same with eight Up Next entries; a Robolectric composition with native graphics", "workflow": "core-ci", "job": "core-ci", "test": "TvSkipNoticePlacementTest/theNoticeCoversNoFocusableControlWithEightUpNextEntries"},
+            {"observes": "on the lean-back player, LEFT and RIGHT from Play/Pause reach Shuffle and Repeat, the centre key sets shuffle and cycles repeat, and both say their state from the published modes; a Robolectric composition driven by D-pad keys", "workflow": "core-ci", "job": "core-ci", "test": "TvNowPlayingControlsTest/shuffleAndRepeatAreReachedFromPlayAndSayTheirState"},
+            {"observes": "UP from the transport reaches the scrubber, whose LEFT and RIGHT seek ten seconds from the last target and clamp to the track; a Robolectric composition driven by D-pad keys", "workflow": "core-ci", "job": "core-ci", "test": "TvNowPlayingControlsTest/theScrubberIsAboveTheTransportAndItsLeftAndRightSeek"},
+            {"observes": "a track that cannot seek offers no scrubber focus stop; a Robolectric composition", "workflow": "core-ci", "job": "core-ci", "test": "TvNowPlayingControlsTest/aTrackThatCannotSeekHasNoScrubberStop"},
+            {"observes": "DOWN from the transport reaches Up Next and the centre key on an entry jumps to it; a Robolectric composition driven by D-pad keys", "workflow": "core-ci", "job": "core-ci", "test": "TvNowPlayingControlsTest/anUpNextEntrySelectedPlaysThatEntry"}
           ],
           "reason": "OBSERVED: the six declared stream controls execute instrumented on the API 34 Android TV emulator's runtime, as PlaybackScrobbleAndroidTvConformanceTest, against the same pinned disposable server while its transcode cache is still cold, and the Android TV emulator proof drives the production TV app through the production Media3 engine to advancing media time under remote-control pause and play and after Home, with the server recording the play. That the engine's bytes were validated is inferred from the data source, which throws before releasing any byte that has not matched an audio signature; no on-device marker records the validation itself. Audio output through the OS mixer and speaker remains ASSUMED and is outside this bounded stream completion claim. Gapless, crossfade, casting and interrupted-session resume are not covered. Automatic skip past a track's own failure (spec 12.12 rule 8): the notice rows above are Robolectric compositions; the controller behaviour is AndroidPlaybackControllerTest's, named and not cited, as on android. OBSERVED locally on an API 34 arm64 Android TV emulator on 2026-09-26, not in CI: AndroidTvEmulatorAutoSkipProofTest skipped a track with no audio, showed the notice in the player's lower half clear of the title (on the revision before the notice moved onto the cover; its placement since is TvSkipNoticePlacementTest's, not a device's), played the next track with no failure line, and the server counted the next track's play and not the skipped one's."
         }
@@ -1012,91 +1106,365 @@
     },
     {
       "id": "playlists.edit",
-      "title": "Browse, play and edit playlists",
+      "title": "Browse, play and edit playlists, with every write read back",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#186-playlists",
-      "gates": ["account:authenticated"],
-      "conformance": ["CONF-88", "CONF-89", "CONF-90", "CONF-91"],
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [
+        "CONF-88",
+        "CONF-89",
+        "CONF-90",
+        "CONF-91"
+      ],
       "platforms": {
         "macos": {
           "status": "partial",
-          "promotion_condition": {"status": "blocked", "blocked_on": "mac-playlist-ui-proof", "reason": "The core and conformance links are executed. What is missing is a test that drives the Mac app's playlist UI against the disposable reference server: open, play, create, rename, add, remove, reorder and delete, with the server read back. No such workflow, job or test exists yet, so none can be named."},
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "mac-playlist-ui-proof",
+            "reason": "The core and conformance links are executed. What is missing is a test that drives the Mac app's playlist UI against the disposable reference server: open, play, create, rename, add, remove, reorder and delete, with the server read back. No such workflow, job or test exists yet, so none can be named."
+          },
           "evidence": [
-            {"conformance": "CONF-88", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"},
-            {"conformance": "CONF-89", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"},
-            {"conformance": "CONF-90", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"},
-            {"conformance": "CONF-91", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"},
-            {"observes": "the playlist page's reorder and removal carry the entry ids of the list the person acted on, convert List drop offsets to the core's final position, and are not offered on a view that is not the whole playlist", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitTests/positionalEditsCarryTheViewThePersonActedOn"}
+            {
+              "conformance": "CONF-88",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
+            },
+            {
+              "observes": "the playlist page's reorder and removal carry the entry ids of the list the person acted on, convert List drop offsets to the core's final position, and are not offered on a view that is not the whole playlist",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/positionalEditsCarryTheViewThePersonActedOn"
+            }
           ],
           "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. No test drives the Mac app's playlist UI, so the Mac surface is not observed and the cell stays partial."
         },
         "ios": {
           "status": "partial",
-          "promotion_condition": {"status": "blocked", "blocked_on": "iphone-playlist-edit-ui-proof", "reason": "An iPhone UI proof covers open, play in order and rename. Promotion needs the remaining edits driven through the app with the server read back: create, Add to Playlist, removal, reorder, delete, and the pending and failed states. No such test exists yet, so none can be named."},
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "iphone-playlist-edit-ui-proof",
+            "reason": "An iPhone UI proof covers open, play in order and rename. Promotion needs the remaining edits driven through the app with the server read back: create, Add to Playlist, removal, reorder, delete, and the pending and failed states. No such test exists yet, so none can be named."
+          },
           "evidence": [
-            {"conformance": "CONF-88", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"},
-            {"conformance": "CONF-89", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"},
-            {"conformance": "CONF-90", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"},
-            {"conformance": "CONF-91", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"},
-            {"observes": "the iPhone app opens a server playlist from Library > Playlists, Play starts the playlist's own first entry rather than its album's, and a rename made on the page shows at once and is read back from the server", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer"},
-            {"observes": "the session's playlist editor keeps a held change withdrawable until the core records the withdrawal, maps a created playlist's local id to the server's, and asks rather than answers a create in doubt", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitIOSTests/theEditorKeepsProblemsQuestionsAndCreatedIDsFromOutcomes"}
+            {
+              "conformance": "CONF-88",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
+            },
+            {
+              "observes": "the iPhone app opens a server playlist from Library > Playlists, Play starts the playlist's own first entry rather than its album's, and a rename made on the page shows at once and is read back from the server",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer"
+            },
+            {
+              "observes": "the session's playlist editor keeps a held change withdrawable until the core records the withdrawal, maps a created playlist's local id to the server's, and asks rather than answers a create in doubt",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/theEditorKeepsProblemsQuestionsAndCreatedIDsFromOutcomes"
+            }
           ],
           "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server. Create, Add to Playlist, removal, reorder, delete and the pending and failed states are not driven through the UI; they are covered as core behaviour and as presentation values only, so the cell stays partial."
         },
         "ipados": {
           "status": "partial",
-          "promotion_condition": {"status": "blocked", "blocked_on": "ipad-playlist-ui-proof", "reason": "No test drives the iPad app's playlist UI; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run of the playlist page and its edits against the disposable reference server. No such test exists yet, so none can be named."},
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipad-playlist-ui-proof",
+            "reason": "No test drives the iPad app's playlist UI; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run of the playlist page and its edits against the disposable reference server. No such test exists yet, so none can be named."
+          },
           "evidence": [
-            {"conformance": "CONF-88", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"},
-            {"conformance": "CONF-89", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"},
-            {"conformance": "CONF-90", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"},
-            {"conformance": "CONF-91", "workflow": "apple-ci", "job": "apple-ci", "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"},
-            {"observes": "the playlist page's reorder and removal carry the entry ids of the list the person acted on and are not offered on a view that is not the whole playlist", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitIOSTests/noPositionalEditIsOfferedOnAViewThatIsNotTheWholePlaylist"}
+            {
+              "conformance": "CONF-88",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
+            },
+            {
+              "observes": "the playlist page's reorder and removal carry the entry ids of the list the person acted on and are not offered on a view that is not the whole playlist",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/noPositionalEditIsOfferedOnAViewThatIsNotTheWholePlaylist"
+            }
           ],
           "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. No test drives the iPad app's playlist UI; an iPhone run does not evidence iPad layout, so the cell stays partial."
         },
-        "tvos": {"status": "planned", "reason": "tvOS lists playlists and opens a read-only page that plays; editing is not offered on tvOS. No test drives that surface yet."},
-        "android": {"status": "planned"},
-        "androidtv": {"status": "planned"}
+        "tvos": {
+          "status": "planned",
+          "reason": "tvOS lists playlists and opens a read-only page that plays; editing is not offered on tvOS. No test drives that surface yet."
+        },
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "through the phone app against the disposable server, a playlist is created from the Playlists list (the page opens at once under its local id and follows it to the server's id), an album is added from its header and a song from its row menu, the first entry is moved down and the last removed in edit mode, the playlist is renamed and deleted; after each step the server is read directly and holds exactly what the person did; every write is one of createPlaylist, updatePlaylist or deletePlaylist, each but the delete is followed by a getPlaylist read-back before the next write, every create after the first replaces this playlist by playlistId, and no outcome ends other than Created or Saved",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidProductionLibraryReaderAppConformanceTest/aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer"
+            },
+            {
+              "observes": "a playlist made on the server in an order that is not the album's, holding one song twice, opens from Library > Playlists on the phone and a tap on its third entry queues the playlist in its own order, duplicates kept, current at the second of the song's two entries",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidProductionLibraryReaderAppConformanceTest/aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntryTapped"
+            },
+            {
+              "observes": "the shared playlist queue keeps the playlist's order and duplicates and starts at the entry chosen by position, never by id",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistAndLyricsPresentationTest/aPlaylistPlaysInItsOwnOrderFromTheEntryChosenByPositionNotId"
+            },
+            {
+              "observes": "the shared copy says whose another user's playlist is and that it is read-only, and says a playlist made on this device is not on the server yet",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistAndLyricsPresentationTest/anotherUsersPlaylistSaysWhoseItIsAndThatItIsReadOnly"
+            },
+            {
+              "observes": "a stale view, a playlist that cannot be changed, and every other refused edit answer is said in words; a pending, compacted or unchanged edit shows for itself",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistAndLyricsPresentationTest/anEditAnswerIsSaidOnlyWhenItDidNotSimplyShow"
+            }
+          ],
+          "unevidenced_conformance": {
+            "CONF-88": "A server fact about the reference server's playlist writes, measured by the core conformance suite; no app test re-measures it.",
+            "CONF-89": "The app test drives create, append, album append, move, remove, rename and delete through the production editor with a server read-back after each, but not an offline replay, formPost batching or a lost create; those are exercised by the core conformance suite, whose results no evidence-verified job exports for this cell.",
+            "CONF-90": "A stale positional edit is refused by the core editor (core host test aStaleViewIsRefusedAndACurrentOneIsWrittenAndReadBackThroughTheFacade, and the core conformance suite); no app test makes another client change the playlist between the view and the edit.",
+            "CONF-91": "The app offers no edit on a playlist published not editable and says whose it is; no app test signs in a second user to drive another user's playlist through it."
+          },
+          "reason": "The phone app lists playlists in the Library, opens a playlist page that plays and shuffles in the playlist's order, and edits through the core editor only: create (from the list or from Add to playlist), rename, delete, append from track rows, row menus and an album's header, and move and remove in edit mode naming the entries shown as the view acted on (spec 18.6). A queued change says Not saved to your server yet; a create in doubt asks Keep or Make another; a stale view, a refusal or a change made elsewhere is said on the page. Compose/Robolectric evidence against the disposable server, not a physical-device claim.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-playlist-stale-view-and-other-user-app-proofs",
+            "reason": "CONF-90 and CONF-91 need an app-level proof that makes another client change the playlist between the view and the edit, and one that signs in a second user; neither exists. CONF-88 and the offline, formPost and lost-create parts of CONF-89 are core and server contracts measured by the core conformance suite, whose results are not exported as evidence for an app cell."
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "a playlist made on the server in an order that is not the album's, holding one song twice, opens from the TV's Library > Playlists with the remote, and the centre key on its third entry, reached with D-pad down from the second, queues the playlist in its own order, duplicates kept, current at the second of the song's two entries, and opens the TV's Now Playing",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aPlaylistSelectedWithTheRemotePlaysInItsOwnOrderAndOpensNowPlaying"
+            }
+          ],
+          "reason": "The TV app browses and plays playlists only: a Playlists grid in the Library and a read-only playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. Editing is phone-only by design of this row. The declared conformance ids are editor and server contracts; the TV app writes nothing, so none is claimed here.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-playlist-editing-not-offered",
+            "reason": "The TV app browses and plays playlists and writes none, so the editor and server contracts this row declares (CONF-88..91) cannot be driven through it; the cell stays partial unless TV editing is decided on or the row is split into browse and edit."
+          }
+        }
       }
     },
     {
       "id": "lyrics.show",
-      "title": "Show lyrics in Now Playing",
+      "title": "Show the playing track's lyrics, synced to media time",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#184-lyrics",
-      "gates": ["account:authenticated"],
-      "conformance": ["CONF-42"],
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [
+        "CONF-42"
+      ],
       "platforms": {
         "macos": {
           "status": "partial",
-          "promotion_condition": {"status": "blocked", "blocked_on": "mac-lyrics-ui-proof", "reason": "No test drives the Mac app's lyrics panel. Promotion needs a Mac UI run that plays a track with synced lyrics from the disposable reference server and observes the lit line. No such test exists yet, so none can be named."},
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "mac-lyrics-ui-proof",
+            "reason": "No test drives the Mac app's lyrics panel. Promotion needs a Mac UI run that plays a track with synced lyrics from the disposable reference server and observes the lit line. No such test exists yet, so none can be named."
+          },
           "evidence": [
-            {"conformance": "CONF-42", "workflow": "apple-ci", "job": "apple-ci", "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"},
-            {"observes": "the lyrics panel asks the core's cursor for the lit line at the playback position in whole milliseconds, and an unsynced document lights nothing", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitTests/theCurrentLineIsTheCoresCursorInWholeMillisecondsAndNoneWhenUnsynced"}
+            {
+              "conformance": "CONF-42",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"
+            },
+            {
+              "observes": "the lyrics panel asks the core's cursor for the lit line at the playback position in whole milliseconds, and an unsynced document lights nothing",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/theCurrentLineIsTheCoresCursorInWholeMillisecondsAndNoneWhenUnsynced"
+            }
           ],
           "reason": "apple-ci executes CONF-42 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac Now Playing shows a lyrics panel beside the player on that core, and its presentation rules run as DulcetKit tests on macOS. No test drives the Mac app's lyrics panel, so the cell stays partial."
         },
         "ios": {
           "status": "partial",
-          "promotion_condition": {"status": "blocked", "blocked_on": "iphone-lyrics-states-ui-proof", "reason": "The iPhone proof observes synced lyrics lighting a line. Plain lyrics, no lyrics and a failed read are presentation values only; promotion needs them rendered through the app. No such test exists yet, so none can be named."},
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "iphone-lyrics-states-ui-proof",
+            "reason": "The iPhone proof observes synced lyrics lighting a line. Plain lyrics, no lyrics and a failed read are presentation values only; promotion needs them rendered through the app. No such test exists yet, so none can be named."
+          },
           "evidence": [
-            {"conformance": "CONF-42", "workflow": "apple-ci", "job": "apple-ci", "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"},
-            {"observes": "the iPhone app's Now Playing lyrics toggle shows the server's English layer of a track's embedded synced lyrics and lights a line as the track plays", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetiOSUITests/testTheLyricsPanelShowsTheSyncedLineThatIsPlaying"},
-            {"observes": "the lyrics panel draws synced, plain, none and unavailable from the core's publication, never a spinner for a track with no lyrics", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitIOSTests/theLyricsPanelDrawsWhatTheCorePublishedAndNeverASpinnerForNone"}
+            {
+              "conformance": "CONF-42",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"
+            },
+            {
+              "observes": "the iPhone app's Now Playing lyrics toggle shows the server's English layer of a track's embedded synced lyrics and lights a line as the track plays",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testTheLyricsPanelShowsTheSyncedLineThatIsPlaying"
+            },
+            {
+              "observes": "the lyrics panel draws synced, plain, none and unavailable from the core's publication, never a spinner for a track with no lyrics",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/theLyricsPanelDrawsWhatTheCorePublishedAndNeverASpinnerForNone"
+            }
           ],
           "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: the lyrics panel shows the synced English layer and a line lights as media time moves. Plain lyrics, no lyrics and a failed read are covered as presentation values, not rendered through the app, so the cell stays partial."
         },
         "ipados": {
           "status": "partial",
-          "promotion_condition": {"status": "blocked", "blocked_on": "ipad-lyrics-ui-proof", "reason": "No test drives the iPad app's lyrics panel; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run that observes the lit line beside the player. No such test exists yet, so none can be named."},
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipad-lyrics-ui-proof",
+            "reason": "No test drives the iPad app's lyrics panel; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run that observes the lit line beside the player. No such test exists yet, so none can be named."
+          },
           "evidence": [
-            {"conformance": "CONF-42", "workflow": "apple-ci", "job": "apple-ci", "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"},
-            {"observes": "the lyrics model paints the stored document first, then the live one, and drops a late answer for a track that is no longer current", "workflow": "apple-ci", "job": "apple-ci", "test": "DulcetKitIOSTests/theModelPaintsTheStoredDocumentThenTheLiveOneAndDropsALateAnswer"}
+            {
+              "conformance": "CONF-42",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"
+            },
+            {
+              "observes": "the lyrics model paints the stored document first, then the live one, and drops a late answer for a track that is no longer current",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/theModelPaintsTheStoredDocumentThenTheLiveOneAndDropsALateAnswer"
+            }
           ],
           "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad Now Playing shows lyrics beside the player on a regular width; its model runs as DulcetKit tests on an iPad simulator. No test drives the iPad app's lyrics panel; an iPhone run does not evidence iPad layout, so the cell stays partial."
         },
-        "tvos": {"status": "planned", "reason": "tvOS Now Playing has no lyrics control yet."},
-        "android": {"status": "planned"},
-        "androidtv": {"status": "planned"}
+        "tvos": {
+          "status": "planned",
+          "reason": "tvOS Now Playing has no lyrics control yet."
+        },
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "a track with embedded synced lyrics in three languages is played from its album on the phone, the lyrics button on the full player opens the lyrics, and the English layer is shown synced and live, read through getLyricsBySongId for that track after a single extension-list read",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidProductionLibraryReaderAppConformanceTest/theLyricsOfThePlayingTrackAreReadLiveAndShownSynced"
+            },
+            {
+              "observes": "the lit lines are the core's cursor at the media position, a line and its same-time translation lit together, nothing lit before the first line, and a seek backwards needs only the new position",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistAndLyricsPresentationTest/theLitLinesAreTheCoresCursorAndTheirGroupAtEveryPosition"
+            },
+            {
+              "observes": "a track with no lyrics says No lyrics for this song, lyrics never seen offline say so, a failed or paused read says why, and only an unanswered first read shows as loading",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistAndLyricsPresentationTest/aTrackWithoutLyricsSaysSoAndNeverSpins"
+            }
+          ],
+          "unevidenced_conformance": {
+            "CONF-42": "The response shape, layer selection, offline serving, the response size limit and the getLyrics fallback are the core's, exercised by the core conformance suite, whose results no evidence-verified job exports for this cell; the app test observes only the synced English layer read live."
+          },
+          "reason": "Now Playing on the phone has a lyrics button that opens a lyrics sheet: synced lines follow media time (the controller's samples, interpolated between them while playback progresses), plain lyrics scroll; a track with none says so. Scrolling the lit line into view and a tap on a line seeking a seekable track are in the app and covered by no test. Compose/Robolectric evidence against the disposable server; the lit line following real audio on a device is ASSUMED.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "core-lyrics-conformance-not-exported-to-app-cells",
+            "reason": "CONF-42's response shape, layer selection, offline serving, size limit and getLyrics fallback are proved by the core conformance suite, whose JUnit is not an evidence source for an app cell; the app proof covers the synced layer read live and shown."
+          }
+        },
+        "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {
+              "observes": "on the TV's production Now Playing, the lyrics toggle reached with the remote replaces Up Next with the playing track's English synced lyrics, read live through getLyricsBySongId, and at 3 s the first line is lit and the next is not",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvLyricsProductionLibraryReaderAppConformanceTest/theTvPanelShowsThePlayingTracksSyncedLyricsAndLightsTheLineAtMediaTime"
+            },
+            {
+              "observes": "on the TV's Now Playing, the lyrics panel for a track with none says No lyrics for this song once the server has answered, with no loading indicator",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvLyricsProductionLibraryReaderAppConformanceTest/aTrackWithNoLyricsSaysSoOnTheTv"
+            }
+          ],
+          "unevidenced_conformance": {
+            "CONF-42": "The response shape, layer selection, offline serving, the response size limit and the getLyrics fallback are the core's, exercised by the core conformance suite, whose results no evidence-verified job exports for this cell."
+          },
+          "reason": "The TV player has a lyrics toggle beside the transport that shows a lyrics panel in place of Up Next; lines are large and not focusable, the lit line follows media time and is kept in view. Compose/Robolectric evidence against the disposable server, not a physical-device claim.",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "core-lyrics-conformance-not-exported-to-app-cells",
+            "reason": "CONF-42's response shape, layer selection, offline serving, size limit and getLyrics fallback are proved by the core conformance suite, whose JUnit is not an evidence source for an app cell; the app proof covers the synced layer read live, the lit line at media time and the no-lyrics statement."
+          }
+        }
       }
     }
   ]

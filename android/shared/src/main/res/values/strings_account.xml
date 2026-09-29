@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Account and sign-out copy (spec §14.7), shared by the phone and TV apps. Kept apart from strings.xml so it can change on its own. -->
+<resources>
+    <string name="account_signout_account_label">Account</string>
+    <string name="account_signout_account_title">Account</string>
+    <string name="account_signout_account_body">Signed in to %1$s as %2$s.</string>
+    <string name="account_signout_action">Sign out</string>
+    <string name="account_signout_close">Close</string>
+    <string name="account_signout_stay">Stay signed in</string>
+
+    <string name="account_signout_checking">Checking for plays and changes that haven’t been sent…</string>
+
+    <string name="account_signout_confirm_title">Sign out of %1$s?</string>
+    <string name="account_signout_confirm_body">Playback stops, and Dulcet deletes this account’s saved password and its cached library, queue and artwork from this device.</string>
+
+    <string name="account_signout_offer_title">Send what hasn’t reached your server?</string>
+    <string name="account_signout_offer_after_send_title">Some of it couldn’t be sent</string>
+    <plurals name="account_signout_pending_plays">
+        <item quantity="one">%d play hasn’t reached your server.</item>
+        <item quantity="other">%d plays haven’t reached your server.</item>
+    </plurals>
+    <plurals name="account_signout_pending_edits">
+        <item quantity="one">%d favourite, rating or playlist change hasn’t reached your server.</item>
+        <item quantity="other">%d favourite, rating and playlist changes haven’t reached your server.</item>
+    </plurals>
+    <string name="account_signout_offer_body">Signing out without sending them discards them.</string>
+    <string name="account_signout_offer_after_send_body">The server didn’t accept them or couldn’t be reached. Signing out now discards them.</string>
+    <string name="account_signout_send">Send, then sign out</string>
+    <string name="account_signout_retry_send">Try sending again</string>
+    <string name="account_signout_discard">Sign out and discard</string>
+
+    <string name="account_signout_unknown_title">Dulcet couldn’t check for unsent changes</string>
+    <string name="account_signout_unknown_body">Signing out now may discard plays or changes that haven’t reached your server.</string>
+    <string name="account_signout_anyway">Sign out anyway</string>
+
+    <string name="account_signout_sending">Sending plays and changes to your server…</string>
+    <string name="account_signout_removing">Signing out…</string>
+
+    <string name="account_signout_failed_title">Dulcet couldn’t finish signing out</string>
+    <string name="account_signout_failed_body">Your account is still saved on this device. Try again, or close Dulcet and reopen it first.</string>
+    <string name="account_signout_try_again">Try again</string>
+
+    <!-- Shown when the saved account's record cannot be read: it can still be signed out and removed. -->
+    <string name="account_signout_unreadable_action">Sign out of the saved account</string>
+</resources>
