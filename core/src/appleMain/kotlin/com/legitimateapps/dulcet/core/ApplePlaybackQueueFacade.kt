@@ -734,7 +734,7 @@ public class ApplePlaybackQueueClient private constructor(
 
     /**
      * The event is built inside [runClosed]: reading the shell's names, reasons and positions can
-     * throw on a malformed value, and no Kotlin exception may cross into Swift (CLAUDE.md trap 17).
+     * throw on a malformed value, and no Kotlin exception may cross into Swift (docs/TRAPS.md trap 17).
      */
     private fun record(event: () -> PlaybackEngineEvent): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().recordPlaybackEvent(event())

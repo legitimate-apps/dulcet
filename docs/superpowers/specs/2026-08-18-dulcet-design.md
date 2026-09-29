@@ -5858,7 +5858,7 @@ freshly booted simulator (SUPPORTED, n=23).
 
 1. **Deterministic environment checks run before any build.** The Homebrew closure install and its
    drift check run immediately after Xcode selection. A pin drift fails every run by construction
-   (§20, CLAUDE.md trap 36) and used to be discovered after ~55 minutes of builds.
+   (§20, docs/TRAPS.md trap 36) and used to be discovered after ~55 minutes of builds.
 2. **At most one simulator is booted while a phase talks to the loopback fixtures, and it is fully
    booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
    does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
@@ -5965,7 +5965,7 @@ alone took 42.4 and 30.7. The aggregator took 6 to 13 seconds. Both legs held a 
 seconds of the run starting, in every run. The partial reds, all outside the split: run 36036076261's
 platform leg hit the iPad destination failure ("Unable to find a device matching the provided
 destination specifier", zero concrete simulators listed). Run 36178175847's conformance leg stopped
-at minute 3 on a Homebrew `ca-certificates` pin drift (CLAUDE.md trap 36; rule 1 placed it there,
+at minute 3 on a Homebrew `ca-certificates` pin drift (docs/TRAPS.md trap 36; rule 1 placed it there,
 where the single job used to reach it after its builds). Run 36188503621 attempt 1's conformance
 leg hit a 10-second loopback read timeout in `DarwinProxyAuthenticationConformanceTest` on
 iosSimulatorArm64, with one simulator booted and host pressure comparable to a green single-job run.
@@ -6610,6 +6610,8 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-09-29 — Records are dated from here on.** The numbered series closes at revision 113. Parallel branches kept claiming the same next number and renumbering at every merge, so a contract change is now recorded as a dated entry, newest first, above the numbered records, with no item numbers. Earlier revisions keep their numbers, and references to them stay valid.
+
 **Revision 113 (2026-09-26)** — Android adopts §12.12. Revision 106 said "Android does not adopt this yet: it
 does not share this controller"; that was wrong. `AndroidPlaybackController` drives the same
 `PlaybackQueueController`, so once revision 106 merged Android skipped past a track's own failure
@@ -7028,7 +7030,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
    `tools/probes/window-epoch-race`, racing page reads against a toggling album directory, took
    42,051 samples (976 during scans, 60 stamps) with zero violations — an independent review run took
    27,957. The CORPUS text and §2's "one sync engine" were changed in this revision on the
-   maintainer's decision, and CLAUDE.md traps 18–19 rewritten to match.
+   maintainer's decision, and docs/TRAPS.md traps 18–19 rewritten to match.
 6. **Gone-ness that holds whatever the server does with missing files (§16.11).** OBSERVED
    2026-09-22 under both `PurgeMissing` settings: with the fixture's `"always"`, a removed album's
    `getAlbum` and `getSong` answer code 70, and restoring the files keeps the album id but mints new
@@ -7205,7 +7207,7 @@ fresh disposable server before landing; items 11–14 are what that review chang
     with the unit read from the probe (§16.12).
     §16.12's bracketed check rejects it; an after-only check, which is how the race probe had
     counted and how item 5 summarises the window rule, does not. §16.12 says so, the probe and
-    CONF-70 count both, and CLAUDE.md trap 18 now names both readings. OBSERVED 2026-09-24 while
+    CONF-70 count both, and docs/TRAPS.md trap 18 now names both readings. OBSERVED 2026-09-24 while
     landing, against private disposable native 0.63.2 servers in both configurations: CONF-70..75
     passed 8 of 8 on three runs per leg (JVM and `macosArm64`); each of the six in-suite races
     toggled 4–5 times, accepted 5 stamps and had 16–69 samples whose *after* reading showed a scan,

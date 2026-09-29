@@ -696,7 +696,7 @@ jobs:
         run: python3 tools/test-darwin-live-shape-advisory
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
-      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (CLAUDE.md
+      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (docs/TRAPS.md
       # trap 36), and this step used to sit behind ~55 minutes of platform builds and UI tests: run
       # 35796413810 on main (2026-09-22) spent 55.6 minutes of a hosted macOS slot before this
       # step reported six drifted formulae in 49 seconds. Nothing between Xcode selection and the
