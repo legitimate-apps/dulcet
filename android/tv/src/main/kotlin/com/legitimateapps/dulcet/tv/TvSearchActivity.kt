@@ -35,6 +35,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,6 +47,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.SearchResultItem
+import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.searchScopeLabel
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -83,7 +85,7 @@ class TvSearchActivity : ComponentActivity() {
                             account = loadAccount()
                         }
                     } else {
-                        com.legitimateapps.dulcet.library.LibraryEntry(current) { TvSearchRoute(current, searchDependencies) }
+                        TvLibraryEntry(current) { TvSearchRoute(current, searchDependencies) }
                     }
                 }
             }
@@ -124,10 +126,10 @@ internal fun TvSearchScreen(
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            // No heading: the navigation row above names the screen, and the room goes to results.
+            modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Search", style = MaterialTheme.typography.displaySmall)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -145,7 +147,7 @@ internal fun TvSearchScreen(
                     decorationBox = { inner ->
                         if (state.query.isEmpty()) {
                             Text(
-                                "Artists, albums, and tracks",
+                                stringResource(R.string.tv_search_hint),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -177,7 +179,7 @@ internal fun TvSearchScreen(
                 Text(line, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("search.scope"))
             }
             if (state.isLoading && state.results.isEmpty()) {
-                Text("Searching…", modifier = Modifier.testTag("search.loading"))
+                Text(stringResource(R.string.tv_search_searching), modifier = Modifier.testTag("search.loading"))
             }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
@@ -248,7 +250,14 @@ private fun TvSearchResult(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(result.title, style = MaterialTheme.typography.titleLarge)
-            Text(listOfNotNull(result.type.name, note).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
+            Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+/** A result's kind, in the TV's words. */
+private fun SearchResultType.label(): Int = when (this) {
+    SearchResultType.Album -> R.string.tv_search_type_album
+    SearchResultType.Artist -> R.string.tv_search_type_artist
+    SearchResultType.Track -> R.string.tv_search_type_track
 }

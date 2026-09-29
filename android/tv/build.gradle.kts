@@ -61,6 +61,9 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.media3.session)
+    // The library proof finds screens by their semantics; every key it sends is a real key event.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(kotlin("test-junit"))
     // The album-play proof binds the production playback service, a Media3 session service.
     testImplementation(libs.media3.session)

@@ -35,16 +35,14 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
-import com.legitimateapps.dulcet.core.AndroidQueueSource
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
-import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
-import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
+import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
+import com.legitimateapps.dulcet.library.playAlbum
+import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
-import com.legitimateapps.dulcet.library.isOffline
-import com.legitimateapps.dulcet.library.playableTracks
 import com.legitimateapps.dulcet.library.titledTracks
 import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackIntents
@@ -111,7 +109,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
-        playAlbum = { album, start, shuffle -> playAlbum(playback, provider, album, start, shuffle) },
+        playAlbum = { album, start, shuffle -> playAlbumFrom(playback, provider, album, start, shuffle) },
         playArtist = { artist, shuffle, done -> playArtist(playback, library, provider, artist, shuffle, done) },
         // Up Next rows take their titles from albums already on screen, every titled track whether or
         // not it can play right now; no request is made for them.
@@ -247,50 +245,14 @@ internal class PhoneActions(
     val rememberAlbum: (AndroidLibraryPublication) -> Unit = {},
 )
 
-private fun playAlbum(
+/** [position] indexes the album's rows; the queue skips rows with no metadata to play. */
+private fun playAlbumFrom(
     playback: AndroidPlaybackController?,
     provider: String,
     publication: AndroidLibraryPublication,
     position: Int,
     shuffle: Boolean,
 ) {
-    val album = publication.header as? AndroidLibraryItem.Album ?: return
-    val tracks = publication.playableTracks(provider)
-    if (playback == null || tracks.isEmpty()) return
-    // [position] indexes the album's rows; the queue skips rows with no metadata to play.
     val rawId = (publication.items.getOrNull(position) as? AndroidLibraryItem.Track)?.rawId
-    val start = tracks.indexOfFirst { it.rawId == rawId }.takeIf { it >= 0 } ?: 0
-    playback.playQueue(tracks, start, AndroidQueueSource.Album, album.title, album.rawId, shuffle)
+    playAlbum(playback, provider, publication, rawId, shuffle)
 }
-
-private fun playArtist(
-    playback: AndroidPlaybackController?,
-    library: LibrarySession,
-    provider: String,
-    publication: AndroidLibraryPublication,
-    shuffle: Boolean,
-    done: (ArtistPlayResult) -> Unit,
-): AutoCloseable? {
-    val artist = publication.header as? AndroidLibraryItem.Artist ?: return null
-    val albums = publication.items.filterIsInstance<AndroidLibraryItem.Album>()
-    if (playback == null || albums.isEmpty()) return null
-    return library.collectAlbums(albums.map { it.rawId }) { details ->
-        val tracks = details.flatMap { it.playableTracks(provider) }
-        if (tracks.isNotEmpty()) playback.playQueue(tracks, 0, AndroidQueueSource.Artist, artist.name, artist.rawId, shuffle)
-        done(
-            when {
-                tracks.isNotEmpty() -> ArtistPlayResult.Played
-                details.any { it.heldBackOffline() } -> ArtistPlayResult.NeedsConnection
-                else -> ArtistPlayResult.NothingPlayable
-            },
-        )
-    }
-}
-
-/** How playing an artist ended, for the line the artist screen shows when nothing played. */
-internal enum class ArtistPlayResult { Played, NeedsConnection, NothingPlayable }
-
-/** An album whose tracks this device cannot play only because it is offline (§16.14). */
-private fun AndroidLibraryPublication.heldBackOffline(): Boolean =
-    itemsUnavailableReason == AndroidLibraryUnavailableReason.NotCachedOffline || freshness.isOffline() ||
-        items.any { (it as? AndroidLibraryItem.Track)?.playability == AndroidLibraryPlayability.UnavailableOffline }

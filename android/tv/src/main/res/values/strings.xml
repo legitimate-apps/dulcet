@@ -22,4 +22,53 @@
     <string name="tv_error_auth">The account was not accepted. Check the username and password.</string>
     <string name="tv_error_capability">This server does not provide a capability Dulcet requires.</string>
     <string name="tv_error_persistence">The account could not be saved, so Dulcet stayed disconnected.</string>
+    <!-- Navigation -->
+    <string name="tv_nav_search">Search</string>
+    <string name="tv_nav_library">Library</string>
+    <string name="tv_nav_now_playing">Now Playing</string>
+    <string name="tv_back">Back</string>
+    <string name="tv_refresh">Refresh</string>
+
+    <!-- Search -->
+    <string name="tv_search_hint">Artists, albums, and tracks</string>
+    <string name="tv_search_searching">Searching…</string>
+    <string name="tv_search_type_album">Album</string>
+    <string name="tv_search_type_artist">Artist</string>
+    <string name="tv_search_type_track">Track</string>
+
+    <!-- Library -->
+    <string name="tv_library_title">Library</string>
+    <string name="tv_library_albums">Albums</string>
+    <string name="tv_library_artists">Artists</string>
+    <string name="tv_library_loading">Loading…</string>
+    <string name="tv_play">Play</string>
+    <string name="tv_shuffle">Shuffle</string>
+    <string name="tv_now_playing_row">Now playing</string>
+    <plurals name="tv_album_count">
+        <item quantity="one">%d album</item>
+        <item quantity="other">%d albums</item>
+    </plurals>
+    <plurals name="tv_track_count">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
+
+    <!-- Now Playing -->
+    <string name="tv_player_heading">Now Playing</string>
+    <string name="tv_player_needs_account">Connect an account before playing.</string>
+    <string name="tv_player_loading">Loading…</string>
+    <string name="tv_player_nothing">Nothing is playing</string>
+    <string name="tv_player_failed">Playback failed. Check your connection, then press Play to try again.</string>
+    <string name="tv_player_play">Play</string>
+    <string name="tv_player_pause">Pause</string>
+    <string name="tv_player_next">Next</string>
+    <string name="tv_player_previous">Previous</string>
+    <string name="tv_player_shuffle_on">Shuffle on</string>
+    <string name="tv_player_shuffle_off">Shuffle off</string>
+    <string name="tv_player_repeat_off">Repeat off</string>
+    <string name="tv_player_repeat_all">Repeat all</string>
+    <string name="tv_player_repeat_one">Repeat one</string>
+    <string name="tv_player_position">Playback position</string>
+    <string name="tv_player_up_next">Up Next</string>
+    <string name="tv_player_cover_art">Cover art</string>
 </resources>

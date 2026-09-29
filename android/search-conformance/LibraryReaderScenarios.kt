@@ -5,7 +5,9 @@ import android.content.Intent
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
@@ -61,6 +63,14 @@ interface ReaderAppUi {
      * focusable element just above it, where a D-pad starts; a touch screen ignores it.
      */
     fun select(tag: String, from: String)
+
+    /**
+     * Activates a button or card the way a person does on this platform: a tap on a touch screen; on
+     * a TV, which has no touch, focus on it and the remote's centre key.
+     */
+    fun activate(node: SemanticsNodeInteraction) {
+        node.performClick()
+    }
 }
 
 /**
@@ -125,7 +135,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         assertEquals(0, proxy.since(relaunchMark).count { it.answered && it.endpoint !in EPOCH_READS },
             "the paint used no content answer from the server")
-        compose.onNodeWithTag("library.home.0.item.0").assertExists()
+        // Painted items, wherever the row was scrolled: a relaunch may restore the row where it was left.
+        assertTrue(compose.onAllNodes(SemanticsMatcher("a first-row card") {
+            it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("library.home.0.item.")
+        }).fetchSemanticsNodes().isNotEmpty(), "the first row painted its cached items")
         compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
         openHomeAlbum(OPENED_ALBUM)
         await("the opened album to paint") { frames("album:$opened").isNotEmpty() }
@@ -212,7 +225,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         environment.network.lose()
         await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
         val offlineMark = proxy.size()
-        compose.onNodeWithTag("album.favourite").performClick()
+        ui.activate(compose.onNodeWithTag("album.favourite"))
         await("the star to show offline") { last("album:$album").favourite == true }
         assertEquals(emptyList(), readerRequests(offlineMark).map { it.endpoint }, "a change made offline sends nothing")
         ui.backFromAlbum()
@@ -290,7 +303,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         failAReconnect()
-        compose.onNodeWithTag("library.connection.retry").performClick()
+        ui.activate(compose.onNodeWithTag("library.connection.retry"))
         await("trying again to reconnect") { observed().connections.last() is LibraryConnectionState.Online }
         assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         assertNoCredentialLeak()
@@ -464,7 +477,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // is told reachable once, and reconnects.
         val reports = observed().reachabilityReports.size
         val answersBeforeTry = observed().reconnectAnswers
-        compose.onNodeWithTag("album.refresh").performClick()
+        ui.activate(compose.onNodeWithTag("album.refresh"))
         await("trying again to be answered") { observed().reconnectAnswers > answersBeforeTry }
         val told = observed().reachabilityReports.drop(reports)
         assertEquals(listOf(true), told, "trying again told the reader the platform's view, once")
@@ -473,7 +486,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // The server answers again, and the library comes back: by the reader's own retry, or by the
         // refresh, whichever comes first.
         proxy.drop(null)
-        compose.onNodeWithTag("album.refresh").performClick()
+        ui.activate(compose.onNodeWithTag("album.refresh"))
         await("the album live again") {
             observed().connections.last() is LibraryConnectionState.Online && last("album:$album").freshness == AndroidLibraryFreshness.Live
         }
@@ -739,14 +752,14 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         proxy.hold { it.endpoint == "star" }
         val before = frames("album:$album").size
-        compose.onNodeWithTag("album.favourite").performClick()
+        ui.activate(compose.onNodeWithTag("album.favourite"))
         await("a publication after the tap") { frames("album:$album").size > before }
         assertEquals(true, frames("album:$album")[before].favourite, "the first publication after the tap shows the star")
         assertEquals(0, proxy.answered("star"), "before the send was answered")
 
         // A revalidation that lands before the send completes reads the server's old value.
         val reads = proxy.answered("getAlbum")
-        compose.onNodeWithTag("album.refresh").performClick()
+        ui.activate(compose.onNodeWithTag("album.refresh"))
         await("the revalidation to land") { proxy.answered("getAlbum") > reads && last("album:$album").freshness == AndroidLibraryFreshness.Live }
         assertEquals(false, server.albumStarred(album), "the server had not been told when the revalidation read it")
         assertEquals(0, proxy.answered("star"), "the send was still held")
@@ -766,12 +779,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(frames("album:$album").drop(before).all { it.favourite == true }, "no publication since the tap dropped the star")
         // And a later read agrees with it.
         val echoed = proxy.answered("getAlbum")
-        compose.onNodeWithTag("album.refresh").performClick()
+        ui.activate(compose.onNodeWithTag("album.refresh"))
         await("the echo read") { proxy.answered("getAlbum") > echoed && last("album:$album").freshness == AndroidLibraryFreshness.Live }
         assertEquals(true, last("album:$album").favourite)
 
         // And back, through the app.
-        compose.onNodeWithTag("album.favourite").performClick()
+        ui.activate(compose.onNodeWithTag("album.favourite"))
         await("the star removed") { last("album:$album").favourite != true }
         await("the removal saved") {
             observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target.rawId == album } >= 2
@@ -782,7 +795,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         environment.network.lose()
         await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
         val beforeTaps = frames("album:$album").size
-        repeat(3) { compose.onNodeWithTag("album.favourite").performClick(); compose.waitForIdle() }
+        repeat(3) { ui.activate(compose.onNodeWithTag("album.favourite")); compose.waitForIdle() }
         await("each of the three taps to show") {
             frames("album:$album").drop(beforeTaps).mapNotNull { it.favourite }.containsInOrder(listOf(true, false, true)) &&
                 last("album:$album").favourite == true
@@ -900,7 +913,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // looper is idled as the wait polls; CLAUDE.md trap 44).
         await("the first home row's items on screen") { compose.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
         compose.onNode(row).performScrollToNode(hasText(title))
-        compose.onAllNodes(hasText(title) and hasAnyAncestor(row)).onFirst().performClick()
+        ui.activate(compose.onAllNodes(hasText(title) and hasAnyAncestor(row)).onFirst())
         compose.waitForIdle()
     }
 
