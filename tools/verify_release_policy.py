@@ -41,7 +41,9 @@
    pieces -- that is review's job, not this gate's.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
-mutated copies. Exits 1 with every violation listed. Anything it cannot read fails closed.
+mutated copies. Exits 1 with every violation listed. A file it parses (project.yml, the committed
+project, a plist) fails closed when it cannot read it; the text scans refuse the spellings they name
+and nothing more -- a scan for accidental routes, not a proof against a deliberate one (spec §22.6).
 
 Every allowlist below is a spec §22.3 decision. A refusal names the constant to extend; extending it
 is a reviewed change to this file, never a workaround elsewhere.

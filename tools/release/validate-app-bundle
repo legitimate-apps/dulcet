@@ -20,9 +20,11 @@ PROD only:
 - No file in the bundle contains the server key's bytes (UTF-8 or UTF-16), whichever route put it
   there: plist, resource, or code.
 - Every http:// or https:// address in any file (UTF-8 or UTF-16, either byte order) names a host in
-  URL_HOSTS. The authority is parsed, not matched against a character class: userinfo up to the last
-  `@` is dropped, a bracketed IPv6 literal is a host of its own, percent-escapes are decoded, and an
-  authority that does not parse to a hostname or an IP literal is refused as unclassifiable. An empty
+  URL_HOSTS. The authority is captured by an RFC 3986 character class and then parsed: userinfo up to
+  the last `@` is dropped, a bracketed IPv6 literal is a host of its own, percent-escapes are decoded,
+  and a captured authority that does not parse to a hostname or an IP literal is refused as unclassifiable.
+  The capture stops at the first character outside the class, which is not itself checked, so a
+  non-ASCII character after a real host is not seen (spec §22.6, limits). An empty
   authority passes only when the byte after `//` ends the string.
   What a byte scan cannot see is an address the compiler never stores contiguously: on arm64 a Swift
   string of 15 UTF-8 bytes or fewer is built from instruction immediates (OBSERVED 2026-09-26,

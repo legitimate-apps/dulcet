@@ -6306,9 +6306,11 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
   `support.apple.com`, `music.example.com` (a placeholder), `music.example.invalid` and
   `query.invalid` (reserved names in shared code), `localhost` and `127.0.0.1` (Ktor's default and a
   loopback pattern), and `ktor.io` and `youtrack.jetbrains.com` (library diagnostics). The authority
-  is parsed rather than matched against a character class: userinfo up to the last `@` is dropped, a
-  bracketed IPv6 literal is a host of its own, percent-escapes are decoded, and an authority that
-  parses to neither a hostname nor an IP literal is refused. A bare scheme passes only where the
+  is captured, then parsed rather than merely matched: userinfo up to the last `@` is dropped, a
+  bracketed IPv6 literal is a host of its own, percent-escapes are decoded, and a *captured*
+  authority that parses to neither a hostname nor an IP literal is refused. The capture is an
+  RFC 3986 character class and stops at the first character outside it, so the character after a
+  non-empty authority is not checked (see the limits below). A bare scheme passes only where the
   string ends after `//`; a Kotlin/Native literal is length-prefixed rather than terminated, so there
   the count in its header says so (OBSERVED in both PROD Release builds).
   The scan catches an address the build stores contiguously, in UTF-8 or UTF-16 — **not every
@@ -6324,6 +6326,25 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
   `"https://$trimmed"`, is unclassifiable and is exempted only by its exact source line in
   `SOURCE_ADDRESS_LINES`. Editing that line re-opens review, and an entry whose line is gone is itself
   refused.
+- **Limits of the guard — a scan for accidental routes, not a proof against a deliberate one.**
+  Review of the ship-readiness change (round 4, 2026-09-29) found no accidental route, and accepted
+  these deliberate ones as review's job rather than the gate's:
+  - *A non-ASCII character after a real host.* Both scans stop the authority at the first character
+    outside RFC 3986 and classify what came before, so `"http://localhost\u{3002}mydomain.net"`
+    reads as `localhost` while Foundation's IDNA mapping turns U+3002 and U+FF0E into `.` (and
+    deletes U+00AD) and connects to `localhost.mydomain.net` (OBSERVED in the review).
+  - *Code in a skipped test directory.* The source scan skips `SOURCE_TEST_DIRECTORIES` by name;
+    nothing yet refuses a non-test SwiftPM target, a local package, a non-test Xcode target or a
+    Gradle source set that takes sources from one.
+  - *The Gradle reader rule is a spelling blocklist.* It refuses the direct spellings of an
+    environment read, a process and another script. Reflection, a Groovy `execute`, a custom wrapper
+    distribution, a `-javaagent` in `gradle.properties`, and a literal address in a build script are
+    not refused.
+  - *Other forms an address can take.* A `ws://` or `wss://` address, a scheme-less host or IP
+    literal (the core completes a bare host with `https://`, §10.2), an address assembled at run time
+    from pieces, and one stored compressed, encoded or in UTF-32.
+  Every one needs a reviewable change to code that also ships in DEV or to build logic; none is a way
+  for the DEV plist value to reach PROD by accident. Closing the cheap ones is a follow-up.
 - **No per-user Xcode state is tracked.** Xcode reads schemes from `xcuserdata/`, which neither this
   policy nor the regeneration check inspects, so any tracked file under it is refused. `verify_ci_policy`
   pins the regeneration step itself: exactly `python3 tools/verify_xcodegen_regeneration --self-test`,
@@ -6331,8 +6352,9 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
 - **Remedies.** Every refusal ends by naming where the rules live and spec §22.3, and every allowlist
   refusal names its constant and says that extending it is a §22.3 decision made in review. A
   refusal with no path forward invites a workaround, so none is silent about how to proceed.
-  Anything the policy cannot read — a key it cannot parse, a file that is not text — fails closed
-  with a message rather than being skipped.
+  What the policy parses — `project.yml`, the committed project, a plist — fails closed with a
+  message when it cannot read it, rather than being skipped. The text scans refuse the spellings they
+  name and nothing more (see the limits above).
 - **Not covered:** a server address compiled into Swift or Kotlin shared by both channels and
   assembled at run time from pieces rather than written out as an address, in source or in the
   bundle. No build configuration can exclude that, so it remains a review obligation. A value added
@@ -6884,6 +6906,10 @@ completion audit listed.
    - **Counts:** 107 policy mutations (12 added) and 37 bundle-validation controls (14 added: the
      reviewer's six strings, five more malformed authorities, two accepted forms and a Kotlin/Native
      header control).
+   - **Round 4** found no BLOCKER and three routes that need a deliberate change (an IDNA dot after
+     a real host, code in a skipped test directory, an obfuscated Gradle read). §22.6 now states them
+     as the guard's limits rather than claiming the scans refuse anything unclassifiable; closing the
+     cheap ones is a follow-up.
 
 **Revision 113 (2026-09-26)** — Android adopts §12.12. Revision 106 said "Android does not adopt this yet: it
 does not share this controller"; that was wrong. `AndroidPlaybackController` drives the same
