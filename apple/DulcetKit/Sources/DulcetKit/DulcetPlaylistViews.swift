@@ -89,18 +89,11 @@ private struct DulcetPlaylistPageContent: View {
             ) { name in
                 store.playlistEditor?.perform(.rename(playlistID: id.rawID, name: name))
             }
-            .confirmationDialog(
-                DulcetStrings.playlistDeleteConfirm,
-                isPresented: $confirmingDelete,
-                titleVisibility: .visible
-            ) {
-                Button(DulcetStrings.playlistDelete, role: .destructive) {
-                    store.playlistEditor?.perform(.delete(playlistID: id.rawID)) { result in
-                        guard result.record == .pending || result.record == .compactedAway else { return }
-                        store.popReader(to: Array(store.readerPath.dropLast()))
-                    }
+            .dulcetPlaylistDeleteConfirmation(isPresented: $confirmingDelete) {
+                store.playlistEditor?.perform(.delete(playlistID: id.rawID)) { result in
+                    guard result.record == .pending || result.record == .compactedAway else { return }
+                    store.popReader(to: Array(store.readerPath.dropLast()))
                 }
-                Button(DulcetStrings.playlistCancel, role: .cancel) {}
             }
         }
     }
@@ -109,6 +102,7 @@ private struct DulcetPlaylistPageContent: View {
         DulcetReaderPage(title: model.window?.header?.displayTitle ?? "") { width in
             if let window = model.window {
                 header(window, width: width)
+                awaitingChoiceBanner
                 problemBanner
                 DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { window in
                     tracks(window, model: model)
@@ -198,6 +192,27 @@ private struct DulcetPlaylistPageContent: View {
         if let count = item?.songCount ?? window.total { parts.append(DulcetStrings.readerCount(.tracks, count)) }
         if let comment = item?.comment, !comment.isEmpty { parts.append(comment) }
         return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// A create in doubt the person said to decide later: its question, asked again from here.
+    @ViewBuilder
+    private var awaitingChoiceBanner: some View {
+        if let editor = store.playlistEditor, editor.awaitingChoice[id.rawID] != nil {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                Text(DulcetStrings.playlistAwaitingChoice)
+                    .font(.callout)
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .lineLimit(nil)
+                Button(DulcetStrings.playlistChoose) { editor.reask(id.rawID) }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("dulcet.playlist.choose")
+            }
+            .padding(DulcetSpacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.playlist.awaitingChoice")
+        }
     }
 
     @ViewBuilder
@@ -360,8 +375,9 @@ struct DulcetPlaylistEditContext: Equatable {
 
 // MARK: - Context menus
 
-/// Rename and Delete for the person's own playlist, and Add to Playlist for an album. Nothing for
-/// another user's playlist, which has no edit affordance at all (§18.6).
+/// Delete for the person's own playlist -- confirmed first, by the same dialog as its page -- and
+/// Add to Playlist for an album. Rename is on the playlist's page. Nothing for another user's
+/// playlist, which has no edit affordance at all (§18.6).
 struct DulcetPlaylistItemMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
@@ -375,7 +391,8 @@ struct DulcetPlaylistItemMenuItems: View {
                 }
             case .playlist where item.isEditable:
                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) {
-                    editor.perform(.delete(playlistID: item.id.rawID))
+                    // Recorded only once the person confirms (dulcetPlaylistSheets).
+                    editor.requestDeletion(of: item.id.rawID)
                 }
             default:
                 EmptyView()
@@ -405,6 +422,17 @@ extension View {
     /// The Add to Playlist chooser and a create-in-doubt's question, wherever they are asked from.
     func dulcetPlaylistSheets(store: DulcetPresentationStore) -> some View {
         modifier(DulcetPlaylistSheets(store: store))
+    }
+
+    /// The one confirmation every playlist deletion goes through: its page's and its context menu's.
+    /// An alert, not a confirmation dialog: the context menu's is asked from the root, where a
+    /// confirmation dialog on macOS traps on the store's environment (the window-title test).
+    func dulcetPlaylistDeleteConfirmation(isPresented: Binding<Bool>, onConfirm: @escaping () -> Void) -> some View {
+        alert(DulcetStrings.playlistDeleteConfirm, isPresented: isPresented) {
+            Button(DulcetStrings.playlistDelete, role: .destructive, action: onConfirm)
+                .accessibilityIdentifier("dulcet.playlist.delete.confirm")
+            Button(DulcetStrings.playlistCancel, role: .cancel) {}
+        }
     }
 
     /// A name prompt: New Playlist, Rename.
@@ -458,45 +486,45 @@ private struct DulcetPlaylistSheets: ViewModifier {
                 DulcetAddToPlaylistSheet(addition: addition)
                     .environment(store)
             }
+            .dulcetPlaylistDeleteConfirmation(isPresented: Binding(
+                get: { store.librarySession?.playlists?.deletionToConfirm != nil },
+                set: { if !$0 { store.librarySession?.playlists?.cancelDeletion() } }
+            )) {
+                store.librarySession?.playlists?.confirmDeletion()
+            }
             .alert(
                 questionTitle,
                 isPresented: Binding(
                     get: { store.librarySession?.playlists?.question != nil },
-                    set: { if !$0 { store.librarySession?.playlists?.dismissQuestion() } }
+                    // Every button answers or dismisses its own question; dismissing here too
+                    // would drop the next queued one, which is already current by then.
+                    set: { _ in }
                 ),
                 presenting: store.librarySession?.playlists?.question
             ) { question in
-                ForEach(Array(question.candidates.enumerated()), id: \.offset) { index, candidate in
-                    switch question.kind {
-                    case .whichIsYours:
-                        Button(DulcetStrings.playlistCandidate(index + 1)) {
-                            store.librarySession?.playlists?.answer(question, choosing: candidate)
-                        }
-                    case .deleteMaybeCreated:
-                        Button(DulcetStrings.playlistDeleteCandidate(index + 1), role: .destructive) {
-                            store.librarySession?.playlists?.answer(question, choosing: candidate)
-                        }
-                    }
-                }
-                switch question.kind {
-                case .whichIsYours:
-                    Button(DulcetStrings.playlistNoneOfThese) {
-                        store.librarySession?.playlists?.answer(question, choosing: nil)
-                    }
-                    Button(DulcetStrings.playlistDecideLater, role: .cancel) {
-                        store.librarySession?.playlists?.dismissQuestion()
-                    }
-                case .deleteMaybeCreated:
-                    Button(DulcetStrings.playlistKeepIt, role: .cancel) {
-                        store.librarySession?.playlists?.dismissQuestion()
-                    }
+                ForEach(DulcetPlaylistPresentation.choices(for: question), id: \.self) { choice in
+                    button(for: choice, of: question)
                 }
             } message: { question in
-                switch question.kind {
-                case .whichIsYours: Text(DulcetStrings.playlistWhichIsYoursMessage(question.name))
-                case .deleteMaybeCreated: Text(DulcetStrings.playlistMaybeCreatedMessage(question.name))
-                }
+                Text(DulcetPlaylistPresentation.message(for: question))
             }
+    }
+
+    @ViewBuilder
+    private func button(for choice: DulcetPlaylistQuestionChoice, of question: DulcetPlaylistQuestion) -> some View {
+        let editor = store.librarySession?.playlists
+        switch choice {
+        case let .adopt(candidate):
+            Button(DulcetStrings.playlistItIsMine) { editor?.answer(question, choosing: candidate) }
+        case let .delete(candidate):
+            Button(DulcetStrings.playlistDeleteFromServer, role: .destructive) { editor?.answer(question, choosing: candidate) }
+        case .createAgain:
+            Button(DulcetStrings.playlistNoneOfThese) { editor?.answer(question, choosing: nil) }
+        case .decideLater:
+            Button(DulcetStrings.playlistDecideLater, role: .cancel) { editor?.dismissQuestion(question) }
+        case .keep:
+            Button(DulcetStrings.playlistKeepIt, role: .cancel) { editor?.dismissQuestion(question) }
+        }
     }
 
     private var questionTitle: String {

@@ -15,6 +15,14 @@ private final class RecordingPlaylists: DulcetPlaylistEditing {
     var completions: [@MainActor (DulcetPlaylistEditResult) -> Void] = []
     var outcomeHandler: (@MainActor (DulcetPlaylistOutcome) -> Void)?
     private(set) var cancelled = false
+    /// What the core's outbox holds for `pendingChanges`; nil answers as a failed read.
+    var pending: [DulcetPlaylistPendingChange]? = []
+    private(set) var pendingReads = 0
+
+    func pendingPlaylistChanges(completion: @escaping @MainActor ([DulcetPlaylistPendingChange]?) -> Void) {
+        pendingReads += 1
+        completion(pending)
+    }
 
     func editPlaylist(_ edit: DulcetPlaylistEdit, completion: @escaping @MainActor (DulcetPlaylistEditResult) -> Void) {
         edits.append(edit)
@@ -226,6 +234,128 @@ func theEditorKeepsProblemsQuestionsAndCreatedIDsFromOutcomes() {
 
     editor.close()
     #expect(fake.cancelled)
+}
+
+private func waiting(_ localID: String, name: String = "Mix", candidates: [String]) -> DulcetPlaylistPendingChange {
+    DulcetPlaylistPendingChange(playlistID: localID, change: "create", name: name, candidates: candidates)
+}
+
+// Review blocker 1: a playlist row's context-menu Delete records nothing until the person
+// confirms, through the same dialog as the playlist's page.
+@Test @MainActor
+func aContextMenuDeleteIsRecordedOnlyOnceThePersonConfirms() {
+    let fake = RecordingPlaylists()
+    let editor = DulcetPlaylistEditor(editing: fake, session: nil)
+
+    editor.requestDeletion(of: "p1")
+    #expect(editor.deletionToConfirm == "p1")
+    #expect(fake.edits.isEmpty, "asking to delete must not record a delete")
+    editor.cancelDeletion()
+    #expect(editor.deletionToConfirm == nil)
+    editor.confirmDeletion()
+    #expect(fake.edits.isEmpty, "a cancelled request cannot be confirmed afterwards")
+
+    editor.requestDeletion(of: "p2")
+    editor.confirmDeletion()
+    #expect(fake.edits == [.delete(playlistID: "p2")])
+    #expect(editor.deletionToConfirm == nil)
+}
+
+// Review blocker 2: a create in doubt is never left waiting with no way to answer. Questions
+// queue rather than overwrite; Decide Later leaves the page able to ask; a new editor asks
+// again from the core's pending changes.
+@Test @MainActor
+func aSecondQuestionQueuesBehindTheFirstAndDecideLaterLeavesAWayBack() {
+    let fake = RecordingPlaylists()
+    let editor = DulcetPlaylistEditor(editing: fake, session: nil)
+    fake.pending = [waiting("local-1", candidates: ["s1"]), waiting("local-2", name: "Other", candidates: ["s2"])]
+
+    fake.outcomeHandler?(outcome("possibleDuplicate", playlist: "local-1", change: "create", localID: "local-1", name: "Mix", candidates: ["s1"]))
+    fake.outcomeHandler?(outcome("possibleDuplicate", playlist: "local-2", change: "create", localID: "local-2", name: "Other", candidates: ["s2"]))
+    fake.outcomeHandler?(outcome("possiblyCreated", playlist: "local-3", change: "create", localID: "local-3", name: "Gone", candidates: ["s3"]))
+    #expect(editor.questions.map(\.localID) == ["local-1", "local-2", "local-3"], "a later outcome overwrote an earlier question")
+
+    let first = try! #require(editor.question)
+    editor.dismissQuestion(first)
+    #expect(editor.question?.localID == "local-2", "Decide Later must move on to the next question")
+    #expect(!editor.questions.contains { $0.localID == "local-1" }, "a deferred question is not re-asked at once")
+    #expect(editor.awaitingChoice["local-1"] != nil, "the page of a deferred create must be able to ask again")
+
+    editor.reask("local-1")
+    #expect(editor.questions.last?.localID == "local-1")
+
+    // Keep It is an answer: the maybe-created question goes and deletes nothing.
+    let maybe = try! #require(editor.questions.first { $0.kind == .deleteMaybeCreated })
+    editor.dismissQuestion(maybe)
+    #expect(!editor.questions.contains { $0.kind == .deleteMaybeCreated })
+    #expect(fake.edits.isEmpty)
+
+    // A create the core no longer keeps waiting is not asked about.
+    fake.pending = [waiting("local-1", candidates: ["s1"])]
+    editor.refreshQuestions()
+    #expect(editor.questions.map(\.localID) == ["local-1"])
+    #expect(editor.awaitingChoice["local-2"] == nil)
+
+    // A failed read drops nothing.
+    fake.pending = nil
+    editor.refreshQuestions()
+    #expect(editor.questions.map(\.localID) == ["local-1"])
+}
+
+@Test @MainActor
+func aNewEditorAsksAgainWhatTheCoreStillKeepsWaitingAndWhatItsPredecessorLeft() {
+    let fake = RecordingPlaylists()
+    fake.pending = [
+        DulcetPlaylistPendingChange(playlistID: "p9", change: "details", name: nil, candidates: nil),
+        waiting("local-1", candidates: ["s1", "s2"]),
+    ]
+    let carried = DulcetPlaylistQuestion(kind: .deleteMaybeCreated, localID: "local-3", name: "Gone", candidates: ["s3"])
+    let editor = DulcetPlaylistEditor(editing: fake, session: nil, carried: [carried])
+    #expect(fake.pendingReads == 1, "the editor must read the core's pending changes when it starts")
+    #expect(editor.questions.map(\.localID) == ["local-3", "local-1"])
+    let asked = try! #require(editor.questions.last)
+    #expect(asked.kind == .whichIsYours && asked.name == "Mix" && asked.candidates == ["s1", "s2"])
+    #expect(editor.unansweredDeletionQuestions == [carried], "a maybe-created question must survive to the next editor")
+
+    // A question the core asks afresh after a deferral is asked at once.
+    editor.dismissQuestion(asked)
+    #expect(!editor.questions.contains { $0.localID == "local-1" })
+    fake.outcomeHandler?(outcome("possibleDuplicate", playlist: "local-1", change: "create", localID: "local-1", name: "Mix", candidates: ["s2"]))
+    #expect(editor.questions.last?.candidates == ["s2"])
+
+    editor.close()
+    #expect(editor.questions.isEmpty)
+    editor.refreshQuestions()
+    #expect(fake.pendingReads == 2, "a closed editor reads nothing")
+}
+
+// Review blocker 3: candidates are named by id only and share the sent name, so two or more
+// cannot be told apart -- neither adopting nor deleting one is offered, and a guessed answer is
+// refused.
+@Test @MainActor
+func aCandidateIsOfferedOnlyWhenItIsTheOnlyOne() {
+    let many = DulcetPlaylistQuestion(kind: .whichIsYours, localID: "local-1", name: "Mix", candidates: ["s1", "s2"])
+    #expect(DulcetPlaylistPresentation.choices(for: many) == [.createAgain, .decideLater])
+    let manyDeletions = DulcetPlaylistQuestion(kind: .deleteMaybeCreated, localID: "local-2", name: "Mix", candidates: ["s1", "s2"])
+    #expect(DulcetPlaylistPresentation.choices(for: manyDeletions) == [.keep])
+    #expect(DulcetPlaylistPresentation.message(for: many) == DulcetStrings.playlistWhichIsYoursManyMessage("Mix", 2))
+
+    let one = DulcetPlaylistQuestion(kind: .whichIsYours, localID: "local-1", name: "Mix", candidates: ["s1"])
+    #expect(DulcetPlaylistPresentation.choices(for: one) == [.adopt("s1"), .createAgain, .decideLater])
+    let oneDeletion = DulcetPlaylistQuestion(kind: .deleteMaybeCreated, localID: "local-2", name: "Mix", candidates: ["s1"])
+    #expect(DulcetPlaylistPresentation.choices(for: oneDeletion) == [.delete("s1"), .keep])
+
+    let fake = RecordingPlaylists()
+    fake.pending = [waiting("local-1", candidates: ["s1", "s2"])]
+    let editor = DulcetPlaylistEditor(editing: fake, session: nil)
+    fake.outcomeHandler?(outcome("possiblyCreated", playlist: "local-2", change: "create", localID: "local-2", name: "Mix", candidates: ["s1", "s2"]))
+    editor.answer(many, choosing: "s2")
+    editor.answer(manyDeletions, choosing: "s1")
+    #expect(fake.edits.isEmpty, "one of several candidates was adopted or deleted on a guess")
+    #expect(editor.questions.count == 2, "a refused answer must leave its question asked")
+
+    editor.answer(many, choosing: nil)
+    #expect(fake.edits == [.chooseCreated(localID: "local-1", playlistID: nil)])
 }
 
 @Test @MainActor

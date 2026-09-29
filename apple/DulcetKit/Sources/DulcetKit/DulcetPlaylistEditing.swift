@@ -127,11 +127,33 @@ public struct DulcetPlaylistOutcome: Sendable, Hashable {
     }
 }
 
+/// One playlist change not yet on the server, as the core lists it (§18.6).
+public struct DulcetPlaylistPendingChange: Sendable, Hashable {
+    public let playlistID: String
+    /// Nil for a word outside the vocabulary.
+    public let change: DulcetPlaylistChangeKind?
+    /// For a create waiting for the person's choice: the name its candidates share.
+    public let name: String?
+    /// For a create waiting for the person's choice: the playlists it may already be.
+    public let candidates: [String]?
+
+    public init(playlistID: String, change: String, name: String?, candidates: [String]?) {
+        self.playlistID = playlistID
+        self.change = DulcetPlaylistChangeKind(rawValue: change)
+        self.name = name
+        self.candidates = candidates
+    }
+}
+
 /// A reader that can edit playlists.
 @MainActor
 public protocol DulcetPlaylistEditing: AnyObject {
     /// The completion is called exactly once.
     func editPlaylist(_ edit: DulcetPlaylistEdit, completion: @escaping @MainActor (DulcetPlaylistEditResult) -> Void)
+    /// Every change not yet on the server, oldest first; nil when they could not be read. The
+    /// completion is called exactly once. It is how a question the person has not answered is
+    /// asked again: the core emits `possibleDuplicate` once, and keeps the create waiting.
+    func pendingPlaylistChanges(completion: @escaping @MainActor ([DulcetPlaylistPendingChange]?) -> Void)
     func subscribePlaylistOutcomes(
         _ handler: @escaping @MainActor (DulcetPlaylistOutcome) -> Void
     ) -> any DulcetLibraryReaderCancellable
@@ -159,6 +181,26 @@ public struct DulcetPlaylistQuestion: Sendable, Hashable, Identifiable {
     public let name: String
     public let candidates: [String]
     public var id: String { localID + "\u{0}" + candidates.joined(separator: "\u{0}") }
+
+    /// Whether the person can be offered to adopt or delete a candidate from the question itself.
+    /// Candidates share the sent name and may include another client's playlist of that name,
+    /// and the core names them by id only, so two or more cannot be told apart here: picking one
+    /// would be deleting, or writing into, a playlist on a guess. Only a lone candidate is offered.
+    public var offersCandidate: Bool { candidates.count == 1 }
+}
+
+/// One answer a question offers, in the order it is drawn.
+public enum DulcetPlaylistQuestionChoice: Sendable, Hashable {
+    /// "Yes, it's mine": adopt the lone candidate.
+    case adopt(String)
+    /// Delete the lone candidate from the server; confirmed by being chosen here.
+    case delete(String)
+    /// None of the candidates: the create is sent again.
+    case createAgain
+    /// Leave it waiting; the playlist's page asks again.
+    case decideLater
+    /// Delete nothing.
+    case keep
 }
 
 /// What "Add to Playlist" is adding: songs in order, or an album's tracks.
@@ -239,6 +281,27 @@ public enum DulcetPlaylistPresentation {
         }
     }
 
+    /// What a question lets the person answer. A candidate is offered only when it is the only
+    /// one (see `DulcetPlaylistQuestion.offersCandidate`).
+    public static func choices(for question: DulcetPlaylistQuestion) -> [DulcetPlaylistQuestionChoice] {
+        let lone = question.offersCandidate ? question.candidates.first : nil
+        switch question.kind {
+        case .whichIsYours:
+            return (lone.map { [.adopt($0)] } ?? []) + [.createAgain, .decideLater]
+        case .deleteMaybeCreated:
+            return (lone.map { [.delete($0)] } ?? []) + [.keep]
+        }
+    }
+
+    public static func message(for question: DulcetPlaylistQuestion) -> String {
+        switch (question.kind, question.offersCandidate) {
+        case (.whichIsYours, true): DulcetStrings.playlistWhichIsYoursMessage(question.name)
+        case (.whichIsYours, false): DulcetStrings.playlistWhichIsYoursManyMessage(question.name, question.candidates.count)
+        case (.deleteMaybeCreated, true): DulcetStrings.playlistMaybeCreatedMessage(question.name)
+        case (.deleteMaybeCreated, false): DulcetStrings.playlistMaybeCreatedManyMessage(question.name, question.candidates.count)
+        }
+    }
+
     public static func question(for outcome: DulcetPlaylistOutcome) -> DulcetPlaylistQuestion? {
         switch outcome.kind {
         case let .possibleDuplicate(localID, name, candidates):
@@ -275,28 +338,127 @@ public final class DulcetPlaylistEditor {
     @ObservationIgnored private weak var session: DulcetLibrarySession?
     @ObservationIgnored private var outcomes: (any DulcetLibraryReaderCancellable)?
 
+    /// Creates the person said to decide later: not asked again until their page asks, or the
+    /// core asks afresh, or the editor starts again.
+    @ObservationIgnored private var deferred: Set<String> = []
+    /// Counts questions as they arrive, so a pending-changes read issued before one arrived never
+    /// drops it as settled.
+    @ObservationIgnored private var arrivals = 0
+    @ObservationIgnored private var arrivedAt: [String: Int] = [:]
+    @ObservationIgnored private var closed = false
+
     /// What each playlist's page keeps saying, by raw id.
     public private(set) var problems: [String: DulcetPlaylistProblem] = [:]
-    /// A create in doubt waiting for the person.
-    public private(set) var question: DulcetPlaylistQuestion?
+    /// Questions waiting for the person, oldest first. One outcome never overwrites another's
+    /// question: a second create in doubt queues behind the first.
+    public private(set) var questions: [DulcetPlaylistQuestion] = []
+    /// Creates waiting for the person's choice, by local id -- asked again from the playlist's page.
+    public private(set) var awaitingChoice: [String: DulcetPlaylistQuestion] = [:]
     /// Local ids of playlists made here, mapped to the server's id once created.
     public private(set) var created: [String: String] = [:]
     /// What "Add to Playlist" is adding, while its chooser is up.
     public var addition: DulcetPlaylistAddition?
+    /// A playlist whose deletion waits for the person to confirm it.
+    public private(set) var deletionToConfirm: String?
 
-    public init(editing: any DulcetPlaylistEditing, session: DulcetLibrarySession?) {
+    /// The question being asked now.
+    public var question: DulcetPlaylistQuestion? { questions.first }
+
+    /// Questions only this session knows: a create in doubt deleted here is gone from the core's
+    /// outbox once it is named, so its question cannot be read back from `pendingChanges`.
+    public var unansweredDeletionQuestions: [DulcetPlaylistQuestion] {
+        questions.filter { $0.kind == .deleteMaybeCreated }
+    }
+
+    /// `carried` are questions a previous editor for the same account left unanswered.
+    public init(
+        editing: any DulcetPlaylistEditing,
+        session: DulcetLibrarySession?,
+        carried: [DulcetPlaylistQuestion] = []
+    ) {
         self.editing = editing
         self.session = session
         outcomes = editing.subscribePlaylistOutcomes { [weak self] outcome in
             self?.receive(outcome)
         }
+        carried.forEach(enqueue)
+        refreshQuestions()
     }
 
     public func close() {
+        closed = true
         outcomes?.cancel()
         outcomes = nil
         addition = nil
-        question = nil
+        deletionToConfirm = nil
+        questions = []
+    }
+
+    /// Asks again every create the core still keeps waiting for a choice, except those the person
+    /// deferred; drops a question whose create no longer waits.
+    public func refreshQuestions() {
+        guard !closed else { return }
+        let issuedAt = arrivals
+        editing.pendingPlaylistChanges { [weak self] changes in
+            guard let self, !self.closed, let changes else { return }
+            var waiting: [DulcetPlaylistQuestion] = []
+            for change in changes where change.change == .create {
+                guard let candidates = change.candidates, !candidates.isEmpty else { continue }
+                waiting.append(DulcetPlaylistQuestion(
+                    kind: .whichIsYours,
+                    localID: change.playlistID,
+                    name: change.name ?? "",
+                    candidates: candidates
+                ))
+            }
+            let waitingIDs = Set(waiting.map(\.localID))
+            let settled: (DulcetPlaylistQuestion) -> Bool = { question in
+                question.kind == .whichIsYours && !waitingIDs.contains(question.localID)
+                    && (self.arrivedAt[question.localID] ?? 0) <= issuedAt
+            }
+            questions.removeAll(where: settled)
+            awaitingChoice = awaitingChoice.filter { !settled($0.value) }
+            for question in waiting {
+                awaitingChoice[question.localID] = question
+                if !deferred.contains(question.localID) { enqueue(question) }
+            }
+        }
+    }
+
+    /// Asks the question of the create `localID` again: the page's "Choose...".
+    public func reask(_ localID: String) {
+        guard let question = awaitingChoice[localID] else { return }
+        deferred.remove(localID)
+        enqueue(question)
+    }
+
+    private func enqueue(_ question: DulcetPlaylistQuestion) {
+        if question.kind == .whichIsYours { awaitingChoice[question.localID] = question }
+        if let index = questions.firstIndex(where: { $0.localID == question.localID && $0.kind == question.kind }) {
+            questions[index] = question
+        } else {
+            questions.append(question)
+        }
+    }
+
+    private func remove(_ question: DulcetPlaylistQuestion) {
+        questions.removeAll { $0.localID == question.localID && $0.kind == question.kind }
+    }
+
+    /// Asks the person to confirm deleting `playlistID`; nothing is recorded until they do.
+    public func requestDeletion(of playlistID: String) {
+        deletionToConfirm = playlistID
+    }
+
+    /// The person confirmed: the deletion is recorded.
+    public func confirmDeletion(completion: (@MainActor (DulcetPlaylistEditResult) -> Void)? = nil) {
+        guard let playlistID = deletionToConfirm else { return }
+        deletionToConfirm = nil
+        perform(.delete(playlistID: playlistID), completion: completion)
+    }
+
+    public func cancelDeletion() {
+        deletionToConfirm = nil
     }
 
     /// Makes an edit; `completion` sees what it did after the person has been told.
@@ -341,19 +503,31 @@ public final class DulcetPlaylistEditor {
         problems[playlistID] = nil
     }
 
-    /// The person's answer to the question, or nil to leave it for later.
+    /// The person's answer to the question: a candidate, or nil for none of them. A candidate is
+    /// taken only when it is the question's lone one -- one of several cannot have been told apart.
     public func answer(_ question: DulcetPlaylistQuestion, choosing candidate: String?) {
-        if self.question == question { self.question = nil }
+        if let candidate, question.candidates != [candidate] { return }
+        remove(question)
         switch question.kind {
         case .whichIsYours:
-            perform(.chooseCreated(localID: question.localID, playlistID: candidate))
+            awaitingChoice[question.localID] = nil
+            deferred.remove(question.localID)
+            perform(.chooseCreated(localID: question.localID, playlistID: candidate)) { [weak self] _ in
+                // Whatever the core recorded, what still waits is read back and asked again.
+                self?.refreshQuestions()
+            }
         case .deleteMaybeCreated:
             if let candidate { perform(.delete(playlistID: candidate)) }
+            refreshQuestions()
         }
     }
 
-    public func dismissQuestion() {
-        question = nil
+    /// Decide Later, or Keep It: a create left waiting is asked again from its page, and on the
+    /// next start; the other questions come next.
+    public func dismissQuestion(_ question: DulcetPlaylistQuestion) {
+        remove(question)
+        if question.kind == .whichIsYours { deferred.insert(question.localID) }
+        refreshQuestions()
     }
 
     /// The server id a playlist created here now has, or its own id.
@@ -367,7 +541,11 @@ public final class DulcetPlaylistEditor {
             problems[localID] = nil
         }
         if let question = DulcetPlaylistPresentation.question(for: outcome) {
-            self.question = question
+            // The core asked afresh (another create settled a candidate): ask now.
+            deferred.remove(question.localID)
+            arrivals += 1
+            arrivedAt[question.localID] = arrivals
+            enqueue(question)
         }
         problems[outcome.playlistID] = DulcetPlaylistPresentation.problem(for: outcome)
         if let message = DulcetPlaylistPresentation.notice(for: outcome) {
@@ -425,6 +603,10 @@ extension DulcetStrings {
     static let playlistDecideLater = dynamicText("playlist.question.later", fallback: "Decide Later")
     static let playlistMaybeCreatedTitle = dynamicText("playlist.question.maybe.title", fallback: "A playlist may have been created")
     static let playlistKeepIt = dynamicText("playlist.question.keep", fallback: "Keep It")
+    static let playlistItIsMine = dynamicText("playlist.question.mine", fallback: "Yes, It\u{2019}s Mine")
+    static let playlistDeleteFromServer = dynamicText("playlist.question.deleteIt", fallback: "Delete It from Your Server")
+    static let playlistAwaitingChoice = dynamicText("playlist.question.awaiting", fallback: "Dulcet is waiting for you to say whether this playlist was already created on your server.")
+    static let playlistChoose = dynamicText("playlist.question.choose", fallback: "Choose\u{2026}")
 
     static func playlistNotSaved(_ phrase: String) -> String {
         dynamicFormatted("playlist.notSaved", fallback: "Couldn\u{2019}t save a playlist change \u{2014} %@", phrase)
@@ -458,11 +640,21 @@ extension DulcetStrings {
         )
     }
 
-    static func playlistCandidate(_ index: Int) -> String {
-        dynamicFormatted("playlist.question.candidate", fallback: "Playlist %d", index)
+    static func playlistWhichIsYoursManyMessage(_ name: String, _ count: Int) -> String {
+        dynamicFormatted(
+            "playlist.question.which.many",
+            fallback: "Dulcet couldn\u{2019}t confirm that \u{201C}%@\u{201D} was created, and your server now has %d playlists with that name, which Dulcet can\u{2019}t tell apart. Look at them in Playlists. Decide Later keeps this one waiting; you can choose from its page.",
+            name,
+            count
+        )
     }
 
-    static func playlistDeleteCandidate(_ index: Int) -> String {
-        dynamicFormatted("playlist.question.deleteCandidate", fallback: "Delete Playlist %d", index)
+    static func playlistMaybeCreatedManyMessage(_ name: String, _ count: Int) -> String {
+        dynamicFormatted(
+            "playlist.question.maybe.many",
+            fallback: "You deleted \u{201C}%@\u{201D} before Dulcet could confirm it was created. Your server has %d playlists with that name, and Dulcet can\u{2019}t tell which one it made, so none is deleted. You can delete the one you don\u{2019}t want from Playlists.",
+            name,
+            count
+        )
     }
 }

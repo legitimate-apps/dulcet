@@ -224,6 +224,8 @@ public class AppleLibraryPlaylistPendingChange internal constructor(
     public val failures: Int,
     /** A create waiting for the person's choice: its candidates; null otherwise. */
     public val candidates: List<String>?,
+    /** A create waiting for the person's choice: the name the candidates share; null otherwise. */
+    public val name: String?,
 )
 
 /** The pending changes, or [errorKind] (`cancelled`, `closed`, `internalFailure`) with none. */
@@ -292,6 +294,7 @@ internal fun PendingPlaylistChange.toApple() = AppleLibraryPlaylistPendingChange
     inDoubt = inDoubt,
     failures = failures,
     candidates = candidates,
+    name = name,
 )
 
 internal fun PlaylistEditOutcome.toApple(): AppleLibraryPlaylistOutcome {

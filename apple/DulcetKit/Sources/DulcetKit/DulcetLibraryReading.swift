@@ -150,6 +150,9 @@ public final class DulcetLibrarySession {
     /// Completions waiting for every reader this session closed to stop.
     @ObservationIgnored private var closesInFlight: [@MainActor () -> Void] = []
     @ObservationIgnored private var closesPending = 0
+    /// Playlist questions the last reader's editor left unanswered, for the next one of that
+    /// account: a create in doubt deleted here is not in the core's outbox to be asked again.
+    @ObservationIgnored private var carriedPlaylistQuestions: (account: DulcetLibraryReaderAccount, questions: [DulcetPlaylistQuestion])?
 
     public private(set) var reader: (any DulcetLibraryReading)?
     public private(set) var account: DulcetLibraryReaderAccount?
@@ -269,7 +272,9 @@ public final class DulcetLibrarySession {
         outcomeSubscription = made.subscribeFavouriteOutcomes { [weak self] outcome in
             self?.receive(outcome)
         }
-        playlists = (made as? any DulcetPlaylistEditing).map { DulcetPlaylistEditor(editing: $0, session: self) }
+        let carried = carriedPlaylistQuestions?.account == account ? carriedPlaylistQuestions?.questions ?? [] : []
+        carriedPlaylistQuestions = nil
+        playlists = (made as? any DulcetPlaylistEditing).map { DulcetPlaylistEditor(editing: $0, session: self, carried: carried) }
         if requested == .connected {
             startReachability()
             made.connect { [weak self] connection in
@@ -324,6 +329,9 @@ public final class DulcetLibrarySession {
         stopReachability()
         outcomeSubscription?.cancel()
         outcomeSubscription = nil
+        if let account, let playlists, !playlists.unansweredDeletionQuestions.isEmpty {
+            carriedPlaylistQuestions = (account, playlists.unansweredDeletionQuestions)
+        }
         playlists?.close()
         playlists = nil
         for window in windows.allObjects {

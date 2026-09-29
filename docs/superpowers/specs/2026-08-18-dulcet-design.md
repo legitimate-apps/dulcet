@@ -6826,7 +6826,12 @@ said on the page. Now Playing gains a lyrics panel that lights the core's cursor
 and plays playlists read-only and has no lyrics control yet. Two facades carry them across the
 Objective-C boundary: `AppleLibraryPlaylistClient` and `AppleLibraryLyricsClient`; the lyrics bridge
 discovers the account's extensions itself (§18.4, *The Apple bridge*). The §18.6 owner requirement
-is now met on Apple.
+is now met on Apple. Every playlist deletion, the context menu's included, waits for the person's
+confirmation. Create-in-doubt questions queue and are never overwritten. A `possibleDuplicate` the
+person leaves for later is asked again from its page and from `pendingChanges()` (which now carries
+the sent name), and a `possiblyCreated` question is carried to the account's next reader. The core
+names candidates by id only, and they share the sent name, so a question offers to adopt or delete a
+candidate only when there is exactly one.
 
 **2026-09-29 — Apple library on the reader.** Phase R2b (§16.18) lands on every Apple shell: the
 one production composition every target shares gives the store a reader session, so the library,

@@ -1542,6 +1542,17 @@ final class DulcetiOSUITests: XCTestCase {
         return observed
     }
 
+    /// The write guard's own control: it launches nothing. A LAN address is refused even though
+    /// a disposable server could live there -- so could a personal one.
+    func testTheLiveServerGuardAcceptsOnlyALoopbackHost() {
+        for host in ["127.0.0.1", "127.8.9.10", "localhost", "::1", "[::1]"] {
+            XCTAssertTrue(Self.isLoopbackHost(host), host)
+        }
+        for host in ["192.168.1.20", "10.0.0.5", "music.example.com", "127.0.0.1.example.com", "1127.0.0.1", "", "0.0.0.0"] {
+            XCTAssertFalse(Self.isLoopbackHost(host), host)
+        }
+    }
+
     /// A playlist on the server opens from Library > Playlists, plays in ITS order, and a rename
     /// made on its page reaches the server (spec §18.6). The playlist is made for this run over
     /// `/rest` with the canary first and "Thirty One Seconds" second -- the reverse of their album
@@ -2335,7 +2346,8 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        proveLivePlaybackAdvancesPastScrobbleThreshold()
+        // A device cannot reach the Mac's loopback, so it may name one disposable host instead.
+        proveLivePlaybackAdvancesPastScrobbleThreshold(allowingDisposableHost: true)
     }
 
     /// Simulator-only evidence for the same live account, library, stream, audio engine, and
@@ -2352,9 +2364,10 @@ final class DulcetiOSUITests: XCTestCase {
 
     @MainActor
     private func proveLivePlaybackAdvancesPastScrobbleThreshold(
-        usingInjectedAccount: Bool = false
+        usingInjectedAccount: Bool = false,
+        allowingDisposableHost: Bool = false
     ) {
-        guard let configuration = livePlaybackConfiguration() else { return }
+        guard let configuration = livePlaybackConfiguration(allowingDisposableHost: allowingDisposableHost) else { return }
 
         let app = XCUIApplication()
         // The app's DEBUG delivery marker. The Now Playing slider shows the threshold; nothing in
@@ -2571,7 +2584,32 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(delivered["failures"], 0, "No delivery attempt may have failed")
     }
 
-    private func livePlaybackConfiguration() -> LivePlaybackConfiguration? {
+    /// The live server every proof here reads -- and writes: playlists, favourites, and a play
+    /// count whenever playback crosses the scrobble threshold. Automated writes go only to a local
+    /// disposable server, so the URL must name a loopback host, or -- for a physical device, which
+    /// cannot reach the Mac's loopback -- exactly the host `DULCET_UI_TEST_DISPOSABLE_HOST` names.
+    /// Anything else fails before the app launches and before any request.
+    private func livePlaybackConfiguration(allowingDisposableHost: Bool = false) -> LivePlaybackConfiguration? {
+        guard let configuration = unguardedLivePlaybackConfiguration() else { return nil }
+        let host = URLComponents(string: configuration.serverURL)?.host?.lowercased() ?? ""
+        let disposable = allowingDisposableHost
+            ? runtimeValue(environment: "DULCET_UI_TEST_DISPOSABLE_HOST", argument: "-dulcet-ui-test-disposable-host")?.lowercased()
+            : nil
+        guard Self.isLoopbackHost(host) || (disposable != nil && !host.isEmpty && host == disposable) else {
+            XCTFail("DULCET_UI_TEST_SERVER_URL must name a loopback host (a local disposable server); refusing to write to '\(host)'")
+            return nil
+        }
+        return configuration
+    }
+
+    static func isLoopbackHost(_ host: String) -> Bool {
+        let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+        if bare == "localhost" || bare == "::1" { return true }
+        let octets = bare.split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4 && octets.first == "127" && octets.allSatisfy { UInt8($0) != nil }
+    }
+
+    private func unguardedLivePlaybackConfiguration() -> LivePlaybackConfiguration? {
         let serverURL = runtimeValue(
             environment: "DULCET_UI_TEST_SERVER_URL",
             argument: "-dulcet-ui-test-server-url"

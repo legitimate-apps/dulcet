@@ -52,6 +52,16 @@ extension DulcetCoreLibraryReader: DulcetPlaylistEditing {
         }
     }
 
+    func pendingPlaylistChanges(completion: @escaping @MainActor ([DulcetPlaylistPendingChange]?) -> Void) {
+        _ = playlists.pendingChanges { result in
+            // A read that failed is not "nothing pending": the editor keeps what it asks.
+            let copy: [DulcetPlaylistPendingChange]? = result.errorKind != nil ? nil : result.changes.map {
+                DulcetPlaylistPendingChange(playlistID: $0.playlistId, change: $0.change, name: $0.name, candidates: $0.candidates)
+            }
+            MainActor.assumeIsolated { completion(copy) }
+        }
+    }
+
     func subscribePlaylistOutcomes(
         _ handler: @escaping @MainActor (DulcetPlaylistOutcome) -> Void
     ) -> any DulcetLibraryReaderCancellable {
