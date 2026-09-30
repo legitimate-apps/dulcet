@@ -726,7 +726,7 @@
             {"observes": "Play on a TV album screen queues every track of the album in the server's order in the production playback service and opens Now Playing; the playing row says so and, selected, opens Now Playing without restarting; the navigation row reaches Now Playing from the library and from search; Play on an artist queues every album's tracks in the artist's order",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/albumAndArtistPlayQueueEveryTrackAndNowPlayingIsReachableFromEveryScreen"},
-            {"observes": "on an API 34 Android TV emulator in core-ci, remote key events alone reach Library from the launch screen, open the albums screen and an album with several tracks, and the centre key on Play queues every track in the server's order in the production Media3 service, current at the first, with media time advancing and the TV's Now Playing in front",
+            {"observes": "on an API 34 Android TV emulator in core-ci, the app opens on Library, and remote key events open the albums screen and an album with several tracks, and the centre key on Play queues every track in the server's order in the production Media3 service, current at the first, with media time advancing and the TV's Now Playing in front",
              "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvEmulatorLibraryAlbumPlayProofTest/anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue"}
           ],

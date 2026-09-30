@@ -4,6 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +27,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +83,11 @@ internal fun TvConnectScreen(
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
     val connecting = attempt?.isActive == true
+    // A form that leaves the screen abandons its attempt, so a connect answered after that saves
+    // nothing — not even when the connector returns without noticing its scope was cancelled.
+    // `stillWanted` reads this. Defence in depth: Sign out, the one way off this form while a
+    // connect runs, is disabled meanwhile.
+    DisposableEffect(Unit) { onDispose { generation += 1; attempt?.cancel() } }
 
     // Reads live state, never `connecting` from the composition it was created in: the button may
     // keep an earlier composition's handler, and a stale "not connecting" turned Cancel into a
@@ -110,7 +121,13 @@ internal fun TvConnectScreen(
                 Text(stringResource(R.string.tv_credential_note), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 24.dp))
             }
-            Column(Modifier.width(560.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
+            // The form scrolls: with a status line and Sign out below Connect it is taller than a
+            // 1080p screen's 540 dp, and a control the D-pad reaches must also be seen. Each control
+            // brings itself into view when focused; a short form stays centred.
+            BoxWithConstraints(Modifier.width(560.dp).fillMaxHeight()) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
+                .testTag("tv.connect.form"),
+                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically)) {
                 TvField(stringResource(R.string.tv_server_address), server, { server = it }, !connecting, "tv.connect.server",
                     KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                     placeholder = stringResource(R.string.tv_server_address_hint), modifier = Modifier.focusRequester(first))
@@ -134,8 +151,10 @@ internal fun TvConnectScreen(
                         modifier = Modifier.testTag("tv.connect.status"))
                 }
                 // A saved account whose record cannot be read never reaches the app; it is signed out
-                // from here (spec §14.7). Renders nothing when no account is saved.
-                TvSignOutEntry(modifier = Modifier.padding(top = 16.dp))
+                // from here (spec §14.7). Renders nothing when no account is saved. Disabled while a
+                // connect runs, as the phone's is: a sign-out begun then would race the connect's save.
+                TvSignOutEntry(modifier = Modifier.padding(top = 16.dp), enabled = !connecting)
+            }
             }
         }
     }

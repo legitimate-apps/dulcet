@@ -64,7 +64,14 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     private val scenarios by lazy {
         LibraryReaderScenarios(compose, environment, object : ReaderAppUi {
-            override fun openLibrary() = show("library.open")
+            /**
+             * The library is the screen the app opens on. Pressing its tab while it shows would race
+             * the home's first card, which may take focus between the focus move and the centre key
+             * and turn the press into opening an album.
+             */
+            override fun openLibrary() {
+                if (!exists("library.surface")) show("library.open")
+            }
 
             override fun openSearch() = show("search.open")
 
@@ -181,7 +188,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
      * and every Back returns focus to the element that opened the screen it leaves.
      */
     @Test fun albumsAndArtistsOpenFromTheRemoteAndBackReturnsFocusToWhatOpenedThem() {
-        show("library.open")
+        // The app opens on the library: the first card takes focus when the rows arrive.
+        await("the library at launch") { exists("library.surface") }
         await("the first home row's first card to take focus") { focused("library.home.0.item.0") }
 
         press("library.view.albums")
@@ -213,8 +221,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("Back to the artists, on $ARTIST") { focused(artist) }
         back()
         await("Back to the library, on Artists") { focused("library.view.artists") }
+        // The library is the screen the app opens on: Back from search returns to it.
+        show("search.open")
+        await("search") { exists("search.query") && !exists("library.surface") }
         back()
-        await("Back from the library to search") { exists("search.query") && !exists("library.surface") }
+        await("Back from search to the library") { exists("library.surface") && !exists("search.query") }
         println("TV NAVIGATION OBSERVED albums=$album artist=$ARTIST artist-album=$second")
     }
 
@@ -247,7 +258,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val expected = (0 until songs.length()).map { songs.getJSONObject(it).getString("id") }
             assertTrue(expected.size >= 3, "setup: a multi-track album")
 
-            show("library.open")
+            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
             press("library.view.albums")
             await("the albums screen") { exists("library.albums.item.0") }
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))

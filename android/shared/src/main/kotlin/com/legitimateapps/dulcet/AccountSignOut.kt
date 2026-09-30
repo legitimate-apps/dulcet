@@ -406,6 +406,12 @@ public class AccountSignOut(
      * The key is recorded as left BEFORE the record is deleted and cleared once both are gone, so a
      * process that dies between the record's deletion and the key's still leaves the key for a
      * later launch. While the record is saved the launch retry skips its id.
+     *
+     * Keyed by [serverId]: an account saved since the sign-out was asked for — a connect that
+     * finished meanwhile — is a different id and is left saved. [AccountCredentialStore.delete]
+     * takes no id, so the check and the delete must see the same saved account: both run on the
+     * main thread, as every production save does ([connectAndSaveAccount]'s callers), with no suspension
+     * between them.
      */
     private fun deleteCredential(serverId: String): Boolean {
         val active = try { credentials.activeAccountId() } catch (_: CredentialStoreException) { return false }

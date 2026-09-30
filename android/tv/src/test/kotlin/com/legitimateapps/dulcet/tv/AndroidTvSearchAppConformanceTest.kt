@@ -54,9 +54,14 @@ class AndroidTvSearchAppConformanceTest {
     fun conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail() {
         val application = RuntimeEnvironment.getApplication() as AndroidTvSearchTestApplication
 
-        // At launch the remote starts on the navigation row, not in the field (no keyboard comes up).
+        // The app opens on the library; the bar's Search tab, one step LEFT, opens search. There the
+        // remote rests on the navigation row, not in the field (no keyboard comes up).
+        compose.waitUntil(timeoutMillis = 5_000) { focused("library.open") }
+        compose.onNodeWithTag("library.open").performKeyInput { pressKey(Key.DirectionLeft) }
         compose.waitUntil(timeoutMillis = 5_000) { focused("search.open") }
-        assertFalse(focused("search.query"), "The query field must not take focus at launch")
+        compose.onNodeWithTag("search.open").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitUntil(timeoutMillis = 5_000) { exists("search.query") && focused("search.open") }
+        assertFalse(focused("search.query"), "The query field must not take focus when search opens")
         compose.onNodeWithTag("search.open").performKeyInput { pressKey(Key.DirectionDown) }
         compose.waitUntil(timeoutMillis = 5_000) { focused("search.query") }
         // Passing over the field leaves it read-only (no input session, so no keyboard); the centre

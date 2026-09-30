@@ -95,7 +95,8 @@ class TvAccountEntryFocusTest {
         assertTrue(opened, "The account entry opens the account screen")
     }
 
-    @Test fun theAccountScreensSignOutTakesFocusAndAsksFirst() {
+    /** The account screen opens on Back, never on Sign out; DOWN reaches Sign out, which asks first. */
+    @Test fun theAccountScreenOpensOnBackAndSignOutOneStepDownAsksFirst() {
         store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
         compose.setContent {
             MaterialTheme {
@@ -107,7 +108,10 @@ class TvAccountEntryFocusTest {
             }
         }
         compose.waitForIdle()
-        awaitFocused("tv.account.signout", "the account screen opens on its one action")
+        awaitFocused("account.back", "the account screen opens on Back")
+        assertTrue(!focused("tv.account.signout"), "The account screen must not open on Sign out")
+        key("account.back", Key.DirectionDown)
+        assertTrue(focused("tv.account.signout"), "DOWN from Back reaches Sign out")
         key("tv.account.signout", Key.DirectionCenter)
         compose.waitUntil(5_000) { signOut.state.value !is SignOutState.Checking }
         assertIs<SignOutState.Confirm>(signOut.state.value, "CENTER on Sign out asks first")
