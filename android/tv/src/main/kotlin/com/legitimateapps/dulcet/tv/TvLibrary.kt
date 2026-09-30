@@ -488,7 +488,11 @@ private fun TvQualityRow(title: String, tag: String, selected: StreamingQuality,
                 TvAction(
                     label,
                     "$tag.${quality.wireName}",
-                    description = if (quality == selected) "$title: $label, selected" else "$title: $label",
+                    description = if (quality == selected) {
+                        context.getString(SharedR.string.streaming_quality_choice_selected, title, label)
+                    } else {
+                        context.getString(SharedR.string.streaming_quality_choice, title, label)
+                    },
                     icon = if (quality == selected) DulcetIcons.Check else null,
                 ) { choose(quality) }
             }

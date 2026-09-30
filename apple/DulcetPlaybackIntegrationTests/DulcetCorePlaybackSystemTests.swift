@@ -59,6 +59,49 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         )
     }
 
+    /// A quality change while the engine hands over to the preload must not discard it: the core
+    /// holds the natural end for that preload, and discarding it would resume the held end and
+    /// prepare the very track the engine is starting.
+    func testAQualityChangeDuringTheHandoverKeepsThePreloadTheEngineIsStarting() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"], sourceContainer: .flac)
+        let suite = "dulcet-quality-held-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+        let quality = DulcetCoreStreamingQuality(defaults: defaults, monitorsNetwork: false)
+        quality.setNetwork(.unmetered)
+        quality.setPreference(DulcetStreamingQualityPreference(unmetered: .original, metered: .kbps128))
+        fixture.controller.streamingQuality = quality
+
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        let preparesBefore = fixture.engine.count("prepare")
+        let discardsBefore = fixture.engine.count("discard")
+
+        fixture.emit(.ready(attemptID: preload.attempt, duration: 120, seekability: .seekable))
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        await fixture.waitFor { fixture.controller.preloadLog.contains("end-held") }
+        XCTAssertTrue(fixture.controller.preloadLog.contains("end-held"), "the handover must be under way")
+        quality.setNetwork(.metered)
+        await fixture.waitFor { fixture.controller.preloadLog.contains("quality-kept-at-handover") }
+
+        fixture.emit(.advancedToPreloaded(oldAttemptID: first, newAttemptID: preload.attempt))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.current.id.rawID == "b" }
+        XCTAssertEqual(fixture.engine.count("discard"), discardsBefore, "the handover's preload is kept")
+        XCTAssertEqual(fixture.engine.count("prepare"), preparesBefore, "and the track is not prepared again")
+        XCTAssertFalse(fixture.controller.preloadLog.contains("resumed-held-end"),
+                       "\(fixture.controller.preloadLog)")
+        XCTAssertTrue(fixture.controller.preloadLog.contains("advanced"))
+
+        // The item after it is resolved at the new quality.
+        fixture.emit(.playbackProgressBegan(attemptID: preload.attempt, wallClock: Date(), mediaPosition: 1))
+        _ = try await fixture.waitForPreload(rawID: "c")
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "preload" }?.container, .mp3)
+    }
+
     /// Every choice the settings screen offers is a core choice with the same stored name.
     func testEveryStreamingQualityChoiceIsTheCoresOwn() {
         for choice in DulcetStreamingQuality.allCases {

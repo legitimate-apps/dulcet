@@ -143,7 +143,7 @@
 "settings.streamingQuality.title" = "Streaming Quality";
 "settings.streamingQuality.unmetered" = "On Wi-Fi";
 "settings.streamingQuality.metered" = "On Cellular";
-"settings.streamingQuality.footnote" = "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. Downloads are always the original file.";
+"settings.streamingQuality.footnote" = "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. A song the server converts to meet a limit may not be scrubbable; a song already within the limit plays as the original. Downloads are always the original file.";
 "settings.streamingQuality.original" = "Original";
 "settings.streamingQuality.kbps" = "%@ kbps";
 "account.remove.confirm.title" = "Sign out of this server?";

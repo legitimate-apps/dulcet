@@ -159,7 +159,7 @@ enum DulcetStrings {
     static let streamingQualityTitle = text("settings.streamingQuality.title", "Streaming Quality")
     static let streamingQualityUnmetered = text("settings.streamingQuality.unmetered", "On Wi-Fi")
     static let streamingQualityMetered = text("settings.streamingQuality.metered", "On Cellular")
-    static let streamingQualityFootnote = text("settings.streamingQuality.footnote", "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. Downloads are always the original file.")
+    static let streamingQualityFootnote = text("settings.streamingQuality.footnote", "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. A song the server converts to meet a limit may not be scrubbable; a song already within the limit plays as the original. Downloads are always the original file.")
     static let streamingQualityOriginal = text("settings.streamingQuality.original", "Original")
     static func streamingQualityKbps(_ kbps: Int) -> String {
         formatted("settings.streamingQuality.kbps", "%@ kbps", String(kbps))

@@ -61,9 +61,14 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         val settings = StreamingQualitySettings.get(this)
         serviceScope.launch { settings.preference.collect { playback?.setStreamingQuality(it) } }
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        // Read now, not only when the callback first reports: the callback is posted to the main
+        // looper, so without this the first song resolves before any network is classified.
+        networkCost = runCatching {
+            connectivity?.let { it.getNetworkCapabilities(it.activeNetwork)?.costClass() }
+        }.getOrNull()
         networkCallbackRegistered = runCatching {
-            getSystemService(ConnectivityManager::class.java)
-                ?.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
+            connectivity?.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
         }.getOrNull() != null
         // A service created by a sign-out's release bind has nothing to release; a controller built
         // here would restore the signing-out account's queue and send its plays, only to be closed.

@@ -84,4 +84,27 @@ class PlaybackServiceStreamingQualityTest {
             application.getSystemService(android.net.ConnectivityManager::class.java)).networkCallbacks.isEmpty(),
             "the service's network callback is removed with the service")
     }
+
+    /** The first song must not resolve before the network is classified: onCreate reads it. */
+    @Test fun theNetworkIsClassifiedWhenTheServiceIsCreatedBeforeAnyCallback() {
+        val application = org.robolectric.RuntimeEnvironment.getApplication()
+        val settings = com.legitimateapps.dulcet.playback.StreamingQualitySettings.get(application)
+        settings.set(com.legitimateapps.dulcet.core.StreamingQualityPreference(
+            com.legitimateapps.dulcet.core.StreamingQuality.Original, com.legitimateapps.dulcet.core.StreamingQuality.Kbps96))
+        val manager = application.getSystemService(android.net.ConnectivityManager::class.java)
+        val shadow = org.robolectric.Shadows.shadowOf(manager)
+        val wifi = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(wifi).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        shadow.setNetworkCapabilities(manager.activeNetwork, wifi)
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val playback = assertNotNull(lifecycle.get().playback)
+            // No callback has been delivered: the looper is not idled and none is invoked.
+            assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Original, playback.nextStreamingQuality)
+        } finally {
+            lifecycle.destroy()
+            shadow.setNetworkCapabilities(manager.activeNetwork, null)
+            application.getSharedPreferences("dulcet.streaming-quality", 0).edit().clear().commit()
+        }
+    }
 }

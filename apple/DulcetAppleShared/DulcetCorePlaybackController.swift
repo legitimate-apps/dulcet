@@ -48,6 +48,9 @@ private struct DulcetPreloadInFlight {
     var resolve: (any ApplePlaybackWireOperation)?
     var corePlan: AppleRemotePlaybackPlanDto?
     var inEngine = false
+    /// The current item has ended naturally and the core holds that end for this preload: the
+    /// engine is handing over to it, and `AdvancedToPreloaded` is on its way.
+    var endHeld = false
 }
 
 @MainActor
@@ -139,6 +142,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private func streamingQualityChanged() {
         // A downloaded file's preload carries no server plan, so no quality to change.
         guard let preload, preload.resolve != nil || preload.corePlan != nil else { return }
+        // Once the engine is handing over to the preload, it IS the next item playing: discarding
+        // it would resume the held end and prepare that same track again. It plays at the quality
+        // it was resolved at, and the item after it at the new one.
+        guard !preload.endHeld else {
+            preloadLog.append("quality-kept-at-handover")
+            return
+        }
         discardPreload(preload, reason: "quality")
         requestPreloadIfNeeded()
     }
@@ -692,6 +702,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 // outgoing session reads Stopped, and presenting that would flash "Nothing is
                 // playing" between two tracks of one album.
                 holdingForPreload = true
+                if !preload.endHeld { preloadLog.append("end-held") }
+                self.preload?.endHeld = true
             } else {
                 // Registered but not yet in the engine: nothing will advance into it, so let the
                 // core start the next entry normally rather than wait for a boundary that is

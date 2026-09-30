@@ -296,7 +296,6 @@ public class AndroidPlaybackController internal constructor(
         if (added) publish()
     }
 
-    /** Resolves an opaque selected song id using this service's saved account, never intent credentials. */
     /**
      * The person's streaming-quality choice. It applies from the next item resolved; what is
      * playing is never restarted for it (spec §12.5). A download is never capped.
@@ -313,6 +312,7 @@ public class AndroidPlaybackController internal constructor(
         streamingQuality.setNetwork(network)
     }
 
+    /** Resolves an opaque selected song id using this service's saved account, never intent credentials. */
     public fun playSong(providerInstanceId: String, rawId: String, displayTitle: String) {
         if (!live()) return
         if (providerInstanceId != account.providerInstanceId || rawId.isBlank()) {
