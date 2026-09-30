@@ -27,8 +27,10 @@ class AndroidTvProductionSearchAppConformanceTest {
 
     @Test fun conf41ProductionQueryMergesAndRoutesOpaqueId() {
         val app = RuntimeEnvironment.getApplication()
-        // The app opens on the library; search is the bar's other root.
-        compose.onNodeWithTag("search.open").performClick()
+        // The app opens on the library; search is the bar's other root, opened as a remote does.
+        compose.onNodeWithTag("search.open").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        compose.onNodeWithTag("search.open").assertIsFocused()
+        compose.onNodeWithTag("search.open").performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitUntil(timeoutMillis = 5_000) { compose.onAllNodesWithTag("search.query").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("search.query").performClick()
         compose.onNodeWithTag("search.query").performKeyInput {
@@ -82,8 +84,13 @@ class AndroidTvProductionSearchAppConformanceTest {
         }
         compose.onNodeWithTag("search.result.0").assertTextContains("Dulcet")
         compose.onNodeWithTag("search.result.1").assertTextContains(environment.localOnly.title)
-        compose.onNodeWithTag("search.result.2").assertDoesNotExist()
-        println("CONF-41 OBSERVED first-character query returns committed local library rows")
+        // Only the device's rows: one character is not sent to the server. The app opens on the
+        // library, whose home rows are committed too, so more device rows than the seeded two may
+        // follow; every one of them is the device's.
+        val rows = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation].rows
+        assertTrue(rows.isNotEmpty() && rows.all { it.source == com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource.Device },
+            "A first-character query shows the device's rows only: ${rows.map { it.source }}")
+        println("CONF-41 OBSERVED first-character query returns committed local library rows (${rows.size} device rows)")
     }
 
 }
