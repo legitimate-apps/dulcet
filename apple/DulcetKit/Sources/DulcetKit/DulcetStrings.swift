@@ -445,6 +445,7 @@ enum DulcetStrings {
     static let readerFavoriteOn = text("reader.favorite.on", "Favorite")
     static let readerRating = text("reader.rating", "Rating")
     static let readerRatingNone = text("reader.rating.none", "Not rated")
+    static let readerRatingUnknown = text("reader.rating.unknown", "Rating unknown")
     static let readerRatingRemove = text("reader.rating.remove", "Remove Rating")
     static let readerRatingMenuNone = text("reader.rating.menuNone", "No Rating")
     static let readerDeviceOnlyTitle = text("reader.deviceOnly.title", "Showing what\u{2019}s on this device")

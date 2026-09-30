@@ -1098,7 +1098,9 @@ private final class DulcetCoreOutcomeListener: NSObject, AppleLibraryFavouriteOu
             targetKind: outcome.targetKind,
             rawID: outcome.rawId,
             field: outcome.field,
-            errorKind: outcome.errorKind
+            errorKind: outcome.errorKind,
+            value: outcome.value?.intValue,
+            serverValue: outcome.serverValue?.intValue
         )
         MainActor.assumeIsolated { handler(copy) }
     }

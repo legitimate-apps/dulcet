@@ -12,24 +12,33 @@ public enum DulcetRating {
     public static let stars = 1 ... 5
 
     /// Pressing a star rates the track that many stars; pressing the star that is already the
-    /// rating removes it, so a rating can be taken off without a separate control.
-    public static func value(pressing star: Int, current: Int) -> Int {
+    /// rating removes it, so a rating can be taken off without a separate control. `current` is nil
+    /// when the rating is unknown: a press is absolute, so it still sets that many stars.
+    public static func value(pressing star: Int, current: Int?) -> Int {
         star == current ? 0 : min(max(star, range.lowerBound), range.upperBound)
     }
 
-    /// VoiceOver's adjustable action: one star up or down, never past 0 or 5.
-    public static func adjusted(_ current: Int, increment: Bool) -> Int {
-        min(max(current + (increment ? 1 : -1), range.lowerBound), range.upperBound)
+    /// VoiceOver's adjustable action: one star up or down, never past 0 or 5. Nil -- nothing is
+    /// sent -- from an unknown rating: a step from a value nobody knows would overwrite the
+    /// server's with a guess.
+    public static func adjusted(_ current: Int?, increment: Bool) -> Int? {
+        guard let current else { return nil }
+        return min(max(current + (increment ? 1 : -1), range.lowerBound), range.upperBound)
     }
 
-    /// Whether star `star` is drawn filled for `rating`.
-    public static func isFilled(star: Int, rating: Int) -> Bool {
-        star <= rating
+    /// Whether star `star` is drawn filled for `rating`; none is filled while it is unknown.
+    public static func isFilled(star: Int, rating: Int?) -> Bool {
+        guard let rating else { return false }
+        return star <= rating
     }
 
     /// What VoiceOver says the value is, with any pending or held change after it.
-    public static func accessibilityValue(rating: Int, state: DulcetFavouriteChangeState) -> String {
-        let value = rating == 0 ? DulcetStrings.readerRatingNone : DulcetStrings.readerRatingValue(rating)
+    public static func accessibilityValue(rating: Int?, state: DulcetFavouriteChangeState) -> String {
+        let value = switch rating {
+        case nil: DulcetStrings.readerRatingUnknown
+        case 0: DulcetStrings.readerRatingNone
+        case let stars?: DulcetStrings.readerRatingValue(stars)
+        }
         switch state {
         case .settled: return value
         case .pending: return "\(value), \(DulcetStrings.readerFavoritePending)"
@@ -38,7 +47,7 @@ public enum DulcetRating {
     }
 
     /// What pressing star `star` would do, as its label: rate that many stars, or remove it.
-    public static func starLabel(star: Int, current: Int) -> String {
+    public static func starLabel(star: Int, current: Int?) -> String {
         value(pressing: star, current: current) == 0 ? DulcetStrings.readerRatingRemove : DulcetStrings.readerRatingRate(star)
     }
 }
@@ -77,7 +86,7 @@ struct DulcetRatingControl: View {
     }
 
     @ViewBuilder
-    private func stars(rating: Int, state: DulcetFavouriteChangeState, session: DulcetLibrarySession) -> some View {
+    private func stars(rating: Int?, state: DulcetFavouriteChangeState, session: DulcetLibrarySession) -> some View {
         let row = HStack(spacing: 0) {
             ForEach(Array(DulcetRating.stars), id: \.self) { star in
                 starButton(star, rating: rating, session: session)
@@ -101,8 +110,10 @@ struct DulcetRatingControl: View {
             .accessibilityValue(DulcetRating.accessibilityValue(rating: rating, state: state))
             .accessibilityAdjustableAction { direction in
                 switch direction {
-                case .increment: session.setRating(target, rating: DulcetRating.adjusted(rating, increment: true))
-                case .decrement: session.setRating(target, rating: DulcetRating.adjusted(rating, increment: false))
+                case .increment, .decrement:
+                    if let value = DulcetRating.adjusted(rating, increment: direction == .increment) {
+                        session.setRating(target, rating: value)
+                    }
                 @unknown default: break
                 }
             }
@@ -110,13 +121,15 @@ struct DulcetRatingControl: View {
 #endif
     }
 
-    private func starButton(_ star: Int, rating: Int, session: DulcetLibrarySession) -> some View {
+    private func starButton(_ star: Int, rating: Int?, session: DulcetLibrarySession) -> some View {
         Button {
             session.setRating(target, rating: DulcetRating.value(pressing: star, current: rating))
         } label: {
             Image(systemName: DulcetRating.isFilled(star: star, rating: rating) ? "star.fill" : "star")
                 .font(size)
                 .dulcetForeground(.accentIconOnWindow)
+                // Unknown is not unrated: dimmed, so it never reads as a server's "no rating".
+                .opacity(rating == nil ? 0.45 : 1)
                 .frame(minWidth: minimumSide, minHeight: minimumSide)
                 .contentShape(Rectangle())
         }
@@ -171,18 +184,19 @@ struct DulcetRatingMenu: View {
            session.account?.providerInstanceID == target.id.providerInstanceID {
             let rating = session.rating(target.id, published: published)
             Menu {
-                Picker(DulcetStrings.readerRating, selection: Binding(
+                // An unknown rating checks nothing; choosing is absolute, so it is always safe.
+                Picker(DulcetStrings.readerRating, selection: Binding<Int?>(
                     get: { rating },
-                    set: { session.setRating(target, rating: $0) }
+                    set: { if let value = $0 { session.setRating(target, rating: value) } }
                 )) {
                     ForEach(Array(DulcetRating.range), id: \.self) { value in
                         Text(value == 0 ? DulcetStrings.readerRatingMenuNone : DulcetStrings.readerRatingMenuStars(value))
-                            .tag(value)
+                            .tag(Optional(value))
                     }
                 }
                 .pickerStyle(.inline)
             } label: {
-                Label(DulcetStrings.readerRating, systemImage: rating == 0 ? "star" : "star.fill")
+                Label(DulcetStrings.readerRating, systemImage: (rating ?? 0) == 0 ? "star" : "star.fill")
             }
         }
     }

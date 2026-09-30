@@ -595,16 +595,79 @@ func aRatingThatIsNotSavedOrSupersededShowsTheServersValueAgain() throws {
     let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
     let target = DulcetFavouriteTarget(kind: .track, id: id)
 
-    for (kind, error) in [("notSaved", "forbidden"), ("superseded", nil), ("notRecorded", nil)] as [(String, String?)] {
+    for (kind, error, server) in [("notSaved", "forbidden", nil), ("superseded", nil, 2), ("notRecorded", nil, nil)] as [(String, String?, Int?)] {
         #expect(session.setRating(target, rating: 5))
         #expect(session.rating(id, published: 1) == 5)
         reader.outcomeHandler?(DulcetFavouriteOutcome(
-            kind: kind, targetKind: "track", rawID: "t1", field: "rating", errorKind: error))
+            kind: kind, targetKind: "track", rawID: "t1", field: "rating", errorKind: error, serverValue: server))
         #expect(session.ratingState(target) == .settled, "\(kind)")
-        #expect(session.rating(id, published: 1) == 1, "\(kind): the server's value shows again")
-        #expect(session.rating(id, published: nil) == 0, "\(kind): the tapped value is forgotten")
+        #expect(session.rating(id, published: 1) == 1, "\(kind): the row's server value shows again")
         #expect(session.notice != nil, "\(kind): the person is told")
     }
+    // No screen of this session ever published t1: the tapped value is never taken for the
+    // server's, and a failed change leaves it unknown, not 0. A superseding value is the server's.
+    #expect(session.rating(id, published: nil) == 2, "superseded: the server's value wins")
+}
+
+@Test @MainActor
+func aTrackNoScreenHasPublishedHasAnUnknownRatingNeverZero() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "queued")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+    #expect(session.rating(id, published: nil) == nil, "a restored queue's track is unknown")
+    #expect(DulcetRating.adjusted(session.rating(id, published: nil), increment: true) == nil,
+            "no relative step from an unknown rating")
+    #expect(session.setRating(target, rating: 3), "an absolute rating is still allowed")
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "notSaved", targetKind: "track", rawID: "queued", field: "rating", errorKind: "forbidden"))
+    #expect(session.rating(id, published: nil) == nil, "a refused change leaves it unknown, not the tap and not 0")
+}
+
+/// The order that exposed the defect: the core's flush republishes every open screen BEFORE it
+/// tells the outcome, so the screen has already recorded the server's value when the outcome
+/// arrives, and the outcome must not erase it.
+@Test @MainActor
+func aServerValueRepublishedBeforeTheOutcomeIsKeptAndIsWhatAnAdjustStepsFrom() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let model = DulcetLibraryWindowModel(query: .albums(.newest))
+    model.open(in: session)
+    let subscription = try #require(reader.windows.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+
+    // Superseded: the person steps 3 to 4 while another device set 5.
+    subscription.publish(window([item("track", "t1", rating: 3)], sequence: 1))
+    #expect(session.setRating(target, rating: 4))
+    subscription.publish(window([item("track", "t1", rating: 4)], sequence: 2)) // the overlay
+    #expect(session.knownRatings[id] == 3, "the overlay is not the server's value")
+    subscription.publish(window([item("track", "t1", rating: 5)], sequence: 3)) // republished first
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "superseded", targetKind: "track", rawID: "t1", field: "rating", errorKind: nil, serverValue: 5))
+    #expect(session.rating(id, published: nil) == 5, "Now Playing shows the server's 5, not empty stars")
+    #expect(DulcetRating.adjusted(session.rating(id, published: nil), increment: false) == 4,
+            "the next step goes from 5, never from a fabricated 0")
+
+    // Not saved: the republish shows the server's 3 again before the outcome.
+    subscription.publish(window([item("track", "t1", rating: 3)], sequence: 4))
+    #expect(session.setRating(target, rating: 1))
+    subscription.publish(window([item("track", "t1", rating: 1)], sequence: 5)) // the overlay
+    subscription.publish(window([item("track", "t1", rating: 3)], sequence: 6)) // republished first
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "notSaved", targetKind: "track", rawID: "t1", field: "rating", errorKind: "forbidden"))
+    #expect(session.rating(id, published: nil) == 3)
+
+    // Saved: the value set is what the server holds.
+    #expect(session.setRating(target, rating: 2))
+    subscription.publish(window([item("track", "t1", rating: 2)], sequence: 7))
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t1", field: "rating", errorKind: nil, value: 2))
+    #expect(session.rating(id, published: nil) == 2)
 }
 
 @Test @MainActor
@@ -649,8 +712,11 @@ func nowPlayingOffersStarsOnlyWhileTheReaderHoldsThePlayingTracksAccount() throw
     #expect(offered.target == DulcetFavouriteTarget(kind: .track, id: ours.id))
     #expect(offered.published == nil, "no screen has shown its rating yet")
 
+    #expect(offered.published == nil && session.rating(ours.id, published: offered.published) == nil,
+            "unknown, not unrated")
     #expect(session.setRating(offered.target, rating: 4))
-    #expect(store.nowPlayingRating(for: ours)?.published == 4, "the stars read what the person set")
+    #expect(session.rating(ours.id, published: store.nowPlayingRating(for: ours)?.published) == 4,
+            "the stars read what the person set")
     #expect(try #require(factory.made.first).ratings.map(\.1) == [4])
 
     let signedOut = DulcetPresentationStore(source: DulcetDeterministicDataSource(initialState: .nowPlaying))
@@ -668,6 +734,10 @@ func theStarsRateRemoveAndAdjustWithinZeroToFive() {
     #expect(DulcetRating.adjusted(3, increment: false) == 2)
     #expect(DulcetRating.stars.map { DulcetRating.isFilled(star: $0, rating: 2) } == [true, true, false, false, false])
     #expect(DulcetRating.accessibilityValue(rating: 0, state: .settled) == "Not rated")
+    #expect(DulcetRating.accessibilityValue(rating: nil, state: .settled) == "Rating unknown")
+    #expect(DulcetRating.stars.allSatisfy { !DulcetRating.isFilled(star: $0, rating: nil) }, "unknown fills nothing")
+    #expect(DulcetRating.adjusted(nil, increment: true) == nil && DulcetRating.adjusted(nil, increment: false) == nil)
+    #expect(DulcetRating.value(pressing: 3, current: nil) == 3, "a press is absolute")
     #expect(DulcetRating.accessibilityValue(rating: 1, state: .settled) == "1 star")
     #expect(DulcetRating.accessibilityValue(rating: 4, state: .pending) == "4 stars, Waiting to send")
     #expect(DulcetRating.accessibilityValue(rating: 4, state: .held(.forbidden)) == "4 stars, Not sent yet")

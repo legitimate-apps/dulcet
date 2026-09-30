@@ -334,6 +334,7 @@
 "reader.favorite.on" = "Favorite";
 "reader.rating" = "Rating";
 "reader.rating.none" = "Not rated";
+"reader.rating.unknown" = "Rating unknown";
 "reader.rating.remove" = "Remove Rating";
 "reader.rating.menuNone" = "No Rating";
 "reader.rating.accessibility" = "Rating for %@";
