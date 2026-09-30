@@ -1,5 +1,4 @@
 import AVFoundation
-import AudioToolbox
 import Dispatch
 import Foundation
 import MediaPlayer
@@ -80,43 +79,20 @@ struct AVPlayerDecodeFailureTests {
             mediaState.observe()
             return !failures().isEmpty
         }
-        // AVFoundation reaches this verdict by rendering: in every passing CI transcript it follows
-        // an AudioQueue logging `Prime: failed` on these frames. OBSERVED in CI (#154, #159): on a
-        // hosted simulator that audio path itself can block for a minute while the engine queue
-        // answers in milliseconds. In #154 one AudioQueue thread logged `Prime: Exiting` and its
-        // own next line, `Prime: failed`, 50 s later, about 65 s into the test; in #159 no
-        // AudioQueue was created at all until about 67 s. So the first budget keeps its teeth for
-        // everything the engine owns, and only a measured stall of the host's audio output -- an
-        // independent queue that cannot prime silence either -- buys the verdict more time.
-        let clock = ContinuousClock()
-        let started = clock.now
-        if !(await poll(for: realAVFoundationProgressTimeout, until: verdictArrived)) {
-            let waited = durationSeconds(started.duration(to: clock.now))
-            let probe = await independentAudioQueuePrimeSeconds(timeout: audioOutputProbeTimeout)
-            if let probe {
-                // The host's audio output works, so nothing outside the engine explains the
-                // silence: fail at the first budget, exactly as before.
-                let diagnostic = await waitFailureDiagnostic(
-                    "AVFoundation never reported the undecodable item as failed " +
-                        "(an independent AudioQueue primed in \(formatSeconds(probe)) s)",
-                    engine: engine,
-                    waitBudget: realAVFoundationProgressTimeout,
-                    waited: waited
-                )
-                #expect(Bool(false), Comment(rawValue: "\(diagnostic); media_state=\(describeState())"))
-            } else {
-                print("DULCET UNDECODABLE HOST AUDIO STALL independent AudioQueue did not prime within " +
-                    "\(formatSeconds(audioOutputProbeTimeout)) s; \(describeState())")
-                try await waitUntil(
-                    "AVFoundation never reported the undecodable item as failed, and the host's audio " +
-                        "output was stalled (an independent AudioQueue could not prime silence)",
-                    engine: engine,
-                    timeout: hostAudioStallGrace,
-                    mediaState: describeState,
-                    condition: verdictArrived
-                )
-            }
-        }
+        // AVFoundation reaches this verdict by rendering, and on a hosted simulator that can take
+        // well over a minute while the engine queue answers in milliseconds. OBSERVED in CI: about
+        // 65-70 s in #154 and #159, and about 88 s on #164's run 36660636272, where an independent
+        // AudioQueue primed silence in 0.016 s once the old 60 s budget ran out -- so a working host audio output
+        // does not bound the verdict's latency, and a probe of it cannot decide pass or fail. The
+        // deadline still has teeth: a verdict that never arrives, or arrives as anything but
+        // `.undecodable`, fails.
+        try await waitUntil(
+            "AVFoundation never reported the undecodable item as failed",
+            engine: engine,
+            timeout: undecodableVerdictTimeout,
+            mediaState: describeState,
+            condition: verdictArrived
+        )
         // The experiment is the one intended: the item was read through the loader, so the
         // failure is AVFoundation's verdict on these bytes, not a refusal before it saw them.
         #expect(!resource.requests.isEmpty)
@@ -127,79 +103,8 @@ struct AVPlayerDecodeFailureTests {
     }
 }
 
-/// An independent AudioQueue answering within this is a host whose audio output works. Measured
-/// locally, a healthy one primes in tens of milliseconds.
-private let audioOutputProbeTimeout: TimeInterval = 5
-
-/// Extra time for the verdict ONLY after the probe measured a stalled host audio output. The
-/// stalls that motivated it (#154, #159) released after roughly 65-70 s of test time.
-private let hostAudioStallGrace: TimeInterval = 90
-
-private func poll(for timeout: TimeInterval, until condition: @Sendable () -> Bool) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: .seconds(timeout))
-    while !condition(), clock.now < deadline {
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-    return condition()
-}
-
-/// Primes one buffer of silence through a fresh AudioQueue, on its own thread, and returns how
-/// long that took -- or nil if it had not finished within `timeout`. This measures the host's audio
-/// output independently of AVFoundation and of the engine: it shares neither their player nor
-/// their queues. A probe that never returns is abandoned, never waited for.
-private func independentAudioQueuePrimeSeconds(timeout: TimeInterval) async -> TimeInterval? {
-    let gate = ProbeResultGate()
-    return await withCheckedContinuation { continuation in
-        let thread = Thread {
-            let started = ContinuousClock.now
-            var format = AudioStreamBasicDescription(
-                mSampleRate: 44_100,
-                mFormatID: kAudioFormatLinearPCM,
-                mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
-                mBytesPerPacket: 2,
-                mFramesPerPacket: 1,
-                mBytesPerFrame: 2,
-                mChannelsPerFrame: 1,
-                mBitsPerChannel: 16,
-                mReserved: 0
-            )
-            var queue: AudioQueueRef?
-            if AudioQueueNewOutput(&format, { _, _, _ in }, nil, nil, nil, 0, &queue) == noErr, let queue {
-                var buffer: AudioQueueBufferRef?
-                let byteCount: UInt32 = 4_096
-                if AudioQueueAllocateBuffer(queue, byteCount, &buffer) == noErr, let buffer {
-                    memset(buffer.pointee.mAudioData, 0, Int(byteCount))
-                    buffer.pointee.mAudioDataByteSize = byteCount
-                    // A queue that answers with an error still answered; only silence is a stall.
-                    if AudioQueueEnqueueBuffer(queue, buffer, 0, nil) == noErr {
-                        _ = AudioQueuePrime(queue, 0, nil)
-                    }
-                }
-                AudioQueueDispose(queue, true)
-            }
-            let elapsed = durationSeconds(started.duration(to: ContinuousClock.now))
-            if gate.claim() { continuation.resume(returning: elapsed) }
-        }
-        thread.start()
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-            if gate.claim() { continuation.resume(returning: nil) }
-        }
-    }
-}
-
-private final class ProbeResultGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var claimed = false
-
-    func claim() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !claimed else { return false }
-        claimed = true
-        return true
-    }
-}
+/// Three times the longest verdict CI has shown (about 88 s on #164's run 36660636272).
+private let undecodableVerdictTimeout: TimeInterval = 270
 
 /// The case name alone: the associated attempt ids would bury the sequence a failure needs to show.
 private func eventName(_ event: DulcetPlaybackEvent) -> String {
