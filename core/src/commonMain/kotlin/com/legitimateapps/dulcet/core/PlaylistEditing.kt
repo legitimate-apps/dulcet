@@ -441,7 +441,8 @@ internal sealed interface PlaylistEditOutcome {
      * — never empty, and the change is gone from the outbox. None of them is ever a candidate for
      * another create here. A shell offers "A playlist named [name] may have been created. Delete it
      * on the server?"; the delete the person confirms is an ordinary [PlaylistEditor.delete] of the
-     * candidate's id.
+     * candidate's id, and it can be taken as soon as this is emitted: every candidate is cached
+     * first, from the live listing that found it.
      */
     data class PossiblyCreated(val localId: String, val name: String, val candidates: List<String>) : PlaylistEditOutcome {
         override val playlistId: String get() = localId
@@ -703,6 +704,13 @@ internal class PlaylistEditor(
 
     /** Local ids of playlists created in this session, mapped to their server ids. */
     private val created = mutableMapOf<String, String>()
+
+    /**
+     * The flush's most recent live listing of the server's playlists, as each was listed, with the
+     * issue sequence it was sent under — what makes a playlist offered to the person deletable at
+     * once ([rememberOffered]). Replaced by every listing.
+     */
+    private var lastListing: Pair<Long, List<CachePlaylistRecord>>? = null
 
     /** This outbox's run of 429s: [PlaylistEditOutcome.Held] is told once per run. */
     private val busyRun = BusyRun()
@@ -1807,7 +1815,10 @@ internal class PlaylistEditor(
      * never a candidate for another, whatever its name, so no create adopts a playlist the person
      * may delete, or may yet choose for the create it was offered for.
      */
-    private fun offer(outcome: PlaylistEditOutcome.PossiblyCreated) = offer(outcome.localId, outcome.candidates, outcome)
+    private fun offer(outcome: PlaylistEditOutcome.PossiblyCreated) {
+        rememberOffered(outcome.candidates)
+        offer(outcome.localId, outcome.candidates, outcome)
+    }
 
     private fun offer(outcome: PlaylistEditOutcome.PossibleDuplicate) = offer(outcome.localId, outcome.candidates, outcome)
 
@@ -1843,7 +1854,29 @@ internal class PlaylistEditor(
     }
 
     /** The server's playlists, as a lost create's candidates are looked for among them. */
-    private suspend fun listPlaylists(): List<ListedPlaylist> = parseListedPlaylists(reader.sendChecked("getPlaylists").response.body)
+    private suspend fun listPlaylists(): List<ListedPlaylist> {
+        val sent = reader.sendChecked("getPlaylists")
+        val records = parseReaderPlaylists(sent.response.body)
+        lastListing = sent.issueSeq to records
+        return records.map { ListedPlaylist(it.rawId, it.name, it.owner) }
+    }
+
+    /**
+     * Writes the playlists [ids] as the flush's last live listing showed them into the cache, before
+     * they are offered to the person to delete ([PlaylistEditOutcome.PossiblyCreated]): an edit
+     * applies only to a cached playlist, and the offer is made by a flush that may run offline — a
+     * reconnect's, before its epoch read — whose re-read of the list is then owed to a reconnect
+     * that may be slow or may fail. The header is the server's own, from a read sent just before;
+     * like a search's write-through (§16.15) it enters no list, and it is written under the issue
+     * sequence its request was sent under, so a newer read of that playlist is never overwritten.
+     * No epoch is recorded: the reading it was listed under is not known here.
+     */
+    private fun rememberOffered(ids: List<String>) {
+        val (issueSeq, records) = lastListing ?: return
+        val offered = records.filter { it.rawId in ids }
+        if (offered.isEmpty()) return
+        cache.writeEntities(CacheWriteStamp(issueSeq, cache.now(), null), CacheEntitySource.ListPage, CacheEntities(playlists = offered))
+    }
 
     /**
      * After a create whose answer was lost: every playlist that may be what it made (§18.6) — named
