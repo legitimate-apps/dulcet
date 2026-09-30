@@ -1745,6 +1745,45 @@ suffix before production forwarding made the conformance control fail.
 ("prefer original quality on Wi-Fi, cap at 192 kbps on cellular") feeds the `ClientInfo` bitrate limit
 on Path A and the `maxBitRate` hint on Path B — one preference, two encodings, never two settings.
 
+**The streaming-quality preference (§28, 2026-09-30).** The example above is an illustration, not the
+default. The preference is:
+
+- **Two choices:** one for an unmetered network and one for a metered one. Each is *Original* or a
+  cap of 320, 256, 192, 128 or 96 kbps.
+- **Default:** *Original* on both, so a person who never opens the setting streams exactly what they
+  streamed before it existed.
+- **Held per device, not per account.** The network belongs to the device, and there is one active
+  account; signing out leaves it. It is stored in one encoded form
+  (`unmetered=original;metered=192`) on both platforms. An unknown or unreadable value falls back to
+  the default field by field.
+- **Network cost is decided by the adapter, never the core.** Apple treats a satisfied `NWPath`
+  that `isExpensive` or `isConstrained` as metered. Android treats a default network without
+  `NET_CAPABILITY_NOT_METERED` as metered. The core takes the class as an input
+  (`StreamingQualityPolicy`). A network not yet classified counts as metered: the person's data is not
+  spent on their behalf before the platform has answered.
+- **Encoding.** A cap lowers `ClientInfo.maxAudioBitrate` and `maxTranscodingAudioBitrate`
+  (bits per second) on Path A. On Path B it sends `maxBitRate` (kbps) **together with a named
+  `format`** — the device profile's transcoding container unless the adapter already chose one. A
+  cap never raises a lower limit that is already there. Without a named format the reference
+  server picks its own downsampling format, and the validator (§12.4) would expect a container it
+  was never told about. *Original* leaves the request exactly as it was.
+- **Timing.** A change applies from the next item resolved and never restarts or re-prepares the one
+  playing. On Apple a gapless preload resolved at the old quality is discarded and requested again.
+  Android has no gapless preload, so its next resolve simply carries the new quality.
+- **Downloads are never capped.** A download is always the original file (`format=raw`, §14.5), and
+  a capped plan cannot become one.
+
+**OBSERVED 2026-09-30 by CONF-92 against the local disposable reference server** (FLAC source at
+123 kbps, 96 kbps cap), with the server's transcoding capability asserted first:
+- Path B: *Original* returned the FLAC file, and the cap returned MP3 with `LegacyHint(mp3, 96)`.
+- Path A: *Original* was `ExtensionDirect` FLAC, and the cap was `ExtensionTranscode` MP3.
+- Both capped bodies were smaller than the original in proportion to the cap (39,183 → 24,639 bytes
+  on each path).
+
+A known cost is left open. A lossy source in another format whose own bitrate is already under the
+cap is still re-encoded to the transcoding container. The legacy path cannot say "only if it is
+above the cap"; a Path-A decision can, but no production adapter uses Path A yet.
+
 ### 12.6 Device capability profile
 
 Path A cannot work without one, and revision 1 omitted it entirely. `core` defines a normative
@@ -6034,6 +6073,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-89 | every playlist operation through the production editor, including an offline replay, is read back raw as meant; without `formPost`, batched or refused within the query budget as the HTTP client encodes it; a lost create adopted when certain, never deleted by inference — its candidate named and removed only by a confirmed delete by id (§18.6) |
 | CONF-90 | a positional edit whose base another client changed is refused with no write and no song removed; the unchanged-list control removes exactly the intended entry (§18.6) |
 | CONF-91 | another user's playlist is not editable to the reader, the editor or the server (code 50/70); the admin override recorded; the own-playlist control saved (§18.6, §10.4) |
+| CONF-92 | a streaming-quality cap is transcoded on both delivery paths: the legacy stream carries `maxBitRate` with a named format and returns that format, the extension's `ClientInfo` cap turns direct play into a transcode, each capped body is proportionally smaller than the original, and *Original* is the untouched control; the server's transcoding capability asserted first (§12.5) |
 | CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
 
 ### 20.5 Facade header review
@@ -7257,6 +7297,51 @@ where it was pressed. Apple TV's Now Playing had no lyrics control at all; it no
 panel as the other Apple players, wider in one column, with focus kept on the control across the
 layout change and plain lyrics made focusable so the remote can scroll them. §16.20 and §18.4 are
 amended in place.
+
+**2026-09-30 — A streaming-quality preference, encoded on both delivery paths (§12.5).** §12.5 named
+one preference with two encodings, but nothing defined its values, scope or default, and no platform
+offered it. It is now defined. It holds one choice for an unmetered network and one for a metered
+network: *Original*, or a cap of 320, 256, 192, 128 or 96 kbps. It defaults to *Original* on both,
+so nothing changes until a person picks a cap. It is held per device, and signing out leaves it.
+
+The adapter classifies the network: Apple from `NWPathMonitor`, Android from
+`NET_CAPABILITY_NOT_METERED`. A network not yet classified counts as metered.
+
+- **Encoding.** A cap lowers the `ClientInfo` bitrate limits on Path A. On Path B it sends
+  `maxBitRate` with a named `format`. A cap without a format would leave the reference server to
+  choose a downsampling format the validator was never told to expect.
+- **Timing.** A change applies from the next item resolved and never restarts the current one. On
+  Apple, a gapless preload resolved at the old quality is discarded and requested again.
+- **Downloads** stay the original file.
+- **The 96 kbps choice** exists partly because the reference corpus has no source above 128 kbps.
+  CONF-92 needs a cap below a real source, and it is a sensible cellular choice in its own right.
+- **Where the setting lives:**
+  - Mac: a Settings scene.
+  - iPhone, iPad and Apple TV: a section of the Connection screen.
+  - Android phone: the account dialog.
+  - Android TV: the Account screen, below Sign out, so that screen still opens on Back with Sign out
+    one step down.
+
+CONF-92 is new. OBSERVED numbers are in §12.5.
+
+**Red first.** Each mutant below was killed by the named tests:
+
+| Mutant | Killed by |
+|---|---|
+| Core: the `ClientInfo` cap removed | the core unit tests and CONF-92 |
+| Core: the legacy format removed | the core unit tests and CONF-92 |
+| Core: the legacy `maxBitRate` removed | the core unit tests and CONF-92 |
+| Android: the controller's application of the quality removed | `AndroidPlaybackControllerTest` |
+| Android: the service's network hand-off removed | `PlaybackServiceStreamingQualityTest` |
+| Android: the service's settings hand-off removed | `PlaybackServiceStreamingQualityTest` |
+| Apple: the controller's prepare-site application removed | `DulcetCorePlaybackSystemTests` |
+| Apple: the controller's preload-site application removed | `DulcetCorePlaybackSystemTests` |
+| Apple: the controller's preload discard removed | `DulcetCorePlaybackSystemTests` |
+
+**Not covered:**
+- No UI test drives any platform's settings screen through to a capped stream.
+- No real network change is observed on any platform.
+- Production resolves only Path B today, so Path A's encoding is proved by CONF-92 alone.
 
 **2026-09-30 — Android TV opens on the library; its Sign out is never the default focus and is
 reachable at 1080p (§14.7).** A connected TV opened on an empty search field. It now opens on the
