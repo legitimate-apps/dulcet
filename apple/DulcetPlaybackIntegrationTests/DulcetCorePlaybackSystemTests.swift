@@ -341,6 +341,92 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                        "the retried attempt resumes where the failure left off")
     }
 
+    /// A Play from outside the app -- the lock screen, Control Center, a headset or a keyboard's
+    /// media key -- after a failure is that failure's Try Again, as the app's own Play is and as
+    /// Android's is (spec §12.1, §15): a new attempt of the same session, not a bare play command
+    /// addressed to an attempt that is over. It used to reach the engine as `.play` for the failed
+    /// item, which AVPlayer ignores, so the system control did nothing at all.
+    func testARemotePlayAfterAFailureIsTryAgain() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+
+        fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        // The failure state is reached, or nothing below means anything.
+        XCTAssertEqual(fixture.controller.currentPresentation.status, .failed)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.phase, "Failed")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId, failedSession)
+        XCTAssertTrue(try XCTUnwrap(fixture.controller.currentPresentation.failure).canRetry)
+
+        let router = try XCTUnwrap(fixture.engine.remoteRouter, "the controller must install its router")
+        let preparesBefore = fixture.engine.count("prepare")
+        let playsBefore = fixture.engine.count("play")
+        XCTAssertTrue(router.handleRemotePlaybackCommand(.play(sessionID: .init(failedSession))),
+                      "a remote Play on the failed session must be accepted")
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        XCTAssertNotEqual(retried, first, "a remote Play after a failure is a new attempt")
+        XCTAssertEqual(fixture.session(ofPrepare: retried), failedSession,
+                       "...of the same session, exactly as Try Again")
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.attemptId, retried.rawValue)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0, "the failed entry, not the next")
+        XCTAssertEqual(fixture.engine.count("play"), playsBefore,
+                       "no bare play may be addressed to the attempt that failed")
+
+        fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.engine.count("seek") > 0 }
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "seek" }?.position, 40,
+                       "the remote retry resumes where the failure left off, as Try Again does")
+    }
+
+    /// A headset's single button sends toggle, not play. After a failure nothing is playing, so
+    /// toggle is Play, and Play is Try Again. Pause, by contrast, has nothing to act on and must
+    /// not start anything.
+    func testARemoteToggleAfterAFailureIsTryAgainAndPauseStartsNothing() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        XCTAssertEqual(fixture.controller.currentPresentation.status, .failed)
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.phase, "Failed")
+        let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+        let router = try XCTUnwrap(fixture.engine.remoteRouter, "the controller must install its router")
+
+        let preparesBeforePause = fixture.engine.count("prepare")
+        _ = router.handleRemotePlaybackCommand(.pause(sessionID: .init(failedSession)))
+        await fixture.waitFor { fixture.engine.count("prepare") > preparesBeforePause }
+        XCTAssertEqual(fixture.engine.count("prepare"), preparesBeforePause, "Pause must not retry")
+        XCTAssertEqual(fixture.controller.currentPresentation.status, .failed)
+
+        XCTAssertTrue(router.handleRemotePlaybackCommand(.toggle(sessionID: .init(failedSession))))
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBeforePause)
+        XCTAssertNotEqual(retried, first)
+        XCTAssertEqual(fixture.session(ofPrepare: retried), failedSession,
+                       "a toggle after a failure before start keeps the session, as Try Again does")
+    }
+
+    /// The app's own Play goes the same way: one path, whichever control pressed it.
+    func testTheAppsOwnPlayAfterAFailureIsTryAgain() async throws {
+        let fixture = makeFixture(tracks: ["a", "b"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.failedBeforeStart(attemptID: first, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.phase, "Failed")
+        let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+
+        let preparesBefore = fixture.engine.count("prepare")
+        fixture.controller.send(.play)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: preparesBefore)
+        XCTAssertNotEqual(retried, first)
+        XCTAssertEqual(fixture.session(ofPrepare: retried), failedSession)
+    }
+
     /// A failure at the end left nothing to resume: Try Again replays the track as a new session,
     /// from the start (spec §12.1), so the second listen is a play of its own.
     func testRetryAfterAFailureAtTheEndReplaysInANewSessionFromTheStart() async throws {
@@ -868,7 +954,14 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
         completion(outcome)
     }
 
-    func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?) {}
+    private var router: (any DulcetRemotePlaybackCommandRouting)?
+
+    /// The router the controller installed: what a system control reaches, and nothing else.
+    var remoteRouter: (any DulcetRemotePlaybackCommandRouting)? { lock.withLock { router } }
+
+    func setRemoteCommandRouter(_ router: (any DulcetRemotePlaybackCommandRouting)?) {
+        lock.withLock { self.router = router }
+    }
 
     func updateRemoteCommandCapabilities(
         _ capabilities: DulcetRemoteCommandCapabilities,
