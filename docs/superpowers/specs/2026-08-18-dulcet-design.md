@@ -2884,6 +2884,14 @@ could not have been sent — the credential that would send them is the unreadab
 this change they were stranded rather than deleted, but the loss is not announced. Removal leaves the last-selected tab (a preference holding no account data).
 Why the mark moved is the §28 entry of 2026-09-29.
 
+**A connect in flight when that form's Sign out is chosen (§28, 2026-09-30).** The removal is keyed
+by the id it was asked about. A connect that completes first saves a new id, which the removal
+leaves saved and the app then shows; only the old id's record and data are removed. Once the
+removal is under way the signing-out screen replaces the form, and a form that leaves the screen
+abandons its attempt, so a server answering after that saves nothing — the person is shown an empty
+form, never an account they can no longer see being connected. On Android the store's delete takes
+no id, so the id check and the delete run together on the main thread, as every save does.
+
 ---
 
 ## 15. Scrobbling, play reporting, resume position
@@ -7144,6 +7152,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-09-30 — Android TV opens on the library; its Sign out is never the default focus and is
+reachable at 1080p (§14.7).** A connected TV opened on an empty search field. It now opens on the
+library, as the phone does; Back from search returns to the library, and Back from the library
+leaves the app. Until the home's first card arrives (or when there is none) the remote rests on the
+bar's Library tab. The Account screen opened with focus on Sign out, so a stray centre press began
+a sign-out; it now opens on Back, and Sign out takes no screen's default focus. On the connect form
+the Sign out offered for an unreadable account sat below a 540 dp screen's edge once a status line
+showed, clipped to zero height and unreachable by the D-pad (OBSERVED in a Robolectric composition
+at 960 x 540 dp); the form now scrolls, and a focused control brings itself into view. Checking
+that Sign out against a connect in flight found one defect: the signing-out screen replaced the
+form and cancelled its attempt, but a connector returning without noticing the cancellation still
+saved its account after the removal. The form now marks its attempt unwanted when it leaves the
+screen. §14.7 records the resulting rule.
 
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
