@@ -70,23 +70,25 @@ public fun playArtist(
 public enum class ArtistPlayResult { Played, NeedsConnection, NothingPlayable }
 
 /**
- * The playable tracks among a list's [items] — a home row holding tracks — queued from the one with
- * [trackRawId], as a library queue named [sourceName]. False, and nothing played, when the service is
- * not bound or that track cannot play now.
+ * The playable tracks among a list's [items] — a home row holding tracks, the favourites, a genre's
+ * songs — queued from the one with [trackRawId], or from the first when it is null (Play and Shuffle),
+ * as a library queue named [sourceName]. False, and nothing played, when the service is not bound,
+ * that track cannot play now, or nothing can.
  */
 public fun playTracks(
     playback: AndroidPlaybackController?,
     providerInstanceId: String,
     items: List<AndroidLibraryItem>,
-    trackRawId: String,
+    trackRawId: String?,
     sourceName: String,
+    shuffle: Boolean = false,
 ): Boolean {
     val tracks = items.filterIsInstance<AndroidLibraryItem.Track>()
         .filter { it.playability != AndroidLibraryPlayability.UnavailableOffline }
         .mapNotNull { it.toTrack(providerInstanceId) }
-    val start = tracks.indexOfFirst { it.rawId == trackRawId }
+    val start = if (trackRawId == null) 0.takeIf { tracks.isNotEmpty() } ?: -1 else tracks.indexOfFirst { it.rawId == trackRawId }
     if (playback == null || start < 0) return false
-    playback.playQueue(tracks, start, AndroidQueueSource.Library, sourceName)
+    playback.playQueue(tracks, start, AndroidQueueSource.Library, sourceName, null, shuffle)
     return true
 }
 

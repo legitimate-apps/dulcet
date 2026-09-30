@@ -70,6 +70,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.library.AlbumSort
+import com.legitimateapps.dulcet.library.rememberAlbumSort
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import com.legitimateapps.dulcet.core.AndroidDownloadStatus
 import com.legitimateapps.dulcet.downloads.AccountDownloadRequests
 import com.legitimateapps.dulcet.downloads.AlbumDownloads
@@ -123,7 +128,8 @@ import com.legitimateapps.dulcet.ui.rememberArtwork
  * file draws them with the shared words in `LibraryCopy.kt`, the same words the TV app uses.
  */
 
-private enum class LibraryView { Home, Albums, Artists, Favourites, Playlists }
+/** The library's views, in the Apple shells' section order where both have one. */
+private enum class LibraryView { Home, Albums, Artists, Genres, Favourites, Playlists }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,6 +154,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
                     LibraryView.Home -> R.string.library_view_home
                     LibraryView.Albums -> R.string.library_view_albums
                     LibraryView.Artists -> R.string.library_view_artists
+                    LibraryView.Genres -> SharedR.string.library_genres
                     LibraryView.Favourites -> R.string.library_view_favourites
                     LibraryView.Playlists -> R.string.library_view_playlists
                 })) },
@@ -159,6 +166,7 @@ internal fun LibraryHome(account: SearchAccount, session: LibrarySession, action
             LibraryView.Home -> HomeRows(account, session, actions)
             LibraryView.Albums -> AlbumsGrid(account, session, actions)
             LibraryView.Artists -> ArtistsList(session, actions)
+            LibraryView.Genres -> GenresList(session, actions)
             LibraryView.Favourites -> FavouritesList(account, session, actions, playingRawId)
             LibraryView.Playlists -> PlaylistsList(account, session, actions)
         }
@@ -228,22 +236,64 @@ internal fun RowPlaceholder(modifier: Modifier) {
 
 // ---- Albums and artists ---------------------------------------------------------------------------------
 
-/** Every album, `alphabeticalByName`, windowed (§16.12): the viewport is reported, pages extend it. */
+/**
+ * Every album, in the order the person chose ([AlbumSort], remembered on this device), windowed
+ * (§16.12): the viewport is reported, pages extend it. A different order is a different window, read
+ * from its start, and the grid returns to its top.
+ */
 @Composable
 private fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
-    val surface = rememberSurface(session, "albums") { openAlbums() }
+    val sort = rememberAlbumSort()
+    val order = sort.value
+    val surface = rememberSurface(session, "albums:$order") { openAlbums(order) }
     val publication by surface.state.collectAsState()
     val grid = rememberLazyGridState()
+    // A different order is a different list: it starts at its top.
+    var shownOrder by rememberSaveable { mutableStateOf(order) }
+    LaunchedEffect(order) {
+        if (shownOrder != order) {
+            shownOrder = order
+            grid.scrollToItem(0)
+        }
+    }
     val current = publication
     ReportViewport(surface, grid, current)
     LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("library.albums"), state = grid,
         contentPadding = PaddingValues(16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        if (current != null) item(span = { GridItemSpan(maxLineSpan) }) {
-            ListStatus(current, "library.albums", session::retry)
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                AlbumSortControl(order, sort::choose)
+                if (current != null) ListStatus(current, "library.albums", session::retry)
+            }
         }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
             AlbumCard(account, item, Modifier.testTag("library.albums.item.$position")) { actions.openAlbum(item.rawId) }
+        }
+    }
+}
+
+/** "Sort by", with the order showing and a menu of the others: the Apple shells' picker. */
+@Composable
+private fun AlbumSortControl(order: AndroidAlbumListType, choose: (AndroidAlbumListType) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(SharedR.string.library_sort_by), style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box {
+            TextButton(onClick = { open = true }, modifier = Modifier.testTag("library.albums.sort")) {
+                Text(stringResource(AlbumSort.titleResource(order)))
+                Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp))
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                for (choice in AlbumSort.CHOICES) DropdownMenuItem(
+                    text = { Text(stringResource(AlbumSort.titleResource(choice))) },
+                    leadingIcon = { if (choice == order) Icon(DulcetIcons.Check, null) else Spacer(Modifier.size(24.dp)) },
+                    onClick = { open = false; choose(choice) },
+                    modifier = Modifier.testTag("library.albums.sort.${AlbumSort.tag(choice)}")
+                        .semantics { selected = choice == order },
+                )
+            }
         }
     }
 }
@@ -255,16 +305,30 @@ private fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions:
  */
 @Composable
 private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publication: AndroidLibraryPublication?) {
+    ReportViewport(surface, publication) {
+        // Album cells are keyed by their id; the status line above them is not.
+        val visible = grid.layoutInfo.visibleItemsInfo.filter { it.key is String }
+        visible.firstOrNull()?.index to visible.lastOrNull()?.index
+    }
+}
+
+/** A list's viewport, as [ReportViewport] for a grid: rows keyed by a string, after one header item. */
+@Composable
+internal fun ReportListViewport(surface: LibrarySurface, list: LazyListState, publication: AndroidLibraryPublication?) {
+    ReportViewport(surface, publication) {
+        val visible = list.layoutInfo.visibleItemsInfo.filter { it.key is String }
+        visible.firstOrNull()?.index to visible.lastOrNull()?.index
+    }
+}
+
+@Composable
+private fun ReportViewport(surface: LibrarySurface, publication: AndroidLibraryPublication?, visible: () -> Pair<Int?, Int?>) {
     val latest by rememberUpdatedState(publication)
-    LaunchedEffect(surface, grid) {
-        snapshotFlow {
-            // Album cells are keyed by their id; the status line above them is not.
-            val visible = grid.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            visible.firstOrNull()?.index to visible.lastOrNull()?.index
-        }.collect { (first, last) ->
+    LaunchedEffect(surface) {
+        snapshotFlow(visible).collect { (first, last) ->
             val shown = latest ?: return@collect
             if (first == null || last == null) return@collect
-            // Grid index 0 is the status line; items start at 1.
+            // Index 0 is the header; items start at 1.
             val from = (first - 1).coerceAtLeast(0)
             val to = (last - 1).coerceAtLeast(from)
             surface.setViewport(from, to)
@@ -287,6 +351,24 @@ private fun ArtistsList(session: LibrarySession, actions: PhoneActions) {
             if (item is AndroidLibraryItem.Artist) ArtistRow(item, Modifier.testTag("library.artists.item.$position")) {
                 actions.openArtist(item.rawId)
             }
+        }
+    }
+}
+
+/** Every genre (`getGenres`, one response, §16.9). A genre opens its songs, as on Apple. */
+@Composable
+private fun GenresList(session: LibrarySession, actions: PhoneActions) {
+    val surface = rememberSurface(session, "genres") { openGenres() }
+    val publication by surface.state.collectAsState()
+    val current = publication
+    LazyColumn(Modifier.fillMaxSize().testTag("library.genres")) {
+        if (current != null) item { ListStatus(current, "library.genres", session::retry) }
+        itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
+            if (item is AndroidLibraryItem.Genre) ListItem(
+                headlineContent = { Text(item.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                trailingContent = { Icon(DulcetIcons.ChevronRight, null) },
+                modifier = Modifier.testTag("library.genres.item.$position").clickable { actions.openGenre(item.rawId) },
+            )
         }
     }
 }
@@ -680,6 +762,76 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
                 AlbumCard(account, album, Modifier.testTag("artist.album.$position")) { actions.openAlbum(album.rawId) }
             }
+        }
+    }
+}
+
+// ---- Genre --------------------------------------------------------------------------------------------
+
+/**
+ * One genre's songs (`getSongsByGenre`, windowed, §16.9), as the Apple shells show a genre: its name,
+ * how many songs, Play and Shuffle, and the songs, each playing the genre's playable songs from itself.
+ * A genre carries no artwork and no heart of its own.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: String, playingRawId: String?, actions: PhoneActions) {
+    val surface = rememberSurface(session, "genre:$name") { openGenre(name) }
+    val publication by surface.state.collectAsState()
+    val observation by session.observation.collectAsState()
+    val current = publication
+    val tracks = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+    val outcomeLines = rememberOutcomeLines(session, tracks.mapNotNull { it.favouriteTarget() })
+    var note by remember(name) { mutableStateOf<String?>(null) }
+    val resources = libraryResources()
+    val list = rememberLazyListState()
+    ReportListViewport(surface, list, current)
+    Column(Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation }) {
+        TopAppBar(title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
+            IconButton(onClick = actions.back, modifier = Modifier.testTag("genre.back")) {
+                Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
+            }
+        }, actions = {
+            IconButton(onClick = session::refresh, modifier = Modifier.testTag("genre.refresh")) {
+                Icon(DulcetIcons.Refresh, stringResource(R.string.library_refresh))
+            }
+        })
+        ConnectionNotices(session, accountNotices = false)
+        LazyColumn(Modifier.fillMaxSize().testTag("genre.tracks"), state = list) {
+            // One header item, so a track's list index is its position plus one (ReportListViewport).
+            item {
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp).testTag("genre.title"))
+                    val count = current?.total ?: tracks.size.takeIf { current?.itemsState == AndroidLibraryItemsState.Present }
+                    if (count != null && count > 0) Text(pluralStringResource(R.plurals.album_song_count, count, count),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("genre.count"))
+                    Spacer(Modifier.height(12.dp))
+                    val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
+                        tracks.any { it.playability != AndroidLibraryPlayability.UnavailableOffline }
+                    PlayShuffleButtons(
+                        onPlay = { note = null; actions.playTracksFrom(tracks, null, name, false) },
+                        onShuffle = { note = null; actions.playTracksFrom(tracks, null, name, true) },
+                        enabled = playable, tagPrefix = "genre")
+                    Spacer(Modifier.height(8.dp))
+                    if (current != null) ListStatus(current, "genre", session::retry)
+                    OutcomeLines(outcomeLines, null, "genre.outcome")
+                    note?.let { StatementText(it, "genre.note") }
+                }
+            }
+            itemsIndexed(tracks, key = { _, track -> track.rawId }) { position, track ->
+                TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag("genre.track.$position"),
+                    onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
+                    favouriteTag = "genre.track.$position.favourite",
+                    onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) },
+                    queue = actions.trackQueue(track, null)) {
+                    note = null
+                    actions.playTracksFrom(tracks, track.rawId, name, false)
+                }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }

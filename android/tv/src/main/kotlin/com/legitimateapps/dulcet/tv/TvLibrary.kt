@@ -31,6 +31,11 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
+import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.library.AlbumSort
+import com.legitimateapps.dulcet.library.rememberAlbumSort
+import com.legitimateapps.dulcet.library.orderLine
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -147,7 +152,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 /*
  * The TV app once an account exists (spec §3, Phase 5): the library and search, each a root, with the
- * library's album, artist, albums and artists screens pushed above it. The app opens on the library,
+ * library's album, artist, albums, artists, genres and genre screens pushed above it. The app opens on the library,
  * as the phone does: a person turning on the TV expects their music, not an empty search field. Library data comes from the
  * account's one LibrarySession (§16.18), whose windows each screen opens while it is composed and
  * closes when it goes, as the phone's do; playing goes through the service's controller with the
@@ -162,12 +167,14 @@ internal const val ROUTE_SEARCH = "search"
 internal const val ROUTE_LIBRARY = "library"
 internal const val ROUTE_ALBUMS = "albums"
 internal const val ROUTE_ARTISTS = "artists"
+internal const val ROUTE_GENRES = "genres"
 internal const val ROUTE_FAVOURITES = "favourites"
 internal const val ROUTE_PLAYLISTS = "playlists"
 internal const val ROUTE_ACCOUNT = "account"
 private const val ALBUM = "album:"
 private const val PLAYLIST = "playlist:"
 private const val ARTIST = "artist:"
+private const val GENRE = "genre:"
 
 private val routeSaver = listSaver<SnapshotStateList<String>, String>(
     { it.toList() },
@@ -237,6 +244,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
+                        top == ROUTE_GENRES -> TvGenresGrid(account, session, navigator)
                         top == ROUTE_FAVOURITES -> TvFavouritesScreen(account, session, playback, playingRawId, navigator)
                         top == ROUTE_PLAYLISTS -> TvPlaylistsGrid(account, session, navigator)
                         top == ROUTE_ACCOUNT -> TvAccountScreen(account, navigator)
@@ -246,6 +254,8 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                             TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator)
                         top.startsWith(ARTIST) ->
                             TvArtistScreen(account, session, playback, top.removePrefix(ARTIST), navigator)
+                        top.startsWith(GENRE) ->
+                            TvGenreScreen(account, session, playback, playingRawId, top.removePrefix(GENRE), navigator)
                     }
                 }
             }
@@ -535,6 +545,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
                 TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
+                TvAction(stringResource(SharedR.string.library_genres), "library.view.genres") { navigator.open(ROUTE_GENRES) }
                 TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
                 TvAction(stringResource(R.string.tv_library_playlists), "library.view.playlists") { navigator.open(ROUTE_PLAYLISTS) }
                 Spacer(Modifier.weight(1f))
@@ -627,13 +638,60 @@ private fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean
 
 // ---- Albums and artists ---------------------------------------------------------------------------------
 
-/** Every album, `alphabeticalByName`, windowed (§16.12): the viewport is reported, pages extend it. */
+/**
+ * Every album, in the order chosen on this device ([AlbumSort], shared with the phone), windowed
+ * (§16.12): the viewport is reported, pages extend it. The orders are a row of buttons above the grid,
+ * UP from the first row of albums; choosing one opens that order's own window from its start and
+ * leaves the remote on the button chosen.
+ */
 @Composable
 private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
     EnterRoute()
-    val surface = rememberSurface(session, ROUTE_ALBUMS) { openAlbums() }
-    TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums) { item ->
+    val sort = rememberAlbumSort()
+    val order = sort.value
+    val surface = rememberSurface(session, ROUTE_ALBUMS + ":" + order) { openAlbums(order) }
+    TvBrowseGrid(account, session, surface, "library.albums", R.string.tv_library_albums,
+        controls = { TvAlbumSortRow(order, sort::choose) }) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
+    }
+}
+
+/** The Apple shells' sort picker as a row of buttons, the chosen one lit and marked selected. */
+@Composable
+private fun TvAlbumSortRow(order: AndroidAlbumListType, choose: (AndroidAlbumListType) -> Unit) {
+    val returning = pendingPosition("library.albums.sort.")
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(stringResource(SharedR.string.library_sort_by), style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val state = rememberLazyListState()
+        LaunchedEffect(returning) { if (returning != null) state.scrollToItem(returning) }
+        LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(vertical = 4.dp)) {
+            itemsIndexed(AlbumSort.CHOICES) { _, choice ->
+                val chosen = choice == order
+                Button(
+                    onClick = { choose(choice) },
+                    modifier = Modifier.tvFocus("library.albums.sort.${AlbumSort.tag(choice)}").semantics { selected = chosen },
+                    colors = if (chosen) androidx.tv.material3.ButtonDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) else androidx.tv.material3.ButtonDefaults.colors(),
+                ) {
+                    if (chosen) Icon(DulcetIcons.Check, null, Modifier.size(20.dp).padding(end = 4.dp))
+                    Text(stringResource(AlbumSort.titleResource(choice)))
+                }
+            }
+        }
+    }
+}
+
+/** Every genre, one response (`getGenres`, §16.9); a genre opens its songs, as on Apple. */
+@Composable
+private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, navigator: TvNavigator) {
+    EnterRoute()
+    val surface = rememberSurface(session, ROUTE_GENRES) { openGenres() }
+    TvBrowseGrid(account, session, surface, "library.genres", SharedR.string.library_genres) { item ->
+        if (item is AndroidLibraryItem.Genre) navigator.open(GENRE + item.rawId)
     }
 }
 
@@ -649,10 +707,19 @@ private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navig
 
 @Composable
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
-                         open: (AndroidLibraryItem) -> Unit) {
+                         controls: (@Composable () -> Unit)? = null, open: (AndroidLibraryItem) -> Unit) {
     val publication by surface.state.collectAsState()
     val current = publication
     val grid = rememberLazyGridState()
+    // A different window (another order) is a different list: it starts at its top. The grid itself
+    // stays, so the control that chose it keeps the remote.
+    var opened by remember { mutableStateOf(surface) }
+    LaunchedEffect(surface) {
+        if (opened !== surface) {
+            opened = surface
+            grid.scrollToItem(0)
+        }
+    }
     ReportViewport(surface, grid, current)
     val returning = pendingPosition("$tag.item.")
     LaunchedEffect(returning, current?.items?.size) {
@@ -666,6 +733,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(title), style = MaterialTheme.typography.displaySmall)
+                controls?.invoke()
                 TvConnectionNotices(session, accountNotices = false)
                 if (current != null) TvListStatus(current, tag, session::retry)
             }
@@ -701,6 +769,26 @@ private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publica
 
 private const val PAGE_AHEAD = 12
 
+/** A list's viewport, as [ReportViewport] for a grid: rows keyed by a string, after [header] other items. */
+@Composable
+private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, publication: AndroidLibraryPublication?, header: Int) {
+    val latest by rememberUpdatedState(publication)
+    LaunchedEffect(surface, list) {
+        snapshotFlow {
+            val visible = list.layoutInfo.visibleItemsInfo.filter { it.key is String }
+            visible.firstOrNull()?.index to visible.lastOrNull()?.index
+        }.collect { (first, last) ->
+            val shown = latest ?: return@collect
+            if (first == null || last == null) return@collect
+            val from = (first - header).coerceAtLeast(0)
+            val to = (last - header).coerceAtLeast(from)
+            surface.setViewport(from, to)
+            if (shown.coverage == AndroidLibraryCoverage.Open && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
+            if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
+        }
+    }
+}
+
 /** A list's freshness and coverage, or the statement shown instead of it (the phone's `ListStatus`). */
 @Composable
 private fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit) {
@@ -715,6 +803,7 @@ private fun TvListStatus(publication: AndroidLibraryPublication, tag: String, re
             }
         }
         resources.coverageLine(publication)?.let { TvStatement(it, "$tag.coverage") }
+        resources.orderLine(publication)?.let { TvStatement(it, "$tag.order") }
         val freshness = publication.freshness
         when {
             freshness is AndroidLibraryFreshness.Unavailable ->
@@ -1266,6 +1355,98 @@ private fun TvPlaylistScreen(
     }
 }
 
+// ---- Genre ----------------------------------------------------------------------------------------------
+
+/**
+ * One genre's songs (`getSongsByGenre`, windowed, §16.9), as the Apple shells show a genre: its name,
+ * how many songs, Play and Shuffle — where the remote lands — and the songs, each playing the genre's
+ * playable songs from itself, with its heart and Play Next and Add to Queue to its right.
+ */
+@Composable
+private fun TvGenreScreen(
+    account: SearchAccount,
+    session: LibrarySession,
+    playback: AndroidPlaybackController?,
+    playingRawId: String?,
+    name: String,
+    navigator: TvNavigator,
+) {
+    EnterRoute()
+    val surface = rememberSurface(session, GENRE + name) { openGenre(name) }
+    val context = LocalContext.current
+    val publication by surface.state.collectAsState()
+    val observation by session.observation.collectAsState()
+    var note by remember(name) { mutableStateOf<String?>(null) }
+    var adding by remember(name) { mutableStateOf<TvQueueAddition?>(null) }
+    TvAddToUpNext(adding) { adding = null }
+    val resources = libraryResources()
+    val provider = account.providerInstanceId
+    // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.
+    val shown by rememberUpdatedState(publication)
+    fun play(trackRawId: String?, shuffle: Boolean) {
+        note = null
+        val items = shown?.items.orEmpty()
+        if (playTracks(playback, provider, items, trackRawId, name, shuffle)) showNowPlaying(context)
+    }
+    val tracks = publication?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+    val outcomeLines = rememberOutcomeLines(session, tracks.mapNotNull { it.favouriteTarget() })
+    val returning = pendingPosition("genre.track.")
+    val list = rememberLazyListState()
+    LaunchedEffect(returning, tracks.size) {
+        if (returning != null && returning < tracks.size) list.scrollToItem(returning + GENRE_HEADER_ITEMS)
+    }
+    ReportListViewport(surface, list, publication, GENRE_HEADER_ITEMS)
+    LazyColumn(
+        Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation },
+        state = list,
+        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TvAction(stringResource(R.string.tv_back), "genre.back", onClick = navigator.back)
+                TvAction(stringResource(R.string.tv_refresh), "genre.refresh", onClick = session::refresh)
+            }
+        }
+        val current = publication
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvConnectionNotices(session, accountNotices = false)
+                Text(name, Modifier.testTag("genre.title"), style = MaterialTheme.typography.displaySmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val count = current?.total ?: tracks.size.takeIf { current?.itemsState == AndroidLibraryItemsState.Present }
+                if (count != null && count > 0) TvStatement(resources.getQuantityString(SharedR.plurals.library_count_tracks,
+                    count, count.toString()), "genre.count")
+                val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
+                    tracks.any { !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline }
+                if (playable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    TvAction(stringResource(R.string.tv_play), "genre.play", icon = DulcetIcons.Play, default = true) { play(null, false) }
+                    TvAction(stringResource(R.string.tv_shuffle), "genre.shuffle", icon = DulcetIcons.Shuffle) { play(null, true) }
+                }
+                if (current != null) TvListStatus(current, "genre", session::retry)
+                TvOutcomeLines(outcomeLines, null, "genre.outcome")
+                note?.let { TvStatement(it, "genre.note") }
+            }
+        }
+        itemsIndexed(tracks, key = { _, track -> track.rawId }) { position, track ->
+            TvTrackRow(
+                track,
+                position,
+                playing = track.rawId == playingRawId,
+                onPlay = { play(track.rawId, false) },
+                onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
+                tagPrefix = "genre.track",
+                byPosition = true,
+                onQueue = tvTrackAddition(context, playback, provider, track, null)?.let { addition -> { adding = addition } },
+            )
+        }
+    }
+}
+
+/** The genre screen's items before its songs: the Back row, then the header. */
+private const val GENRE_HEADER_ITEMS = 2
+
 // ---- Artist ---------------------------------------------------------------------------------------------
 
 @Composable
@@ -1376,7 +1557,7 @@ private fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String
                    width: Int? = 200, onClick: () -> Unit) {
     val placeholder = when (item) {
         is AndroidLibraryItem.Artist -> DulcetIcons.Person
-        is AndroidLibraryItem.Track -> DulcetIcons.MusicNote
+        is AndroidLibraryItem.Track, is AndroidLibraryItem.Genre -> DulcetIcons.MusicNote
         else -> DulcetIcons.Album
     }
     val artwork = when (item) {

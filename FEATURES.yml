@@ -681,10 +681,31 @@
              "test": "AndroidProductionLibraryReaderAppConformanceTest/anUnreachableAnswerArrivingInTheBackgroundStartsNoRead"},
             {"observes": "a playable track tapped on the phone's album screen queues the album in the server's order, current at that track, in the production playback service",
              "workflow": "core-ci", "job": "core-ci",
-             "test": "AndroidProductionLibraryReaderAppConformanceTest/aTrackTappedPlaysTheAlbumFromThatTrack"}
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/aTrackTappedPlaysTheAlbumFromThatTrack"},
+            {"observes": "over the production session and reader against a loopback server, the phone library's Genres view lists what getGenres returns, a genre tapped opens its songs read by getSongsByGenre for that genre only, and a song row, Play and Shuffle each ask to play the genre's songs, from that song or from the first, shuffled only for Shuffle",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/theLibraryListsGenresAndAGenreOpensItsSongsFromTheSameReader"},
+            {"observes": "the phone's genre list says it is loading while getGenres is unanswered, and shows the genres once it is answered",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/aGenreListStillBeingReadSaysSoUntilItArrives"},
+            {"observes": "the phone's genre list says nothing is there when getGenres lists no genre",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/anEmptyGenreListSaysNothingIsThere"},
+            {"observes": "the phone's genre list says why, in the library's words, when the server fails the getGenres read",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/aGenreListTheServerFailedToReadSaysWhy"},
+            {"observes": "the phone's Albums screen offers the Apple shells' seven orders in their order; choosing Recently added opens a getAlbumList2 type=newest window from offset 0 and keeps the choice on the device",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/theAlbumsOfferApplesOrdersAndTheChosenOneIsReadFromItsStart"},
+            {"observes": "an album order chosen earlier on the device is the one the phone's Albums screen opens in, and no other order is read for it",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn"},
+            {"observes": "with the platform reporting no network, an album order never read shows the albums the device has seen, labelled Available offline, and reads nothing for that order",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "PhoneGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"}
           ],
           "promotion_condition": {"status": "blocked", "blocked_on": "android-app-level-window-and-lookahead-proofs", "reason": "CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests; no test in this repository drives them through the phone app, so no workflow, job or test can be named yet."},
-          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence."
+          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; genre play is observed at the action the screen calls, not in the playback service."
         },
         "androidtv": {
           "status": "partial",
@@ -728,10 +749,22 @@
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/albumAndArtistPlayQueueEveryTrackAndNowPlayingIsReachableFromEveryScreen"},
             {"observes": "on an API 34 Android TV emulator in core-ci, the app opens on Library, and remote key events open the albums screen and an album with several tracks, and the centre key on Play queues every track in the server's order in the production Media3 service, current at the first, with media time advancing and the TV's Now Playing in front",
              "workflow": "core-ci", "job": "core-ci",
-             "test": "AndroidTvEmulatorLibraryAlbumPlayProofTest/anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue"}
+             "test": "AndroidTvEmulatorLibraryAlbumPlayProofTest/anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue"},
+            {"observes": "with remote keys over the TV's routes, top bar and focus memory and the production session and reader against a loopback server, Genres is one step right of Artists on the library, opens with focus on the first genre, a genre opens its songs read by getSongsByGenre for that genre only with focus on Play, and each Back returns focus to what opened the screen",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "TvGenresAndAlbumSortTest/genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay"},
+            {"observes": "on the TV's Albums screen the orders are reached UP from the albums, the centre key on Recently added opens a getAlbumList2 type=newest window, keeps the remote on that button and keeps the choice on the device",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "TvGenresAndAlbumSortTest/theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt"},
+            {"observes": "an album order chosen earlier on the device is the one the TV's Albums screen opens in, with focus on its first album",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "TvGenresAndAlbumSortTest/theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn"},
+            {"observes": "with the platform reporting no network, an album order never read chosen on the TV shows the albums the device has seen, labelled Available offline, and reads nothing for that order",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "TvGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"}
           ],
           "promotion_condition": {"status": "blocked", "blocked_on": "android-app-level-window-and-lookahead-proofs", "reason": "CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests; no test in this repository drives them through the TV app, so no workflow, job or test can be named yet."},
-          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence."
+          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; playing a genre on the TV is not exercised by any test."
         }
       }
     },

@@ -233,14 +233,34 @@ public class LibrarySession internal constructor(
         })
     }
 
-    /** The album grid, `alphabeticalByName`, windowed (§16.12). The caller closes it. */
-    public fun openAlbums(): LibrarySurface = openSurface("albums") { listener ->
-        reader.openWindow(AndroidLibraryQuery.AlbumList(AndroidAlbumListType.AlphabeticalByName), listener)
+    /**
+     * The album grid in one of the orders the person can choose ([AlbumSort.CHOICES]), windowed
+     * (§16.12). Each order is its own window, read from its start: a different order is a different
+     * list, never a re-sort of the one on screen (§16.9). The caller closes it.
+     */
+    public fun openAlbums(type: AndroidAlbumListType = AndroidAlbumListType.AlphabeticalByName): LibrarySurface {
+        require(type in AlbumSort.CHOICES) { "not an album sort" }
+        return openSurface("albums:${type.name}") { listener ->
+            reader.openWindow(AndroidLibraryQuery.AlbumList(type), listener)
+        }
     }
 
     /** Every artist, one response (§16.9). The caller closes it. */
     public fun openArtists(): LibrarySurface = openSurface("artists") { listener ->
         reader.openWindow(AndroidLibraryQuery.Artists(), listener)
+    }
+
+    /** Every genre, one response (`getGenres`, §16.9). The caller closes it. */
+    public fun openGenres(): LibrarySurface = openSurface("genres") { listener ->
+        reader.openWindow(AndroidLibraryQuery.Genres, listener)
+    }
+
+    /**
+     * One genre's songs, windowed (`getSongsByGenre`, §16.9): the page a genre opens, as on Apple. The
+     * caller closes it when the screen goes.
+     */
+    public fun openGenre(name: String): LibrarySurface = openSurface("genre:$name") { listener ->
+        reader.openWindow(AndroidLibraryQuery.SongsByGenre(name), listener)
     }
 
     /**
@@ -717,7 +737,7 @@ internal fun LibraryConnectionState.readerOffline(): Boolean =
 
 /**
  * State observations for tests. They carry no account data: catalog ids and freshness only.
- * [surfaces] maps a surface key (`home.0`, `albums`, `album:<id>`) to every publication it received.
+ * [surfaces] maps a surface key (`home.0`, `albums:<order>`, `genre:<name>`, `album:<id>`) to every publication it received.
  */
 public data class LibraryObservationState(
     val surfaces: Map<String, List<LibraryFrame>> = emptyMap(),
