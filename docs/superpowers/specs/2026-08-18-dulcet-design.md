@@ -7248,6 +7248,30 @@ focus is off the bar or on the showing root's own tab, decided once when the ele
 screen that has nothing to restore rests the remote on its root's tab until its default arrives, so
 focus that falls off a screen that just left is not mistaken for a move along the bar.
 
+**2026-09-30 — Apple: Play after a stop restarts the entry, as Android's does (§12.1).** Before,
+Play on an Apple session whose attempt was `Stopped` was a bare engine play. The engine's stop
+removes its item and withdraws the system's Now Playing entry, so that play was refused
+(`invalidState`) and nothing sounded; the session was also presented as "nothing is playing", so no
+surface offered Play. Now the stopped entry is presented at rest, as a finished queue's is, and Play
+(or a toggle) reports the person's Play and then restarts the entry as a new session through the
+facade's `restartStoppedCurrent`, which calls the same core function as Android's Play after Stop
+(`restartCurrent`) and does nothing for a session that is live, failed (Try Again's) or absent. As
+for every start, a position the stop saved is restored, so "restart" means a new session, not
+necessarily from zero; that is Android's behaviour too. Reachability, OBSERVED from the code and
+tests rather than on a device: Apple offers no Stop of its own (the system stop command is disabled
+and no in-app control issues one), and the engine is stopped only by the controller itself -- before
+a new start, at a queue's end (which ends the session), and on sign-out (which forgets the account
+first, so that stop still presents "unavailable"). A system teardown ends the core session outright
+(`ApplePlaybackQueueFacadeTest`), so Play there already started the entry through `startCurrent`.
+The change therefore closes a path no current control reaches, and makes any future Stop behave as
+Android's. A lock-screen Play after a stop still cannot arrive: the entry is withdrawn, as after a
+queue's end. Evidence: `ApplePlaybackQueueFacadeTest.playAfterAStopRestartsTheSelectedEntryAsANewSessionAndNothingElseDoes`
+(macOS native; a mutant dropping the phase guard fails it);
+`DulcetCorePlaybackSystemTests.testPlayAfterAStopRestartsTheEntryAsANewSession` (macOS host; fails
+before the change on the missing presentation, and with the presentation but not the Play branch on
+the missing prepare); `AVPlayerEngineTests.aStopLeavesNoItemForAPlayToSoundAndWithdrawsTheSystemEntry`
+pins what the engine's stop leaves behind. Not observed on a device.
+
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
 found it could still be lost in two reachable ways, and the offer it serves not yet actionable, each

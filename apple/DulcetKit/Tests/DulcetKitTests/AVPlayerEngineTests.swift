@@ -1209,6 +1209,61 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
+    /// What a Stop leaves behind, which is why the owner answers Play after it by restarting
+    /// the entry (spec §12.1, as Android does) and never by a bare play: the engine holds no item,
+    /// so its own Play is refused, and the system's Now Playing entry is withdrawn, so a remote
+    /// Play addressed to the stopped session is not the engine's to take and never reaches the
+    /// owner through it. The stop is reported as the attempt's `.skipped`, which the core records
+    /// as `Stopped` while keeping the session.
+    @Test
+    func aStopLeavesNoItemForAPlayToSoundAndWithdrawsTheSystemEntry() async throws {
+        let clock = ManualAVPlayerEngineClock()
+        let mediaControls = RecordingSystemMediaControls()
+        let router = RecordingRemoteCommandRouter()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: RecordingAudioSession(),
+            systemMediaControls: mediaControls,
+            remoteCommandRouter: router
+        )
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(session: "stopped-session", attempt: "stopped-attempt")
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
+        // A playing entry the system shows, whose remote Play reaches the owner, or the rest
+        // proves nothing.
+        #expect(events.containsProgressBegan)
+        #expect(mediaControls.send(.play(sessionID: playbackPlan.playbackSessionID)))
+        #expect(router.commands.count == 1, "the control: before the stop a remote Play is routed")
+        let clearsBefore = mediaControls.clearCount
+
+        #expect(await execute(engine, .stop(commandID: .init("stop")))
+            == .completed(commandID: .init("stop"), result: .withoutData))
+        #expect(events.snapshot.last == .skipped(
+            attemptID: playbackPlan.attemptID,
+            position: 0.5,
+            reason: .user
+        ))
+        #expect(mediaControls.clearCount == clearsBefore + 1, "the system entry is withdrawn")
+
+        #expect(await execute(engine, .play(commandID: .init("play-after-stop")))
+            == .rejected(commandID: .init("play-after-stop"), reason: .invalidState),
+            "a bare Play after Stop has no item to play")
+        #expect(!mediaControls.send(.play(sessionID: playbackPlan.playbackSessionID)),
+                "a remote Play for the stopped session is not the engine's")
+        #expect(router.commands.count == 1, "and does not reach the owner through the engine")
+        #expect(events.snapshot.last == .skipped(
+            attemptID: playbackPlan.attemptID,
+            position: 0.5,
+            reason: .user
+        ), "nothing after the stop reports the stopped attempt as playing again")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
     @Test
     func mediaPlayerCommandCenterExposesOnlyTheV1CommandSet() {
         let controls = DulcetPlatformSystemMediaControls()
@@ -1711,7 +1766,19 @@ private final class RecordingSystemMediaControls: DulcetSystemMediaControlling,
         lock.unlock()
     }
 
-    func clear() {}
+    private var clearStorage = 0
+
+    var clearCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return clearStorage
+    }
+
+    func clear() {
+        lock.lock()
+        clearStorage += 1
+        lock.unlock()
+    }
 
     func send(_ command: DulcetRemotePlaybackCommand) -> Bool {
         lock.lock()
