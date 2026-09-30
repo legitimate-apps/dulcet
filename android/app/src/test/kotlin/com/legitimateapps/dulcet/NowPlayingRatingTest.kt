@@ -86,6 +86,11 @@ class NowPlayingRatingTest {
 
     private fun shown(tag: String = "player.rating"): Int = range(tag).current.toInt()
 
+    private fun unknown(tag: String = "player.rating"): Boolean =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config.let {
+            SemanticsProperties.ProgressBarRangeInfo !in it && it[SemanticsProperties.StateDescription] == "Rating unknown"
+        }
+
     private fun state(tag: String = "player.rating"): String =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.StateDescription]
 
@@ -106,7 +111,7 @@ class NowPlayingRatingTest {
     @Test fun theStarsChangeWithTheTapSendSetRatingAndTheShownStarTakesItAway() {
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
-        assertEquals(0, shown(), "control: a track never rated shows no stars")
+        assertTrue(unknown(), "control: a track this device has never seen has an unknown rating, not a 0")
         tapStar(4)
         settle("four stars shown") { shown() == 4 }
         settle("the rating sent") { server.answered("setRating") == 1 }
@@ -132,24 +137,64 @@ class NowPlayingRatingTest {
         settle("the refusal to be told") { ShadowToast.getTextOfLatestToast() != null }
         assertTrue(ShadowToast.getTextOfLatestToast().toString().startsWith("Couldn't save that change — "),
             "the library's words for a change that did not save: ${ShadowToast.getTextOfLatestToast()}")
-        settle("the stars to go back") { shown() == 0 }
+        settle("the stars to go back to what was known: nothing — unknown, never a made-up 0") { unknown() }
     }
 
-    /** TalkBack: one element, named Rating, stating its value, adjusted in whole stars through setProgress. */
+    /**
+     * An outcome is kept per target AND field: a heart saved on the same track after its rating was
+     * refused does not erase the refusal before a screen says it. Composed only once both outcomes
+     * have arrived, so whether the refusal survives is decided by the session, not by frame timing.
+     */
+    @Test fun aRefusedRatingThenASavedHeartOnTheSameTrackAreBothKeptAndTheRefusalIsSaid() {
+        server.refuse = true
+        val target = com.legitimateapps.dulcet.core.AndroidLibraryEntity(com.legitimateapps.dulcet.core.AndroidLibraryEntityKind.Track, TRACK)
+        session.setRating(target, 3)
+        settle("the rating refused") { server.answered("setRating") == 1 && session.observation.value.changeOutcomes.isNotEmpty() }
+        session.setFavourite(target, true)
+        settle("both outcomes told") { session.observation.value.changeOutcomes.size == 2 }
+        val told = session.observation.value.changeOutcomes
+        assertEquals(listOf(com.legitimateapps.dulcet.core.AndroidLibraryChangeField.Rating, com.legitimateapps.dulcet.core.AndroidLibraryChangeField.Favourite),
+            told.map { it.field }, "setup: the refusal, then the saved heart")
+        assertTrue(told[1] is com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome.Saved, "setup: the heart saved: $told")
+        compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
+        settle("the refusal to be said") { ShadowToast.getTextOfLatestToast() != null }
+        assertTrue(ShadowToast.getTextOfLatestToast().toString().startsWith("Couldn't save that change — "),
+            "the refused rating is said, though a heart was saved after it: ${ShadowToast.getTextOfLatestToast()}")
+        assertEquals(1, ShadowToast.shownToastCount(), "said once: the saved heart needs no words")
+    }
+
+    /**
+     * TalkBack: one element, named Rating, stating its value. Unknown, it offers only absolute sets —
+     * no range and no setProgress, since a step from an unknown rating would overwrite the server's
+     * with 1. Known, it is adjusted in whole stars through setProgress.
+     */
     @Test fun forTalkBackTheStarsAreOneAdjustableElement() {
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
-        val node = compose.onNodeWithTag("player.rating").fetchSemanticsNode()
+        var node = compose.onNodeWithTag("player.rating").fetchSemanticsNode()
         assertEquals(listOf("Rating"), node.config[SemanticsProperties.ContentDescription])
+        assertTrue(node.children.isEmpty(), "the five stars are not five screen-reader stops")
+        assertEquals("Rating unknown", state())
+        assertTrue(SemanticsActions.SetProgress !in node.config, "no relative adjust from an unknown rating")
+        val offered = node.config[SemanticsActions.CustomActions]
+        assertEquals((1..5).map { "Rate $it of 5 stars" }, offered.map { it.label })
+        compose.runOnIdle { offered[1].action() }
+        settle("two stars shown") { SemanticsProperties.ProgressBarRangeInfo in compose.onNodeWithTag("player.rating").fetchSemanticsNode().config && shown() == 2 }
+        settle("the absolute rating sent") { server.answered("setRating") == 1 }
+        assertEquals("2", server.requests("setRating").single()["rating"])
+
+        node = compose.onNodeWithTag("player.rating").fetchSemanticsNode()
         assertEquals(0f..5f, range("player.rating").range)
         assertEquals(4, range("player.rating").steps, "whole stars: four steps between 0 and 5")
-        assertEquals("Not rated", state())
-        assertTrue(node.children.isEmpty(), "the five stars are not five screen-reader stops")
+        assertEquals("2 of 5 stars", state())
         compose.onNodeWithTag("player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(2.6f) }
         settle("three stars shown") { shown() == 3 }
         assertEquals("3 of 5 stars", state())
-        settle("the rating sent") { server.answered("setRating") == 1 }
-        assertEquals("3", server.requests("setRating").single()["rating"])
+        settle("the rating sent") { server.answered("setRating") == 2 }
+        assertEquals("3", server.requests("setRating").last()["rating"])
+        compose.onNodeWithTag("player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
+        settle("the rating taken away") { shown() == 0 }
+        assertEquals("Not rated", state(), "a known 0 is Not rated, distinct from unknown")
     }
 
     /** The row menu's Rate… opens the stars; a tap rates the song, and the row's value is what it shows. */

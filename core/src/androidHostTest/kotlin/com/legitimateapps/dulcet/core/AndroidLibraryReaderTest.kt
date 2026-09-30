@@ -635,6 +635,81 @@ class AndroidLibraryReaderTest {
         assertEquals(2, server.ratings[track.rawId], "the server's value was not overwritten")
     }
 
+    /**
+     * A rating and a heart on ONE track, through the watches: each field's outcome reaches its own
+     * watch only. A saved heart does not become a rating of 1, a saved rating does not fill the
+     * heart, and a refused rating leaves the heart as it was — for a track with no cache row, where
+     * the watches read only what this reader was told.
+     */
+    @Test
+    fun aRatingAndAFavouriteOutcomeOnOneTrackDoNotCross() {
+        val reader = reader()
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "album-0004-track-0")
+        val ratings = Collections.synchronizedList(mutableListOf<Int?>())
+        val hearts = Collections.synchronizedList(mutableListOf<Boolean?>())
+        reader.watchRating(target) { ratings += it }
+        reader.watchFavourite(target) { hearts += it }
+        pollUntil("the first values") { ratings.snapshot().isNotEmpty() && hearts.snapshot().isNotEmpty() }
+        assertEquals(listOf<Int?>(null), ratings.snapshot(), "fixture: no rating known")
+        assertEquals(listOf<Boolean?>(null), hearts.snapshot(), "fixture: no favourite state known")
+        val outcomes = Collections.synchronizedList(mutableListOf<AndroidLibraryChangeOutcome>())
+        reader.addChangeOutcomeListener { outcomes += it }
+
+        assertTrue(reader.setFavourite(target, true))
+        pollUntil("the heart saved") { outcomes.snapshot().size == 1 }
+        assertEquals(AndroidLibraryChangeField.Favourite, outcomes.snapshot().single().field)
+        Thread.sleep(200)
+        assertEquals(true, hearts.snapshot().last(), "the saved heart stays: ${hearts.snapshot()}")
+        assertTrue(ratings.snapshot().all { it == null }, "a saved heart told the rating watch a value: ${ratings.snapshot()}")
+
+        assertTrue(reader.setRating(target, 4))
+        pollUntil("the rating saved") { outcomes.snapshot().size == 2 }
+        Thread.sleep(200)
+        assertEquals(4, ratings.snapshot().last(), "the saved rating stays: ${ratings.snapshot()}")
+        assertEquals(true, hearts.snapshot().last(), "a saved rating left the heart alone: ${hearts.snapshot()}")
+
+        server.failWithCode["setRating"] = 70
+        assertTrue(reader.setRating(target, 2))
+        pollUntil("the rating refused") { outcomes.snapshot().size == 3 }
+        assertTrue(outcomes.snapshot().last() is AndroidLibraryChangeOutcome.NotSaved, "setup: refused: ${outcomes.snapshot()}")
+        pollUntil("the rating back to the acknowledged 4") { ratings.snapshot().last() == 4 }
+        Thread.sleep(200)
+        assertEquals(4, ratings.snapshot().last(), "a refusal returns the stars to the last value the server acknowledged")
+        assertEquals(true, hearts.snapshot().last(), "a refused rating left the heart alone: ${hearts.snapshot()}")
+
+        server.failWithCode.clear()
+        assertTrue(reader.setFavourite(target, false))
+        pollUntil("the unstar saved") { outcomes.snapshot().size == 4 }
+        Thread.sleep(200)
+        assertEquals(false, hearts.snapshot().last())
+        assertEquals(4, ratings.snapshot().last(), "a saved unstar is not a rating of 0: ${ratings.snapshot()}")
+    }
+
+    /**
+     * A refused rating on a track with no cache row and no acknowledgement returns the watch to
+     * UNKNOWN — never a made-up 0, which the stars would show as "Not rated" and a relative adjust
+     * would step from.
+     */
+    @Test
+    fun aRefusedRatingWithNothingKnownReturnsTheWatchToUnknownNeverZero() {
+        val reader = reader()
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "album-0004-track-0")
+        val told = Collections.synchronizedList(mutableListOf<Int?>())
+        reader.watchRating(target) { told += it }
+        pollUntil("the first value") { told.snapshot().isNotEmpty() }
+        assertEquals(listOf<Int?>(null), told.snapshot(), "fixture: nothing is known about the track")
+        val outcomes = Collections.synchronizedList(mutableListOf<AndroidLibraryChangeOutcome>())
+        reader.addChangeOutcomeListener { outcomes += it }
+        server.failWithCode["setRating"] = 70
+        assertTrue(reader.setRating(target, 3))
+        pollUntil("the refusal") { outcomes.snapshot().isNotEmpty() }
+        assertTrue(outcomes.snapshot().single() is AndroidLibraryChangeOutcome.NotSaved, "setup: refused: ${outcomes.snapshot()}")
+        pollUntil("the watch back to unknown") { told.snapshot().size >= 3 }
+        Thread.sleep(200)
+        assertEquals(listOf(null, 3, null), told.snapshot(), "unknown, the tap, then unknown again — never 0")
+        assertEquals(null, server.ratings[target.rawId], "control: the server holds no rating")
+    }
+
     /** A copy taken under the list's lock: the reader's thread appends while the test reads. */
     private fun <T> MutableList<T>.snapshot(): List<T> = synchronized(this) { toList() }
 

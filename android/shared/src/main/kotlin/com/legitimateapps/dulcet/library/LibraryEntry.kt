@@ -148,7 +148,8 @@ public fun AndroidLibraryItem.isFavourite(): Boolean = when (this) {
 
 /**
  * The outcome lines (§16.20) about [targets] — the entities a screen shows a heart for — in the
- * order the targets are given, each once. They are dismissed when the screen goes, so an outcome is
+ * order the targets are given, each once: a target's heart and stars each say their own outcome, on
+ * one line ([outcomeLines]). They are dismissed when the screen goes, so an outcome is
  * only ever said on a screen that shows its entity.
  */
 @Composable
@@ -161,5 +162,5 @@ public fun rememberOutcomeLines(session: LibrarySession, targets: List<AndroidLi
     val seen = remember(session) { mutableSetOf<AndroidLibraryEntity>() }
     seen += shown
     DisposableEffect(session) { onDispose { seen.forEach(session::dismissOutcome) } }
-    return shown.mapNotNull { target -> resources.outcomeLine(outcomes[target])?.let { target to it } }
+    return shown.mapNotNull { target -> resources.outcomeLines(outcomes, target)?.let { target to it } }
 }

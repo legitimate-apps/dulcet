@@ -103,7 +103,11 @@
     <string name="library_rating_none">Not rated</string>
     <string name="library_rating_value">%1$d of 5 stars</string>
     <string name="library_rating_set">Rate %1$d of 5 stars</string>
-    <string name="library_rating_clear">Remove the rating of %1$d stars</string>
+    <plurals name="library_rating_clear">
+        <item quantity="one">Remove the rating of %1$d star</item>
+        <item quantity="other">Remove the rating of %1$d stars</item>
+    </plurals>
+    <string name="library_rating_unknown">Rating unknown</string>
     <string name="library_rating_menu">Rate…</string>
     <string name="library_rating_done">Done</string>
     <string name="library_favourites_songs">Songs</string>

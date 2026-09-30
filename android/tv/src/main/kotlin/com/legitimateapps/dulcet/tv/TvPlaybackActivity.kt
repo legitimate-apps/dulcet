@@ -180,11 +180,11 @@ private class ControllerActions(private val controller: AndroidPlaybackControlle
 internal class TvPlayerFavourite(val favourite: Boolean, val line: String?, val toggle: () -> Unit)
 
 /**
- * The playing track's stars on the TV player: its rating as this device knows it (0 unrated), and
- * [rate] to set one, 0 removing it. Its outcome is the heart's line ([TvPlayerFavourite.line]), which
+ * The playing track's stars on the TV player: its rating as this device knows it (0 unrated, null
+ * unknown), and [rate] to set one, 0 removing it. Its outcome is the heart's line ([TvPlayerFavourite.line]), which
  * says every change to the playing track, a rating's included.
  */
-internal class TvPlayerRating(val rating: Int, val rate: (Int) -> Unit)
+internal class TvPlayerRating(val rating: Int?, val rate: (Int) -> Unit)
 
 @Composable
 internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
@@ -206,7 +206,7 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
         null
     }
     val rating = if (library != null && target != null) {
-        TvPlayerRating(rememberWatchedRating(library, target) ?: 0) { library.setRating(target, it) }
+        TvPlayerRating(rememberWatchedRating(library, target)) { library.setRating(target, it) }
     } else {
         null
     }
@@ -335,15 +335,17 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
 private fun TvRatingStars(rating: TvPlayerRating) {
     val latest by rememberUpdatedState(rating)
     val resources = LocalContext.current.resources
-    val shown = rating.rating.coerceIn(0, MAX_RATING)
+    // Null is unknown: no star selected, said "Rating unknown", and no relative adjust (adjustableRating).
+    val shown = rating.rating?.coerceIn(0, MAX_RATING)
+    val filled = shown ?: 0
     val label = stringResource(SharedR.string.library_rating)
     Row(Modifier.padding(top = 4.dp).testTag("tv.player.rating").semantics {
-        adjustableRating(label, resources.ratingState(shown), shown) { latest.rate(it) }
+        adjustableRating(label, resources.ratingState(shown), shown, resources) { latest.rate(it) }
     }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         for (star in 1..MAX_RATING) {
             IconButton(onClick = { latest.rate(ratingForTap(latest.rating, star)) },
-                modifier = Modifier.size(40.dp).testTag("tv.player.rating.$star").semantics { selected = star <= shown }) {
-                Icon(if (star <= shown) DulcetIcons.Star else DulcetIcons.StarBorder,
+                modifier = Modifier.size(40.dp).testTag("tv.player.rating.$star").semantics { selected = star <= filled }) {
+                Icon(if (star <= filled) DulcetIcons.Star else DulcetIcons.StarBorder,
                     resources.ratingStarAction(shown, star), Modifier.size(22.dp))
             }
         }

@@ -83,6 +83,31 @@ class TvPlayerFavouriteSessionTest {
         settle("the heart to empty") { !heartSelected() }
     }
 
+    /**
+     * The stars over the same session: a track this device has never seen has an unknown rating —
+     * no star selected, said "Rating unknown", no relative adjust — never a made-up 0. The first star
+     * then rates it 1; it does not "remove" a rating nobody knows.
+     */
+    @Test fun anUncachedTracksRatingIsUnknownAndTheFirstStarRatesIt() {
+        val state = AndroidPlaybackState(title = "Heart", phase = "Playing", playbackSessionId = "s",
+            queue = listOf(AndroidQueueEntry("q1", AndroidTrack("provider:tvheart", TRACK, "Heart"))), currentIndex = 0)
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlaying(account, state, null) } }
+        compose.waitForIdle()
+        val row = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode().config
+        assertEquals("Rating unknown", row[SemanticsProperties.StateDescription])
+        assertTrue(SemanticsActions.SetProgress !in row, "no relative adjust from an unknown rating")
+        assertTrue((1..5).none { starSelected(it) }, "no star selected while unknown")
+        compose.onNodeWithTag("tv.player.rating.1").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        compose.onNodeWithTag("tv.player.rating.1").performKeyInput { pressKey(Key.DirectionCenter) }
+        settle("the rating sent") { server.answered("setRating") == 1 }
+        assertEquals("1", server.requests("setRating").single()["rating"], "the first star rates 1 from unknown")
+        settle("one star shown") { starSelected(1) && (2..5).none { starSelected(it) } }
+    }
+
+    private fun starSelected(star: Int): Boolean =
+        compose.onNodeWithTag("tv.player.rating.$star").fetchSemanticsNode().config.getOrElse(SemanticsProperties.Selected) { false }
+
     /** Focuses the heart and presses the remote's centre key on it, as a person does. */
     private fun press() {
         compose.onNodeWithTag("tv.player.favourite").performSemanticsAction(SemanticsActions.RequestFocus)

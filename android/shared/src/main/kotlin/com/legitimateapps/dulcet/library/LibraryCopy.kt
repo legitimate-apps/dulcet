@@ -5,8 +5,10 @@ import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
+import com.legitimateapps.dulcet.core.AndroidLibraryChangeField
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
 import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
+import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder
@@ -135,6 +137,14 @@ public fun Resources.outcomeLine(outcome: AndroidLibraryChangeOutcome?): String?
     is AndroidLibraryChangeOutcome.Superseded -> getString(R.string.library_change_superseded)
     is AndroidLibraryChangeOutcome.NotRecorded -> getString(R.string.library_change_not_recorded)
 }
+
+/**
+ * What [outcomes] say about [target]: its heart's outcome, then its stars', each [outcomeLine] that
+ * needs words, joined; null when neither does.
+ */
+public fun Resources.outcomeLines(outcomes: Map<LibraryOutcomeKey, AndroidLibraryChangeOutcome>, target: AndroidLibraryEntity): String? =
+    AndroidLibraryChangeField.entries.mapNotNull { outcomeLine(outcomes[LibraryOutcomeKey(target, it)]) }
+        .takeIf { it.isNotEmpty() }?.joinToString("\n")
 
 /**
  * Why a held change is waiting: the error of the `ping` that checked the account, which can be

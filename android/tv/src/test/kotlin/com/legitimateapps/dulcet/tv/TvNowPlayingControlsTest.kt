@@ -239,7 +239,7 @@ class TvNowPlayingControlsTest {
         assertTrue((1..3).all { selected("tv.player.rating.$it") } && (4..5).none { selected("tv.player.rating.$it") },
             "three stars fill with the press")
         assertTrue(focused("tv.player.rating.3"), "focus stays on the star")
-        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_rating_clear, 3), description("tv.player.rating.3"),
+        assertEquals(resources.getQuantityString(com.legitimateapps.dulcet.shared.R.plurals.library_rating_clear, 3, 3), description("tv.player.rating.3"),
             "the shown star says it removes the rating")
         key("tv.player.rating.3", Key.DirectionCenter)
         assertEquals(listOf(3, 0), rated, "the centre key on the shown star removes the rating")
@@ -252,6 +252,45 @@ class TvNowPlayingControlsTest {
         compose.onNodeWithTag("tv.player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(4f) }
         compose.waitForIdle()
         assertEquals(listOf(3, 0, 4), rated, "an accessibility service sets the rating through setProgress")
+    }
+
+    /**
+     * A rating this device does not know — a track only ever seen in a queue, before any change — is
+     * no star selected and said "Rating unknown", never "Not rated". There is no value to step from,
+     * so the row offers no range and no setProgress (one step up would send 1 over whatever the
+     * server holds), only absolute actions; a star still sets exactly its own rating.
+     */
+    @Test fun anUnknownRatingIsSaidAsUnknownAndOffersOnlyAbsoluteSets() {
+        var rating by mutableStateOf<Int?>(null)
+        val rated = mutableListOf<Int>()
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvNowPlayingScreen(null, playing(), actions, rating = TvPlayerRating(rating) { rated += it; rating = it })
+            }
+        }
+        compose.waitForIdle()
+        val node = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode()
+        assertEquals("Rating unknown", node.config[SemanticsProperties.StateDescription])
+        assertTrue((1..5).none { selected("tv.player.rating.$it") }, "no star is selected while the rating is unknown")
+        assertTrue(SemanticsProperties.ProgressBarRangeInfo !in node.config, "an unknown rating has no range to step through")
+        assertTrue(SemanticsActions.SetProgress !in node.config, "and no relative adjust")
+        val offered = node.config[SemanticsActions.CustomActions]
+        assertEquals((1..5).map { "Rate $it of 5 stars" }, offered.map { it.label })
+        compose.runOnIdle { offered[1].action() }
+        compose.waitForIdle()
+        assertEquals(listOf(2), rated, "an absolute action sets exactly its rating")
+
+        rating = null
+        compose.waitForIdle()
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_rating_set, 1), description("tv.player.rating.1"),
+            "from unknown, the first star rates — it does not remove")
+        key("tv.player.playpause", Key.DirectionUp)
+        key("tv.player.scrubber", Key.DirectionUp)
+        var at = (1..5).first { focused("tv.player.rating.$it") }
+        while (at > 1) { key("tv.player.rating.$at", Key.DirectionLeft); at-- }
+        key("tv.player.rating.1", Key.DirectionCenter)
+        assertEquals(listOf(2, 1), rated)
+        assertEquals("Remove the rating of 1 star", description("tv.player.rating.1"), "one star, singular")
     }
 
     private fun sharedString(id: Int, vararg args: Any): String = resources.getString(id, *args)

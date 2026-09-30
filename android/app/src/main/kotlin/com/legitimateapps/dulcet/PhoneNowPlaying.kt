@@ -6,7 +6,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.libraryResources
-import com.legitimateapps.dulcet.library.outcomeLine
+import com.legitimateapps.dulcet.library.outcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
 import com.legitimateapps.dulcet.ui.RatingStars
@@ -695,7 +695,7 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
     val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
     val favourite = rememberWatchedFavourite(session, target) == true
     val outcomes by session.outcomes.collectAsState()
-    val line = libraryResources().outcomeLine(outcomes[target])
+    val line = libraryResources().outcomeLines(outcomes, target)
     val context = LocalContext.current
     LaunchedEffect(line) {
         if (line != null) {
@@ -716,7 +716,8 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
 private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackState) {
     val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId ?: return
     val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
-    val rating = rememberWatchedRating(session, target) ?: 0
+    // Null — unknown — stays unknown: shown as no stars said "Rating unknown", never as a 0.
+    val rating = rememberWatchedRating(session, target)
     RatingStars(rating, { session.setRating(target, it) }, "player.rating",
         onColor = MaterialTheme.colorScheme.primary, offColor = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 4.dp), starSize = 22.dp, touchSize = TOUCH_TARGET)
