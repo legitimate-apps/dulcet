@@ -86,6 +86,16 @@
     <string name="library_home_frequent">Most played</string>
     <string name="library_home_favourites">Favourites</string>
 
+    <string name="library_genres">Genres</string>
+    <string name="library_sort_by">Sort by</string>
+    <string name="library_sort_title">Title</string>
+    <string name="library_sort_artist">Artist</string>
+    <string name="library_sort_recently_added">Recently added</string>
+    <string name="library_sort_recently_played">Recently played</string>
+    <string name="library_sort_most_played">Most played</string>
+    <string name="library_sort_top_rated">Top rated</string>
+    <string name="library_sort_random">Random</string>
+
     <string name="library_favourite_add">Add to favourites</string>
     <string name="library_favourite_remove">Remove from favourites</string>
     <string name="library_favourite_on">Favourite</string>

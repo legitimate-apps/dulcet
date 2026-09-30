@@ -144,6 +144,10 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         queueTrack = { track, insertion, album ->
             if (!queueTrack(playback, provider, track, insertion, libraryName, album)) queueEditRefused(context)
         },
+        openGenre = { routes += "genre:$it" },
+        playTracksFrom = { items, rawId, source, shuffle ->
+            if (playTracks(playback, provider, items, rawId, source, shuffle)) playerOpen = true
+        },
     )
     // A restored Up Next row with no title takes it from what this device has seen, as it did from the
     // whole-library mirror: a seen-cache read, never a request.
@@ -191,6 +195,8 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
             route?.startsWith("artist:") == true ->
                 ArtistScreen(account, library, route.removePrefix("artist:"), actions)
+            route?.startsWith("genre:") == true ->
+                GenreScreen(account, library, route.removePrefix("genre:"), playingRawId, actions)
             route?.startsWith("playlist:") == true ->
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
             tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
@@ -298,6 +304,13 @@ internal class PhoneActions(
     val queueAlbum: (AndroidLibraryPublication, AndroidQueueInsertion) -> Unit = { _, _ -> },
     /** Play Next or Add to Queue for one track, shown on the album given, if any. */
     val queueTrack: (AndroidLibraryItem.Track, AndroidQueueInsertion, AndroidLibraryItem.Album?) -> Unit = { _, _, _ -> },
+    /** Opens a genre's songs, by the genre's name. */
+    val openGenre: (String) -> Unit = {},
+    /**
+     * A list's playable tracks queued from the one with the id — from the first when it is null — as a
+     * library queue with the name, shuffled or not: a genre's Play, Shuffle and rows.
+     */
+    val playTracksFrom: (List<AndroidLibraryItem>, String?, String, Boolean) -> Unit = { _, _, _, _ -> },
 ) {
     /** A row's Play Next and Add to Queue, or null for a track that cannot be queued now. */
     fun trackQueue(track: AndroidLibraryItem.Track, album: AndroidLibraryItem.Album?): TrackQueue? =
