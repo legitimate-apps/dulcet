@@ -657,3 +657,54 @@ private extension NSColor {
     }
 }
 #endif
+
+// MARK: - Apple TV launch focus
+
+/// The engine's first placement on the bar leaves launch focus open for the section, including
+/// when the section's control only appears later.
+@Test @MainActor
+func launchFocusStaysOpenForTheSectionWhileTheEngineHoldsItOnTheBar() {
+    let focus = DulcetLaunchFocus()
+    #expect(focus.pending)
+    #expect(!focus.wantsSectionFocus, "nothing to take focus from before the bar holds it")
+    focus.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    #expect(focus.pending)
+    #expect(focus.wantsSectionFocus, "a late section control must be asked to take focus")
+    // The claim lands: focus leaves the bar for the section's control.
+    focus.sectionBarFocusChanged(wasOnBar: true, isOnBar: false)
+    focus.sectionControlFocused()
+    #expect(!focus.pending)
+    // The person later moving up to the bar is theirs to keep.
+    focus.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    #expect(!focus.wantsSectionFocus, "focus the person moved to the bar must not be taken back")
+}
+
+/// A section control that takes focus before the engine ever places it settles the launch, so a
+/// later move to the bar is never mistaken for the engine's first pass.
+@Test @MainActor
+func launchFocusSettlesWhenASectionControlTakesItFirst() {
+    let focus = DulcetLaunchFocus()
+    focus.sectionControlFocused()
+    focus.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    #expect(!focus.wantsSectionFocus)
+}
+
+/// Any move the person makes before the section's content arrives ends the claim.
+@Test @MainActor
+func launchFocusClosesOnEveryMoveThePersonMakes() {
+    let alongTheBar = DulcetLaunchFocus()
+    alongTheBar.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    alongTheBar.sectionBarFocusChanged(wasOnBar: true, isOnBar: true)
+    #expect(!alongTheBar.wantsSectionFocus, "moving along the bar")
+
+    let downOutOfTheBar = DulcetLaunchFocus()
+    downOutOfTheBar.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    downOutOfTheBar.sectionBarFocusChanged(wasOnBar: true, isOnBar: false)
+    downOutOfTheBar.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    #expect(!downOutOfTheBar.wantsSectionFocus, "leaving the bar, then coming back to it")
+
+    let settled = DulcetLaunchFocus()
+    settled.settle()
+    settled.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    #expect(!settled.wantsSectionFocus, "the exit button, or another section")
+}

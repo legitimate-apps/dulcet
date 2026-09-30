@@ -1508,8 +1508,13 @@ struct DulcetReaderLibraryRoot: View {
 
 #if os(tvOS)
 /// The library's sections across the top of Library, under the app's own section bar.
+///
+/// A launch that opens into Library puts remote focus here, on the section showing: it is always
+/// drawn, whatever the reader has painted yet, and one Up press from it reaches the app's bar.
 private struct DulcetReaderTVSectionBar: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(DulcetLaunchFocus.self) private var launchFocus: DulcetLaunchFocus?
+    @FocusState private var focusedSection: DulcetLibrarySection?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1523,6 +1528,7 @@ private struct DulcetReaderTVSectionBar: View {
                             .font(.callout.weight(selected ? .semibold : .regular))
                     }
                     .buttonStyle(.bordered)
+                    .focused($focusedSection, equals: section)
                     .accessibilityIdentifier("dulcet.reader.section.\(section.rawValue)")
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
@@ -1531,6 +1537,19 @@ private struct DulcetReaderTVSectionBar: View {
             .padding(.vertical, DulcetSpacing.xs)
         }
         .focusSection()
+        .onAppear(perform: claimLaunchFocus)
+        // The focus engine can place launch focus on the app's bar after this appeared.
+        .onChange(of: launchFocus?.wantsSectionFocus == true) { _, wants in
+            if wants { claimLaunchFocus() }
+        }
+        .onChange(of: focusedSection) { _, current in
+            if current != nil { launchFocus?.sectionControlFocused() }
+        }
+    }
+
+    private func claimLaunchFocus() {
+        guard let launchFocus, launchFocus.pending else { return }
+        focusedSection = store.librarySection
     }
 }
 #endif

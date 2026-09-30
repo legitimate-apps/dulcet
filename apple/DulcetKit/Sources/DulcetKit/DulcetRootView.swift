@@ -164,6 +164,46 @@ public struct DulcetCaptureView: View {
 }
 #endif
 
+/// Where remote focus goes when the app launches on Apple TV, until the person moves it.
+///
+/// The section bar is the first focusable row on screen, so the focus engine's own first pass
+/// puts launch focus on it -- on the control for the section already showing, where the first
+/// press of Select does nothing. A section that opens with its own controls claims focus instead.
+/// Library's content can also arrive after that first pass, so the claim stays open while focus
+/// is only where the engine put it, and closes for good as soon as the person has moved focus
+/// themselves: along the bar, down out of it, with the exit button, or to another section.
+///
+/// Platform-neutral so its decisions are testable off the device; only Apple TV installs one.
+@MainActor
+@Observable
+final class DulcetLaunchFocus {
+    /// True until launch focus has settled: a claim landed, or the person moved focus.
+    private(set) var pending = true
+    /// Whether the section bar holds focus, as the shell last reported it.
+    private(set) var barHoldsFocus = false
+
+    /// True while a section's own control should take focus from the bar.
+    var wantsSectionFocus: Bool { pending && barHoldsFocus }
+
+    /// The section bar's focused control changed. Focus arriving on the bar from nowhere is the
+    /// focus engine placing it; focus leaving a bar control -- to another bar control or into a
+    /// section -- is a move, by the person or by a claim that already landed.
+    func sectionBarFocusChanged(wasOnBar: Bool, isOnBar: Bool) {
+        if wasOnBar { pending = false }
+        barHoldsFocus = isOnBar
+    }
+
+    /// A section's own control reports that it now holds focus.
+    func sectionControlFocused() {
+        pending = false
+    }
+
+    /// The person acted: the exit button, or a change of section.
+    func settle() {
+        pending = false
+    }
+}
+
 #if os(tvOS)
 /// Top-level section navigation for the remote.
 ///
@@ -195,6 +235,7 @@ public struct DulcetCaptureView: View {
 private struct DulcetTVSectionNavigation: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedSection: DulcetSidebarDestination?
+    @State private var launchFocus = DulcetLaunchFocus()
 
     var body: some View {
         let selected = store.selectedDestination
@@ -207,12 +248,20 @@ private struct DulcetTVSectionNavigation: View {
                     }
             }
         }
+        .environment(launchFocus)
+        .onChange(of: focusedSection) { previous, current in
+            launchFocus.sectionBarFocusChanged(wasOnBar: previous != nil, isOnBar: current != nil)
+        }
+        .onChange(of: store.selectedDestination) { _, _ in launchFocus.settle() }
         // The exit button is how a person leaves a surface on this platform, so it returns focus
         // to the bar -- deterministically, rather than relying on the focus engine to find a
         // control several scroll views away. From the bar itself it stays unhandled, because
         // there the platform's own meaning is to leave the app, and consuming it would strand
         // the person inside.
-        .dulcetOnExitCommand(perform: focusedSection == nil ? { focusedSection = selected } : nil)
+        .dulcetOnExitCommand(perform: focusedSection == nil ? {
+            launchFocus.settle()
+            focusedSection = selected
+        } : nil)
     }
 
     /// The reader's Library pages; empty anywhere else, so another section is never pushed on.
