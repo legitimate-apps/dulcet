@@ -106,7 +106,7 @@ class PhoneGenresAndAlbumSortTest {
         // The page may be read twice: a window opened while the session's first reconnect runs is also
         // revalidated by it (§16.14 step 3). Every read is of the genre opened, from its start.
         assertEquals(setOf("Jazz"), server.requests("getSongsByGenre").map { it["genre"] }.toSet(), "reads only of the genre opened")
-        assertEquals(setOf("0"), server.requests("getSongsByGenre").map { it["offset"] }.toSet())
+        assertEquals(setOf("0"), server.requests("getSongsByGenre").map { it["offset"] }.toSet(), "every read from the start: ${server.requests("getSongsByGenre")}")
         assertTrue("genre:Jazz" in observed("genre.surface").surfaces, "the page is the session's genre window")
 
         click("genre.track.1")
