@@ -2,6 +2,11 @@ package com.legitimateapps.dulcet.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
 import android.os.Binder
 import android.os.IBinder
 import androidx.annotation.OptIn
@@ -15,8 +20,13 @@ import com.legitimateapps.dulcet.CredentialStoreException
 import com.legitimateapps.dulcet.core.AndroidLocalPlaybackSource
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import com.legitimateapps.dulcet.core.NetworkCostClass
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** One owner for playback across both native shells, activity recreation and backgrounding. */
@@ -28,8 +38,33 @@ class PlaybackService : MediaSessionService() {
         private set
     inner class LocalBinder : Binder() { val service: PlaybackService get() = this@PlaybackService }
 
+    /** Main-thread work that lives as long as the service: following the streaming-quality setting. */
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** The default network's cost as last reported; null until the OS has reported one. */
+    private var networkCost: NetworkCostClass? = null
+
+    /**
+     * Follows the default network's cost into the controller (spec §12.5). Only capabilities are
+     * read: a default network's arrival always reports them, and a change of metering does too.
+     */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            val cost = capabilities.costClass()
+            networkCost = cost
+            playback?.setNetworkCostClass(cost)
+        }
+    }
+    private var networkCallbackRegistered = false
+
     override fun onCreate() {
         super.onCreate()
+        val settings = StreamingQualitySettings.get(this)
+        serviceScope.launch { settings.preference.collect { playback?.setStreamingQuality(it) } }
+        networkCallbackRegistered = runCatching {
+            getSystemService(ConnectivityManager::class.java)
+                ?.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))
+        }.getOrNull() != null
         // A service created by a sign-out's release bind has nothing to release; a controller built
         // here would restore the signing-out account's queue and send its plays, only to be closed.
         // Every other entry builds it lazily, as it does for an account saved after creation.
@@ -78,6 +113,9 @@ class PlaybackService : MediaSessionService() {
                     AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }?.localPlan(rawId)
                 }
             })
+        // The quality for the next item: the person's choice for the network last reported.
+        controller.setStreamingQuality(StreamingQualitySettings.get(this).preference.value)
+        networkCost?.let(controller::setNetworkCostClass)
         playback = controller
         playbackAccountId = account.id
         val builder = MediaSession.Builder(this, controller.sessionPlayer)
@@ -123,6 +161,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
+        if (networkCallbackRegistered) {
+            networkCallbackRegistered = false
+            runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(networkCallback) }
+        }
         session?.let { removeSession(it); it.release() }
         playback?.close()
         session = null

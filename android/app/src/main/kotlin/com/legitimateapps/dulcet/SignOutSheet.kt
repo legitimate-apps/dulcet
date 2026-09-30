@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
@@ -63,7 +65,12 @@ internal fun AccountDialog(actions: AccountActions, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("account.dialog"),
         title = { Text(stringResource(R.string.account_signout_account_title)) },
-        text = { Text(stringResource(R.string.account_signout_account_body, actions.serverName, actions.username)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(stringResource(R.string.account_signout_account_body, actions.serverName, actions.username))
+                StreamingQualitySection()
+            }
+        },
         confirmButton = {
             TextButton(
                 onClick = { onDismiss(); actions.requestSignOut() },

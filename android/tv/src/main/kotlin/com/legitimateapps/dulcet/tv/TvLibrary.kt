@@ -145,6 +145,9 @@ import com.legitimateapps.dulcet.library.unavailableLine
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.core.StreamingQuality
+import com.legitimateapps.dulcet.playback.StreamingQualitySettings
+import com.legitimateapps.dulcet.playback.label
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.rememberArtwork
@@ -419,7 +422,7 @@ internal val LocalTvNavFocus = staticCompositionLocalOf<FocusRequester?> { null 
 // ---- Account (spec §14.7): the settings place, reached from the bar's Account tab ----------------
 
 /**
- * Whose account, on which server, and Sign out. Pushed above whatever was showing, so Back returns
+ * Whose account, on which server, Sign out, and the streaming quality. Pushed above whatever was showing, so Back returns
  * to it; the bar's Account tab stays lit meanwhile. It opens with focus on Back, never on Sign out:
  * a destructive action is never where a remote's centre key lands unasked.
  */
@@ -448,6 +451,48 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
             )
         }
         item { TvSignOutEntry() }
+        // Below Sign out, so the screen still opens on Back with Sign out one step down (§14.7).
+        item { TvStreamingQuality() }
+    }
+}
+
+/**
+ * The streaming-quality choice (spec §12.5): a row of choices for Wi-Fi and one for cellular, the
+ * chosen one marked. Saved at once, applied from the next song; nothing playing restarts for it.
+ */
+@Composable
+private fun TvStreamingQuality() {
+    val context = LocalContext.current
+    val settings = remember(context) { StreamingQualitySettings.get(context) }
+    val preference by settings.preference.collectAsStateWithLifecycle()
+    Column(Modifier.testTag("quality.section"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(stringResource(SharedR.string.streaming_quality_title), style = MaterialTheme.typography.headlineSmall)
+        TvQualityRow(stringResource(SharedR.string.streaming_quality_unmetered), "quality.unmetered", preference.unmetered) {
+            settings.set(preference.copy(unmetered = it))
+        }
+        TvQualityRow(stringResource(SharedR.string.streaming_quality_metered), "quality.metered", preference.metered) {
+            settings.set(preference.copy(metered = it))
+        }
+        TvStatement(stringResource(SharedR.string.streaming_quality_body), "quality.body")
+    }
+}
+
+@Composable
+private fun TvQualityRow(title: String, tag: String, selected: StreamingQuality, choose: (StreamingQuality) -> Unit) {
+    val context = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StreamingQuality.entries.forEach { quality ->
+                val label = quality.label(context)
+                TvAction(
+                    label,
+                    "$tag.${quality.wireName}",
+                    description = if (quality == selected) "$title: $label, selected" else "$title: $label",
+                    icon = if (quality == selected) DulcetIcons.Check else null,
+                ) { choose(quality) }
+            }
+        }
     }
 }
 

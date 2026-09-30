@@ -120,6 +120,8 @@ public class AndroidPlaybackController internal constructor(
     private val queue = PlaybackQueueController(PersistentQueueStore(store.database), resumes,
         PlaybackIdentitySource { "$it:${UUID.randomUUID()}" })
     private val wire = PlaybackWireClient(account)
+    /** The person's streaming quality and the network the service last reported (spec §12.5). */
+    private val streamingQuality = StreamingQualityPolicy()
     private val requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
         account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp), "playback.resource")
     private val sender = ScrobbleEndpointSender(account)
@@ -295,6 +297,22 @@ public class AndroidPlaybackController internal constructor(
     }
 
     /** Resolves an opaque selected song id using this service's saved account, never intent credentials. */
+    /**
+     * The person's streaming-quality choice. It applies from the next item resolved; what is
+     * playing is never restarted for it (spec §12.5). A download is never capped.
+     */
+    public fun setStreamingQuality(preference: StreamingQualityPreference) {
+        streamingQuality.setPreference(preference)
+    }
+
+    /** The quality the next item is resolved at: the choice for the network last reported. */
+    public val nextStreamingQuality: StreamingQuality get() = streamingQuality.currentQuality
+
+    /** What the current network costs, as the service reads it from the OS. */
+    public fun setNetworkCostClass(network: NetworkCostClass) {
+        streamingQuality.setNetwork(network)
+    }
+
     public fun playSong(providerInstanceId: String, rawId: String, displayTitle: String) {
         if (!live()) return
         if (providerInstanceId != account.providerInstanceId || rawId.isBlank()) {
@@ -739,6 +757,7 @@ public class AndroidPlaybackController internal constructor(
                 val request = PlaybackResolveRequest(session, directive.attemptId, directive.itemId,
                     song.container ?: transcode, false, ANDROID_PROFILE,
                     LegacyPlaybackPreference(if (song.container == null) transcode else null, null))
+                    .withStreamingQuality(streamingQuality.currentQuality)
                 val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 when (result) {
