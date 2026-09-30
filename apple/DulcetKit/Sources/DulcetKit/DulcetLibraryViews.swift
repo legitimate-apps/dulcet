@@ -35,10 +35,13 @@ struct DulcetEmptyLibraryView: View {
 
             if !connected {
                 VStack(spacing: DulcetSpacing.sm) {
-                    Button(DulcetStrings.connectServer, systemImage: "plus", action: onConnect)
-                        .dulcetProminentActionStyle()
-                        .dulcetDefaultActionShortcut()
-                        .accessibilityLabel(DulcetStrings.connectServer)
+                    DulcetProminentAction(
+                        DulcetStrings.connectServer,
+                        systemImage: "plus",
+                        isDefaultAction: true,
+                        action: onConnect
+                    )
+                    .accessibilityLabel(DulcetStrings.connectServer)
 
                     Button(DulcetStrings.browseHelp) {}
                         .dulcetLinkButtonStyle()
@@ -102,10 +105,13 @@ struct DulcetSavedAccountLibraryView: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(nil)
                 .frame(maxWidth: 560)
-            Button(DulcetStrings.reconnect, systemImage: "arrow.clockwise", action: onReconnect)
-                .dulcetProminentActionStyle()
-                .dulcetDefaultActionShortcut()
-                .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
+            DulcetProminentAction(
+                DulcetStrings.reconnect,
+                systemImage: "arrow.clockwise",
+                isDefaultAction: true,
+                action: onReconnect
+            )
+            .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
             Text(DulcetStrings.savedAccountDisconnectedFootnote)
                 .font(.footnote)
                 .dulcetForeground(.secondaryTextOnWindow)
@@ -136,8 +142,7 @@ struct DulcetLibraryErrorView: View {
                 .dulcetForeground(.secondaryTextOnWindow)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 560)
-            Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise", action: onRetry)
-                .dulcetProminentActionStyle()
+            DulcetProminentAction(DulcetStrings.tryAgain, systemImage: "arrow.clockwise", action: onRetry)
                 .accessibilityLabel(DulcetStrings.tryAgain)
         }
         .padding(DulcetSpacing.xxl)
@@ -445,15 +450,14 @@ struct DulcetLibraryHeader: View {
     }
 
     private var playAllButton: some View {
-        Button(action: onPlayAll) {
-            Label(DulcetStrings.playAll, systemImage: "play.fill")
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .dulcetForeground(.labelOnAccentFill)
-        }
-        .buttonStyle(.borderedProminent)
-        .dulcetDefaultActionShortcut()
-        .disabled(!playbackEnabled)
+        DulcetProminentAction(
+            DulcetStrings.playAll,
+            systemImage: "play.fill",
+            isEnabled: playbackEnabled,
+            isDefaultAction: true,
+            fillsWidth: true,
+            action: onPlayAll
+        )
         .help(playbackEnabled ? DulcetStrings.playAll : DulcetStrings.libraryTracksLoading)
         .accessibilityLabel(DulcetStrings.playAll)
     }
@@ -1078,15 +1082,14 @@ struct DulcetAlbumHeader: View {
     }
 
     private var playButton: some View {
-        Button(action: onPlay) {
-            Label(DulcetStrings.play, systemImage: "play.fill")
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .dulcetForeground(.labelOnAccentFill)
-        }
-        .buttonStyle(.borderedProminent)
-        .dulcetDefaultActionShortcut()
-        .disabled(album.tracks.isEmpty)
+        DulcetProminentAction(
+            DulcetStrings.play,
+            systemImage: "play.fill",
+            isEnabled: !album.tracks.isEmpty,
+            isDefaultAction: true,
+            fillsWidth: true,
+            action: onPlay
+        )
         .accessibilityLabel(DulcetStrings.play)
         .accessibilityIdentifier("dulcet.album.play")
     }
@@ -1552,10 +1555,12 @@ struct DulcetOfflineLibraryView: View {
                             }
                         }
                         Spacer()
-                        Button(DulcetStrings.tryAgain, systemImage: "arrow.clockwise") {}
-                            .dulcetProminentActionStyle()
-                            .dulcetDefaultActionShortcut()
-                            .accessibilityLabel(DulcetStrings.tryAgain)
+                        DulcetProminentAction(
+                            DulcetStrings.tryAgain,
+                            systemImage: "arrow.clockwise",
+                            isDefaultAction: true
+                        ) {}
+                        .accessibilityLabel(DulcetStrings.tryAgain)
                     }
 
                     if dynamicTypeSize.isAccessibilitySize {

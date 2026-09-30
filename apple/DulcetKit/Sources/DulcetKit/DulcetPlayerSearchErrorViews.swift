@@ -91,10 +91,9 @@ struct DulcetPlaybackFailedView: View {
     @ViewBuilder
     private func actions(_ failure: DulcetFailedPlayback) -> some View {
         if failure.canRetry {
-            Button(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
+            DulcetProminentAction(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
                 onControl(.retry)
             }
-            .dulcetProminentActionStyle()
             .accessibilityIdentifier("dulcet.now-playing.retry")
         }
         if failure.canSkip {
@@ -385,7 +384,7 @@ struct DulcetNowPlayingView: View {
     private var transportControls: some View {
         HStack(spacing: 0) {
             controlButton(
-                symbol: player.shuffleEnabled ? "shuffle.circle.fill" : "shuffle",
+                symbol: "shuffle",
                 font: .title3,
                 label: DulcetStrings.shuffle,
                 value: player.shuffleEnabled ? DulcetStrings.controlOn : DulcetStrings.controlOff
@@ -394,23 +393,32 @@ struct DulcetNowPlayingView: View {
             }
             .dulcetForeground(player.shuffleEnabled ? .accentIconOnWindow : .primaryTextOnWindow)
             Spacer(minLength: DulcetSpacing.xs)
-            controlButton(symbol: "backward.fill", font: .title, label: DulcetStrings.previous) {
+            controlButton(
+                symbol: "backward.fill",
+                font: .title,
+                label: DulcetStrings.previous,
+                enabled: player.canGoPrevious
+            ) {
                 onControl(.previous)
             }
-            .disabled(!player.canGoPrevious)
             Spacer(minLength: DulcetSpacing.xs)
+            // The glyph itself, as the system player draws it: no disc behind play/pause.
             controlButton(
-                symbol: player.isPlaying ? "pause.circle.fill" : "play.circle.fill",
-                font: .system(size: 56),
+                symbol: player.isPlaying ? "pause.fill" : "play.fill",
+                font: .system(size: 34, weight: .medium),
                 label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
             Spacer(minLength: DulcetSpacing.xs)
-            controlButton(symbol: "forward.fill", font: .title, label: DulcetStrings.next) {
+            controlButton(
+                symbol: "forward.fill",
+                font: .title,
+                label: DulcetStrings.next,
+                enabled: player.canGoNext
+            ) {
                 onControl(.next)
             }
-            .disabled(!player.canGoNext)
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(
                 symbol: repeatSymbol,
@@ -436,6 +444,7 @@ struct DulcetNowPlayingView: View {
         symbol: String,
         font: Font,
         label: String,
+        enabled: Bool = true,
         value: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
@@ -448,6 +457,10 @@ struct DulcetNowPlayingView: View {
                 .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle()
+        // A plain style does not grey its own label when disabled; a control that cannot act
+        // is dimmed, as the system player's are.
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.3)
         .accessibilityLabel(label)
         if let value {
             button.accessibilityValue(value)
@@ -541,21 +554,22 @@ struct DulcetNowPlayingView: View {
     private var playbackProgress: some View {
         VStack(spacing: DulcetSpacing.xxs) {
             if Self.showsProgressIndicator(progressBegan: player.progressBegan, phase: player.phase) {
-                playbackProgressIndicator
-                    .accessibilityLabel(DulcetStrings.nowPlaying)
-                    .accessibilityValue(DulcetStrings.playbackProgress(
-                        elapsed: displayedElapsed.dulcetDuration,
-                        duration: player.current.duration.dulcetDuration
-                    ))
-
-                HStack {
+                // The times flank the bar, as the system player lays them out.
+                HStack(alignment: .center, spacing: DulcetSpacing.xs) {
                     Text(displayedElapsed.dulcetDuration)
                         .accessibilityLabel(DulcetStrings.elapsedTime)
                         .accessibilityValue(displayedElapsed.dulcetDuration)
-                    Spacer()
+                        .lineLimit(1)
+                    playbackProgressIndicator
+                        .accessibilityLabel(DulcetStrings.nowPlaying)
+                        .accessibilityValue(DulcetStrings.playbackProgress(
+                            elapsed: displayedElapsed.dulcetDuration,
+                            duration: player.current.duration.dulcetDuration
+                        ))
                     Text(DulcetStrings.remaining(displayedRemaining.dulcetDuration))
                         .accessibilityLabel(DulcetStrings.remainingTime)
                         .accessibilityValue(displayedRemaining.dulcetDuration)
+                        .lineLimit(1)
                 }
                 .font(.caption.monospacedDigit())
                 .dulcetForeground(.secondaryTextOnWindow)
@@ -575,7 +589,7 @@ struct DulcetNowPlayingView: View {
         ProgressView(value: displayedSeconds, total: durationSeconds)
 #else
         if player.seekability == .seekable {
-            Slider(
+            DulcetScrubber(
                 value: Binding(
                     get: { displayedSeconds },
                     set: { scrubPosition = $0 }
@@ -619,9 +633,8 @@ struct DulcetNowPlayingView: View {
 
     private var repeatSymbol: String {
         switch player.repeatMode {
-        case .off: "repeat"
-        case .all: "repeat.circle.fill"
-        case .one: "repeat.1.circle.fill"
+        case .off, .all: "repeat"
+        case .one: "repeat.1"
         }
     }
 
@@ -885,6 +898,9 @@ struct DulcetNowPlayingSheet: View {
 struct DulcetTLSUntrustedView: View {
     let failure: DulcetTLSFailure
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+#if os(macOS)
+    @Environment(\.controlActiveState) private var controlActiveState
+#endif
 
     var body: some View {
         ScrollView {
@@ -912,8 +928,9 @@ struct DulcetTLSUntrustedView: View {
 #if !os(tvOS)
                     Link(destination: DulcetLinks.certificateInstallationGuide) {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
+                            .dulcetForeground(prominentLinkPair)
                     }
-                        .dulcetProminentActionStyle()
+                        .buttonStyle(.borderedProminent)
                         .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
 #endif
@@ -929,6 +946,16 @@ struct DulcetTLSUntrustedView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.settings)
+    }
+
+    /// The prominent help link's label pair, as ``DulcetProminentAction`` picks it: the
+    /// accent-fill pair while the window is key, the control's text colour while it is not.
+    private var prominentLinkPair: DulcetRegisteredContrastPair {
+#if os(macOS)
+        controlActiveState == .key ? .labelOnAccentFill : .primaryTextOnControl
+#else
+        .labelOnAccentFill
+#endif
     }
 
     private var shield: some View {

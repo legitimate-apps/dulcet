@@ -148,11 +148,13 @@ private struct DulcetPlaylistPageContent: View {
                         .accessibilityIdentifier("dulcet.playlist.status")
                 }
                 HStack(spacing: DulcetSpacing.xs) {
-                    Button(DulcetStrings.play, systemImage: "play.fill") {
+                    DulcetProminentAction(
+                        DulcetStrings.play,
+                        systemImage: "play.fill",
+                        isEnabled: !playable.isEmpty
+                    ) {
                         store.playReaderTracks(playable, sourceKind: .playlist, sourceID: id, sourceName: item?.displayTitle ?? "")
                     }
-                    .dulcetProminentActionStyle()
-                    .disabled(playable.isEmpty)
                     .accessibilityIdentifier("dulcet.playlist.play")
                     Button(DulcetStrings.shuffle, systemImage: "shuffle") {
                         store.playReaderTracks(playable, shuffle: true, sourceKind: .playlist, sourceID: id, sourceName: item?.displayTitle ?? "")

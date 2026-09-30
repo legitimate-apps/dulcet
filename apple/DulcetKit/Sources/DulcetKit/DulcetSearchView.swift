@@ -168,8 +168,7 @@ struct DulcetSearchView: View {
                     title: DulcetStrings.searchErrorTitle,
                     body: DulcetStrings.searchErrorBody
                 )
-                Button(DulcetStrings.searchRetry, action: onRetry)
-                    .dulcetProminentActionStyle()
+                DulcetProminentAction(DulcetStrings.searchRetry, action: onRetry)
             }
         case .idle:
             searchMessage(
