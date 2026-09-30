@@ -357,6 +357,10 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
         fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .transport))
         await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        // A real player pauses after its item fails, and its observer can report it late. That
+        // report must not take the attempt out of Failed, or there is nothing left to retry.
+        fixture.emit(.paused(attemptID: first, position: 40))
+        await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.phase != "Failed" }
         // The failure state is reached, or nothing below means anything.
         XCTAssertEqual(fixture.controller.currentPresentation.status, .failed)
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.phase, "Failed")

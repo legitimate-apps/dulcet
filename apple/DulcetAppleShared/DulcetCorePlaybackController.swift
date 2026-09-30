@@ -299,7 +299,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // sound. One path for every Play -- the app's own, and the lock screen's, Control
             // Center's, a headset's and a media key's, which all arrive here through
             // `handleRemoteCommand` -- so none of them can do less than Try Again does.
-            if session.phase == "Failed" { return retryCurrentEntry() }
+            if session.phase == Self.failedPhase { return retryCurrentEntry() }
             // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
             // is ready the engine reports nothing, and a failure can come before Ready.
             _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
@@ -1272,7 +1272,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private func failedEntry() -> DulcetFailedPlayback {
         guard account != nil,
               let snapshot = queueClient.snapshot().snapshot,
-              snapshot.currentSession?.phase == "Failed" else { return .undescribed }
+              snapshot.currentSession?.phase == Self.failedPhase else { return .undescribed }
         let index = Int(snapshot.currentIndex)
         guard snapshot.entries.indices.contains(index) else { return .undescribed }
         let entry = snapshot.entries[index]
@@ -1322,6 +1322,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private func commandID(_ purpose: String) -> DulcetPlaybackCommandID {
         DulcetPlaybackCommandID("\(purpose)-\(UUID().uuidString)")
     }
+
+    /// The wire name of the core's `PlaybackAttemptPhase.Failed`: the facade sends the enum
+    /// case's own name, and tools/verify-playback-phase-parity holds the phase switch in
+    /// `publish` to the enum. Decisions outside that switch read the name from here.
+    private static let failedPhase = "Failed"
 
     private static let defaultBusyBackoff: TimeInterval = 5
     private static let minimumBusyBackoff: TimeInterval = 1
