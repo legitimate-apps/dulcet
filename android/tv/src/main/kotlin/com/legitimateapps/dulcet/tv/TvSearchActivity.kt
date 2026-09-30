@@ -154,7 +154,7 @@ internal fun TvSearchScreen(
     val state by presenter.state.collectAsStateWithLifecycle()
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
-    val accountEntry = LocalTvAccountEntry.current
+    val navFocus = LocalTvNavFocus.current
     // One read of the rows for this composition, used by the list and its focus requesters alike.
     // The list's items are read when it measures, not when this composes; reading the state again
     // there let a publication landing between the two (the results arriving) meet requesters sized
@@ -182,7 +182,7 @@ internal fun TvSearchScreen(
     EnterRoute()
     val route = LocalTvRouteFocus.current
     LaunchedEffect(Unit) {
-        if (route == null || route.claimDefault()) runCatching { accountEntry?.requestFocus() }
+        if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -242,9 +242,9 @@ internal fun TvSearchScreen(
                                     resultFocus.first().requestFocus()
                                     true
                                 }
-                                // The field keeps UP for its cursor; the account entry sits above it.
-                                event.key == Key.DirectionUp && accountEntry != null -> {
-                                    accountEntry.requestFocus()
+                                // The field keeps UP for its cursor; the navigation bar is above it.
+                                event.key == Key.DirectionUp && navFocus != null -> {
+                                    navFocus.requestFocus()
                                     true
                                 }
                                 else -> false

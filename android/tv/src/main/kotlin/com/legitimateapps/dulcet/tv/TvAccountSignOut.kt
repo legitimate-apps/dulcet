@@ -1,13 +1,10 @@
 package com.legitimateapps.dulcet.tv
 
 import android.app.Application
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
@@ -70,9 +67,10 @@ internal class TvAccountModel(application: Application) : AndroidViewModel(appli
 
 /**
  * Wraps the TV app. While an account is saved — readable or not, so an account whose record cannot
- * be read can be signed out from the connect screen too — it offers Sign out; each step that needs
- * an answer is a dialog; and while the account is sent for or removed, a signing-out screen stands
- * in for the app, so nothing can start new work for it.
+ * be read can be signed out from the connect screen too — the shell's account places offer Sign out
+ * through [LocalTvAccountActions]; each step that needs an answer is a dialog; and while the account
+ * is sent for or removed, a signing-out screen stands in for the app, so nothing can start new work
+ * for it.
  *
  * [account] is whatever the activity last read as the signed-in account; it only keys when the
  * saved account is looked up again, so connecting shows the entry without waiting for a restart.
@@ -86,30 +84,27 @@ internal fun TvAccountHost(signOut: AccountSignOut, account: Any?, content: @Com
         return
     }
     val saved = remember(account, state) { signOut.savedAccountId() != null }
-    val entry = remember { FocusRequester() }
-    // A row of its own above the screen, so it covers nothing, and UP from a screen's topmost
-    // control reaches it. A text field keeps UP for its cursor, so a screen whose topmost control is
-    // one hands UP to [LocalTvAccountEntry] itself.
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
-        if (saved) {
-            Row(Modifier.fillMaxWidth().padding(start = 56.dp, top = 16.dp, end = 56.dp)) {
-                Button(
-                    onClick = signOut::request,
-                    modifier = Modifier.focusRequester(entry).testTag("tv.account.signout"),
-                ) { Text(stringResource(SharedR.string.account_signout_action)) }
-            }
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            CompositionLocalProvider(LocalTvAccountEntry provides entry.takeIf { saved }) { content() }
-        }
-    }
+    CompositionLocalProvider(LocalTvAccountActions provides TvAccountActions(saved, signOut::request)) { content() }
 }
 
+/** What the shell's account places show: whether an account is saved, and the way to begin §14.7. */
+internal class TvAccountActions(val saved: Boolean, val requestSignOut: () -> Unit)
+
+/** Provided by [TvAccountHost] around the app; null where Sign out cannot be offered at all. */
+internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?> { null }
+
 /**
- * The account entry's focus while it is shown, for a screen whose topmost control is a text field:
- * a text field consumes UP for its cursor, so the D-pad could otherwise never leave it upward.
+ * The Sign out entry. It lives in the shell's account places — the library's Account screen, and
+ * the connect screen when a saved account cannot be read — never in the navigation bar.
  */
-internal val LocalTvAccountEntry = staticCompositionLocalOf<FocusRequester?> { null }
+@Composable
+internal fun TvSignOutEntry(default: Boolean = false, modifier: Modifier = Modifier) {
+    val actions = LocalTvAccountActions.current ?: return
+    if (!actions.saved) return
+    Button(onClick = actions.requestSignOut, modifier = modifier.tvFocus("tv.account.signout", default)) {
+        Text(stringResource(SharedR.string.account_signout_action))
+    }
+}
 
 /** One dialog per step of §14.7 that needs an answer; dismissing one means Stay signed in. */
 @Composable

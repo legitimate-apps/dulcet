@@ -133,6 +133,9 @@ internal fun TvConnectScreen(
                         else MaterialTheme.colorScheme.error,
                         modifier = Modifier.testTag("tv.connect.status"))
                 }
+                // A saved account whose record cannot be read never reaches the app; it is signed out
+                // from here (spec §14.7). Renders nothing when no account is saved.
+                TvSignOutEntry(modifier = Modifier.padding(top = 16.dp))
             }
         }
     }

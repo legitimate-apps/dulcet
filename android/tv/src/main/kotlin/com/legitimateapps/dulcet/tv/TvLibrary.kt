@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -69,6 +71,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -146,6 +149,7 @@ internal const val ROUTE_ALBUMS = "albums"
 internal const val ROUTE_ARTISTS = "artists"
 internal const val ROUTE_FAVOURITES = "favourites"
 internal const val ROUTE_PLAYLISTS = "playlists"
+internal const val ROUTE_ACCOUNT = "account"
 private const val ALBUM = "album:"
 private const val PLAYLIST = "playlist:"
 private const val ARTIST = "artist:"
@@ -199,16 +203,17 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
     // colour here, or every uncoloured heading falls back to black on the dark background.
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-            TvNavigationRow(routes.first(), playbackState.hasSession, navigation,
+            TvTopBar(top, routes.first(), playbackState.hasSession, navigation,
                 onSearch = { show(routes, states, memory, ROUTE_SEARCH) },
                 onLibrary = { show(routes, states, memory, ROUTE_LIBRARY) },
-                onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) })
+                onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) },
+                onAccount = { if (routes.last() != ROUTE_ACCOUNT) routes += ROUTE_ACCOUNT })
             Box(Modifier.fillMaxWidth().weight(1f)) {
             states.SaveableStateProvider(top) {
                 CompositionLocalProvider(
                     LocalTvRouteFocus provides memory.route(top),
-                    // A text field keeps UP for its cursor; the navigation row is above it.
-                    LocalTvAccountEntry provides navigation.current,
+                    // A text field keeps UP for its cursor; the navigation bar is above it.
+                    LocalTvNavFocus provides navigation.current,
                 ) {
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
@@ -218,6 +223,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
                         top == ROUTE_FAVOURITES -> TvFavouritesScreen(account, session, playback, playingRawId, navigator)
                         top == ROUTE_PLAYLISTS -> TvPlaylistsGrid(account, session, navigator)
+                        top == ROUTE_ACCOUNT -> TvAccountScreen(account, navigator)
                         top.startsWith(PLAYLIST) ->
                             TvPlaylistScreen(account, session, playback, playingRawId, top.removePrefix(PLAYLIST), navigator)
                         top.startsWith(ALBUM) ->
@@ -248,46 +254,123 @@ private fun show(routes: SnapshotStateList<String>, states: androidx.compose.run
     routes += route
 }
 
-/** The navigation row's focus: the root that is showing, so UP from a screen's top lands on it. */
-private class TvNavigationFocus {
+/** The navigation bar's focus: the root that is showing, so UP from a screen's top lands on it. */
+internal class TvNavigationFocus {
     val search = FocusRequester()
     val library = FocusRequester()
+    val account = FocusRequester()
     var current: FocusRequester = search
 }
 
+/**
+ * The 10-foot top bar, on every screen of the signed-in app: the brand, the roots (Search and
+ * Library) as tabs, and at the far end Now Playing while something plays and the Account place.
+ * Sign out is not here; it lives on the Account screen ([ROUTE_ACCOUNT]).
+ */
 @Composable
-private fun TvNavigationRow(
+internal fun TvTopBar(
+    top: String,
     root: String,
     playing: Boolean,
     focus: TvNavigationFocus,
     onSearch: () -> Unit,
     onLibrary: () -> Unit,
     onNowPlaying: () -> Unit,
+    onAccount: () -> Unit,
 ) {
-    focus.current = if (root == ROUTE_LIBRARY) focus.library else focus.search
-    Row(Modifier.fillMaxWidth().padding(start = 56.dp, top = 12.dp, end = 56.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, onSearch)
-        TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, onLibrary)
+    focus.current = when {
+        top == ROUTE_ACCOUNT -> focus.account
+        root == ROUTE_LIBRARY -> focus.library
+        else -> focus.search
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 56.dp, top = 20.dp, end = 56.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(DulcetIcons.LibraryMusic, null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
+        Text(
+            stringResource(R.string.app_name),
+            Modifier.padding(start = 12.dp, end = 40.dp),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, onClick = onSearch)
+        TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library,
+            Modifier.padding(start = 8.dp), onLibrary)
+        Spacer(Modifier.weight(1f))
         if (playing) {
             Button(onClick = onNowPlaying, modifier = Modifier.testTag("tv.nav.nowplaying")) {
                 Icon(DulcetIcons.QueueMusic, null, Modifier.size(20.dp))
                 Text(stringResource(R.string.tv_nav_now_playing), Modifier.padding(start = 8.dp))
             }
         }
+        TvTab(stringResource(SharedR.string.account_signout_account_label), top == ROUTE_ACCOUNT, "tv.account.open", focus.account,
+            Modifier.padding(start = 8.dp), onAccount, icon = DulcetIcons.Person)
     }
 }
 
 @Composable
-private fun TvTab(label: String, selected: Boolean, tag: String, focus: FocusRequester, onClick: () -> Unit) {
+private fun TvTab(
+    label: String,
+    selected: Boolean,
+    tag: String,
+    focus: FocusRequester,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+) {
     Button(
         onClick = onClick,
-        modifier = Modifier.focusRequester(focus).testTag(tag).semantics { this.selected = selected },
+        modifier = modifier.focusRequester(focus).testTag(tag).semantics { this.selected = selected },
         colors = if (selected) androidx.tv.material3.ButtonDefaults.colors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) else androidx.tv.material3.ButtonDefaults.colors(),
-    ) { Text(label) }
+    ) {
+        if (icon != null) Icon(icon, null, Modifier.size(20.dp))
+        Text(label, Modifier.padding(start = if (icon != null) 8.dp else 0.dp))
+    }
+}
+
+/**
+ * The navigation bar's current tab's focus, for a screen whose topmost control is a text field:
+ * a text field consumes UP for its cursor, so the D-pad could otherwise never leave it upward.
+ */
+internal val LocalTvNavFocus = staticCompositionLocalOf<FocusRequester?> { null }
+
+// ---- Account (spec §14.7): the settings place, reached from the bar's Account tab ----------------
+
+/**
+ * Whose account, on which server, and Sign out. Pushed above whatever was showing, so Back returns
+ * to it; the bar's Account tab stays lit meanwhile.
+ */
+@Composable
+internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
+    EnterRoute()
+    val server = runCatching { java.net.URI(account.normalizedBaseUrl).host }.getOrNull()
+        ?.takeIf { it.isNotBlank() } ?: account.normalizedBaseUrl
+    LazyColumn(
+        Modifier.fillMaxSize().testTag("account.surface"),
+        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(SharedR.string.account_signout_account_title), Modifier.weight(1f),
+                    style = MaterialTheme.typography.displaySmall)
+                TvAction(stringResource(R.string.tv_back), "account.back", onClick = navigator.back)
+            }
+        }
+        item {
+            Text(
+                stringResource(SharedR.string.account_signout_account_body, server, account.username),
+                Modifier.testTag("account.summary"),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item { TvSignOutEntry(default = true) }
+    }
 }
 
 // ---- Focus memory ---------------------------------------------------------------------------------------
@@ -371,13 +454,19 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(stringResource(R.string.tv_library_title), Modifier.weight(1f), style = MaterialTheme.typography.displaySmall)
-                TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
-                TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
-                TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
-                TvAction(stringResource(R.string.tv_library_playlists), "library.view.playlists") { navigator.open(ROUTE_PLAYLISTS) }
-                TvAction(stringResource(R.string.tv_refresh), "library.refresh", onClick = session::refresh)
+            // The heading gets its own line, the four sections a row of their own beneath it: the
+            // heading and the ways into the library read as two stops, not one crowded line.
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.tv_library_title), Modifier.weight(1f), style = MaterialTheme.typography.displaySmall)
+                    TvAction(stringResource(R.string.tv_refresh), "library.refresh", icon = DulcetIcons.Refresh, onClick = session::refresh)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
+                    TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
+                    TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
+                    TvAction(stringResource(R.string.tv_library_playlists), "library.view.playlists") { navigator.open(ROUTE_PLAYLISTS) }
+                }
             }
         }
         item { TvConnectionNotices(session, accountNotices = true) }
@@ -1070,7 +1159,7 @@ private fun TvArtistScreen(
             }
             TvConnectionNotices(session, accountNotices = false)
             Row(horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
-                TvArtwork(account, artist?.artworkKey, 160, DulcetIcons.Person)
+                TvArtwork(account, artist?.artworkKey, 160, DulcetIcons.Person, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
                     if (listed) Text(pluralStringResource(R.plurals.tv_album_count, albums.size, albums.size),
@@ -1138,7 +1227,11 @@ private fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String
         border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary))),
     ) {
         Column {
-            TvArtwork(account, artwork, width ?: 180, placeholder, Modifier.fillMaxWidth().aspectRatio(1f), rounded = false)
+            // An artist's art is a circle, as artists are drawn everywhere; albums and tracks are square.
+            val artist = item is AndroidLibraryItem.Artist
+            TvArtwork(account, artwork, width ?: 180, placeholder,
+                Modifier.fillMaxWidth().aspectRatio(1f).padding(if (artist) 14.dp else 0.dp),
+                rounded = false, circle = artist)
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(item.displayTitle(), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 item.subtitle()?.let {
@@ -1158,9 +1251,10 @@ internal fun TvArtwork(
     placeholder: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier.size(size.dp),
     rounded: Boolean = true,
+    circle: Boolean = false,
 ) {
     val image = account?.let { rememberArtwork(it, key, size * 2) }
-    Box(modifier.then(if (rounded) Modifier.clip(RoundedCornerShape(12.dp)) else Modifier)
+    Box(modifier.then(if (circle) Modifier.clip(CircleShape) else if (rounded) Modifier.clip(RoundedCornerShape(12.dp)) else Modifier)
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center) {
         if (image != null) Image(image, stringResource(R.string.tv_player_cover_art), Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
