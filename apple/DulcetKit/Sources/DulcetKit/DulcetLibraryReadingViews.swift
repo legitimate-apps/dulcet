@@ -1263,7 +1263,6 @@ struct DulcetReaderTrackListPage: View {
         let compact = width < DulcetLibraryMetrics.compactWidthThreshold
         let artworkSize: CGFloat = compact ? min(260, width - 64) : 220
         let item = window.header
-        let playable = window.playableTracks
         let layout = compact
             ? AnyLayout(VStackLayout(alignment: .center, spacing: DulcetSpacing.sm))
             : AnyLayout(HStackLayout(alignment: .bottom, spacing: DulcetSpacing.md))
@@ -1287,34 +1286,71 @@ struct DulcetReaderTrackListPage: View {
                         .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(nil)
                 }
-                HStack(spacing: DulcetSpacing.xs) {
-                    Button(DulcetStrings.play, systemImage: "play.fill") {
-                        store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
-                    }
-                    .dulcetProminentActionStyle()
-                    .disabled(playable.isEmpty)
-                    .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
-                    Button(DulcetStrings.shuffle, systemImage: "shuffle") {
-                        store.playReaderTracks(playable, shuffle: true, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(playable.isEmpty)
-                    .accessibilityIdentifier("dulcet.\(kind.rawValue).shuffle")
-                    if let item, let target = item.favouriteTarget {
-                        DulcetFavouriteButton(
-                            target: target,
-                            published: item.isFavourite,
-                            title: item.displayTitle,
-                            size: .title3,
-                            identifier: "dulcet.\(kind.rawValue).favorite"
-                        )
-                    }
-                }
-                .padding(.top, DulcetSpacing.xxs)
+                headerActions(window, item: item)
+                    .padding(.top, DulcetSpacing.xxs)
             }
             .frame(maxWidth: compact ? .infinity : nil, alignment: compact ? .center : .leading)
         }
         .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
+    }
+
+    /// Play, Shuffle and the heart in one row while their labels fit on one line each; otherwise
+    /// -- at the accessibility text sizes on a phone -- stacked, Play and Shuffle full width. A
+    /// row squeezed narrower than its labels wraps them a letter per line into buttons taller
+    /// than the screen, which push the tracks out of reach.
+    private func headerActions(_ window: DulcetLibraryWindow, item: DulcetReaderItem?) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: DulcetSpacing.xs) {
+                playButton(window, fills: false)
+                shuffleButton(window, fills: false)
+                favouriteButton(item)
+            }
+            .lineLimit(1)
+            VStack(spacing: DulcetSpacing.xs) {
+                playButton(window, fills: true)
+                shuffleButton(window, fills: true)
+                favouriteButton(item)
+            }
+        }
+    }
+
+    private func playButton(_ window: DulcetLibraryWindow, fills: Bool) -> some View {
+        let playable = window.playableTracks
+        return Button {
+            store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+        } label: {
+            Label(DulcetStrings.play, systemImage: "play.fill")
+                .frame(maxWidth: fills ? .infinity : nil)
+        }
+        .dulcetProminentActionStyle()
+        .disabled(playable.isEmpty)
+        .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
+    }
+
+    private func shuffleButton(_ window: DulcetLibraryWindow, fills: Bool) -> some View {
+        let playable = window.playableTracks
+        return Button {
+            store.playReaderTracks(playable, shuffle: true, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+        } label: {
+            Label(DulcetStrings.shuffle, systemImage: "shuffle")
+                .frame(maxWidth: fills ? .infinity : nil)
+        }
+        .buttonStyle(.bordered)
+        .disabled(playable.isEmpty)
+        .accessibilityIdentifier("dulcet.\(kind.rawValue).shuffle")
+    }
+
+    @ViewBuilder
+    private func favouriteButton(_ item: DulcetReaderItem?) -> some View {
+        if let item, let target = item.favouriteTarget {
+            DulcetFavouriteButton(
+                target: target,
+                published: item.isFavourite,
+                title: item.displayTitle,
+                size: .title3,
+                identifier: "dulcet.\(kind.rawValue).favorite"
+            )
+        }
     }
 
     private func detailLine(_ item: DulcetReaderItem?, window: DulcetLibraryWindow) -> String? {
