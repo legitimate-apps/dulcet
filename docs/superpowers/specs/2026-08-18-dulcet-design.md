@@ -2754,7 +2754,18 @@ and reconciliation against a changed server item. The platform owns the **execut
   integrity boundary. For a cold legacy transcoded download, completion is the terminal response-body
   end plus successful container/signature validation; the stored row records the observed file byte
   count as exact only **after** the complete temp file closes. A crash between validation and rename
-  leaves a temp file that reconciliation deletes.
+  leaves a temp file that reconciliation deletes. **Validation never reads a file whole (§28,
+  2026-09-30, fix round):** the envelope and signature checks see a bounded prefix (64 KiB, widened
+  only as far as a leading ID3v2 tag needs, to at most 16 MiB), and the exact length is compared with
+  the file's length on disk. A whole-file read of a large FLAC exhausts a phone's heap.
+- **A download is the original file, requested as such.** It is the legacy `stream` request with
+  `format=raw`, the Subsonic API's explicit "no transcoding" (API 1.9.0). With no `format`, a server
+  applies a transcoding its administrator configured for the player, and every download of such an
+  account would then fail validation against the source container; the reference server's
+  `download` endpoint transcodes the same way when it is set to transcode downloads. **OBSERVED** in
+  the reference server's source (v0.63.2, `ResolveRequest`): `raw` returns before either the
+  player's transcoding or its bit-rate cap is applied. **ASSUMED** for other servers. Apple and
+  Android build the request from one core function.
 - **Partial files** keep platform-supplied resume data; resume data older than 7 days, or rejected by
   the platform, causes a restart from zero rather than a stuck row.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
@@ -2793,8 +2804,21 @@ and reconciliation against a changed server item. The platform owns the **execut
   track whose container this device cannot play without a download control. The disk budget is
   the lesser of 10 GiB and what is used plus free space less 256 MiB, with a 512 MiB reservation for
   an unknown length. A failure is recorded with the core, which owns the retry boundary, and the
-  executor asks WorkManager to wake it at that boundary rather than retrying by itself. A transfer
-  restarts from zero; resume data is not kept. A downloaded song plays through the same validating
+  executor asks WorkManager to wake it at that boundary rather than retrying by itself; anything
+  thrown, an `Error` included, is such a failure, so no row stays `downloading` with no task behind
+  it. **A stopped transfer resumes.** WorkManager stops ordinary work after about ten minutes and runs
+  it again, and a cancellation leaves the row and its partial file as they are; the next run asks for
+  the rest with `Range: bytes=<partial length>-` and appends only when the answer is a 206 whose
+  `Content-Range` is exactly `bytes <partial>-<total-1>/<total>`, where `total` is the exact length
+  the first response declared, kept as the row's resume data. A 200 is taken as the whole file
+  again; any other range, or a 416, discards the partial file and restarts from zero, so a changed
+  file is never stitched onto an old prefix. This was chosen over long-running foreground work:
+  it needs no foreground-service type, permission or notification, it survives process death as
+  well as the time limit, and each run makes progress however short it is. `/rest` has no
+  validators (§16.11), so a file changed on the server to the *same* length between two runs is not
+  detected by the range check; the promoted file is still signature- and length-checked. A
+  connection failure keeps the partial file for the retry; a refusal, a rejected body or an `Error`
+  discards it. A downloaded song plays through the same validating
   Media3 data source as a stream (§12.4), over the promoted file, so a file changed since promotion
   is refused rather than played. The playback controller asks for the local plan before any server
   read, including the queue's own song read, which offline would otherwise fail first. The library
@@ -7248,8 +7272,16 @@ start now asks for the local plan first. Evidence: Robolectric host tests of the
 a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
 relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
 and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
-`android-emulator` job. Left open: resume data, and title metadata offline for tracks the reader
-never read.
+`android-emulator` job. Left open: title metadata offline for tracks the reader never read.
+**Fix round, same day.** Review found three defects, each corrected here. (1) Promotion, recovery
+and Apple's local-plan check read the whole file to validate it; a large FLAC exhausted the heap,
+and the `OutOfMemoryError` escaped the executor's `catch (Exception)`, leaving the row `downloading`
+for ever. Validation now reads a bounded prefix plus the on-disk length (§14.5 *Atomic promotion*),
+and the executor records any throwable but a cancellation as a failure. (2) WorkManager stops
+ordinary work after about ten minutes, and each rerun restarted from byte zero, so a long transfer
+never finished; transfers now resume by `Range` (§14.5, *The Android executor*). (3) A download sent
+`stream` with no `format`, so a server transcoding for this player made every download fail
+validation; Apple had the same gap. Both now send `format=raw`.
 
 **2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
 page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and

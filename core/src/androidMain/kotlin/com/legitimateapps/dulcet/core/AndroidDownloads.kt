@@ -7,13 +7,17 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -89,11 +93,19 @@ public enum class AndroidDownloadRunOutcome {
  * - **A file is written only after its row, and only under the name the row gives it**
  *   (`<downloadId>.partial` in the temporary directory, the row's `file_relative_path` once
  *   promoted), which is what the launch sweep of spec §14.7 requires.
- * - **Nothing is promoted unvalidated.** The whole temporary file passes the §12.4 validator —
- *   envelope detection first, then the container signature — and an exact server length must match
- *   before the atomic rename. A server error envelope delivered with HTTP 200 is rejected there.
+ * - **Nothing is promoted unvalidated.** The temporary file passes the §12.4 validator — envelope
+ *   detection first, then the container signature, from a bounded prefix — and its on-disk length
+ *   must match an exact server length before the atomic rename. A server error envelope delivered
+ *   with HTTP 200 is rejected there. No file is ever read whole.
+ * - **Every download is the original file**: legacy `stream` with `format=raw`, which a transcoding
+ *   the server has configured for this player cannot override.
+ * - **A stopped transfer resumes.** The executor's work may be stopped at any point — WorkManager
+ *   stops ordinary work after about ten minutes — and runs again; the next run asks for the rest of
+ *   the file with a `Range` request from the temporary file's length, and appends only when the
+ *   server answers with exactly that range of a file of the length it first declared. Any other
+ *   answer restarts from byte zero, so a changed file is never stitched onto an old prefix.
  * - **One transfer at a time**, so a download never competes with playback for more than one
- *   connection, and a transcoded download is never scheduled (every download is the original file).
+ *   connection.
  *
  * Every public call is safe from any thread; database work is confined to one thread.
  */
@@ -110,6 +122,8 @@ public class AndroidDownloadController internal constructor(
     private val openTransfer: ((RemotePlaybackWirePlan) -> AndroidPlaybackResource)?,
     /** Told the raw ids whose downloaded state changed, so library screens republish their badges. */
     private val onDownloadedChanged: (Set<String>) -> Unit,
+    /** The file system the download directory lives on; a test substitutes one that faults. */
+    fileSystem: okio.FileSystem = okio.FileSystem.SYSTEM,
 ) : AutoCloseable {
     public constructor(context: Context, account: PlaybackEndpointAccount, tasks: AndroidDownloadTasks) : this(
         account = account,
@@ -132,7 +146,7 @@ public class AndroidDownloadController internal constructor(
     private val store: DulcetDatabaseStore = openStore()
     private val engine = DownloadPolicyEngine(
         store.database,
-        DownloadFileStore(downloadRoot.path, okio.FileSystem.SYSTEM),
+        DownloadFileStore(downloadRoot.path, fileSystem),
     )
     @Volatile private var wire: PlaybackWireClient? = PlaybackWireClient(account)
     @Volatile private var requests: AuthenticatedEndpointClient? = AuthenticatedEndpointClient(
@@ -143,6 +157,7 @@ public class AndroidDownloadController internal constructor(
     private val progress = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Long?>>()
     private val mutableStatuses = MutableStateFlow<Map<String, AndroidDownloadStatus>>(emptyMap())
     @Volatile private var closed = false
+    private val runningTasks = MutableStateFlow(0)
 
     /** Every download of the account, by raw id, with the transfer under way's progress. */
     public val statuses: StateFlow<Map<String, AndroidDownloadStatus>> = mutableStatuses
@@ -173,6 +188,10 @@ public class AndroidDownloadController internal constructor(
             }
         }
     }
+
+    /** The temporary file a task writes, for tests that observe a transfer part-way. */
+    internal suspend fun temporaryPathForTest(downloadId: String): String =
+        withContext(database) { engine.temporaryFilePath(DownloadId(downloadId)) }
 
     /** True once relaunch reconciliation has run; false when the subsystem could not be opened. */
     public suspend fun awaitReconciled(): Boolean = reconciled.await()
@@ -266,10 +285,30 @@ public class AndroidDownloadController internal constructor(
     /**
      * The executor's body for one task: transfers the row's file into its temporary path, then asks
      * the core to validate and promote it. A cancellation (the task was stopped or the download
-     * removed) leaves the row as it is — WorkManager runs a stopped task again, and a removed one has
-     * no row. Every other failure is recorded with the core, which sets the retry boundary.
+     * removed) leaves the row and its partial file as they are — WorkManager runs a stopped task
+     * again, which resumes from the file's length, and a removed one has no row. Every other failure,
+     * an [Error] included, is recorded with the core, which sets the retry boundary: nothing thrown
+     * may leave a row `Downloading` with no task behind it. A transport failure keeps the partial
+     * file for the retry to resume; any other failure discards it.
      */
     public suspend fun runTask(downloadId: String): AndroidDownloadRunOutcome {
+        runningTasks.update { it + 1 }
+        try {
+            return runTaskCounted(downloadId)
+        } finally {
+            runningTasks.update { it - 1 }
+        }
+    }
+
+    /**
+     * Waits until no [runTask] is running, at most [timeoutMilliseconds]; true when none is. After
+     * [close] a running transfer stops at its next read, so a sign-out that deletes the account's
+     * files waits here first and no transfer writes into a directory being deleted.
+     */
+    public suspend fun awaitTasksStopped(timeoutMilliseconds: Long): Boolean =
+        withTimeoutOrNull(timeoutMilliseconds) { runningTasks.first { it == 0 } } != null
+
+    private suspend fun runTaskCounted(downloadId: String): AndroidDownloadRunOutcome {
         if (closed || !awaitReconciled()) return AndroidDownloadRunOutcome.NotRunnable
         val id = DownloadId(downloadId)
         val row = withContext(database) { engine.record(id) }
@@ -297,12 +336,13 @@ public class AndroidDownloadController internal constructor(
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             val error = (failure as? AndroidDownloadTransferFailure)?.error
                 ?: (failure as? AndroidPlaybackIOException)?.error
                 ?: DomainError.Transport.Unreachable
-            withContext(database) {
-                temporary.delete()
+            // The recording must happen even when the task's own job is being torn down around it.
+            withContext(database + NonCancellable) {
+                if (!failure.keepsPartialFile()) temporary.delete()
                 if (engine.record(id) != null) {
                     engine.recordFailure(id, error, wall())
                     AndroidDownloadRunOutcome.WillRetry
@@ -361,44 +401,84 @@ public class AndroidDownloadController internal constructor(
             legacyPreference = LegacyPlaybackPreference(format = null, maxBitRateKbps = null),
         ))) {
             is PlaybackResolutionResult.Failed -> throw AndroidDownloadTransferFailure(resolved.error)
-            is PlaybackResolutionResult.Resolved -> resolved.plan
+            is PlaybackResolutionResult.Resolved -> resolved.plan.asOriginalFileDownload()
         }
         val resource = openTransfer?.invoke(plan)
             ?: AndroidHttpPlaybackResource(account, plan, requests ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled))
+        val resumable = withContext(database) {
+            (engine.resumeDecision(row.downloadId, wall()) as? DownloadResumeDecision.Resume)?.data
+        }?.let(::decodeRangeResume)
         return withContext(Dispatchers.IO) {
-            val response = resource.open(0, -1)
+            val partial = if (temporary.exists()) temporary.length() else 0L
+            val resumeAt = resumable?.takeIf { partial in 1 until it }?.let { partial }
+            var response = resource.open(resumeAt ?: 0L, -1)
+            var continuing = false
+            if (resumeAt != null) {
+                // Only exactly the rest of a file of the first-declared length continues the prefix.
+                // A 200 is the whole file again; any other range means the file is not the one the
+                // prefix came from, so the prefix goes and the transfer starts over from zero.
+                continuing = response.status == 206 &&
+                    response.headers.contentRange?.trim() == "bytes $resumeAt-${resumable - 1}/$resumable"
+                if (!continuing && response.status != 200 && (response.status == 206 || response.status == 416)) {
+                    try { response.close() } catch (_: Exception) { }
+                    response = resource.open(0L, -1)
+                }
+            }
             try {
-                if (response.status !in 200..299) throw AndroidDownloadTransferFailure(when (response.status) {
-                    401 -> DomainError.Auth.InvalidCredentials
-                    403 -> DomainError.Auth.Forbidden
-                    429 -> DomainError.Server.Busy(parseRetryAfterSeconds(response.headers.retryAfter))
-                    else -> DomainError.Server.Unknown(response.status)
-                })
-                val exact = (response.headers.contentLength as? PlaybackContentLength.Exact)?.byteCount
-                progress[row.identity.rawId] = 0L to exact
-                publish()
-                temporary.parentFile?.mkdirs()
-                var written = 0L
-                var reported = 0L
-                FileOutputStream(temporary).use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                        val count = response.input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        written += count
-                        if (written - reported >= PROGRESS_STEP_BYTES) {
-                            reported = written
-                            progress[row.identity.rawId] = written to exact
-                            publish()
+                if (response.status !in 200..299 || (!continuing && response.status != 200)) {
+                    throw AndroidDownloadTransferFailure(when (response.status) {
+                        401 -> DomainError.Auth.InvalidCredentials
+                        403 -> DomainError.Auth.Forbidden
+                        429 -> DomainError.Server.Busy(parseRetryAfterSeconds(response.headers.retryAfter))
+                        in 200..299 -> DomainError.Protocol.UnexpectedBinary
+                        else -> DomainError.Server.Unknown(response.status)
+                    })
+                }
+                val exact = if (continuing) resumable else (response.headers.contentLength as? PlaybackContentLength.Exact)?.byteCount
+                if (!continuing) {
+                    // The declared length is what a later run's range must match; without one there
+                    // is nothing to check a continuation against, so such a transfer never resumes.
+                    withContext(database) {
+                        if (exact != null && exact > 0) {
+                            engine.recordResumeData(row.downloadId, encodeRangeResume(exact), wall())
+                        } else {
+                            engine.clearResumeData(row.downloadId)
                         }
                     }
-                    // The bytes reach the disk before the core may rename them into place.
-                    output.flush()
-                    output.fd.sync()
                 }
-                DownloadResponseMetadata(response.headers.contentType, response.headers.contentLength)
+                var written = if (continuing) partial else 0L
+                var reported = written
+                progress[row.identity.rawId] = written to exact
+                publish()
+                temporary.parentFile?.mkdirs()
+                FileOutputStream(temporary, continuing).use { output ->
+                    try {
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            // A closed controller's account is being signed out: stop as a stopped task does.
+                            if (closed) throw CancellationException("download controller closed")
+                            val count = response.input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            written += count
+                            if (written - reported >= PROGRESS_STEP_BYTES) {
+                                reported = written
+                                progress[row.identity.rawId] = written to exact
+                                publish()
+                            }
+                        }
+                    } finally {
+                        // The bytes reach the disk before the core may rename them into place, and
+                        // before a stopped run's successor resumes from the file's length.
+                        output.flush()
+                        output.fd.sync()
+                    }
+                }
+                DownloadResponseMetadata(
+                    response.headers.contentType,
+                    if (continuing) PlaybackContentLength.Exact(requireNotNull(resumable)) else response.headers.contentLength,
+                )
             } finally {
                 try { response.close() } catch (_: Exception) { }
             }
@@ -461,6 +541,28 @@ public class AndroidDownloadController internal constructor(
             listOf(TranscodingAudioProfile(AudioContainer.Mp3, "mp3", maxAudioChannels = 2)))
     }
 }
+
+/**
+ * True for a failure of the connection, whose partial file a retry resumes from. A refusal, a
+ * rejected body or an [Error] discards it: none of them is a prefix worth continuing.
+ */
+private fun Throwable.keepsPartialFile(): Boolean = when (this) {
+    is AndroidDownloadTransferFailure -> error is DomainError.Transport
+    is AndroidPlaybackIOException -> error is DomainError.Transport
+    is IOException -> true
+    else -> false
+}
+
+/** The resume record Android keeps on a row: the exact length the first response declared. */
+private fun encodeRangeResume(totalBytes: Long): ByteArray = "$RANGE_RESUME_PREFIX$totalBytes".encodeToByteArray()
+
+private fun decodeRangeResume(data: ByteArray): Long? = data.decodeToString()
+    .takeIf { it.startsWith(RANGE_RESUME_PREFIX) }
+    ?.removePrefix(RANGE_RESUME_PREFIX)
+    ?.toLongOrNull()
+    ?.takeIf { it > 0 }
+
+private const val RANGE_RESUME_PREFIX = "android-range:1:"
 
 /** A transfer that failed for a reason the core has a word for. Carries no URL. */
 internal class AndroidDownloadTransferFailure(val error: DomainError) : IOException("download transfer failed")

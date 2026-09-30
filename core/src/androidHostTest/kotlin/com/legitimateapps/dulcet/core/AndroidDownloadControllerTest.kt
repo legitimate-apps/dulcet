@@ -3,8 +3,17 @@ package com.legitimateapps.dulcet.core
 import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.datasource.DataSpec
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okio.FileSystem
+import okio.ForwardingFileSystem
+import okio.Path
+import okio.Source
 import org.junit.After
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -18,6 +27,7 @@ import java.net.Socket
 import java.net.URI
 import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
@@ -73,7 +83,11 @@ class AndroidDownloadControllerTest {
             assertEquals("/rest/stream.view", request.path)
             assertEquals(listOf(RAW_ID), request.query["id"])
             assertTrue(request.query.keys.containsAll(setOf("u", "t", "s")), "the transfer is the signed stream request")
-            assertFalse("format" in request.query, "a download is the original file, never a transcode")
+            // With no format a server applies any transcoding configured for this player; `raw` is
+            // the API's explicit "never transcode", so the stored file is the original.
+            assertEquals(listOf("raw"), request.query["format"], "a download is the original file, never a transcode")
+            assertFalse("maxBitRate" in request.query)
+            assertNull(request.headers["range"], "a first transfer asks for the whole file")
             println("ANDROID DOWNLOAD HOST OBSERVED transfer=http promotion=atomic bytes=${AUDIO.size} temp-left=false")
         }
     }
@@ -107,6 +121,142 @@ class AndroidDownloadControllerTest {
             assertTrue(files().isEmpty())
             assertNull(controller.localPlan(RAW_ID))
         }
+    }
+
+    @Test fun aTransferStoppedMidBodyResumesFromItsPartialFileWithARangeRequest() = runBlocking {
+        val stopped = CountDownLatch(1)
+        WireServer { request -> rangeAware(request, stopped) }.use { server ->
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val partial = stopMidBody(controller, task, stopped)
+
+            // Stopped, as WorkManager stops work at its time limit: the row still names the running
+            // task, which WorkManager runs again, and the bytes so far are kept.
+            assertEquals("downloading", rows().single().state)
+            val kept = partial.length()
+            assertTrue(kept in STOP_AT until AUDIO.size.toLong(), "a strict prefix was kept: $kept of ${AUDIO.size}")
+
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(task))
+
+            assertEquals(2, server.requests.size)
+            val resumed = server.requests.last()
+            assertEquals("bytes=$kept-", resumed.headers["range"], "the rerun asks only for the rest, never from zero")
+            assertEquals(listOf("raw"), resumed.query["format"])
+            val row = rows().single()
+            assertEquals("complete", row.state)
+            assertContentEquals(AUDIO, File(root, row.file_relative_path).readBytes(), "prefix and rest form the original")
+            assertFalse(partial.exists())
+        }
+    }
+
+    @Test fun aResumeAnsweredForADifferentFileRestartsFromZeroAndNeverStitches() = runBlocking {
+        val stopped = CountDownLatch(1)
+        val changed = AUDIO.copyOf().also { it[AUDIO.size - 1] = 7 } + ByteArray(333) { 5 }
+        WireServer { request ->
+            val range = request.headers["range"]
+            when {
+                range == null && stopped.count > 0 -> rangeAware(request, stopped)
+                range == null -> WireReply(200, changed)
+                // The server's file is no longer the one the prefix came from: its length moved.
+                else -> {
+                    val start = range.removePrefix("bytes=").removeSuffix("-").toInt()
+                    WireReply(206, changed.copyOfRange(start, changed.size),
+                        headers = mapOf("Content-Range" to "bytes $start-${changed.size - 1}/${changed.size}"))
+                }
+            }
+        }.use { server ->
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val kept = stopMidBody(controller, task, stopped).length()
+
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(task))
+
+            assertEquals(listOf(null, "bytes=$kept-", null), server.requests.map { it.headers["range"] },
+                "the mismatched range is abandoned for a whole-file request")
+            assertContentEquals(changed, File(root, rows().single().file_relative_path).readBytes(),
+                "the stored file is wholly the new one, not the old prefix with the new tail")
+        }
+    }
+
+    @Test fun anErrorThrownWhilePromotingIsRecordedAsAFailureWithARetryBoundary() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val faulting = object : ForwardingFileSystem(FileSystem.SYSTEM) {
+                override fun source(file: Path): Source {
+                    if (file.name.endsWith(".partial")) throw OutOfMemoryError("fixture: promotion ran out of memory")
+                    return super.source(file)
+                }
+            }
+            val controller = controller(server, tasks, fileSystem = faulting)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, controller.runTask(tasks.started.single()))
+
+            assertEquals(1, server.requests.size, "the transfer ran, so the fault struck at promotion")
+            val row = rows().single()
+            assertEquals("interrupted", row.state, "an Error may not leave the row downloading with no task")
+            val boundary = assertNotNull(controller.statuses.value.getValue(RAW_ID).retryNotBeforeWallClock)
+            assertTrue(boundary > NOW && boundary != Long.MAX_VALUE, "the policy's backoff applies")
+            assertTrue(files().isEmpty(), "a body that faulted in validation is not kept")
+            controller.scheduleNext()
+            assertEquals(listOf(boundary), tasks.wakes, "the queue moves on at the boundary")
+        }
+    }
+
+    @Test fun aClosedControllersRunningTransferStopsAndIsAwaited() = runBlocking {
+        val stopped = CountDownLatch(1)
+        WireServer { request -> rangeAware(request, stopped) }.use { server ->
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val partial = File(controller.temporaryPathForTest(task))
+            val run = CoroutineScope(Dispatchers.IO).async { controller.runTask(task) }
+            withTimeout(10_000) { while (partial.length() < STOP_AT) delay(5) }
+
+            controller.close()
+            val waiter = CoroutineScope(Dispatchers.IO).async { controller.awaitTasksStopped(10_000) }
+            delay(200)
+            assertFalse(waiter.isCompleted, "a transfer still inside its read is still running, and is waited for")
+            stopped.countDown()
+
+            assertTrue(waiter.await(), "the transfer stopped within the wait")
+            assertTrue(run.isCompleted)
+            assertFailsWith<CancellationException> { run.await() }
+            val kept = partial.length()
+            delay(400)
+            assertEquals(kept, partial.length(), "nothing is written after the wait returns")
+            assertTrue(kept < AUDIO.size, "the closed controller stopped before the whole body")
+        }
+    }
+
+    /** The whole file, pausing after [STOP_AT] bytes until [stopped]; the rest for a range request. */
+    private fun rangeAware(request: WireRequest, stopped: CountDownLatch): WireReply {
+        val range = request.headers["range"] ?: return WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
+            check(stopped.await(10, TimeUnit.SECONDS)) { "the test never stopped the transfer" }
+        })
+        val start = range.removePrefix("bytes=").removeSuffix("-").toInt()
+        return WireReply(206, AUDIO.copyOfRange(start, AUDIO.size),
+            headers = mapOf("Content-Range" to "bytes $start-${AUDIO.size - 1}/${AUDIO.size}"))
+    }
+
+    /**
+     * Runs [task] until [STOP_AT] bytes are on disk, then cancels it as WorkManager stops work, and
+     * returns the partial file. The server sends one more chunk after the cancellation so the
+     * blocked read returns and the executor observes the stop between reads, as it does in use.
+     */
+    private suspend fun stopMidBody(controller: AndroidDownloadController, task: String, stopped: CountDownLatch): File {
+        val partial = File(controller.temporaryPathForTest(task))
+        val run = CoroutineScope(Dispatchers.IO).async { controller.runTask(task) }
+        withTimeout(10_000) { while (partial.length() < STOP_AT) delay(5) }
+        run.cancel()
+        stopped.countDown()
+        assertFailsWith<CancellationException> { run.await() }
+        return partial
     }
 
     @Test fun serverRefusalsAreRecordedWithTheirRetryBoundary() = runBlocking {
@@ -248,6 +398,7 @@ class AndroidDownloadControllerTest {
         tasks: RecordingTasks,
         wall: () -> Long = { NOW },
         onChanged: (Set<String>) -> Unit = {},
+        fileSystem: FileSystem = FileSystem.SYSTEM,
     ): AndroidDownloadController = AndroidDownloadController(
         account = PlaybackEndpointAccount(SERVER_ID, server.url, USER, PASSWORD, allowLocalHttp = true),
         openStore = { openStore() },
@@ -257,6 +408,7 @@ class AndroidDownloadControllerTest {
         diskBudgetBytes = { 10L * 1024 * 1024 * 1024 },
         openTransfer = null,
         onDownloadedChanged = onChanged,
+        fileSystem = fileSystem,
     ).also { opened += it }
 
     // JDBC's process-wide DriverManager would retain a sandbox-loaded driver that ordinary host
@@ -283,7 +435,7 @@ class AndroidDownloadControllerTest {
         override fun wakeAt(wallClockMilliseconds: Long) { wakes += wallClockMilliseconds }
     }
 
-    private data class WireRequest(val target: String) {
+    private data class WireRequest(val target: String, val headers: Map<String, String> = emptyMap()) {
         private val uri get() = URI(target)
         val path: String get() = uri.path
         val query: Map<String, List<String>> get() = uri.rawQuery.orEmpty().split('&').filter { it.isNotEmpty() }.map {
@@ -298,6 +450,10 @@ class AndroidDownloadControllerTest {
         val declaredLength: Int = bytes.size,
         val contentType: String = "audio/wav",
         val retryAfter: String? = null,
+        val headers: Map<String, String> = emptyMap(),
+        /** Bytes sent before [pause] runs; the next [STOP_CHUNK] follow at once, the rest later. */
+        val pauseAfter: Int? = null,
+        val pause: () -> Unit = {},
     )
 
     private class WireServer(private val respond: (WireRequest) -> WireReply) : AutoCloseable {
@@ -317,14 +473,29 @@ class AndroidDownloadControllerTest {
             client.soTimeout = 10_000
             val reader = client.getInputStream().bufferedReader(Charsets.US_ASCII)
             val line = checkNotNull(reader.readLine())
-            generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
-            val request = WireRequest(line.split(' ')[1])
+            val headers = generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
+                .associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
+            val request = WireRequest(line.split(' ')[1], headers)
             requests += request
             val reply = respond(request)
             val header = "HTTP/1.1 ${reply.code} Fixture\r\nContent-Type: ${reply.contentType}\r\n" +
                 "Content-Length: ${reply.declaredLength}\r\nConnection: close\r\n" +
-                (reply.retryAfter?.let { "Retry-After: $it\r\n" } ?: "") + "\r\n"
-            client.getOutputStream().apply { write(header.toByteArray(Charsets.US_ASCII)); write(reply.bytes); flush() }
+                (reply.retryAfter?.let { "Retry-After: $it\r\n" } ?: "") +
+                reply.headers.entries.joinToString("") { "${it.key}: ${it.value}\r\n" } + "\r\n"
+            val output = client.getOutputStream()
+            output.write(header.toByteArray(Charsets.US_ASCII))
+            val pauseAt = reply.pauseAfter
+            if (pauseAt == null) {
+                output.write(reply.bytes); output.flush()
+                return
+            }
+            output.write(reply.bytes, 0, pauseAt); output.flush()
+            reply.pause()
+            output.write(reply.bytes, pauseAt, STOP_CHUNK); output.flush()
+            // The stopped executor closes its end; the rest may or may not find a reader.
+            Thread.sleep(300)
+            try { output.write(reply.bytes, pauseAt + STOP_CHUNK, reply.bytes.size - pauseAt - STOP_CHUNK); output.flush() }
+            catch (_: java.io.IOException) { }
         }
         override fun close() {
             if (closed) return
@@ -340,6 +511,8 @@ class AndroidDownloadControllerTest {
         const val USER = "download-user"
         const val PASSWORD = "download-password"
         const val NOW = 1_800_000_000_000L
+        const val STOP_AT = 16_384
+        const val STOP_CHUNK = 1_024
         val AUDIO: ByteArray = "RIFF".toByteArray() + byteArrayOf(0x24, 0x70, 0, 0) + "WAVEfmt ".toByteArray() +
             ByteArray(40_000) { (it % 251).toByte() }
     }

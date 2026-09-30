@@ -594,6 +594,35 @@ internal fun RemotePlaybackWirePlan.isTranscoded(): Boolean = when (val decision
         decision.format != null || decision.maxBitRateKbps != null
 }
 
+/**
+ * The plan a download sends: the legacy `stream` request with `format=raw`, the Subsonic API's
+ * explicit "no transcoding" (spec §14.5). A request with no format lets the server apply a
+ * transcoding configured for this player, and the reference server's `download` endpoint does the
+ * same when it transcodes downloads automatically; `raw` returns before either (OBSERVED in the
+ * reference server's source, v0.63.2 `ResolveRequest`). Only an original-file legacy plan qualifies.
+ */
+internal fun RemotePlaybackWirePlan.asOriginalFileDownload(): RemotePlaybackWirePlan {
+    require(path == PlaybackDeliveryPath.Legacy && endpoint == "stream" && !isTranscoded()) {
+        "a download is the original file over legacy stream"
+    }
+    return RemotePlaybackWirePlan(
+        playbackSessionId = playbackSessionId,
+        attemptId = attemptId,
+        itemId = itemId,
+        path = path,
+        deliveryProtocol = deliveryProtocol,
+        expectedContainer = expectedContainer,
+        transcode = transcode,
+        contentLength = contentLength,
+        endpoint = endpoint,
+        parameters = LinkedHashMap(parameters).apply { put("format", ORIGINAL_FILE_FORMAT) },
+        resolutionRequest = resolutionRequest,
+    )
+}
+
+/** The Subsonic API's `format` value that disables transcoding (API 1.9.0). */
+internal const val ORIGINAL_FILE_FORMAT = "raw"
+
 internal fun RemotePlaybackWirePlan.usesEstimatedLegacyContentLength(): Boolean =
     path == PlaybackDeliveryPath.Legacy &&
         isTranscoded() &&

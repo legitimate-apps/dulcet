@@ -74,6 +74,12 @@ internal object PlaybackStreamValidator {
         response: AuthenticatedEndpointResponse,
         expectedContainer: AudioContainer,
         requiresAudioSignature: Boolean = true,
+        /**
+         * The length of the whole body when [response] carries only its leading bytes: a download
+         * is validated from a bounded prefix of its file plus the file's on-disk length, never by
+         * reading the file whole (spec §14.5). Defaults to the carried body, which is then all of it.
+         */
+        totalBodyLength: Long = response.body.size.toLong(),
     ): PlaybackStreamValidationResult {
         val envelope = response.body.inspectSubsonicBinaryEnvelope()
         val statusIsSuccess = response.statusCode in 200..299
@@ -145,7 +151,7 @@ internal object PlaybackStreamValidator {
         if (
             declaredLength is PlaybackContentLength.Exact &&
             response.statusCode != PARTIAL_CONTENT &&
-            declaredLength.byteCount != response.body.size.toLong()
+            declaredLength.byteCount != totalBodyLength
         ) {
             return unexpectedSuccessfulPayload(response, DomainError.Protocol.UnexpectedBinary)
         }
@@ -275,6 +281,22 @@ private fun ByteArray.id3v2BlockLengthOrNull(): Int? {
     val blockLength = ID3_HEADER_LENGTH + payloadLength + footerLength
     return blockLength.takeIf { it <= size }
 }
+
+/**
+ * How many leading bytes the audio-signature check needs to see: the ID3v2 block plus the four bytes
+ * of a signature after it when [this] opens with a readable ID3v2 header, otherwise 0. A prefix
+ * shorter than this cannot show a FLAC signature that follows a large tag of embedded artwork.
+ */
+internal fun ByteArray.audioSignatureWindowBytes(): Long {
+    if (!matchesAscii(0, "ID3") || size < ID3_HEADER_LENGTH) return 0
+    val sizeBytes = (6..9).map { this[it].toInt() and 0xFF }
+    if (sizeBytes.any { it and 0x80 != 0 }) return 0
+    val payloadLength = sizeBytes.fold(0L) { total, byte -> (total shl 7) or byte.toLong() }
+    val footerLength = if (this[5].toInt() and ID3_FOOTER_FLAG != 0) ID3_FOOTER_LENGTH else 0
+    return ID3_HEADER_LENGTH + payloadLength + footerLength + SIGNATURE_AFTER_TAG_BYTES
+}
+
+private const val SIGNATURE_AFTER_TAG_BYTES = 4
 
 private fun ByteArray.hasAdtsSignature(): Boolean {
     if (size < 2) return false

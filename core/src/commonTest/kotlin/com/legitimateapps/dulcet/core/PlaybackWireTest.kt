@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
@@ -120,6 +121,29 @@ class PlaybackWireTest {
             plan.parameters,
         )
         assertEquals(OPAQUE_MEDIA_ID, plan.itemId.rawId)
+    }
+
+    @Test
+    fun aDownloadAsksForTheOriginalFileWithFormatRawAndIsNeverATranscode() = runTest {
+        val client = PlaybackWireClient(ACCOUNT, RecordingPlaybackTransport())
+        val original = extensionRequest().copy(
+            supportsTranscodingExtension = false,
+            legacyPreference = LegacyPlaybackPreference(format = null, maxBitRateKbps = null),
+        )
+
+        val plan = assertIs<PlaybackResolutionResult.Resolved>(client.resolve(original)).plan.asOriginalFileDownload()
+
+        // With no format a server applies the transcoding configured for this player; `raw` is the
+        // API's explicit "no transcoding", on the same validated stream endpoint.
+        assertEquals("stream", plan.endpoint)
+        assertEquals(linkedMapOf("id" to OPAQUE_MEDIA_ID, "format" to "raw"), plan.parameters)
+        assertFalse(plan.isTranscoded())
+        assertFalse(plan.usesEstimatedLegacyContentLength(), "an original file's length is exact")
+
+        val transcoded = assertIs<PlaybackResolutionResult.Resolved>(
+            client.resolve(original.copy(legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 128))),
+        ).plan
+        assertFailsWith<IllegalArgumentException> { transcoded.asOriginalFileDownload() }
     }
 
     @Test
