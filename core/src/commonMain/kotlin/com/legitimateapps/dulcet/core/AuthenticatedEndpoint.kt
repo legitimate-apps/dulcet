@@ -356,7 +356,8 @@ internal class AuthenticatedEndpointClient(
      * Navidrome's estimateContentLength contract is different: all bytes already received are the
      * complete representation even when the estimate overshoots. Read incrementally so those bytes
      * survive CIO's EOF or Darwin's specifically typed completion; every other transport failure
-     * still propagates.
+     * still propagates. On Darwin that completion is normally rewritten before Ktor sees it,
+     * because Ktor discards the unread body on any completion error (AccountHttpClient.apple.kt).
      */
     private suspend fun io.ktor.client.statement.HttpResponse.bodyAsBytesAllowingEstimatedEnd(): ByteArray {
         val channel = bodyAsChannel()

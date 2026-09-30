@@ -18,7 +18,9 @@ internal actual fun isPlatformEstimatedLengthCompletion(failure: Throwable): Boo
     return false
 }
 
-// NSURLSession reports a body shorter than its declared Content-Length through this code after it
-// has delivered all received bytes to the data-task delegate. OBSERVED with Ktor 3.5.2 on macOS.
+// NSURLSession reports a body shorter than its declared Content-Length through this code, after
+// handing the data-task delegate a prefix of it. OBSERVED with Ktor 3.5.2 on macOS. For a request
+// that asked for an estimate, the session delegate in AccountHttpClient.apple.kt already turns this
+// completion into a normal end, so it reaches the estimated read only if that predicate misses one.
 private const val NETWORK_CONNECTION_LOST = -1005L
 private const val MAX_CAUSE_DEPTH = 16

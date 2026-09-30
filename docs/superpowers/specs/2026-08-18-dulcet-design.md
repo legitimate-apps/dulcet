@@ -1698,7 +1698,9 @@ are hints, not a contract; the server may ignore them.
 **Path B also sends `estimateContentLength` whenever the plan is transcoded** — the lever revision 2
 missed. **OBSERVED:** `stream` takes `estimateContentLength`, which *"Sets Content-Length header for
 transcoded media."* Without it a cold legacy transcoded stream has no declared length, so it is
-delivered chunked and cannot advertise a seekable resource size. Keep sending it.
+delivered chunked and cannot advertise a seekable resource size. Keep sending it. The estimate is
+not a bound in either direction: a short cold transcode can outgrow it, and the server then stops at
+the declaration, so the body ends short and without its last frames (§28, 2026-09-30).
 
 🚨 **OBSERVED 2026-08-28 by CONF-13 against Navidrome 0.63.2: a COLD transcode is not
 range-capable at all.** A ranged `getTranscodeStream` against a transcode that is not yet cached
@@ -7295,6 +7297,34 @@ the phone's did. Evidence is host tests over the production `LibrarySession` and
 `AndroidLibraryReader` against a loopback server: the disposable server's corpus carries no genres
 (§16.9), so no live run opens a genre. Left open: genre play is observed at the action the phone's
 screen calls, and not at all on the TV.
+
+**2026-09-30 — An estimated legacy body the Darwin engine threw away (§12.5, CONF-92).** CONF-92's
+capped legacy load failed once on the tvOS simulator in `apple-ci` as `Unreachable`, after the same
+server had just transcoded the stream. Three facts, each OBSERVED:
+
+1. The estimate can **undershoot** as well as overshoot (revision 83 saw only overshoot). For the
+   2-second probe at 96 kbps, cold, Navidrome declared 24,576 bytes; ffmpeg produced more, the
+   server refused the write that would pass the declaration (log: `wrote more than the declared
+   Content-Length`) and closed, and curl received 23,385 bytes. The body is short either way, and on
+   an undershoot the end of the audio is simply missing.
+2. NSURLSession reports a body short of its declaration as `NSURLErrorDomain/-1005` after handing
+   the delegate a prefix of it: sometimes all of it, often only the first 16 KiB read, when the rest
+   arrived together with the end of the stream (loopback fixture, `DarwinEstimatedLengthBodyTest`).
+3. Ktor's Darwin engine answers any completion error by **cancelling** the body channel, which
+   discards every byte the reader has not yet consumed (Ktor 3.5.2 `DarwinTaskHandler` and
+   `ByteChannel.cancel`; a read made after the task ended failed with the -1005 and no bytes at all).
+   Revision 84's recovery ran in the reader, after that loss, so what it kept depended on a race.
+
+The tvOS failure is the losing side of that race with nothing read -- ASSUMED: it did not reproduce
+locally (0 failures in 8 uncached tvOS simulator runs before the change; 8 of 8 passed after it, as did
+3 of 3 on the iOS simulator and 3 of 3 on macOS), and the reading rests on (3). The
+fix sits before the loss: the Apple client's `NSURLSession` delegate forwards to Ktor's and, for a
+request that asked for an estimate, carries no `Range` and was answered 2xx with at least one body
+byte, reports that one completion as success, so Ktor ends the channel normally with every byte it
+was handed. An exact length, a ranged request, and an estimated response with no body byte still
+fail; the estimate, `Range` and byte clauses were each mutated and their controls went red (the 2xx
+clause has no control). The Apple apps' own playback path uses its
+own URLSession and is not changed; whether AVFoundation meets the same short prefix is not measured.
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
