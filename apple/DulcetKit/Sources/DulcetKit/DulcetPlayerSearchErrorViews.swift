@@ -94,7 +94,7 @@ struct DulcetPlaybackFailedView: View {
             Button(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
                 onControl(.retry)
             }
-            .buttonStyle(.borderedProminent)
+            .dulcetProminentActionStyle()
             .accessibilityIdentifier("dulcet.now-playing.retry")
         }
         if failure.canSkip {
@@ -392,6 +392,7 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(.setShuffle(!player.shuffleEnabled))
             }
+            .dulcetForeground(player.shuffleEnabled ? .accentIconOnWindow : .primaryTextOnWindow)
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(symbol: "backward.fill", font: .title, label: DulcetStrings.previous) {
                 onControl(.previous)
@@ -405,7 +406,6 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
-            .dulcetForeground(.accentIconOnWindow)
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(symbol: "forward.fill", font: .title, label: DulcetStrings.next) {
                 onControl(.next)
@@ -420,6 +420,7 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(.cycleRepeat)
             }
+            .dulcetForeground(player.repeatMode != .off ? .accentIconOnWindow : .primaryTextOnWindow)
         }
         .frame(maxWidth: 420)
         .frame(maxWidth: .infinity)
@@ -471,7 +472,7 @@ struct DulcetNowPlayingView: View {
             HStack(spacing: DulcetSpacing.sm) {
                 formatBadge
                 Spacer(minLength: 0)
-                DulcetAirPlayRoutePicker(tint: .dulcetAccent)
+                DulcetAirPlayRoutePicker(tint: .primary)
                 lyricsToggle
                 if showsQueueToggle {
                     Button {
@@ -912,7 +913,7 @@ struct DulcetTLSUntrustedView: View {
                     Link(destination: DulcetLinks.certificateInstallationGuide) {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
                     }
-                        .buttonStyle(.borderedProminent)
+                        .dulcetProminentActionStyle()
                         .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
 #endif

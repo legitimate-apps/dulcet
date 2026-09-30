@@ -269,6 +269,7 @@
 "queue.drag.refused" = "Can’t be added to Up Next";
 "library.album.hint" = "Opens the album";
 "reader.untitled" = "Unknown";
+"reader.track.durationUnknown" = "–";
 "reader.section.home" = "Home";
 "reader.section.albums" = "Albums";
 "reader.section.artists" = "Artists";

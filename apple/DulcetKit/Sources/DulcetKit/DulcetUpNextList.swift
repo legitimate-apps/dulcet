@@ -100,15 +100,18 @@ public struct DulcetUpNextSection: View {
         Button {
             onEdit(model.jumpIntent(to: entry))
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.track.title)
-                    .lineLimit(1)
-                Text(DulcetStrings.artistNames(entry.track.artistNames))
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .lineLimit(1)
+            HStack(spacing: DulcetSpacing.xs) {
+                DulcetArtworkView(artwork: entry.track.artwork, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.track.title)
+                        .lineLimit(1)
+                    Text(DulcetStrings.artistNames(entry.track.artistNames))
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
