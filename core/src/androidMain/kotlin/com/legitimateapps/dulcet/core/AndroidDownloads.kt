@@ -124,6 +124,9 @@ public class AndroidDownloadController internal constructor(
 
     public val providerInstanceId: String get() = account.providerInstanceId
 
+    /** True once [close] has run; a closed controller runs and schedules nothing. */
+    public val isClosed: Boolean get() = closed
+
     private val database = Dispatchers.IO.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val store: DulcetDatabaseStore = openStore()

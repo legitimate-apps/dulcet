@@ -139,9 +139,9 @@ public class AndroidAccountData internal constructor(
         internal fun artworkParentFor(context: Context): File = File(context.cacheDir, "artwork")
 
         /**
-         * Where downloaded media lives on Android. Android downloads nothing yet (spec §14.5), so no
-         * row names a file here; a removal is still given the directory an Android download executor
-         * must use, so that its rows' files are deleted with them once one exists.
+         * Where downloaded media lives on Android: app-private, excluded from backup, and the root
+         * [AndroidDownloadController] writes every temporary and promoted file under (spec §14.5), so
+         * a removal deletes an account's downloads with its rows.
          */
         internal fun downloadRootFor(context: Context): File = File(context.noBackupFilesDir, "downloads")
 
