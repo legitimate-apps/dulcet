@@ -26,9 +26,10 @@ import org.junit.runner.RunWith
 
 /**
  * A screenshot tour of the phone app for design review; see [DesignTourShots]. It visits the
- * library's Home, Albums, an album, Artists, an artist, Favourites, Now Playing while playing, Up
- * Next and Search with results, against the disposable server, and fails naming every screen it
- * could not reach. `tools/design-tour-android` runs it and collects the shots.
+ * library's Home, Albums, an album, Artists, an artist, Favourites, Playlists, a playlist, Now
+ * Playing while playing the track that has synced lyrics, Up Next, the lyrics sheet, and Search
+ * with results, against the disposable server, and fails naming every screen it could not reach.
+ * `tools/design-tour-android` runs it and collects the shots.
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidPhoneDesignTourTest {
@@ -44,7 +45,7 @@ class AndroidPhoneDesignTourTest {
         val label = InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "phone"
         val probe = DisposableServerProbe.fromInstrumentation()
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
-        retrying(3) { starFixtures(probe) }
+        retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         awaitQueuedBroadcastsDelivered()
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(label)
@@ -73,17 +74,31 @@ class AndroidPhoneDesignTourTest {
                 click("library.view.favourites")
                 awaitTag("library.favourites.album.0") && shots.settle()
             }
+            shots.step("playlists") {
+                click("library.open")
+                click("library.view.playlists")
+                awaitTag("library.playlists.item.0") && shots.settle()
+            }
+            shots.step("playlist") {
+                compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(PLAYLIST))
+                compose.onNode(hasText(PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
+                awaitTag("playlist.title") && shots.settle()
+            }
+            // The playlist's second entry carries the corpus's synced lyrics, so the player and the
+            // lyrics sheet are shot with lines that light up.
             shots.step("now-playing") {
-                openAlbum()
-                awaitEnabled("album.play")
-                click("album.play")
-                awaitTag("player.mini") && awaitText(TRACK)
-                click("player.mini")
-                awaitTag("player.full") && shots.settle(3_000)
+                click("playlist.entry.1")
+                awaitTag("player.full") && awaitText(LYRICS_TRACK) && shots.settle(3_000)
             }
             shots.step("up-next") {
                 click("player.queue")
                 awaitTag("player.upnext.0") && shots.settle()
+            }
+            // Back out of the sheet; the player stays open for the lyrics.
+            repeat(1) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
+            shots.step("lyrics") {
+                click("player.lyrics")
+                awaitTag("player.lyrics.sheet") && awaitTag("lyrics.line.0") && shots.settle(1_500)
             }
             // Back out of the sheet and the player to the page.
             repeat(2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
@@ -127,6 +142,17 @@ class AndroidPhoneDesignTourTest {
         probe.call("star", mapOf("id" to probe.songId(TRACK)))
     }
 
+    /** One playlist the tours open: the playing track and the one with synced lyrics. Idempotent. */
+    private fun seedPlaylist(probe: DisposableServerProbe) {
+        val existing = probe.call("getPlaylists").getJSONObject("playlists").optJSONArray("playlist")
+        if (existing != null && (0 until existing.length()).any { existing.getJSONObject(it).getString("name") == PLAYLIST }) return
+        probe.callPairs("createPlaylist", listOf(
+            "name" to PLAYLIST,
+            "songId" to probe.songId(TRACK),
+            "songId" to probe.songId(LYRICS_TRACK),
+        ))
+    }
+
     private fun click(tag: String) {
         awaitTag(tag)
         compose.onNodeWithTag(tag).performClick()
@@ -142,14 +168,6 @@ class AndroidPhoneDesignTourTest {
     private fun awaitText(text: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
         compose.waitUntil("$text on screen", timeoutMillis) {
             compose.onAllNodes(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
-        }
-    }.isSuccess
-
-    private fun awaitEnabled(tag: String): Boolean = runCatching {
-        compose.waitUntil("$tag enabled", 30_000) {
-            compose.onAllNodes(hasTestTag(tag) and hasClickAction() and SemanticsMatcher("enabled") {
-                !it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled)
-            }).fetchSemanticsNodes().isNotEmpty()
         }
     }.isSuccess
 
@@ -169,5 +187,7 @@ class AndroidPhoneDesignTourTest {
         const val ALBUM = "Threshold Boundary"
         const val ARTIST = "Dulcet Fixtures"
         const val TRACK = "Twenty Nine Seconds"
+        const val LYRICS_TRACK = "Thirty One Seconds"
+        const val PLAYLIST = "Dulcet Tour Mix"
     }
 }
