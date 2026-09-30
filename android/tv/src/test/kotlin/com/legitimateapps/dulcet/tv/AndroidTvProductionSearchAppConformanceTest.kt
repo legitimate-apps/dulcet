@@ -87,9 +87,17 @@ class AndroidTvProductionSearchAppConformanceTest {
         // Only the device's rows: one character is not sent to the server. The app opens on the
         // library, whose home rows are committed too, so more device rows than the seeded two may
         // follow; every one of them is the device's.
-        val rows = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation].rows
+        val state = compose.onNodeWithTag("search.results").fetchSemanticsNode().config[SearchObservation]
+        val rows = state.rows
+        assertEquals(com.legitimateapps.dulcet.core.AndroidLibrarySearchScope.DeviceWhileServerPending, state.scope,
+            "A first-character query is answered from the device")
+        assertFalse(state.serverPending, "No server answer is coming for one character")
         assertTrue(rows.isNotEmpty() && rows.all { it.source == com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource.Device },
             "A first-character query shows the device's rows only: ${rows.map { it.source }}")
+        val ids = rows.map { it.item.id }
+        assertEquals(ids.size, ids.toSet().size, "No row is shown twice")
+        assertEquals(1, ids.count { it == environment.overlap.id }, "The cached overlap row appears exactly once")
+        assertEquals(1, ids.count { it == environment.localOnly.id }, "The device-only row appears exactly once")
         println("CONF-41 OBSERVED first-character query returns committed local library rows (${rows.size} device rows)")
     }
 

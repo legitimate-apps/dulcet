@@ -83,9 +83,10 @@ internal fun TvConnectScreen(
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
     val connecting = attempt?.isActive == true
-    // A form that leaves the screen abandons its attempt: the signing-out screen takes its place
-    // while an account is removed, and a connect answered after that must save nothing — not even
-    // when the connector returns without noticing its scope was cancelled. `stillWanted` reads this.
+    // A form that leaves the screen abandons its attempt, so a connect answered after that saves
+    // nothing — not even when the connector returns without noticing its scope was cancelled.
+    // `stillWanted` reads this. Defence in depth: Sign out, the one way off this form while a
+    // connect runs, is disabled meanwhile.
     DisposableEffect(Unit) { onDispose { generation += 1; attempt?.cancel() } }
 
     // Reads live state, never `connecting` from the composition it was created in: the button may
@@ -150,8 +151,9 @@ internal fun TvConnectScreen(
                         modifier = Modifier.testTag("tv.connect.status"))
                 }
                 // A saved account whose record cannot be read never reaches the app; it is signed out
-                // from here (spec §14.7). Renders nothing when no account is saved.
-                TvSignOutEntry(modifier = Modifier.padding(top = 16.dp))
+                // from here (spec §14.7). Renders nothing when no account is saved. Disabled while a
+                // connect runs, as the phone's is: a sign-out begun then would race the connect's save.
+                TvSignOutEntry(modifier = Modifier.padding(top = 16.dp), enabled = !connecting)
             }
             }
         }

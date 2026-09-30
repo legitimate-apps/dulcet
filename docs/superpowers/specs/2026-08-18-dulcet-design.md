@@ -2884,13 +2884,13 @@ could not have been sent — the credential that would send them is the unreadab
 this change they were stranded rather than deleted, but the loss is not announced. Removal leaves the last-selected tab (a preference holding no account data).
 Why the mark moved is the §28 entry of 2026-09-29.
 
-**A connect in flight when that form's Sign out is chosen (§28, 2026-09-30).** The removal is keyed
-by the id it was asked about. A connect that completes first saves a new id, which the removal
-leaves saved and the app then shows; only the old id's record and data are removed. Once the
-removal is under way the signing-out screen replaces the form, and a form that leaves the screen
-abandons its attempt, so a server answering after that saves nothing — the person is shown an empty
-form, never an account they can no longer see being connected. On Android the store's delete takes
-no id, so the id check and the delete run together on the main thread, as every save does.
+**Sign out and a connect on the same form (§28, 2026-09-30).** While a connect runs, the form's
+Sign out is disabled, on the phone and the TV alike, so a sign-out cannot begin while the connect's
+save may still land. The removal is keyed by the id it was asked about: an account saved under
+another id while a sign-out is open is left saved, and only the old id's record and data are
+removed. On Android the store's delete takes no id, so the id check and the delete run together on
+the main thread, as every production save does. As defence in depth, the TV form abandons its
+attempt when it leaves the screen, so an answer arriving after that saves nothing.
 
 ---
 
@@ -7162,10 +7162,22 @@ a sign-out; it now opens on Back, and Sign out takes no screen's default focus. 
 the Sign out offered for an unreadable account sat below a 540 dp screen's edge once a status line
 showed, clipped to zero height and unreachable by the D-pad (OBSERVED in a Robolectric composition
 at 960 x 540 dp); the form now scrolls, and a focused control brings itself into view. Checking
-that Sign out against a connect in flight found one defect: the signing-out screen replaced the
-form and cancelled its attempt, but a connector returning without noticing the cancellation still
-saved its account after the removal. The form now marks its attempt unwanted when it leaves the
-screen. §14.7 records the resulting rule.
+that Sign out against a connect in flight found a race: Sign out stayed enabled while connecting,
+and the form gives way only on the frame after the removal begins, so a connect answered in that gap
+could save after the account was removed. Sign out is now disabled while a connect runs, as the
+phone's is. The form also marks its attempt unwanted when it leaves the screen. That second defect —
+a connector returning after its scope was cancelled still saved — was reached only with a test
+double that ignores cancellation; the production `AccountConnector` catches cancellation and returns
+`Failed(Transport.Cancelled)`, so whether production could reach it is ASSUMED, not observed. §14.7
+records the resulting rule.
+
+A review of this change found that the home's first card took focus whenever it arrived, even after
+the person had moved along the bar: with a cold server, RIGHT to Account and then the rows arriving
+put focus on an album, and the next centre press opened it. The bar sits outside every route's focus
+memory, so the route could not see the move. A screen's default element now takes focus only while
+focus is off the bar or on the showing root's own tab, decided once when the element composes. Every
+screen that has nothing to restore rests the remote on its root's tab until its default arrives, so
+focus that falls off a screen that just left is not mistaken for a move along the bar.
 
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)

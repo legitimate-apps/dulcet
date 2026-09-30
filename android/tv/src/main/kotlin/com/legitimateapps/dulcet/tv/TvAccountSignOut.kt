@@ -99,10 +99,10 @@ internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?>
  * a screen's default focus: a remote reaches it only by moving to it.
  */
 @Composable
-internal fun TvSignOutEntry(modifier: Modifier = Modifier) {
+internal fun TvSignOutEntry(modifier: Modifier = Modifier, enabled: Boolean = true) {
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
-    Button(onClick = actions.requestSignOut, modifier = modifier.tvFocus("tv.account.signout")) {
+    Button(onClick = actions.requestSignOut, enabled = enabled, modifier = modifier.tvFocus("tv.account.signout")) {
         Text(stringResource(SharedR.string.account_signout_action))
     }
 }

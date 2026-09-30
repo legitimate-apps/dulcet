@@ -215,6 +215,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                     LocalTvRouteFocus provides memory.route(top),
                     // A text field keeps UP for its cursor; the navigation bar is above it.
                     LocalTvNavFocus provides navigation.current,
+                    LocalTvNavigation provides navigation,
                 ) {
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
@@ -255,12 +256,54 @@ private fun show(routes: SnapshotStateList<String>, states: androidx.compose.run
     routes += route
 }
 
-/** The navigation bar's focus: the root that is showing, so UP from a screen's top lands on it. */
+/**
+ * The navigation bar's focus: the root that is showing, so UP from a screen's top lands on it; and
+ * which of the bar's controls holds focus, if any. The bar sits outside every route's focus memory,
+ * so a screen's default focus asks here whether the person has moved along the bar ([allowsDefault]).
+ */
 internal class TvNavigationFocus {
     val search = FocusRequester()
     val library = FocusRequester()
     val account = FocusRequester()
     var current: FocusRequester = library
+
+    /** The tag of the showing root's tab: the one place on the bar a screen's default may take focus from. */
+    var currentTag: String = "library.open"
+
+    /** The tag of the bar control holding focus; null while focus is off the bar. Not state: read once, at a claim. */
+    var focusedTag: String? = null
+        private set
+
+    fun focusChanged(tag: String, focused: Boolean) {
+        if (focused) focusedTag = tag else if (focusedTag == tag) focusedTag = null
+    }
+
+    /**
+     * Whether a screen's default element may take focus now: focus is off the bar, or on the showing
+     * root's own tab — where the app put it while the screen had nothing to focus. Never once the
+     * person has moved to another tab, Now Playing or Account.
+     */
+    fun allowsDefault(): Boolean = focusedTag == null || focusedTag == currentTag
+}
+
+/** Provided around the routes, so [tvFocus] can ask whether the person has moved along the bar. */
+internal val LocalTvNavigation = staticCompositionLocalOf<TvNavigationFocus?> { null }
+
+/**
+ * While a screen's default element does not exist yet — the library home before its rows arrive,
+ * or with none; a pushed screen before its read — the remote rests on the bar's tab for the showing
+ * root, so the first key press moves from a known place, and the default may take focus from there
+ * when it arrives ([TvNavigationFocus.allowsDefault]). Without this, focus that fell off a screen
+ * that just left lands wherever the platform puts it, often another tab, which reads as a move.
+ * Acts only when the route has nothing to restore or claim.
+ */
+@Composable
+internal fun RestOnTheBarUntilContent() {
+    val route = LocalTvRouteFocus.current
+    val navFocus = LocalTvNavFocus.current
+    LaunchedEffect(Unit) {
+        if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
+    }
 }
 
 /**
@@ -284,6 +327,11 @@ internal fun TvTopBar(
         root == ROUTE_LIBRARY -> focus.library
         else -> focus.search
     }
+    focus.currentTag = when {
+        top == ROUTE_ACCOUNT -> "tv.account.open"
+        root == ROUTE_LIBRARY -> "library.open"
+        else -> "search.open"
+    }
     Row(
         Modifier.fillMaxWidth().padding(start = 56.dp, top = 20.dp, end = 56.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -295,18 +343,21 @@ internal fun TvTopBar(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
         )
-        TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, onClick = onSearch)
-        TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library,
+        TvTab(stringResource(R.string.tv_nav_search), root == ROUTE_SEARCH, "search.open", focus.search, focus,
+            onClick = onSearch)
+        TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,
             Modifier.padding(start = 8.dp), onLibrary)
         Spacer(Modifier.weight(1f))
         if (playing) {
-            Button(onClick = onNowPlaying, modifier = Modifier.testTag("tv.nav.nowplaying")) {
+            Button(onClick = onNowPlaying, modifier = Modifier
+                .onFocusChanged { focus.focusChanged("tv.nav.nowplaying", it.isFocused) }
+                .testTag("tv.nav.nowplaying")) {
                 Icon(DulcetIcons.QueueMusic, null, Modifier.size(20.dp))
                 Text(stringResource(R.string.tv_nav_now_playing), Modifier.padding(start = 8.dp))
             }
         }
         TvTab(stringResource(SharedR.string.account_signout_account_label), top == ROUTE_ACCOUNT, "tv.account.open", focus.account,
-            Modifier.padding(start = 8.dp), onAccount, icon = DulcetIcons.Person)
+            focus, Modifier.padding(start = 8.dp), onAccount, icon = DulcetIcons.Person)
     }
 }
 
@@ -316,13 +367,15 @@ private fun TvTab(
     selected: Boolean,
     tag: String,
     focus: FocusRequester,
+    bar: TvNavigationFocus,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
     Button(
         onClick = onClick,
-        modifier = modifier.focusRequester(focus).testTag(tag).semantics { this.selected = selected },
+        modifier = modifier.focusRequester(focus).onFocusChanged { bar.focusChanged(tag, it.isFocused) }
+            .testTag(tag).semantics { this.selected = selected },
         colors = if (selected) androidx.tv.material3.ButtonDefaults.colors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -408,6 +461,7 @@ internal val LocalTvRouteFocus = staticCompositionLocalOf<TvRouteFocus?> { null 
 internal fun EnterRoute() {
     val route = LocalTvRouteFocus.current ?: return
     remember(route) { route.also(TvRouteFocus::enter) }
+    RestOnTheBarUntilContent()
 }
 
 /**
@@ -417,10 +471,14 @@ internal fun EnterRoute() {
 @Composable
 internal fun Modifier.tvFocus(tag: String, default: Boolean = false): Modifier {
     val route = LocalTvRouteFocus.current
+    val bar = LocalTvNavigation.current
     val requester = remember { FocusRequester() }
     if (route != null) {
         val restore = route.pending == tag
-        val claim = default && route.claimDefault()
+        // Decided once, when the element first composes: a default that arrives late — the home's
+        // first card after a cold read — takes focus only if the person has not moved along the bar
+        // meanwhile, and a later recomposition never turns a declined claim into a jump.
+        val claim = remember(tag, default) { default && route.claimDefault() && bar?.allowsDefault() != false }
         if (restore || claim) LaunchedEffect(tag) {
             if (runCatching { requester.requestFocus() }.isSuccess) route.restored()
         }
@@ -441,14 +499,9 @@ private fun pendingPosition(prefix: String): Int? =
 private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playback: AndroidPlaybackController?,
                           navigator: TvNavigator) {
     EnterRoute()
-    // The screen the app opens on. Its first card takes focus when it arrives; until then — an empty
-    // library, one still loading, or one that cannot be read — the remote waits on the bar's Library
-    // tab, so the first key press moves from a known place rather than from nowhere.
-    val route = LocalTvRouteFocus.current
-    val navFocus = LocalTvNavFocus.current
-    LaunchedEffect(Unit) {
-        if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
-    }
+    // The screen the app opens on. Its first card takes focus when it arrives, if the remote is still
+    // on the bar's Library tab (tvFocus); until then — an empty library, one still loading, or one that
+    // cannot be read — the remote waits there (EnterRoute), so the first key press moves from a known place.
     val rows = rememberHomeRows(session)
     val observation by session.observation.collectAsState()
     val list = rememberLazyListState()

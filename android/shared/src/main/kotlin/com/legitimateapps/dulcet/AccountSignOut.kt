@@ -410,7 +410,7 @@ public class AccountSignOut(
      * Keyed by [serverId]: an account saved since the sign-out was asked for — a connect that
      * finished meanwhile — is a different id and is left saved. [AccountCredentialStore.delete]
      * takes no id, so the check and the delete must see the same saved account: both run on the
-     * main thread, as every save does ([connectAndSaveAccount]'s callers), with no suspension
+     * main thread, as every production save does ([connectAndSaveAccount]'s callers), with no suspension
      * between them.
      */
     private fun deleteCredential(serverId: String): Boolean {

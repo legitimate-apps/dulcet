@@ -9,7 +9,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -123,63 +125,76 @@ class TvConnectScreenSignOutTest {
     }
 
     /**
-     * Should-fix 3, one order: Sign out is asked for while a connect is in flight, and the connect
-     * finishes first, saving a new account. Signing out afterwards removes the unreadable account it
-     * was asked for — never the one just connected, which stays saved and is what the app then shows.
+     * Review S1: Sign out is disabled while a connect runs, as the phone's is, so a sign-out cannot
+     * begin while the connect's save may still land; it is enabled again once the attempt ends.
      */
-    @Test fun aConnectFinishingDuringSignOutKeepsTheNewAccountAndRemovesOnlyTheOldOne() {
+    @Test fun signOutIsDisabledWhileAConnectRuns() {
         store.saveUnreadable(BROKEN)
         val gate = CompletableDeferred<Unit>()
         var started = false
-        host { started = true; gate.await(); connected() }
+        host { started = true; gate.await(); AccountConnectionResult.Failed(DomainError.Auth.InvalidCredentials) }
+        compose.onNodeWithTag("tv.account.signout").assertIsEnabled()
         fillAndSubmit()
         compose.waitUntil(5_000) { started }
+        compose.onNodeWithTag("tv.account.signout").assertIsNotEnabled()
+        // A TV button stays focusable when disabled; the remote reaches it and its centre key does nothing.
+        compose.onNodeWithTag("tv.connect.submit").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("tv.account.signout").assertIsFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitForIdle()
+        assertEquals(SignOutState.Idle, signOut.state.value, "The centre key on a disabled Sign out begins nothing")
 
-        press("tv.account.signout")
-        compose.onNodeWithTag("signout.unknown").assertExists()
         gate.complete(Unit)
-        compose.waitUntil(5_000) { store.activeAccountId() != BROKEN }
-        val connected = store.activeAccountId()
-        compose.waitUntil(5_000) { exists("app.connected") }
-
-        press("signout.anyway")
-        compose.waitUntil(5_000) { signedOut == 1 }
-        assertEquals(connected, store.activeAccountId(), "The account connected meanwhile stays saved")
-        assertEquals(connected, store.load()?.id)
-        assertEquals(listOf("remove:$BROKEN"), data.log, "Only the account asked about loses its data")
-        assertTrue(exists("app.connected"), "The app goes on showing the connected account")
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("tv.connect.status").assertTextContains("not accepted", substring = true) }.isSuccess
+        }
+        compose.onNodeWithTag("tv.account.signout").assertIsEnabled()
     }
 
     /**
-     * Should-fix 3, the other order: the sign-out runs while a connect is in flight. The signing-out
-     * screen replaces the form, which abandons the attempt, so a server answering afterwards saves
-     * nothing: the removed account is not resurrected and no account appears that the form no longer
-     * shows being connected.
+     * Should-fix 3: the removal is keyed by the id it was asked about. An account saved while the
+     * sign-out's dialog is open is a different id; signing out removes only the old one's record and
+     * data, and the new account stays saved.
      */
-    @Test fun aConnectAnsweredAfterTheSignOutSavesNothing() {
+    @Test fun anAccountSavedDuringTheSignOutIsKeptAndOnlyTheOldIdIsRemoved() {
         store.saveUnreadable(BROKEN)
+        host { connected() }
+
+        press("tv.account.signout")
+        compose.onNodeWithTag("signout.unknown").assertExists()
+        val saved = store.save("Music", "https://music.example.invalid", "listener", "tv-password-canary", false).id
+
+        press("signout.anyway")
+        compose.waitUntil(5_000) { signedOut == 1 }
+        assertEquals(saved, store.activeAccountId(), "The account saved meanwhile stays saved")
+        assertEquals(saved, store.load()?.id)
+        assertEquals(listOf("remove:$BROKEN"), data.log, "Only the account asked about loses its data")
+    }
+
+    /**
+     * Defence in depth: a form that leaves the screen — as it does when the signing-out screen takes
+     * its place — abandons its attempt, so a server answering afterwards saves nothing, even through
+     * a connector that returns without noticing the cancellation.
+     */
+    @Test fun aFormThatLeavesTheScreenAbandonsItsConnect() {
         val gate = CompletableDeferred<Unit>()
         var started = false
-        var calls = 0
-        // Ignores cancellation while it waits, as a connector blocked in I/O would.
-        host { calls++; started = true; withContext(NonCancellable) { gate.await() }; connected() }
+        var shown by mutableStateOf(true)
+        compose.setContent {
+            MaterialTheme {
+                if (shown) TvConnectScreen({ started = true; withContext(NonCancellable) { gate.await() }; connected() }, store) {}
+            }
+        }
         fillAndSubmit()
         compose.waitUntil(5_000) { started }
-
-        data.removeGate = CompletableDeferred()
-        press("tv.account.signout")
-        press("signout.anyway")
-        compose.waitUntil(5_000) { signOut.state.value == SignOutState.Removing }
-        compose.onNodeWithTag("signout.progress").assertExists()
+        shown = false
+        compose.waitForIdle()
         gate.complete(Unit)
         compose.waitForIdle()
-        data.removeGate!!.complete(Unit)
-        compose.waitUntil(5_000) { signedOut == 1 }
-
-        assertEquals(1, calls)
-        assertNull(store.activeAccountId(), "Nothing is saved: neither the removed account nor the abandoned connect")
-        assertEquals(listOf("remove:$BROKEN"), data.log)
-        compose.onNodeWithTag("tv.connect.submit").assertTextContains("Connect")
+        assertNull(store.activeAccountId(), "An attempt whose form left the screen saves nothing")
     }
 
     /** The activity's shape: the host around the connect screen, which gives way once connected. */
