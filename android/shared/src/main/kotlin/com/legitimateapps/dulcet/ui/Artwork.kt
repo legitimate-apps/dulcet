@@ -10,6 +10,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidArtworkRepository
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
@@ -36,6 +37,16 @@ public object ArtworkImages {
     public fun cached(account: SearchAccount, key: String, pixels: Int): ImageBitmap? =
         decoded.get(cacheKey(account, key, pixels))
 
+    /** The largest decode of [key] already in the cache at any size — a first paint while the requested size loads. */
+    public fun cachedAtAnySize(account: SearchAccount, key: String): ImageBitmap? {
+        val prefix = account.providerInstanceId + "\u0000" + key + "\u0000"
+        var best: ImageBitmap? = null
+        for ((k, v) in decoded.snapshot()) {
+            if (k.startsWith(prefix) && (best == null || v.width > best.width)) best = v
+        }
+        return best
+    }
+
     public suspend fun load(context: Context, account: SearchAccount, key: String, pixels: Int): ImageBitmap? {
         val cacheKey = cacheKey(account, key, pixels)
         decoded.get(cacheKey)?.let { return it }
@@ -47,13 +58,34 @@ public object ArtworkImages {
             while (bounds.outWidth / (sample * 2) >= pixels && bounds.outHeight / (sample * 2) >= pixels) sample *= 2
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
                 BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@withContext null
-            accent.put(cacheKey(account, key, 0), averageColor(bitmap))
-            bitmap.asImageBitmap().also { decoded.put(cacheKey, it) }
+            val accentColor = averageColor(bitmap)
+            accent.put(cacheKey(account, key, 0), accentColor)
+            flattenTransparency(bitmap, accentColor).asImageBitmap().also { decoded.put(cacheKey, it) }
         }
     }
 
     /** A muted average of the cover, for backgrounds that follow the artwork. */
     public fun accent(account: SearchAccount, key: String): Color? = accent.get(cacheKey(account, key, 0))
+
+    /**
+     * Cover art with an alpha channel — a server's default art is often one — would float on the
+     * placeholder colour behind it: composite it over the cover's own accent, so the art fills its
+     * frame. Opaque covers are returned as decoded.
+     */
+    private fun flattenTransparency(bitmap: Bitmap, background: Color): Bitmap {
+        if (!bitmap.hasAlpha()) return bitmap
+        val edge = listOf(
+            0 to 0, bitmap.width - 1 to 0, 0 to bitmap.height - 1, bitmap.width - 1 to bitmap.height - 1,
+            bitmap.width / 2 to 0, 0 to bitmap.height / 2, bitmap.width - 1 to bitmap.height / 2,
+        ).any { (x, y) -> android.graphics.Color.alpha(bitmap.getPixel(x, y)) < 255 }
+        if (!edge) return bitmap
+        val flat = Bitmap.createBitmap(bitmap.width, bitmap.height, bitmap.config ?: Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(flat)
+        canvas.drawColor(background.toArgb())
+        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        bitmap.recycle()
+        return flat
+    }
 
     private fun averageColor(bitmap: Bitmap): Color {
         val tiny = Bitmap.createScaledBitmap(bitmap, ACCENT_SAMPLES, ACCENT_SAMPLES, true)
@@ -90,22 +122,25 @@ public object ArtworkImages {
         account.providerInstanceId + "\u0000" + key + "\u0000" + pixels
 }
 
-/** Cover art for [key] at roughly [pixels] square, or null while loading and when there is none. */
+/** Cover art for [key] at about [pixels] square — another size's cached decode while that loads — or null when there is none. */
 @Composable
 public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): ImageBitmap? {
     val context = LocalContext.current
-    val image by produceState(key?.let { ArtworkImages.cached(account, it, pixels) }, account.providerInstanceId, key, pixels) {
+    // A first paint may be the same cover at another size — the mini player's thumb, say — while the
+    // requested size loads; a failed fetch never replaces it with the placeholder.
+    val image by produceState(key?.let { ArtworkImages.cached(account, it, pixels) ?: ArtworkImages.cachedAtAnySize(account, it) },
+        account.providerInstanceId, key, pixels) {
         if (key.isNullOrBlank()) { value = null; return@produceState }
         // A null is a missing cover and a failed fetch alike, and the repository remembers only the
         // missing one — so asking again is cheap when there is no cover, and recovers a tile whose
         // fetch hit a transient failure (a fresh device's first connections are reset).
         repeat(LOAD_ATTEMPTS) { attempt ->
-            value = ArtworkImages.cached(account, key, pixels) ?: try {
+            val fetched = ArtworkImages.cached(account, key, pixels) ?: try {
                 ArtworkImages.load(context, account, key, pixels)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled // leaving composition cancels the load; that is not a missing cover
             } catch (_: Exception) { null }
-            if (value != null) return@produceState
+            if (fetched != null) { value = fetched; return@produceState }
             if (attempt + 1 < LOAD_ATTEMPTS) kotlinx.coroutines.delay(LOAD_RETRY_DELAY_MILLIS)
         }
     }

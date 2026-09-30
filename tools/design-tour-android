@@ -15,12 +15,12 @@
 #
 # SCREENS
 #   phone (android/app/src/androidTest/.../AndroidPhoneDesignTourTest.kt): Library Home, Albums,
-#   an album, Artists, an artist, Favourites, Now Playing while playing, Up Next, Search with results.
+#   an album, Artists, an artist, Favourites, Playlists, a playlist, Now Playing while playing the
+#   track with synced lyrics, Up Next, the lyrics sheet, Search with results.
 #   tv (android/tv/src/androidTest/.../AndroidTvDesignTourTest.kt): the home screen at launch,
-#   Library, Albums, an album, Artists, an artist, Favourites, Now Playing, Up Next, then Search
-#   with results, each reached with focus and the centre key so the focus a remote leaves is in
-#   the shot.
-#   This branch has no playlists or lyrics on Android, so the tour has no such screens.
+#   Library, Albums, an album, Artists, an artist, Favourites, Playlists, a playlist, Now Playing,
+#   Up Next, the lyrics panel, the account screen, then Search with results, each reached with focus
+#   and the centre key so the focus a remote leaves is in the shot.
 #
 # RUNTIME (measured on an Apple Silicon laptop)
 #   warm Gradle (nothing changed): ~2.5 min for all three tours including one emulator boot; each

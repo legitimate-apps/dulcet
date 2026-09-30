@@ -74,7 +74,10 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState)
                     Modifier.padding(vertical = 4.dp).testTag("tv.player.lyrics.line.$index").semantics { selected = lit },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = if (lit) FontWeight.Bold else null,
-                    color = if (lit || !current.synced) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                    // The line being sung, in the phone's lit-line colour; unsung lines recede.
+                    color = if (lit) MaterialTheme.colorScheme.primary
+                        else if (!current.synced) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

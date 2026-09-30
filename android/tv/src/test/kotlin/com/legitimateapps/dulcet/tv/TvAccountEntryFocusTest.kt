@@ -1,8 +1,16 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
@@ -43,9 +51,9 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * A remote reaches the TV's Sign out (spec §14.7) with nothing but D-pad keys, on the real search
- * screen inside the real host: from the launch state, where focus waits above the empty query field, and
- * from a list of results. No semantic click or focus request is used, since a remote has neither.
+ * A remote reaches the TV's Sign out (spec §14.7) with nothing but D-pad keys, in the shell's real
+ * pieces: the top bar over the search screen, and the account screen it opens. Sign out is never on
+ * the bar itself. No semantic click or focus request is used, since a remote has neither.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w960dp-h540dp-land-television")
@@ -63,19 +71,43 @@ class TvAccountEntryFocusTest {
         application.getSharedPreferences("tv-entry-focus-test", 0).edit().clear().commit()
     }
 
-    @Test fun fromTheLaunchStateUpReachesSignOutAndCenterAsksFirst() {
-        host()
-        // At launch focus waits on the row above the screen, here Sign out, and never in the field,
+    @Test fun fromTheLaunchStateTheRemoteReachesTheAccountEntryOnTheBar() {
+        var opened = false
+        host(onAccount = { opened = true })
+        // At launch focus waits on the navigation bar, here its Search tab, and never in the field,
         // whose focus would bring up the on-screen keyboard.
-        assertTrue(focused("tv.account.signout"), "At launch focus is on the row above the search screen")
+        assertTrue(focused("search.open"), "At launch focus is on the navigation bar")
         assertTrue(!focused("search.query"), "At launch the query field must not hold focus")
 
-        // Down into the screen, then up again: the entry is not a dead end.
-        key("tv.account.signout", Key.DirectionDown)
-        assertTrue(focused("search.query"), "DOWN from Sign out must return to the query field")
+        // Down into the screen, then up again: the bar is not a dead end.
+        key("search.open", Key.DirectionDown)
+        assertTrue(focused("search.query"), "DOWN from the bar must return to the query field")
         key("search.query", Key.DirectionUp)
-        assertTrue(focused("tv.account.signout"))
+        assertTrue(focused("search.open"))
 
+        // Along the bar to the account entry; Sign out is not on the bar, the account screen holds it.
+        key("search.open", Key.DirectionRight)
+        assertTrue(focused("library.open"), "RIGHT from Search reaches Library")
+        key("library.open", Key.DirectionRight)
+        assertTrue(focused("tv.account.open"), "RIGHT from Library reaches the account entry")
+        assertTrue(missing("tv.account.signout"), "Sign out is not a control of the bar")
+        key("tv.account.open", Key.DirectionCenter)
+        assertTrue(opened, "The account entry opens the account screen")
+    }
+
+    @Test fun theAccountScreensSignOutTakesFocusAndAsksFirst() {
+        store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
+        compose.setContent {
+            MaterialTheme {
+                TvAccountHost(signOut, "id") {
+                    CompositionLocalProvider(LocalTvRouteFocus provides remember { TvRouteFocus() }) {
+                        TvAccountScreen(account, TvNavigator({}, {}))
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        awaitFocused("tv.account.signout", "the account screen opens on its one action")
         key("tv.account.signout", Key.DirectionCenter)
         compose.waitUntil(5_000) { signOut.state.value !is SignOutState.Checking }
         assertIs<SignOutState.Confirm>(signOut.state.value, "CENTER on Sign out asks first")
@@ -84,11 +116,11 @@ class TvAccountEntryFocusTest {
     /**
      * More results than the screen has room for, walked to the end and back: every result is reached
      * by DOWN, including those composed only once focus moves toward them, and UP from the first
-     * result and then the query field reaches Sign out, which covers no result it passed.
+     * result and then the query field reaches the bar, which covers no result it passed.
      */
-    @Test fun fromAListOfResultsUpReachesSignOutWhichCoversNoResult() {
+    @Test fun fromAListOfResultsUpReachesTheBarWhichCoversNoResult() {
         host()
-        key("tv.account.signout", Key.DirectionDown)
+        key("search.open", Key.DirectionDown)
         key("search.query", Key.DirectionCenter)
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitForIdle()
@@ -106,19 +138,28 @@ class TvAccountEntryFocusTest {
         }
         assertTrue(focused("search.query"), "UP from the first result returns to the query field")
         key("search.query", Key.DirectionUp)
-        assertTrue(focused("tv.account.signout"), "UP from the results must reach Sign out")
+        assertTrue(focused("search.open"), "UP from the results must reach the navigation bar")
 
-        val entry = bounds("tv.account.signout")
-        for (card in cards) assertTrue(entry.bottom <= card.top, "Sign out $entry overlaps a result at $card")
-        assertTrue(entry.bottom <= bounds("search.query").top, "Sign out overlaps the query field")
+        val bar = bounds("search.open")
+        for (card in cards) assertTrue(bar.bottom <= card.top, "The bar $bar overlaps a result at $card")
+        assertTrue(bar.bottom <= bounds("search.query").top, "The bar overlaps the query field")
     }
 
-    private fun host() {
+    private fun host(onAccount: () -> Unit = {}) {
         store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
         compose.setContent {
             MaterialTheme {
+                val navigation = remember { TvNavigationFocus() }
                 TvAccountHost(signOut, "id") {
-                    TvSearchScreen(SearchPresenter(account, Results())) {}
+                    Column(Modifier.fillMaxSize()) {
+                        TvTopBar(top = ROUTE_SEARCH, root = ROUTE_SEARCH, playing = false, focus = navigation,
+                            onSearch = {}, onLibrary = {}, onNowPlaying = {}, onAccount = onAccount)
+                        Box(Modifier.fillMaxWidth().weight(1f)) {
+                            CompositionLocalProvider(LocalTvNavFocus provides navigation.current) {
+                                TvSearchScreen(SearchPresenter(account, Results())) {}
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -134,7 +175,17 @@ class TvAccountEntryFocusTest {
         compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Focused) { false }
     }.getOrDefault(false)
 
+    private fun missing(tag: String): Boolean =
+        compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()
+
     private fun bounds(tag: String): Rect = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+
+    private fun awaitFocused(tag: String, where: String) {
+        val ok = runCatching {
+            compose.waitUntil(5_000) { focused(tag) }
+        }.isSuccess
+        assertTrue(ok, "Focus must reach $tag in $where")
+    }
 
     private class MemoryStore : AccountCredentialStore {
         var saved: StoredAccount? = null

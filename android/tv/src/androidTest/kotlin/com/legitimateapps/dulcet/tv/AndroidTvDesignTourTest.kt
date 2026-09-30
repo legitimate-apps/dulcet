@@ -28,9 +28,9 @@ import org.junit.runner.RunWith
 /**
  * A screenshot tour of the TV app for design review; see `DesignTourShots`. Moves the way a remote
  * does -- focus, then the centre key -- so every shot shows the focus a person would see: the home
- * screen at launch, Library, Albums, an album, Artists, an artist, Favourites, Now Playing with Up
- * Next while playing, and Search with results -- last, so a failure there cannot cost the others.
- * `tools/design-tour-android` runs it.
+ * screen at launch, Library, Albums, an album, Artists, an artist, Favourites, Playlists, a
+ * playlist, Now Playing with Up Next while playing, the lyrics panel, the account screen, and Search
+ * with results -- last, so a failure there cannot cost the others. `tools/design-tour-android` runs it.
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidTvDesignTourTest {
@@ -46,7 +46,7 @@ class AndroidTvDesignTourTest {
         val label = InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "tv"
         val probe = DisposableServerProbe.fromInstrumentation()
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
-        retrying(3) { starFixtures(probe) }
+        retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         awaitQueuedBroadcastsDelivered()
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(label)
@@ -63,6 +63,9 @@ class AndroidTvDesignTourTest {
             back(2)
             shots.step("favourites") { select("library.view.favourites") && awaitTag("library.favourites") && shots.settle(2_000) }
             back(1)
+            shots.step("playlists") { select("library.view.playlists") && awaitTag("library.playlists.item.0") && shots.settle() }
+            shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitTag("playlist.title") && shots.settle() }
+            back(2)
             shots.step("now-playing") {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && awaitFocused("album.play")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
@@ -70,6 +73,19 @@ class AndroidTvDesignTourTest {
                     && awaitTag("tv.player.title") && awaitTag("tv.player.upnext.0") && shots.settle(2_500)
             }
             shots.step("up-next") { focusTag("tv.player.upnext.1") && shots.settle() }
+            // Centre on the focused Up Next row jumps to the track with the corpus's synced lyrics,
+            // then the transport's lyrics toggle shows the panel in Up Next's place.
+            shots.step("lyrics") {
+                remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                shots.settle(1_500)
+                    && focusTag("tv.player.lyrics")
+                    && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
+                    && awaitTag("tv.player.lyrics.panel", 10_000) && shots.settle(1_500)
+            }
+            back(1)
+            shots.step("account") {
+                select("tv.account.open") && awaitTag("tv.account.signout") && shots.settle()
+            }
             back(1)
             shots.step("search") {
                 mark("search: in front") && runCatching {
@@ -104,6 +120,17 @@ class AndroidTvDesignTourTest {
         probe.call("star", mapOf("albumId" to album.getString("id")))
         probe.call("star", mapOf("artistId" to album.getString("artistId")))
         probe.call("star", mapOf("id" to probe.songId(TRACK)))
+    }
+
+    /** One playlist the tours open: the playing track and the one with synced lyrics. Idempotent. */
+    private fun seedPlaylist(probe: DisposableServerProbe) {
+        val existing = probe.call("getPlaylists").getJSONObject("playlists").optJSONArray("playlist")
+        if (existing != null && (0 until existing.length()).any { existing.getJSONObject(it).getString("name") == PLAYLIST }) return
+        probe.callPairs("createPlaylist", listOf(
+            "name" to PLAYLIST,
+            "songId" to probe.songId(TRACK),
+            "songId" to probe.songId(LYRICS_TRACK),
+        ))
     }
 
     /** Focus, then the centre key, as a remote selects. */
@@ -164,5 +191,7 @@ class AndroidTvDesignTourTest {
         const val ALBUM = "Threshold Boundary"
         const val ARTIST = "Dulcet Fixtures"
         const val TRACK = "Twenty Nine Seconds"
+        const val LYRICS_TRACK = "Thirty One Seconds"
+        const val PLAYLIST = "Dulcet Tour Mix"
     }
 }

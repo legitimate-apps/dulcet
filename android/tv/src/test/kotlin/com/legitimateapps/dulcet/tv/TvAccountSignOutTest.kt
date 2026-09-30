@@ -9,7 +9,6 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.AccountCredentialStore
 import com.legitimateapps.dulcet.AccountDataGateway
 import com.legitimateapps.dulcet.AccountRemovalJournal
@@ -52,13 +51,13 @@ class TvAccountSignOutTest {
     }
 
     @Test fun withoutASavedAccountThereIsNoSignOutEntry() {
-        compose.setContent { TvAccountHost(signOut, null) { Text("app") } }
+        compose.setContent { TvAccountHost(signOut, null) { TvSignOutEntry() } }
         compose.onNodeWithTag("tv.account.signout").assertDoesNotExist()
     }
 
     @Test fun connectingShowsTheEntryWithoutARestart() {
         var account by mutableStateOf<Any?>(null)
-        compose.setContent { TvAccountHost(signOut, account) { Text("app") } }
+        compose.setContent { TvAccountHost(signOut, account) { TvSignOutEntry() } }
         compose.onNodeWithTag("tv.account.signout").assertDoesNotExist()
         account = store.save("Fixture Server", "https://music.example.invalid", "listener", "tv-password", false).id
         compose.onNodeWithTag("tv.account.signout").assertIsDisplayed()
@@ -66,7 +65,7 @@ class TvAccountSignOutTest {
 
     @Test fun theEntryAsksFirstStayKeepsTheAccountAndSigningOutRemovesItBehindTheProgressScreen() {
         val account = store.save("Fixture Server", "https://music.example.invalid", "listener", "tv-password", false)
-        compose.setContent { TvAccountHost(signOut, account.id) { Text("app") } }
+        compose.setContent { TvAccountHost(signOut, account.id) { TvSignOutEntry() } }
 
         press("tv.account.signout")
         compose.onNodeWithTag("signout.confirm").assertIsDisplayed()
@@ -97,7 +96,7 @@ class TvAccountSignOutTest {
      */
     @Test fun stayHoldsTheFocusInEveryDialogThatCouldRemoveSomething() {
         store.save("Fixture Server", "https://music.example.invalid", "listener", "tv-password", false)
-        compose.setContent { TvAccountHost(signOut, "id") { Text("app") } }
+        compose.setContent { TvAccountHost(signOut, "id") { TvSignOutEntry() } }
 
         data.pending = PendingChanges(setOf("song-1"), 1)
         press("tv.account.signout")
