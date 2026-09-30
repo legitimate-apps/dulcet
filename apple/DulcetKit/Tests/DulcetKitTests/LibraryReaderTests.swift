@@ -670,6 +670,66 @@ func aServerValueRepublishedBeforeTheOutcomeIsKeptAndIsWhatAnAdjustStepsFrom() t
     #expect(session.rating(id, published: nil) == 2)
 }
 
+/// Two taps before the first is answered: Saved(4) says what the server holds, and says nothing
+/// about the 5 still on its way. The 5 stays shown -- and held, when it is held -- until its own
+/// outcome; the 4 becomes what the server is known to hold.
+@Test @MainActor
+func aSavedEarlierRatingNeitherDropsNorUnholdsTheLaterOneStillOnItsWay() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+
+    #expect(session.setRating(target, rating: 4))
+    #expect(session.setRating(target, rating: 5))
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "held", targetKind: "track", rawID: "t1", field: "rating", errorKind: "forbidden"))
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t1", field: "rating", errorKind: nil, value: 4))
+    #expect(session.rating(id, published: nil) == 5, "the later tap still shows")
+    #expect(session.ratingState(target) == .held(.forbidden), "and is still held, and said to be")
+    #expect(session.knownRatings[id] == 4, "the earlier value is what the server holds now")
+
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t1", field: "rating", errorKind: nil, value: 5))
+    #expect(session.rating(id, published: nil) == 5)
+    #expect(session.ratingState(target) == .settled, "its own outcome settles it")
+    #expect(session.knownRatings[id] == 5)
+}
+
+/// Tap 4, tap 5, then the overlay publication of the 4 arrives late: it is this session's own
+/// value, not the server's, so it is not recorded as what the server holds -- the refusal that
+/// follows returns the stars to the server's 2.
+@Test @MainActor
+func aLateOverlayOfAnEarlierTapIsNeverTakenAsTheServersRating() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let model = DulcetLibraryWindowModel(query: .albums(.newest))
+    model.open(in: session)
+    let subscription = try #require(reader.windows.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+
+    subscription.publish(window([item("track", "t1", rating: 2)], sequence: 1))
+    #expect(session.setRating(target, rating: 4))
+    #expect(session.setRating(target, rating: 5))
+    subscription.publish(window([item("track", "t1", rating: 4)], sequence: 2)) // the first tap's overlay, late
+    #expect(session.knownRatings[id] == 2, "an earlier tap's overlay is not the server's value")
+    subscription.publish(window([item("track", "t1", rating: 5)], sequence: 3)) // the latest overlay
+    #expect(session.knownRatings[id] == 2)
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "notSaved", targetKind: "track", rawID: "t1", field: "rating", errorKind: "forbidden"))
+    #expect(session.rating(id, published: nil) == 2, "refused, the stars show the server's 2, never a tap")
+
+    // Settled, a publication is the server's again, whatever it shows.
+    subscription.publish(window([item("track", "t1", rating: 4)], sequence: 4))
+    #expect(session.knownRatings[id] == 4, "once nothing is pending, the tapped values are forgotten")
+}
+
 @Test @MainActor
 func theScreensTellTheSessionEachTracksRatingForNowPlaying() throws {
     let factory = RecordingReaderFactory()

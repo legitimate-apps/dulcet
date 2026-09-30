@@ -180,6 +180,11 @@ public final class DulcetLibrarySession {
     public private(set) var pendingRatings: [DulcetFavouriteKey: Int] = [:]
     /// Ratings kept unsent (§18.3 `held`), and why.
     public private(set) var heldRatings: [DulcetFavouriteKey: DulcetReaderErrorKind] = [:]
+    /// Every value set for an entity since its ratings last settled, not only the latest: a
+    /// publication of any of them may be this session's own overlay arriving late (tap 4, tap 5,
+    /// then the overlay of the 4), so none of them is taken as the server's value until an outcome
+    /// says what the server holds.
+    private var tappedRatings: [DulcetFavouriteKey: Set<Int>] = [:]
     /// The rating the SERVER is last known to hold for each entity: what a screen published while
     /// no rating change of this session was pending for it, a saved change's value, or a superseding
     /// server value. Never the value tapped, and never a guess: an entity with no entry is unknown,
@@ -282,6 +287,7 @@ public final class DulcetLibrarySession {
         knownFavourites = [:]
         pendingRatings = [:]
         heldRatings = [:]
+        tappedRatings = [:]
         knownRatings = [:]
         readerGeneration += 1
         outcomeSubscription = made.subscribeFavouriteOutcomes { [weak self] outcome in
@@ -336,6 +342,7 @@ public final class DulcetLibrarySession {
         knownFavourites = [:]
         pendingRatings = [:]
         heldRatings = [:]
+        tappedRatings = [:]
         knownRatings = [:]
         readerGeneration += 1
         for window in windows.allObjects {
@@ -523,15 +530,27 @@ public final class DulcetLibrarySession {
         pendingRatings.first { $0.key.rawID == id.rawID && $0.key.providerInstanceID == id.providerInstanceID }?.value
     }
 
-    /// A published rating is the server's unless it may be this session's own pending overlay: while
-    /// a change is pending, a publication showing the pending value may be the overlay, and one
-    /// showing any other value is the server's (the core overlays every publication while a change
-    /// is pending, so a different value means the change has already ended there -- the core
-    /// republishes BEFORE it tells the outcome).
+    private func tappedRatings(for id: DulcetProviderItemID) -> Set<Int> {
+        tappedRatings.first { $0.key.rawID == id.rawID && $0.key.providerInstanceID == id.providerInstanceID }?.value ?? []
+    }
+
+    /// A published rating is the server's unless it may be this session's own overlay: while a
+    /// change is pending, a publication showing ANY value set since the ratings last settled may be
+    /// an overlay (the latest, or an earlier one published late), and one showing any other value is
+    /// the server's (the core overlays every publication while a change is pending, so a value this
+    /// session never set means the change has already ended there -- the core republishes BEFORE it
+    /// tells the outcome).
     private func recordPublishedRating(_ rating: Int?, for id: DulcetProviderItemID) {
         guard let rating, knownRatings[id] != rating else { return }
-        if let pending = pendingRating(for: id), pending == rating { return }
+        if pendingRating(for: id) != nil, tappedRatings(for: id).contains(rating) { return }
         knownRatings[id] = rating
+    }
+
+    /// The entity's ratings have settled: nothing is pending, and no value set is still in flight.
+    private func settleRatings(_ key: DulcetFavouriteKey) {
+        pendingRatings[key] = nil
+        heldRatings[key] = nil
+        tappedRatings[key] = nil
     }
 
     /// Whether a rating for this entity is waiting to be sent, or held.
@@ -558,6 +577,7 @@ public final class DulcetLibrarySession {
         }
         pendingRatings[key] = rating
         heldRatings[key] = nil
+        tappedRatings[key, default: []].insert(rating)
         return true
     }
 
@@ -568,11 +588,16 @@ public final class DulcetLibrarySession {
         switch outcome.kind {
         case .saved:
             if let saved = outcome.value ?? pendingRatings[key] { knownRatings[id] = saved }
-            pendingRatings[key] = nil
-            heldRatings[key] = nil
+            if let saved = outcome.value, let pending = pendingRatings[key], saved != pending {
+                // An earlier value reached the server while a later one is still on its way (tap 4,
+                // tap 5, then Saved(4)): the server holds 4 now, and the 5 stays pending -- shown,
+                // and still held if it was -- until its own outcome.
+                tappedRatings[key]?.remove(saved)
+                break
+            }
+            settleRatings(key)
         case let .notSaved(error):
-            pendingRatings[key] = nil
-            heldRatings[key] = nil
+            settleRatings(key)
             post(DulcetStrings.readerChangeNotSaved(DulcetStrings.readerErrorPhrase(error)))
         case let .held(error):
             heldRatings[key] = error
@@ -582,12 +607,10 @@ public final class DulcetLibrarySession {
         case .superseded:
             // The server's value wins, and is what shows.
             if let server = outcome.serverValue { knownRatings[id] = server }
-            pendingRatings[key] = nil
-            heldRatings[key] = nil
+            settleRatings(key)
             post(DulcetStrings.readerChangeSuperseded)
         case .notRecorded:
-            pendingRatings[key] = nil
-            heldRatings[key] = nil
+            settleRatings(key)
             post(DulcetStrings.readerChangeNotRecorded)
         }
     }
