@@ -1123,6 +1123,55 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
+    /// After the current item fails, the system must be told it is no longer playing -- so the
+    /// lock screen, Control Center and a headset offer Play -- and that Play must still reach the
+    /// owner's router, which turns it into Try Again (spec §12.1, §15). The engine does not retry
+    /// by itself: only the core knows what a retry is. Left showing "playing", the system's one
+    /// button was Pause, and the failed item's Now Playing entry went on counting up.
+    @Test
+    func aFailedCurrentItemTellsTheSystemItStoppedAndRoutesItsPlay() async throws {
+        let clock = ManualAVPlayerEngineClock()
+        let mediaControls = RecordingSystemMediaControls()
+        let router = RecordingRemoteCommandRouter()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: RecordingAudioSession(),
+            systemMediaControls: mediaControls,
+            remoteCommandRouter: router
+        )
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(
+            resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)),
+            session: "failing-session",
+            attempt: "failing-attempt"
+        )
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
+        #expect(events.containsProgressBegan)
+        #expect(mediaControls.publications.last?.sessionID == playbackPlan.playbackSessionID)
+        #expect(mediaControls.transportPlayingStates.last == true, "the case needs a playing entry")
+
+        engine.reportCurrentItemFailedForTesting(.undecodable)
+        // The failure state is reached, or the rest proves nothing.
+        #expect(events.snapshot.last == .failedAfterPartial(
+            attemptID: playbackPlan.attemptID,
+            position: 0.5,
+            error: .undecodable
+        ))
+        #expect(mediaControls.transportPlayingStates.last == false,
+                "a failed item must not be shown to the system as playing")
+        #expect(mediaControls.transports.last?.2 == 0, "nor as advancing")
+
+        #expect(mediaControls.send(.play(sessionID: playbackPlan.playbackSessionID)))
+        #expect(router.commands == [.play(sessionID: playbackPlan.playbackSessionID)],
+                "a Play after the failure must reach the owner, which retries")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
     @Test
     func mediaPlayerCommandCenterExposesOnlyTheV1CommandSet() {
         let controls = DulcetPlatformSystemMediaControls()

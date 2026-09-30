@@ -168,6 +168,15 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    /// Drives a failure of the current item on the non-AVFoundation test path through exactly the
+    /// `itemFailed` the item-status and failed-to-play observers call; only the trigger differs.
+    func reportCurrentItemFailedForTesting(_ failure: DulcetPlaybackFailure) {
+        performOnQueueSynchronously { [self] in
+            guard let current else { return }
+            itemFailed(current, reported: failure)
+        }
+    }
+
     /// Drives a playback stall on the non-AVFoundation test path through exactly the
     /// `beginBuffering` the `.AVPlayerItemPlaybackStalled` observer calls.
     func reportCurrentItemStalledForTesting() {
@@ -721,6 +730,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func itemFailed(_ context: PlayerItemContext, reported: DulcetPlaybackFailure? = nil) {
         guard isActive(context), !context.failureEmitted, !context.waitingForRefresh else { return }
         context.failureEmitted = true
+        stopPresentingAsPlaying(afterFailureOf: context)
         let failure = context.item.error.map { closedFailure(for: $0) } ?? reported ?? closedFailure(for: nil)
         if context.progressBegan {
             emit(
@@ -760,6 +770,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             return
         }
         context.failureEmitted = true
+        stopPresentingAsPlaying(afterFailureOf: context)
         if context.progressBegan {
             emit(
                 .failedAfterPartial(
@@ -771,6 +782,19 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         } else {
             emit(.failedBeforeStart(attemptID: attemptID, error: error))
         }
+    }
+
+    /// A failed current item is not playing, and the system must not say it is: left as it was,
+    /// the lock screen, Control Center and a headset kept offering Pause for an item that had
+    /// stopped, and its elapsed time went on counting up. Shown as paused, the system offers Play,
+    /// which the owner turns into Try Again (spec §12.1, §15). The player is paused too, so audio
+    /// already buffered does not go on sounding under a failure. A failed PRELOADED item leaves
+    /// the current one alone: its failure is not the current item's.
+    private func stopPresentingAsPlaying(afterFailureOf context: PlayerItemContext) {
+        guard context === current else { return }
+        context.playRequested = false
+        player.pause()
+        updateSystemTransport(for: context, isPlaying: false, rateOverride: 0)
     }
 
     private func currentItemChanged() {
