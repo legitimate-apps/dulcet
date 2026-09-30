@@ -985,16 +985,12 @@ private struct DulcetStateSurface: View {
                     onEdit: store.editQueue
                 )
 #if os(macOS)
-                // The heart for what is playing, in the window's toolbar (§16.20).
+                // The heart for what is playing, in the window's toolbar (§16.20). The other Apple
+                // platforms draw the same heart in the player's own controls.
                 .toolbar {
-                    if let session = store.librarySession, session.reader != nil,
-                       player.current.id.providerInstanceID == session.account?.providerInstanceID {
+                    if store.nowPlayingFavourite(for: player.current) != nil {
                         ToolbarItem(placement: .primaryAction) {
-                            DulcetFavouriteButton(
-                                target: DulcetFavouriteTarget(kind: .track, id: player.current.id),
-                                published: session.knownFavourites[player.current.id] ?? player.current.isFavorite,
-                                title: player.current.title
-                            )
+                            DulcetNowPlayingFavouriteButton(track: player.current)
                         }
                     }
                 }

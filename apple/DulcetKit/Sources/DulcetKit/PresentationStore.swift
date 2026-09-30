@@ -452,13 +452,24 @@ public final class DulcetPresentationStore {
     /// The playing track as a favourite: offered only while the reader holds the account the
     /// track came from, with what the person currently sees on its heart.
     public var playingTrackFavourite: (target: DulcetFavouriteTarget, isFavourite: Bool)? {
-        guard let session = librarySession, session.reader != nil,
+        guard let session = librarySession,
               let track = snapshot.nowPlaying?.current,
+              let favourite = nowPlayingFavourite(for: track) else { return nil }
+        return (favourite.target, session.isFavourite(track.id, published: favourite.published))
+    }
+
+    /// The heart Now Playing draws for `track`, on every Apple platform: offered only while the
+    /// reader holds the account the track came from (§16.20). `published` is what the session last
+    /// saw published for it, else the queue's own copy -- which is as old as the queue. The button
+    /// goes through the session like every other heart, so pending, held and saved are the same.
+    public func nowPlayingFavourite(
+        for track: DulcetTrack
+    ) -> (target: DulcetFavouriteTarget, published: Bool?)? {
+        guard let session = librarySession, session.reader != nil,
               track.id.providerInstanceID == session.account?.providerInstanceID else { return nil }
-        let published = session.knownFavourites[track.id] ?? track.isFavorite
         return (
             DulcetFavouriteTarget(kind: .track, id: track.id),
-            session.isFavourite(track.id, published: published)
+            session.knownFavourites[track.id] ?? track.isFavorite
         )
     }
 

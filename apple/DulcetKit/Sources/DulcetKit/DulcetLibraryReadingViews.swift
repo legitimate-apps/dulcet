@@ -251,6 +251,8 @@ struct DulcetFavouriteButton: View {
     var title: String = ""
     var size: Font = .body
     var identifier = "dulcet.reader.favorite"
+    /// The smallest side of the control's hit area.
+    var minimumSide: CGFloat = 32
 
     var body: some View {
         if let session = store.librarySession {
@@ -271,7 +273,7 @@ struct DulcetFavouriteButton: View {
                             .accessibilityHidden(true)
                     }
                 }
-                .frame(minWidth: 32, minHeight: 32)
+                .frame(minWidth: minimumSide, minHeight: minimumSide)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
@@ -289,6 +291,32 @@ struct DulcetFavouriteButton: View {
         case .settled: on && !title.isEmpty ? DulcetStrings.readerFavoriteAccessibility(title) : ""
         case .pending: DulcetStrings.readerFavoritePending
         case .held: DulcetStrings.readerFavoriteHeld
+        }
+    }
+}
+
+/// The playing track's heart (§16.20): the macOS toolbar's, and the one in the player's own
+/// controls on iPhone, iPad and Apple TV. It is the rows' heart, through the same session, so a
+/// pending, held or saved change reads the same here as on the track's row. Nothing is drawn while
+/// the reader does not hold the account the track came from.
+struct DulcetNowPlayingFavouriteButton: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let track: DulcetTrack
+    var size: Font = .body
+    var minimumSide: CGFloat = 32
+
+    static let identifier = "dulcet.now-playing.favorite"
+
+    var body: some View {
+        if let favourite = store.nowPlayingFavourite(for: track) {
+            DulcetFavouriteButton(
+                target: favourite.target,
+                published: favourite.published,
+                title: track.title,
+                size: size,
+                identifier: Self.identifier,
+                minimumSide: minimumSide
+            )
         }
     }
 }
