@@ -4072,9 +4072,10 @@ passes every test that only checks the end.
    comparison (§16.11 rule 2);
 3. revalidate the visible screen (§16.11 rule 3) — which, for a window whose stored epoch differs,
    is the rebase of §16.12 — and re-read, once, each list that a flush run while the reader was
-   offline changed on the server and could not re-read then, unless a screen showing it was just
-   revalidated (a playlist created or deleted by step 1; §28 revision 104 item 33, "After the
-   integration CI");
+   offline changed on the server and could not re-read then, unless this step revalidated a screen
+   showing it — a screen opened while the step runs does not count, however fresh its own last read
+   (a playlist created or deleted by step 1; §28 revision 104 item 33, "After the integration CI",
+   and §28, 2026-09-29 "A lost create's offer is actionable when made");
 4. if the epoch changed, re-read the albums that contain downloads, at concurrency 1 (§16.11 rule 4);
 5. nothing else. There is no catch-up walk, no bulk refetch, and nothing re-read because it is old.
 
@@ -5245,7 +5246,12 @@ not enter into it either.
 - A create **deleted here** while its send was in doubt deletes **nothing** — whether it was deleted
   before the flush looked for it or while the flush was looking. The person is told the candidates'
   ids (`PossiblyCreated`): the shell offers "A playlist named *X* may have been created. Delete it on
-  the server?", and a delete the person confirms is an ordinary delete by id. A playlist found
+  the server?", and a delete the person confirms is an ordinary delete by id. An edit applies only
+  to a cached playlist, so every id offered is first written to the cache as the live listing that
+  found it showed it — under the issue sequence that listing was sent with, entering no list, the
+  way a search writes through (§16.15) — and the offer is actionable the moment it is made: also
+  when the flush ran offline before a reconnect's epoch read and that reconnect then failed
+  (§28, 2026-09-29 "A lost create's offer is actionable when made"). A playlist found
   without the server's own answer — the lone candidate, the person's choice, or what an empty `ok`
   left — is never deleted, and nothing more is written to it once the delete is seen: the check
   runs as late as it can, just before the create's comment or visibility is written, but a write
@@ -7138,6 +7144,42 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
+cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
+found it could still be lost in two reachable ways, and the offer it serves not yet actionable, each
+OBSERVED with a failing test on the reviewed code; the tests are in `PlaylistReconnectFlushTest`.
+- *An unreachable report during the owed re-read lost it.* The set was cleared before the reads,
+  and going offline cancels a reconnect outright, so the in-flight re-read and every later one ended
+  in a `CancellationException` and were never owed again. Each query now leaves the set as its read
+  starts and is put back if the read is cut off. The re-owe after a read that returns offline stays:
+  it is reachable only from a flush that is not a reconnect's, which going offline does not cancel,
+  and a test drives that path.
+- *The skip tested the wrong moment.* It skipped a list with a screen open when step 3 ended, not
+  one step 3 revalidated. A Playlists screen opened while step 3 ran, its list read live under a
+  minute before, reads nothing itself (the 60-second rule of §16.11), so nothing read the list and
+  the confirmed delete was refused `NotCached`. The skip now takes the screens step 3 revalidates,
+  as the step's text already said. It still skips a list whose screen's revalidation failed: an
+  online re-read through an open screen likewise makes one attempt.
+- *The offer came before its action could succeed.* A flush names candidates at step 1; the owed
+  re-read caches them at step 3. Tapped before then — or after a reconnect whose epoch read failed on
+  credentials, which is never retried on a timer — the delete was refused `NotCached` while the offer
+  was on screen. Every offered id is now written to the cache from the live listing that found it,
+  before the outcome is emitted (§18.6), so the offer is actionable when made. The write is a server
+  read's own header under its own issue sequence, so it never overwrites a newer read, records no
+  epoch, and enters no list. The owed re-read still runs, for the list itself.
+- *The ordering test did not discriminate "before".* A re-read sent before the epoch read brings its
+  own window's epoch read, so counting either side of the first one passed. It now asserts the whole
+  sequence: `getPlaylists, getScanStatus, getMusicFolders, getPlaylists`.
+- *The contract's other two races.* The round trip's create and CONF-90's stale index also reported
+  the server reachable and then flushed, so a reconnect's flush raced the one the scenario named.
+  Both now wait for the reconnect, as CONF-89 does.
+- *Stated, not changed.* CONF-89's cancelled case deletes the lost create offline, so a live run no
+  longer covers a create deleted while online and then named by an online flush;
+  `PlaylistEditingTest` covers that branch against the fake server only. The owe lives in the reader
+  instance: an account switch builds a new reader, so it never crosses accounts, and a relaunch loses
+  it — a candidate written by the offer survives in the cache, but the list itself is not re-read
+  until its screen reads.
 
 **2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
 page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and
@@ -9456,14 +9498,15 @@ fresh disposable server before landing; items 11–14 are what that review chang
       later flush is the one it names.
     - **A flush run offline dropped its list re-read.** After its own write, a flush re-reads the
       playlist list through a window, and no window reads while the reader is offline. So the
-      re-read was dropped silently, not owed. A reconnect's flush runs offline by design (§16.14
-      step 1). The failure path: a lost create is deleted offline; the reconnect's flush names what
+      re-read was dropped silently, not owed. A reconnect's flush runs offline when the reader was
+      offline (§16.14 step 1); a foreground reconnect of an online reader flushes online. The failure path: a lost create is deleted offline; the reconnect's flush names what
       the send may have made (`PossiblyCreated`); that candidate never reaches the cache; and the
       delete the person then confirms by its id is refused as `NotCached`. This failed in 5 of 5
       runs, the one where the race went the scenario's way included. On `main` no flush ran offline.
       The re-read is now owed to the next successful reconnect, which makes it at step 3, after the
       epoch read. It is made once, and not at all for a list whose open screen step 3 has just
-      revalidated. A re-read refused again is owed again. The pre-send record of a create is
+      revalidated. A re-read cut off again is owed again — which, as first shipped, held only for a
+      flush that is not a reconnect's (corrected in §28, 2026-09-29 "A lost create's offer is actionable when made"). The pre-send record of a create is
       unchanged: it is still the listing the flush sends just before the create, through the
       outbox's own request path. It comes from neither the cache nor a clock.
     - **Red first.** `PlaylistReconnectFlushTest`'s three tests were run against the integration head
