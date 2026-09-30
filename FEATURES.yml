@@ -1103,6 +1103,11 @@
         "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},
         "android": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-download-emulator-proofs-unobserved",
+            "reason": "CONF-51 and CONF-52 are wired as AndroidEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask and AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithEveryNetworkDown in core-ci's android-emulator job against the disposable server, and no passing phone emulator run has been observed; the cell promotes when a run of both is cited."
+          },
           "evidence": [
             {"observes": "on the phone app's unit-test runtime, the saved account's download controller from the process registry starts a WorkManager task tagged with the account and the row's download id; the task waits for a network, then its worker transfers the file from a loopback server and the core promotes exactly one file with the served bytes", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/aRequestedDownloadRunsAsAWorkManagerTaskAndIsPromoted"},
             {"observes": "a relaunched process's controller leaves a download to the task WorkManager still holds and starts nothing more, and gives a row whose task WorkManager lost a new task that completes it", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/aRelaunchKeepsATaskWorkManagerStillHoldsAndRestartsOneItLost"},
@@ -1116,6 +1121,11 @@
         },
         "androidtv": {
           "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-download-emulator-proofs-unobserved",
+            "reason": "CONF-51 and CONF-52 are wired as AndroidTvEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask and AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithEveryNetworkDown in core-ci's android-emulator job against the disposable server, and no passing TV emulator run has been observed; the cell promotes when a run of both is cited."
+          },
           "evidence": [
             {"observes": "on the TV app, a track row's own download button, reached by focus and pressed with the remote's centre key, requests the track's download", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/theRowsDownloadButtonDownloadsATrackThatHasNone"},
             {"observes": "a downloaded TV row shows its marker and its button, pressed with the remote, removes the download", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/aDownloadedRowShowsItsMarkerAndItsButtonRemovesIt"},
