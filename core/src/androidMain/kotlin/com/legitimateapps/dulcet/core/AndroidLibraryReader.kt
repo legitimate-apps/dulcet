@@ -343,9 +343,18 @@ public class AndroidLibraryReader internal constructor(
         null
     }
 
-    /** Reader thread: the favourites republished these ids. */
+    /**
+     * Reader thread: the favourites republished these ids. The watches read them in the NEXT reader
+     * task, not this one. A flush tells a saved or superseded change only after republishing it, in
+     * the same task: read here, a track with no cache row has lost its pending value and not yet
+     * gained the acknowledged one ([noteAcknowledged] records it), so a saved heart would be told
+     * `null` — hollow — and filled again a moment later. Read a task later, the acknowledgement is
+     * already recorded, so the watch goes from the pending value straight to the saved one.
+     */
     private fun fanOutFavouriteChange(rawIds: Set<String>) {
-        favouriteWatches.toList().filter { it.target.rawId in rawIds }.forEach { it.emit(favouriteOf(it)) }
+        onReader {
+            favouriteWatches.toList().filter { it.target.rawId in rawIds }.forEach { it.emit(favouriteOf(it)) }
+        }
     }
 
     /**
