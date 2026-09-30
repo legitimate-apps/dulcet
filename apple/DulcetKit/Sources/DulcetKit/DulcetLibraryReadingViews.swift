@@ -631,7 +631,12 @@ struct DulcetReaderTrackRow: View {
                     row(track)
                         .accessibilityIdentifier("dulcet.reader.track")
 #if !os(tvOS)
-                        .dulcetTrackContextMenu(track: track, onPlay: { onPlay(track) }, offersAlbum: showsAlbum)
+                        .dulcetTrackContextMenu(
+                            track: track,
+                            onPlay: { onPlay(track) },
+                            offersAlbum: showsAlbum,
+                            publishedRating: item.rating
+                        )
 #endif
                 }
             } else {

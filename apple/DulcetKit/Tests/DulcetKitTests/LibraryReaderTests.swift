@@ -17,6 +17,7 @@ private final class RecordingReader: DulcetLibraryReading {
     private(set) var windows: [RecordingWindow] = []
     private(set) var searches: [RecordingSearch] = []
     private(set) var favourites: [(DulcetFavouriteTarget, Bool)] = []
+    private(set) var ratings: [(DulcetFavouriteTarget, Int)] = []
     var acceptsFavourites = true
     var pending: Int64? = 0
     var outcomeHandler: (@MainActor (DulcetFavouriteOutcome) -> Void)?
@@ -49,6 +50,12 @@ private final class RecordingReader: DulcetLibraryReading {
     func setFavourite(_ target: DulcetFavouriteTarget, favourite: Bool) -> Bool {
         events.append("setFavourite")
         favourites.append((target, favourite))
+        return acceptsFavourites
+    }
+
+    func setRating(_ target: DulcetFavouriteTarget, rating: Int) -> Bool {
+        events.append("setRating")
+        ratings.append((target, rating))
         return acceptsFavourites
     }
 
@@ -259,6 +266,7 @@ private func item(
     _ rawID: String,
     title: String = "Title",
     favourite: Bool? = nil,
+    rating: Int? = nil,
     playability: String? = "streamable",
     duration: Int64? = 180_000
 ) -> DulcetReaderItem {
@@ -282,7 +290,7 @@ private func item(
         artworkKey: nil,
         owner: nil,
         favourite: favourite,
-        rating: nil,
+        rating: rating,
         playCount: nil,
         playability: playability,
         detailComplete: true,
@@ -512,6 +520,160 @@ func aFavouriteShowsAtOnceIsHeldWhenRefusedAndClearsWhenSaved() throws {
     reader.acceptsFavourites = false
     #expect(!session.setFavourite(target, favourite: false))
     #expect(session.notice?.message == DulcetStrings.readerChangeNotRecorded)
+}
+
+@Test @MainActor
+func aRatingShowsAtOnceIsHeldWhenRefusedAndClearsWhenSaved() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+
+    #expect(session.rating(id, published: 2) == 2)
+    #expect(session.setRating(target, rating: 4))
+    #expect(session.rating(id, published: 2) == 4, "the rating shows before any request")
+    #expect(session.ratingState(target) == .pending)
+    #expect(reader.ratings.map(\.1) == [4])
+    #expect(reader.ratings.first?.0 == target, "the send names the rated track")
+    #expect(session.favouriteState(target) == .settled, "a rating is not a pending favourite")
+
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "held", targetKind: "track", rawID: "t1", field: "rating", errorKind: "forbidden"))
+    #expect(session.ratingState(target) == .held(.forbidden))
+    #expect(session.rating(id, published: 2) == 4, "a held rating is still the person's")
+    #expect(session.notice != nil)
+
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t1", field: "rating", errorKind: nil))
+    #expect(session.ratingState(target) == .settled)
+    #expect(session.rating(id, published: nil) == 4, "the saved rating stays where no row shows it")
+
+    // 0 removes the rating, through the same outbox.
+    #expect(session.setRating(target, rating: 0))
+    #expect(reader.ratings.map(\.1) == [4, 0])
+    #expect(session.rating(id, published: 4) == 0, "the removal shows before any request")
+
+    // Anything else is refused here and nothing is sent.
+    #expect(!session.setRating(target, rating: 6))
+    #expect(!session.setRating(target, rating: -1))
+    #expect(reader.ratings.count == 2)
+
+    reader.acceptsFavourites = false
+    #expect(!session.setRating(target, rating: 3))
+    #expect(session.notice?.message == DulcetStrings.readerChangeNotRecorded)
+}
+
+@Test @MainActor
+func aRatingOutcomeNeverSettlesAFavouriteOfTheSameTrack() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+    #expect(session.setFavourite(target, favourite: true))
+    #expect(session.setRating(target, rating: 5))
+
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t1", field: "rating", errorKind: nil))
+    #expect(session.ratingState(target) == .settled)
+    #expect(session.favouriteState(target) == .pending, "the heart's own send has not ended")
+
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t1", field: "favourite", errorKind: nil))
+    #expect(session.favouriteState(target) == .settled)
+}
+
+@Test @MainActor
+func aRatingThatIsNotSavedOrSupersededShowsTheServersValueAgain() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let target = DulcetFavouriteTarget(kind: .track, id: id)
+
+    for (kind, error) in [("notSaved", "forbidden"), ("superseded", nil), ("notRecorded", nil)] as [(String, String?)] {
+        #expect(session.setRating(target, rating: 5))
+        #expect(session.rating(id, published: 1) == 5)
+        reader.outcomeHandler?(DulcetFavouriteOutcome(
+            kind: kind, targetKind: "track", rawID: "t1", field: "rating", errorKind: error))
+        #expect(session.ratingState(target) == .settled, "\(kind)")
+        #expect(session.rating(id, published: 1) == 1, "\(kind): the server's value shows again")
+        #expect(session.rating(id, published: nil) == 0, "\(kind): the tapped value is forgotten")
+        #expect(session.notice != nil, "\(kind): the person is told")
+    }
+}
+
+@Test @MainActor
+func theScreensTellTheSessionEachTracksRatingForNowPlaying() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let model = DulcetLibraryWindowModel(query: .albums(.newest))
+    model.open(in: session)
+    let subscription = try #require(reader.windows.first)
+    subscription.publish(window([item("track", "t1", rating: 3), item("track", "t2")]))
+    let t1 = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t1")
+    let t2 = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t2")
+    #expect(session.knownRatings[t1] == 3)
+    #expect(session.knownRatings[t2] == nil, "a rating the server never gave is not a zero")
+    #expect(session.rating(t1, published: nil) == 3)
+}
+
+@Test @MainActor
+func nowPlayingOffersStarsOnlyWhileTheReaderHoldsThePlayingTracksAccount() throws {
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let factory = RecordingReaderFactory()
+    let (store, session, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    let ours = try #require(item("track", "t1", rating: 2).playableTrack)
+    let theirs = try #require(DulcetReaderItem(
+        kind: "track", providerInstanceID: "another-server", rawID: "t9", title: "Elsewhere",
+        artistName: nil, artistRawID: nil, albumTitle: nil, albumRawID: nil, year: nil, genre: nil,
+        durationMilliseconds: 60_000, songCount: nil, albumCount: nil, discNumber: nil, trackNumber: nil,
+        sourceContainer: "Mp3", artworkKey: nil, owner: nil, favourite: nil, rating: 5, playCount: nil,
+        playability: "streamable", detailComplete: true, metadataMissing: false
+    )?.playableTrack)
+
+    #expect(store.nowPlayingRating(for: theirs) == nil, "another account's track cannot be rated here")
+    let offered = try #require(store.nowPlayingRating(for: ours))
+    #expect(offered.target == DulcetFavouriteTarget(kind: .track, id: ours.id))
+    #expect(offered.published == nil, "no screen has shown its rating yet")
+
+    #expect(session.setRating(offered.target, rating: 4))
+    #expect(store.nowPlayingRating(for: ours)?.published == 4, "the stars read what the person set")
+    #expect(try #require(factory.made.first).ratings.map(\.1) == [4])
+
+    let signedOut = DulcetPresentationStore(source: DulcetDeterministicDataSource(initialState: .nowPlaying))
+    #expect(signedOut.nowPlayingRating(for: ours) == nil, "no reader session, no stars")
+}
+
+@Test
+func theStarsRateRemoveAndAdjustWithinZeroToFive() {
+    #expect(DulcetRating.value(pressing: 3, current: 0) == 3)
+    #expect(DulcetRating.value(pressing: 3, current: 5) == 3)
+    #expect(DulcetRating.value(pressing: 3, current: 3) == 0, "pressing the rating again removes it")
+    #expect(DulcetRating.adjusted(0, increment: true) == 1)
+    #expect(DulcetRating.adjusted(5, increment: true) == 5, "never past five")
+    #expect(DulcetRating.adjusted(0, increment: false) == 0, "never below none")
+    #expect(DulcetRating.adjusted(3, increment: false) == 2)
+    #expect(DulcetRating.stars.map { DulcetRating.isFilled(star: $0, rating: 2) } == [true, true, false, false, false])
+    #expect(DulcetRating.accessibilityValue(rating: 0, state: .settled) == "Not rated")
+    #expect(DulcetRating.accessibilityValue(rating: 1, state: .settled) == "1 star")
+    #expect(DulcetRating.accessibilityValue(rating: 4, state: .pending) == "4 stars, Waiting to send")
+    #expect(DulcetRating.accessibilityValue(rating: 4, state: .held(.forbidden)) == "4 stars, Not sent yet")
+    #expect(DulcetRating.starLabel(star: 2, current: 4) == "Rate 2 stars")
+    #expect(DulcetRating.starLabel(star: 1, current: 0) == "Rate 1 star")
+    #expect(DulcetRating.starLabel(star: 4, current: 4) == "Remove Rating")
 }
 
 @Test @MainActor

@@ -895,6 +895,10 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
         client.setFavourite(kind: target.kind.rawValue, rawId: target.id.rawID, favourite: favourite)
     }
 
+    func setRating(_ target: DulcetFavouriteTarget, rating: Int) -> Bool {
+        client.setRating(kind: target.kind.rawValue, rawId: target.id.rawID, rating: Int32(rating))
+    }
+
     func subscribeFavouriteOutcomes(
         _ handler: @escaping @MainActor (DulcetFavouriteOutcome) -> Void
     ) -> any DulcetLibraryReaderCancellable {

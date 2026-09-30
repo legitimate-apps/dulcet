@@ -75,6 +75,9 @@ public protocol DulcetLibraryReading: AnyObject {
     /// The change is in the next publication of every open screen showing it, before any request.
     /// False when the reader could not take it.
     func setFavourite(_ target: DulcetFavouriteTarget, favourite: Bool) -> Bool
+    /// A rating of 1 to 5, or 0 to remove it; the same outbox as a favourite (§18.3), and its
+    /// outcomes arrive on the same subscription. False when the reader could not take it.
+    func setRating(_ target: DulcetFavouriteTarget, rating: Int) -> Bool
     func subscribeFavouriteOutcomes(
         _ handler: @escaping @MainActor (DulcetFavouriteOutcome) -> Void
     ) -> any DulcetLibraryReaderCancellable
@@ -173,6 +176,13 @@ public final class DulcetLibrarySession {
     /// included. Now Playing and the lock screen read it: a queued track's own copy is as old as
     /// the queue.
     public private(set) var knownFavourites: [DulcetProviderItemID: Bool] = [:]
+    /// Ratings set whose send has not ended, keyed by entity: the value set (0 removes it).
+    public private(set) var pendingRatings: [DulcetFavouriteKey: Int] = [:]
+    /// Ratings kept unsent (§18.3 `held`), and why.
+    public private(set) var heldRatings: [DulcetFavouriteKey: DulcetReaderErrorKind] = [:]
+    /// The rating this session last saw published for each entity, as ``knownFavourites`` is for
+    /// hearts: Now Playing reads it, because a queued track carries no rating of its own.
+    public private(set) var knownRatings: [DulcetProviderItemID: Int] = [:]
     /// The latest statement about a change or an unplayable row, for the shell to show briefly.
     public private(set) var notice: DulcetLibraryNotice?
     /// Playlist editing for the current reader, when it can edit playlists (§18.6).
@@ -268,6 +278,9 @@ public final class DulcetLibrarySession {
         pendingFavourites = [:]
         heldFavourites = [:]
         knownFavourites = [:]
+        pendingRatings = [:]
+        heldRatings = [:]
+        knownRatings = [:]
         readerGeneration += 1
         outcomeSubscription = made.subscribeFavouriteOutcomes { [weak self] outcome in
             self?.receive(outcome)
@@ -319,6 +332,9 @@ public final class DulcetLibrarySession {
         pendingFavourites = [:]
         heldFavourites = [:]
         knownFavourites = [:]
+        pendingRatings = [:]
+        heldRatings = [:]
+        knownRatings = [:]
         readerGeneration += 1
         for window in windows.allObjects {
             window.readerChanged()
@@ -420,6 +436,7 @@ public final class DulcetLibrarySession {
         var tracks: [DulcetTrack] = []
         for item in items where item.kind == .track || item.kind == .album || item.kind == .artist {
             if item.kind == .track, let track = item.playableTrack { tracks.append(track) }
+            if let rating = item.rating, knownRatings[item.id] != rating { knownRatings[item.id] = rating }
             guard let favourite = item.isFavourite, knownFavourites[item.id] != favourite else { continue }
             knownFavourites[item.id] = favourite
         }
@@ -428,6 +445,7 @@ public final class DulcetLibrarySession {
 
     func observe(_ rows: [DulcetReaderSearchRow]) {
         for row in rows {
+            if let rating = row.rating, knownRatings[row.id] != rating { knownRatings[row.id] = rating }
             guard let favourite = row.isFavourite, knownFavourites[row.id] != favourite else { continue }
             knownFavourites[row.id] = favourite
         }
@@ -489,7 +507,86 @@ public final class DulcetLibrarySession {
         setFavourite(target, favourite: !isFavourite(target.id, published: published))
     }
 
+    // MARK: Ratings
+
+    /// The rating to draw for an entity, 0 for none: the value set, while it is pending, then what
+    /// the screens last published. `published` is the value in the row being drawn.
+    public func rating(_ id: DulcetProviderItemID, published: Int?) -> Int {
+        if let key = pendingRatings.keys.first(where: {
+            $0.rawID == id.rawID && $0.providerInstanceID == id.providerInstanceID
+        }), let pending = pendingRatings[key] {
+            return pending
+        }
+        return published ?? knownRatings[id] ?? 0
+    }
+
+    /// Whether a rating for this entity is waiting to be sent, or held.
+    public func ratingState(_ target: DulcetFavouriteTarget) -> DulcetFavouriteChangeState {
+        let key = DulcetFavouriteKey(target)
+        if let error = heldRatings[key] { return .held(error) }
+        if pendingRatings[key] != nil { return .pending }
+        return .settled
+    }
+
+    /// Rates the entity 1 to 5, or removes its rating with 0. Shown at once; the outcome arrives
+    /// later. Any other value is refused here and nothing is recorded.
+    @discardableResult
+    public func setRating(_ target: DulcetFavouriteTarget, rating: Int) -> Bool {
+        guard DulcetRating.range.contains(rating) else { return false }
+        guard let reader, account?.providerInstanceID == target.id.providerInstanceID else {
+            post(DulcetStrings.readerChangeNotRecorded)
+            return false
+        }
+        let key = DulcetFavouriteKey(target)
+        guard reader.setRating(target, rating: rating) else {
+            post(DulcetStrings.readerChangeNotRecorded)
+            return false
+        }
+        pendingRatings[key] = rating
+        heldRatings[key] = nil
+        knownRatings[target.id] = rating
+        return true
+    }
+
+    private func receiveRating(_ outcome: DulcetFavouriteOutcome, key: DulcetFavouriteKey, id: DulcetProviderItemID) {
+        switch outcome.kind {
+        case .saved:
+            pendingRatings[key] = nil
+            heldRatings[key] = nil
+        case let .notSaved(error):
+            pendingRatings[key] = nil
+            heldRatings[key] = nil
+            // The overlay is gone and the server's value shows; the screens republish it.
+            knownRatings[id] = nil
+            post(DulcetStrings.readerChangeNotSaved(DulcetStrings.readerErrorPhrase(error)))
+        case let .held(error):
+            heldRatings[key] = error
+            post(error == .serverBusy
+                ? DulcetStrings.readerChangeHeldBusy
+                : DulcetStrings.readerChangeHeldRefused(DulcetStrings.readerHeldPhrase(error)))
+        case .superseded:
+            pendingRatings[key] = nil
+            heldRatings[key] = nil
+            knownRatings[id] = nil
+            post(DulcetStrings.readerChangeSuperseded)
+        case .notRecorded:
+            pendingRatings[key] = nil
+            heldRatings[key] = nil
+            knownRatings[id] = nil
+            post(DulcetStrings.readerChangeNotRecorded)
+        }
+    }
+
     private func receive(_ outcome: DulcetFavouriteOutcome) {
+        if outcome.field == .rating, let targetKind = outcome.targetKind,
+           let providerInstanceID = account?.providerInstanceID {
+            receiveRating(
+                outcome,
+                key: DulcetFavouriteKey(kind: targetKind, providerInstanceID: providerInstanceID, rawID: outcome.targetRawID),
+                id: DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: outcome.targetRawID)
+            )
+            return
+        }
         guard outcome.field == .favourite, let targetKind = outcome.targetKind,
               let providerInstanceID = account?.providerInstanceID else { return }
         let key = DulcetFavouriteKey(

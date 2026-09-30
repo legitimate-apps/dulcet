@@ -443,6 +443,10 @@ enum DulcetStrings {
     static let readerFavoritePending = text("reader.favorite.pending", "Waiting to send")
     static let readerFavoriteHeld = text("reader.favorite.held", "Not sent yet")
     static let readerFavoriteOn = text("reader.favorite.on", "Favorite")
+    static let readerRating = text("reader.rating", "Rating")
+    static let readerRatingNone = text("reader.rating.none", "Not rated")
+    static let readerRatingRemove = text("reader.rating.remove", "Remove Rating")
+    static let readerRatingMenuNone = text("reader.rating.menuNone", "No Rating")
     static let readerDeviceOnlyTitle = text("reader.deviceOnly.title", "Showing what\u{2019}s on this device")
     static let readerSearchScopeDevice = text("reader.search.scope.device", "On this device")
     static let readerSearchScopeServer = text("reader.search.scope.server", "Your server")
@@ -555,6 +559,22 @@ enum DulcetStrings {
             fallback: "%d changes haven\u{2019}t reached your server yet. Send them before signing out, or sign out and discard them.",
             count: count
         )
+    }
+
+    static func readerRatingAccessibility(_ title: String) -> String {
+        formatted("reader.rating.accessibility", "Rating for %@", title)
+    }
+
+    static func readerRatingValue(_ stars: Int) -> String {
+        pluralized("reader.rating.value", fallback: "%d stars", count: stars)
+    }
+
+    static func readerRatingRate(_ stars: Int) -> String {
+        pluralized("reader.rating.rate", fallback: "Rate %d stars", count: stars)
+    }
+
+    static func readerRatingMenuStars(_ stars: Int) -> String {
+        pluralized("reader.rating.menuStars", fallback: "%d Stars", count: stars)
     }
 
     static func readerFavoriteAccessibility(_ title: String) -> String {
