@@ -109,6 +109,73 @@ class TvNowPlayingControlsTest {
     }
 
     /**
+     * An Up Next entry is edited with the remote alone: RIGHT from its row reaches its options, the
+     * centre key opens them with the first choice focused, and a choice closes them with focus back
+     * on the button. The first entry of Up Next cannot move up and the last cannot move down.
+     */
+    @Test fun anUpNextEntryIsMovedAndRemovedWithTheRemote() {
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlayingScreen(null, fourEntries(), actions) } }
+        compose.waitForIdle()
+        reachEntry(2)
+        key("tv.player.upnext.2", Key.DirectionRight)
+        assertTrue(focused("tv.player.upnext.2.edit"), "RIGHT from an Up Next entry reaches its options")
+        key("tv.player.upnext.2.edit", Key.DirectionCenter)
+        assertTrue(exists("tv.player.upnext.edit"), "the centre key opens the entry's options")
+        assertFalse(exists("tv.player.upnext.edit.moveUp"), "the first Up Next entry cannot move above the playing one")
+        assertTrue(focused("tv.player.upnext.edit.moveDown"), "the first choice takes focus")
+        key("tv.player.upnext.edit.moveDown", Key.DirectionCenter)
+        assertEquals(listOf("move=e3>3"), actions.calls, "Move Down names the entry and its new place in the whole queue")
+        assertFalse(exists("tv.player.upnext.edit"), "a choice closes the options")
+        assertTrue(focused("tv.player.upnext.2.edit"), "focus returns to the button that opened them")
+
+        key("tv.player.upnext.2.edit", Key.DirectionDown)
+        assertTrue(focused("tv.player.upnext.3.edit"), "DOWN moves between the options buttons")
+        key("tv.player.upnext.3.edit", Key.DirectionCenter)
+        assertTrue(exists("tv.player.upnext.edit.moveUp"))
+        assertFalse(exists("tv.player.upnext.edit.moveDown"), "the last entry cannot move down")
+        key("tv.player.upnext.edit.moveUp", Key.DirectionDown)
+        key("tv.player.upnext.edit.remove", Key.DirectionCenter)
+        assertEquals(listOf("move=e3>3", "remove=e4"), actions.calls)
+    }
+
+    /** Only Up Next is edited: the playing entry, which the queue will not remove, and those before it have no options. */
+    @Test fun thePlayingEntryAndThosePlayedHaveNoOptions() {
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlayingScreen(null, fourEntries(), actions) } }
+        compose.waitForIdle()
+        assertTrue(exists("tv.player.upnext.0") && exists("tv.player.upnext.1"), "setup: the rows are composed")
+        assertFalse(exists("tv.player.upnext.0.edit"))
+        assertFalse(exists("tv.player.upnext.1.edit"), "the playing entry cannot be removed")
+        reachEntry(2)
+        assertTrue(exists("tv.player.upnext.2.edit"), "an Up Next entry has options")
+    }
+
+    /** Clear Up Next is among an entry's options; a refusal from the queue is said. */
+    @Test fun clearRemovesUpNextAndARefusedEditIsSaid() {
+        actions.accepts = false
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlayingScreen(null, fourEntries(), actions) } }
+        compose.waitForIdle()
+        reachEntry(2)
+        key("tv.player.upnext.2", Key.DirectionRight)
+        key("tv.player.upnext.2.edit", Key.DirectionCenter)
+        key("tv.player.upnext.edit.moveDown", Key.DirectionDown)
+        key("tv.player.upnext.edit.remove", Key.DirectionDown)
+        assertTrue(focused("tv.player.upnext.edit.clear"), "DOWN through the options reaches Clear Up Next")
+        key("tv.player.upnext.edit.clear", Key.DirectionCenter)
+        assertEquals(listOf("clear"), actions.calls)
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.queue_edit_refused),
+            org.robolectric.shadows.ShadowToast.getTextOfLatestToast(), "a refused edit is said")
+    }
+
+    /** DOWN from the transport, then DOWN through the list to the entry at [position]. */
+    private fun reachEntry(position: Int) {
+        key("tv.player.playpause", Key.DirectionDown)
+        var at = (0..3).firstOrNull { focused("tv.player.upnext.$it") }
+        assertTrue(at != null, "setup: DOWN from the transport reaches Up Next")
+        while (at!! < position) { key("tv.player.upnext.$at", Key.DirectionDown); at++ }
+        assertTrue(focused("tv.player.upnext.$position"), "setup: D-pad DOWN reaches entry $position")
+    }
+
+    /**
      * The heart is the transport's last control, RIGHT of Repeat: its state is its fill and its
      * description the action; centre toggles it; a change that needs words says them beneath the title.
      */
@@ -152,6 +219,9 @@ class TvNowPlayingControlsTest {
         currentIndex = 1, canGoNext = true, canGoPrevious = true,
     )
 
+    private fun fourEntries() = playing().copy(
+        queue = (1..4).map { AndroidQueueEntry("e$it", AndroidTrack("p", "t$it", "Track $it", "Artist")) })
+
     private fun key(tag: String, key: Key) {
         compose.onNodeWithTag(tag).performKeyInput { pressKey(key) }
         compose.waitForIdle()
@@ -176,5 +246,10 @@ class TvNowPlayingControlsTest {
         override fun cycleRepeatMode() { calls += "repeat" }
         override fun seek(positionMilliseconds: Long) { calls += "seek=$positionMilliseconds" }
         override fun jumpTo(queueEntryId: String) { calls += "jump=$queueEntryId" }
+        /** What the queue answers to an edit. */
+        var accepts = true
+        override fun moveEntry(queueEntryId: String, toIndex: Int): Boolean { calls += "move=$queueEntryId>$toIndex"; return accepts }
+        override fun removeEntry(queueEntryId: String): Boolean { calls += "remove=$queueEntryId"; return accepts }
+        override fun clearUpcoming(): Boolean { calls += "clear"; return accepts }
     }
 }

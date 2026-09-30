@@ -86,6 +86,13 @@ import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.SkipNoticeRegion
 import kotlin.math.roundToInt
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import com.legitimateapps.dulcet.ui.queueEditRefused
+import com.legitimateapps.dulcet.shared.R as SharedR
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.layout.SubcomposeLayout
@@ -534,47 +541,140 @@ private fun ToggleIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, la
     }
 }
 
+/**
+ * What the Up Next sheet can do to the queue. The controller in the app; a recording in a test. Each
+ * edit answers whether the queue accepted it, and a refusal is said (spec §14.1).
+ */
+internal interface UpNextActions {
+    fun jumpTo(queueEntryId: String)
+    fun moveEntry(queueEntryId: String, toIndex: Int): Boolean
+    fun removeEntry(queueEntryId: String): Boolean
+    fun clearUpcoming(): Boolean
+}
+
+private class ControllerUpNextActions(private val controller: AndroidPlaybackController) : UpNextActions {
+    override fun jumpTo(queueEntryId: String) = controller.jumpTo(queueEntryId)
+    override fun moveEntry(queueEntryId: String, toIndex: Int) = controller.moveEntry(queueEntryId, toIndex)
+    override fun removeEntry(queueEntryId: String) = controller.removeEntry(queueEntryId)
+    override fun clearUpcoming() = controller.clearUpcoming()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun UpNextSheet(account: SearchAccount, state: AndroidPlaybackState, playback: AndroidPlaybackController, dismiss: () -> Unit) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     ModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("player.upnext")) {
-        Text(stringResource(R.string.action_up_next), Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        UpNextList(account, state, remember(playback) { ControllerUpNextActions(playback) })
+    }
+}
+
+/**
+ * The queue: what played, the playing entry, and Up Next. A tap plays an entry. Each entry after the
+ * playing one has a menu that moves it up or down within Up Next or removes it, and the same three are
+ * accessibility actions on the row, since a menu behind a button is one more step for TalkBack. The
+ * playing entry and those before it offer no edits: removing the playing one is refused by the queue
+ * (spec §14.1), and the Apple shells edit Up Next only. Clear removes all of Up Next.
+ */
+@Composable
+internal fun UpNextList(account: SearchAccount?, state: AndroidPlaybackState, actions: UpNextActions) {
+    val context = LocalContext.current
+    fun answered(accepted: Boolean) { if (!accepted) queueEditRefused(context) }
+    // With no playing entry, the whole queue is Up Next.
+    val firstUpcoming = state.currentIndex?.plus(1) ?: 0
+    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.action_up_next), Modifier.weight(1f),
             style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        if (state.queue.isEmpty()) {
-            Text(stringResource(R.string.up_next_empty), Modifier.padding(24.dp))
-            return@ModalBottomSheet
-        }
-        val list = rememberLazyListState()
-        LaunchedEffect(Unit) { state.currentIndex?.let { list.scrollToItem(it) } }
-        LazyColumn(state = list, modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
-                val current = position == state.currentIndex
-                val past = state.currentIndex?.let { position < it } ?: false
-                ListItem(
-                    headlineContent = {
-                        Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (current) MaterialTheme.colorScheme.primary else Color.Unspecified,
-                            fontWeight = if (current) FontWeight.SemiBold else null)
-                    },
-                    supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                    leadingContent = { Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
-                    trailingContent = when {
-                        current -> { { Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing),
-                            tint = MaterialTheme.colorScheme.primary) } }
-                        entry.track.durationMilliseconds != null -> { { Text(formatDuration(entry.track.durationMilliseconds!!),
-                            style = MaterialTheme.typography.bodySmall) } }
-                        else -> null
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable(enabled = !current) { playback.jumpTo(entry.queueEntryId) }
-                        .alpha(if (past) 0.55f else 1f)
-                        .testTag("player.upnext.$position"),
-                )
+        if (firstUpcoming < state.queue.size) {
+            TextButton(onClick = { answered(actions.clearUpcoming()) }, modifier = Modifier.testTag("player.upnext.clear")) {
+                Text(stringResource(SharedR.string.queue_clear))
             }
         }
-        Spacer(Modifier.height(24.dp))
+    }
+    if (state.queue.isEmpty()) {
+        Text(stringResource(R.string.up_next_empty), Modifier.padding(24.dp))
+        return
+    }
+    val list = rememberLazyListState()
+    LaunchedEffect(Unit) { state.currentIndex?.let { list.scrollToItem(it) } }
+    val moveUp = stringResource(SharedR.string.queue_move_up)
+    val moveDown = stringResource(SharedR.string.queue_move_down)
+    val remove = stringResource(SharedR.string.queue_remove)
+    LazyColumn(state = list, modifier = Modifier.fillMaxWidth()) {
+        itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
+            val current = position == state.currentIndex
+            val past = state.currentIndex?.let { position < it } ?: false
+            val upcoming = position >= firstUpcoming
+            val canMoveUp = upcoming && position > firstUpcoming
+            val canMoveDown = upcoming && position < state.queue.lastIndex
+            val id = entry.queueEntryId
+            ListItem(
+                headlineContent = {
+                    Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = if (current) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                        fontWeight = if (current) FontWeight.SemiBold else null)
+                },
+                supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (current) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing),
+                            tint = MaterialTheme.colorScheme.primary)
+                        else entry.track.durationMilliseconds?.let {
+                            Text(formatDuration(it), style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (upcoming) UpNextEntryMenu("player.upnext.$position",
+                            onMoveUp = if (canMoveUp) { { answered(actions.moveEntry(id, position - 1)) } } else null,
+                            onMoveDown = if (canMoveDown) { { answered(actions.moveEntry(id, position + 1)) } } else null,
+                            onRemove = { answered(actions.removeEntry(id)) })
+                    }
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.clickable(enabled = !current) { actions.jumpTo(id) }
+                    .semantics {
+                        if (upcoming) customActions = listOfNotNull(
+                            if (canMoveUp) CustomAccessibilityAction(moveUp) { answered(actions.moveEntry(id, position - 1)); true } else null,
+                            if (canMoveDown) CustomAccessibilityAction(moveDown) { answered(actions.moveEntry(id, position + 1)); true } else null,
+                            CustomAccessibilityAction(remove) { answered(actions.removeEntry(id)); true },
+                        )
+                    }
+                    .alpha(if (past) 0.55f else 1f)
+                    .testTag("player.upnext.$position"),
+            )
+        }
+    }
+    Spacer(Modifier.height(24.dp))
+}
+
+/** An Up Next entry's menu: Move Up and Move Down where the entry can go that way, and Remove. */
+@Composable
+private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?, onRemove: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.testTag("$tag.menu")) {
+            Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_entry_options))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (onMoveUp != null) DropdownMenuItem(
+                text = { Text(stringResource(SharedR.string.queue_move_up)) },
+                leadingIcon = { Icon(DulcetIcons.ArrowUp, null) },
+                onClick = { open = false; onMoveUp() },
+                modifier = Modifier.testTag("$tag.menu.moveUp"),
+            )
+            if (onMoveDown != null) DropdownMenuItem(
+                text = { Text(stringResource(SharedR.string.queue_move_down)) },
+                leadingIcon = { Icon(DulcetIcons.ArrowDown, null) },
+                onClick = { open = false; onMoveDown() },
+                modifier = Modifier.testTag("$tag.menu.moveDown"),
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(SharedR.string.queue_remove)) },
+                leadingIcon = { Icon(DulcetIcons.Remove, null) },
+                onClick = { open = false; onRemove() },
+                modifier = Modifier.testTag("$tag.menu.remove"),
+            )
+        }
     }
 }
 

@@ -38,6 +38,11 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
+import com.legitimateapps.dulcet.core.AndroidQueueInsertion
+import com.legitimateapps.dulcet.library.canBeQueued
+import com.legitimateapps.dulcet.library.queueAlbum
+import com.legitimateapps.dulcet.library.queueTrack
+import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
 import com.legitimateapps.dulcet.library.playAlbum
@@ -110,6 +115,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     LaunchedEffect(showRequests) { if (showRequests > 0) playerOpen = true }
 
     val provider = account.providerInstanceId
+    val libraryName = stringResource(R.string.tab_library)
     val actions = PhoneActions(
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
@@ -131,6 +137,13 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
             if (playPlaylist(playback, provider, playlist, position, shuffle)) playerOpen = true
         },
         addToPlaylist = { adding = it },
+        // A refused addition is said, as the Apple shells say it, rather than silently not happening.
+        queueAlbum = { album, insertion ->
+            if (!queueAlbum(playback, provider, album, insertion)) queueEditRefused(context)
+        },
+        queueTrack = { track, insertion, album ->
+            if (!queueTrack(playback, provider, track, insertion, libraryName, album)) queueEditRefused(context)
+        },
     )
     // A restored Up Next row with no title takes it from what this device has seen, as it did from the
     // whole-library mirror: a seen-cache read, never a request.
@@ -281,7 +294,17 @@ internal class PhoneActions(
     val playPlaylist: (AndroidLibraryPublication, Int, Boolean) -> Unit = { _, _, _ -> },
     /** Opens "Add to playlist" for songs or an album. */
     val addToPlaylist: (PlaylistAddition) -> Unit = {},
-)
+    /** Play Next or Add to Queue for an album publication's playable tracks (spec §14.1). */
+    val queueAlbum: (AndroidLibraryPublication, AndroidQueueInsertion) -> Unit = { _, _ -> },
+    /** Play Next or Add to Queue for one track, shown on the album given, if any. */
+    val queueTrack: (AndroidLibraryItem.Track, AndroidQueueInsertion, AndroidLibraryItem.Album?) -> Unit = { _, _, _ -> },
+) {
+    /** A row's Play Next and Add to Queue, or null for a track that cannot be queued now. */
+    fun trackQueue(track: AndroidLibraryItem.Track, album: AndroidLibraryItem.Album?): TrackQueue? =
+        if (!track.canBeQueued()) null
+        else TrackQueue({ queueTrack(track, AndroidQueueInsertion.PlayNext, album) },
+            { queueTrack(track, AndroidQueueInsertion.AddToQueue, album) })
+}
 
 /** [position] indexes the album's rows; the queue skips rows with no metadata to play. */
 private fun playAlbumFrom(

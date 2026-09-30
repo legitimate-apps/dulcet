@@ -87,6 +87,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
+import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryHomeRowSurface
 import com.legitimateapps.dulcet.library.LibraryObservation
@@ -105,6 +106,7 @@ import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
 import com.legitimateapps.dulcet.library.orderLine
+import com.legitimateapps.dulcet.library.playableTracks
 import com.legitimateapps.dulcet.library.rememberHomeRows
 import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.library.titleResource
@@ -327,7 +329,8 @@ private fun FavouritesList(account: SearchAccount, session: LibrarySession, acti
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                     favouriteTag = "library.favourites.track.$position.favourite",
-                    onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) }) {
+                    onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) },
+                    queue = actions.trackQueue(track, null)) {
                     note = null
                     actions.playTracks(tracks, track.rawId, title)
                 }
@@ -487,6 +490,20 @@ internal fun AlbumScreen(
             if (album != null) FavouriteButton(album.favourite == true, "album.favourite") {
                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
             }
+            // Play Next and Add to Queue for the whole album, beside its download (spec §14.1).
+            if (album != null && shown != null && shown.playableTracks(account.providerInstanceId).isNotEmpty()) {
+                var open by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { open = true }, modifier = Modifier.testTag("album.menu")) {
+                        Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_add_options))
+                    }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        QueueInsertionItems("album", { open = false },
+                            { actions.queueAlbum(shown, AndroidQueueInsertion.PlayNext) },
+                            { actions.queueAlbum(shown, AndroidQueueInsertion.AddToQueue) })
+                    }
+                }
+            }
         })
         ConnectionNotices(session, accountNotices = false)
         val current = publication ?: return@Column
@@ -552,7 +569,8 @@ internal fun AlbumScreen(
                             onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(item.rawId), item.title.orEmpty())) },
                             download = TrackDownload(downloads[item.rawId],
                                 onDownload = { requests.download(listOf(item)) }.takeIf { item.downloadItem() != null },
-                                onRemove = { requests.remove(listOf(item.rawId)) })) {
+                                onRemove = { requests.remove(listOf(item.rawId)) }),
+                            queue = actions.trackQueue(item, album)) {
                             note = null
                             actions.playAlbum(current, position, false)
                         }
@@ -745,6 +763,7 @@ internal fun TrackRow(
     favouriteTag: String? = null,
     onAddToPlaylist: (() -> Unit)? = null,
     download: TrackDownload? = null,
+    queue: TrackQueue? = null,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
@@ -782,7 +801,7 @@ internal fun TrackRow(
                     // A heart on a track that cannot play offline still works: a favourite is sent on reconnect.
                     if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
                     // The row's context menu. An append is not positional, so it needs no view (§18.6).
-                    if (onAddToPlaylist != null) TrackMenu(rowTag, onAddToPlaylist, download)
+                    if (onAddToPlaylist != null) TrackMenu(rowTag, onAddToPlaylist, download, queue.takeIf { !unavailable })
                 }
             }
         },
@@ -851,15 +870,22 @@ internal class TrackDownload(
     val onRemove: () -> Unit,
 )
 
+/**
+ * Play Next and Add to Queue on a row's menu (spec §14.1). Absent for a track that cannot play now:
+ * what is added is what a play would queue.
+ */
+internal class TrackQueue(val onPlayNext: () -> Unit, val onAddToQueue: () -> Unit)
+
 /** The row's context menu: what can be done to one song besides playing it. */
 @Composable
-private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: TrackDownload? = null) {
+private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: TrackDownload? = null, queue: TrackQueue? = null) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.testTag((tag ?: "track") + ".menu")) {
             Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (queue != null) QueueInsertionItems(tag ?: "track", { open = false }, queue.onPlayNext, queue.onAddToQueue)
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.playlist_add_to)) },
                 leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
@@ -879,4 +905,21 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: Track
             )
         }
     }
+}
+
+/** Play Next and Add to Queue as menu items, tagged `<tag>.menu.playNext` and `<tag>.menu.addToQueue`. */
+@Composable
+internal fun QueueInsertionItems(tag: String, close: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(stringResource(SharedR.string.queue_play_next)) },
+        leadingIcon = { Icon(DulcetIcons.PlaylistPlay, null) },
+        onClick = { close(); onPlayNext() },
+        modifier = Modifier.testTag("$tag.menu.playNext"),
+    )
+    DropdownMenuItem(
+        text = { Text(stringResource(SharedR.string.queue_add_to_queue)) },
+        leadingIcon = { Icon(DulcetIcons.QueueMusic, null) },
+        onClick = { close(); onAddToQueue() },
+        modifier = Modifier.testTag("$tag.menu.addToQueue"),
+    )
 }

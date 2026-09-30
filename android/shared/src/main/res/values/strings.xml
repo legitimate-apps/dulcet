@@ -161,4 +161,17 @@
     <string name="lyrics_unavailable_paused">Your server isn\'t answering for lyrics right now.</string>
     <string name="lyrics_trimmed">Some languages were too long to keep and aren\'t shown.</string>
     <string name="lyrics_title">Lyrics</string>
+
+    <!-- Queue editing (spec §14.1), the Apple shells' words. -->
+    <string name="queue_play_next">Play Next</string>
+    <string name="queue_add_to_queue">Add to Queue</string>
+    <string name="queue_move_up">Move Up</string>
+    <string name="queue_move_down">Move Down</string>
+    <string name="queue_remove">Remove</string>
+    <string name="queue_clear">Clear</string>
+    <string name="queue_clear_up_next">Clear Up Next</string>
+    <string name="queue_entry_options">Up Next options</string>
+    <string name="queue_add_options">Add to Up Next</string>
+    <string name="queue_cancel">Cancel</string>
+    <string name="queue_edit_refused">Couldn’t change Up Next</string>
 </resources>

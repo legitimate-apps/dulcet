@@ -336,7 +336,8 @@ internal fun PlaylistScreen(
                                 onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                                 onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                                 favouriteTag = "playlist.entry.$position.favourite",
-                                onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) }) {
+                                onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) },
+                                queue = actions.trackQueue(track, null)) {
                                 note = null
                                 actions.playPlaylist(current, position, false)
                             }

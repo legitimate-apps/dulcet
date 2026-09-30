@@ -54,6 +54,7 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.shared.R as SharedR
+import com.legitimateapps.dulcet.ui.queueEditRefused
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -147,6 +148,10 @@ internal interface TvPlayerActions {
     fun cycleRepeatMode()
     fun seek(positionMilliseconds: Long)
     fun jumpTo(queueEntryId: String)
+    /** Queue edits (spec §14.1); each answers whether the queue accepted it. */
+    fun moveEntry(queueEntryId: String, toIndex: Int): Boolean
+    fun removeEntry(queueEntryId: String): Boolean
+    fun clearUpcoming(): Boolean
 }
 
 private class ControllerActions(private val controller: AndroidPlaybackController) : TvPlayerActions {
@@ -157,6 +162,9 @@ private class ControllerActions(private val controller: AndroidPlaybackControlle
     override fun cycleRepeatMode() = controller.cycleRepeatMode()
     override fun seek(positionMilliseconds: Long) = controller.seek(positionMilliseconds)
     override fun jumpTo(queueEntryId: String) = controller.jumpTo(queueEntryId)
+    override fun moveEntry(queueEntryId: String, toIndex: Int) = controller.moveEntry(queueEntryId, toIndex)
+    override fun removeEntry(queueEntryId: String) = controller.removeEntry(queueEntryId)
+    override fun clearUpcoming() = controller.clearUpcoming()
 }
 
 /**
@@ -369,23 +377,68 @@ private fun TvScrubber(state: AndroidPlaybackState, playback: TvPlayerActions?) 
     }
 }
 
-/** The queue, the playing entry kept in view; selecting an entry plays it. */
+/**
+ * The queue, the playing entry kept in view; selecting an entry plays it. Each entry after the playing
+ * one has an options button, RIGHT of it, whose dialog moves it up or down within Up Next or removes
+ * it, and Clear Up Next removes all of it. The playing entry and those before it offer
+ * no edits: the queue refuses to remove the playing one (spec §14.1), and the Apple shells edit Up
+ * Next only. A refused edit is said.
+ */
 @Composable
 private fun TvUpNext(state: AndroidPlaybackState, playback: TvPlayerActions?) {
+    val context = LocalContext.current
+    val resources = context.resources
+    fun answered(accepted: Boolean) { if (!accepted) queueEditRefused(context) }
+    // With no playing entry, the whole queue is Up Next.
+    val firstUpcoming = state.currentIndex?.plus(1) ?: 0
+    var editing by remember { mutableStateOf<String?>(null) }
+    // The entry the dialog is open for, by identity: a row may have moved, or gone, since.
+    val editingAt = editing?.let { id -> state.queue.indexOfFirst { it.queueEntryId == id } }
+        ?.takeIf { it >= firstUpcoming && playback != null }
+    if (editing != null && editingAt == null) LaunchedEffect(editing) { editing = null }
+    if (editingAt != null && playback != null) {
+        val id = state.queue[editingAt].queueEntryId
+        TvQueueMenu("tv.player.upnext.edit",
+            state.queue[editingAt].track.title.ifBlank { resources.getString(R.string.tv_player_loading) },
+            listOfNotNull(
+                if (editingAt > firstUpcoming) TvQueueChoice(resources.getString(SharedR.string.queue_move_up),
+                    "tv.player.upnext.edit.moveUp") { answered(playback.moveEntry(id, editingAt - 1)) } else null,
+                if (editingAt < state.queue.lastIndex) TvQueueChoice(resources.getString(SharedR.string.queue_move_down),
+                    "tv.player.upnext.edit.moveDown") { answered(playback.moveEntry(id, editingAt + 1)) } else null,
+                TvQueueChoice(resources.getString(SharedR.string.queue_remove), "tv.player.upnext.edit.remove") {
+                    answered(playback.removeEntry(id))
+                },
+                // Clear is here rather than beside the heading: a button there would sit between the
+                // transport and the list, and DOWN from the transport must land on the list.
+                TvQueueChoice(resources.getString(SharedR.string.queue_clear_up_next), "tv.player.upnext.edit.clear") {
+                    answered(playback.clearUpcoming())
+                },
+            ),
+            resources.getString(SharedR.string.queue_cancel)) { editing = null }
+    }
     Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.titleMedium)
     val list = rememberLazyListState()
     // The playing entry near the top, with the one before it still in view for context.
     LaunchedEffect(state.currentIndex) { state.currentIndex?.let { list.scrollToItem((it - 1).coerceAtLeast(0)) } }
     val loading = stringResource(R.string.tv_player_loading)
+    val options = stringResource(SharedR.string.queue_entry_options)
     LazyColumn(Modifier.fillMaxWidth().height(180.dp).testTag("tv.player.upnext"), state = list) {
         itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
-            ListItem(
-                selected = position == state.currentIndex,
-                onClick = { playback?.jumpTo(entry.queueEntryId) },
-                headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 1) },
-                supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1) } },
-                modifier = Modifier.testTag("tv.player.upnext.$position"),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ListItem(
+                    selected = position == state.currentIndex,
+                    onClick = { playback?.jumpTo(entry.queueEntryId) },
+                    headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 1) },
+                    supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1) } },
+                    modifier = Modifier.weight(1f).testTag("tv.player.upnext.$position"),
+                )
+                if (playback != null && position >= firstUpcoming) {
+                    IconButton(onClick = { editing = entry.queueEntryId },
+                        modifier = Modifier.testTag("tv.player.upnext.$position.edit")) {
+                        Icon(DulcetIcons.MoreVert, options)
+                    }
+                }
+            }
         }
     }
 }
