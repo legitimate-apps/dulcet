@@ -1054,6 +1054,12 @@ passing_cases = """\
             name="conf90AStaleIndexIsPreventedNotSent[iosSimulatorArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
             name="conf91AnotherUsersPlaylistIsNotEditable[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[macosArm64]"
+            name="conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.PlaybackScrobbleConformanceTest[iosSimulatorArm64]"
+            name="conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="aStreamingQualityChoiceIsSavedThroughTheInstalledSettingAndShown" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.LyricsConformanceTest[macosArm64]"
             name="conf42SongLyricsStructuredShapeSelectionAndOfflineCache[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.LyricsConformanceTest[iosSimulatorArm64]"

@@ -1767,9 +1767,38 @@ default. The preference is:
   cap never raises a lower limit that is already there. Without a named format the reference
   server picks its own downsampling format, and the validator (§12.4) would expect a container it
   was never told about. *Original* leaves the request exactly as it was.
+- **A cap the original already meets is not sent (§28, 2026-09-30, review round).** When the
+  device plays the source's container directly and the source's own bitrate, read with `getSong`
+  before the stream, is at or below the cap, the original file is streamed. It stays seekable and
+  resumable and is never re-encoded. This costs one extra request per capped play. An unreadable
+  bitrate keeps the cap. The rule applies only to a streaming-quality cap
+  (`LegacyPlaybackPreference.originalWhenItFits`), never to an explicit hint an adapter or a test
+  sets to ask for a transcode. Path A needs no such read, because the server compares the source
+  against the `ClientInfo` limits itself.
+- **A hint may be ignored.** A Path-B `format` is a hint. A reference server without a working
+  transcoder answers it with the original file (trap 28), which played before the cap existed. A
+  hinted plan therefore accepts the hinted container first and the source's container second.
+  Each gets its full signature validation (§12.4), and the container that arrived is recorded:
+  - Android locks every later range of the attempt to it.
+  - Apple tells AVFoundation that content type instead of the hinted one.
 - **Timing.** A change applies from the next item resolved and never restarts or re-prepares the one
   playing. On Apple a gapless preload resolved at the old quality is discarded and requested again.
-  Android has no gapless preload, so its next resolve simply carries the new quality.
+  Android has no gapless preload, so its next resolve simply carries the new quality. Once the
+  current item has ended and the core holds that end for the preload, the preload is not discarded.
+  At that point it is the item starting; discarding it would resume the held end and prepare the
+  same track again. It plays at the quality it was resolved at, and the item after it at the new one.
+- **What a transcoded stream costs.** A stream the server really transcodes is not served by byte
+  range; its length is only an estimate (`estimateContentLength`):
+  - Android reports it `NotSeekable`. A pending resume position is not applied to it, and Previous
+    goes to the previous track rather than restarting it.
+  - Apple follows AVFoundation's seekable ranges.
+
+  Server-offset seeking with `timeOffset` (proved by CONF-14a) would lift this, but no adapter builds
+  it yet. The settings footnote says so plainly. A source already within the cap is not transcoded
+  (above), so the cost falls only on songs a cap actually shrinks.
+- **A cap makes preloads transcoded.** A preload under a cap is a transcode, and it counts against
+  the §12.8 budget. The first `Server.Busy` attributable to a preload stops transcoded preloads, and
+  so gapless, for the rest of the session on that server.
 - **Downloads are never capped.** A download is always the original file (`format=raw`, §14.5), and
   a capped plan cannot become one.
 
@@ -1777,12 +1806,10 @@ default. The preference is:
 123 kbps, 96 kbps cap), with the server's transcoding capability asserted first:
 - Path B: *Original* returned the FLAC file, and the cap returned MP3 with `LegacyHint(mp3, 96)`.
 - Path A: *Original* was `ExtensionDirect` FLAC, and the cap was `ExtensionTranscode` MP3.
-- Both capped bodies were smaller than the original in proportion to the cap (39,183 → 24,639 bytes
-  on each path).
-
-A known cost is left open. A lossy source in another format whose own bitrate is already under the
-cap is still re-encoded to the transcoding container. The legacy path cannot say "only if it is
-above the cap"; a Path-A decision can, but no production adapter uses Path A yet.
+- Both capped bodies were no larger than the cap allows. The original is 39,183 bytes; across
+  runs the capped bodies were 24,012–24,639 bytes on Path B and 24,639 on Path A.
+- With a 128 kbps cap, which the 123 kbps source already meets, the plan asked for no transcode
+  and the FLAC original arrived (review round, same day).
 
 ### 12.6 Device capability profile
 
@@ -6073,7 +6100,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-89 | every playlist operation through the production editor, including an offline replay, is read back raw as meant; without `formPost`, batched or refused within the query budget as the HTTP client encodes it; a lost create adopted when certain, never deleted by inference — its candidate named and removed only by a confirmed delete by id (§18.6) |
 | CONF-90 | a positional edit whose base another client changed is refused with no write and no song removed; the unchanged-list control removes exactly the intended entry (§18.6) |
 | CONF-91 | another user's playlist is not editable to the reader, the editor or the server (code 50/70); the admin override recorded; the own-playlist control saved (§18.6, §10.4) |
-| CONF-92 | a streaming-quality cap is transcoded on both delivery paths: the legacy stream carries `maxBitRate` with a named format and returns that format, the extension's `ClientInfo` cap turns direct play into a transcode, each capped body is proportionally smaller than the original, and *Original* is the untouched control; the server's transcoding capability asserted first (§12.5) |
+| CONF-92 | a streaming-quality cap is transcoded on both delivery paths: the legacy stream carries `maxBitRate` with a named format and returns that format, a source already within the cap streams as the original, the extension's `ClientInfo` cap turns direct play into a transcode, each capped body is no larger than the cap allows, and *Original* is the untouched control; the server's transcoding capability asserted first (§12.5) |
 | CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
 
 ### 20.5 Facade header review
@@ -7342,6 +7369,38 @@ CONF-92 is new. OBSERVED numbers are in §12.5.
 - No UI test drives any platform's settings screen through to a capped stream.
 - No real network change is observed on any platform.
 - Production resolves only Path B today, so Path A's encoding is proved by CONF-92 alone.
+
+*Review round, same day.* An independent review found two defects and one cost.
+
+1. **A server that ignores the format hint was refused.** A capped plan expected only MP3, so a
+   server that ignores the hint and sends the FLAC original (trap 28) failed with
+   `UnexpectedContentType`, where *Original* played. A hinted plan now accepts the hinted container
+   or the source's, each under its full signature check, and records which arrived. The validation
+   is shared by the core load, the Apple facade (which then tells AVFoundation the arrived content
+   type) and the Android data source (which locks later ranges to it).
+2. **A quality change during a gapless handover re-prepared the playing track.** Between the
+   natural end and `AdvancedToPreloaded`, a change discarded the preload whose end the core held,
+   and that resumed the held end and prepared the same track. Such a preload is now kept.
+3. **The cost: a cap made every stream a transcode, and a transcode is not seekable.** A cap the
+   source already meets is no longer sent (§12.5). The cost that remains for real transcodes is
+   stated in §12.5, the settings footnotes and `FEATURES.yml`, rather than building server-offset
+   seeking now.
+
+Also in this round:
+- Android classifies the network in `onCreate`, so the first song is classified.
+- The Android TV choice's spoken description is localised.
+- §12.5 names the §12.8 budget a capped preload spends.
+
+**Red first:** each of these was removed in turn and a named test failed:
+
+| Removed | Failed |
+|---|---|
+| The two-container acceptance, in the core load | `StreamingQualityTest` |
+| The two-container acceptance, in the Android data source | `AndroidPlaybackDataSourceTest` |
+| The two-container acceptance, in the Apple facade | `ApplePlaybackIgnoredHintTest` |
+| The fitting-source rule | `StreamingQualityTest` and CONF-92's fitting leg |
+| The handover guard | `DulcetCorePlaybackSystemTests` |
+| The synchronous network read | `PlaybackServiceStreamingQualityTest` |
 
 **2026-09-30 — Android TV opens on the library; its Sign out is never the default focus and is
 reachable at 1080p (§14.7).** A connected TV opened on an empty search field. It now opens on the
