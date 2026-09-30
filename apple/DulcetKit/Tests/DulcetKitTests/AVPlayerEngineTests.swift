@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioToolbox
 import Dispatch
 import Foundation
 import MediaPlayer
@@ -52,13 +53,16 @@ struct AVPlayerDecodeFailureTests {
     @Test
     func mediaAVFoundationCannotDecodeFailsAsUndecodable() async throws {
         let resource = InMemoryPlaybackResource(data: mp3FramesWithUndecodablePayloads())
-        let engine = DulcetAVPlayerEngine()
+        let player = AVQueuePlayer()
+        let engine = DulcetAVPlayerEngine(player: player)
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
 
         _ = await execute(engine, .prepare(commandID: .init("undecodable-prepare"), plan: playbackPlan))
         _ = await execute(engine, .play(commandID: .init("undecodable-play")))
+        let item = try #require(player.items().first)
+        let mediaState = PlayerMediaState(player: player, first: item, next: nil)
         let failures: @Sendable () -> [DulcetPlaybackFailure] = {
             events.snapshot.compactMap { event in
                 switch event {
@@ -67,12 +71,51 @@ struct AVPlayerDecodeFailureTests {
                 }
             }
         }
-        try await waitUntil(
-            "AVFoundation never reported the undecodable item as failed",
-            engine: engine,
-            timeout: realAVFoundationProgressTimeout
-        ) {
-            !failures().isEmpty
+        let describeState: @Sendable () -> String = {
+            "\(mediaState.describe()) item_status=\(item.status.rawValue) " +
+                "item_error=\(item.error.map { ($0 as NSError).code.description } ?? "none") " +
+                "requests=\(resource.requests.count) events=\(events.snapshot.map(eventName))"
+        }
+        let verdictArrived: @Sendable () -> Bool = {
+            mediaState.observe()
+            return !failures().isEmpty
+        }
+        // AVFoundation reaches this verdict by rendering: in every passing CI transcript it follows
+        // an AudioQueue logging `Prime: failed` on these frames. OBSERVED in CI (#154, #159): on a
+        // hosted simulator that audio path itself can block for a minute while the engine queue
+        // answers in milliseconds. In #154 one AudioQueue thread logged `Prime: Exiting` and its
+        // own next line, `Prime: failed`, 50 s later, about 65 s into the test; in #159 no
+        // AudioQueue was created at all until about 67 s. So the first budget keeps its teeth for
+        // everything the engine owns, and only a measured stall of the host's audio output -- an
+        // independent queue that cannot prime silence either -- buys the verdict more time.
+        let clock = ContinuousClock()
+        let started = clock.now
+        if !(await poll(for: realAVFoundationProgressTimeout, until: verdictArrived)) {
+            let waited = durationSeconds(started.duration(to: clock.now))
+            let probe = await independentAudioQueuePrimeSeconds(timeout: audioOutputProbeTimeout)
+            if let probe {
+                // The host's audio output works, so nothing outside the engine explains the
+                // silence: fail at the first budget, exactly as before.
+                let diagnostic = await waitFailureDiagnostic(
+                    "AVFoundation never reported the undecodable item as failed " +
+                        "(an independent AudioQueue primed in \(formatSeconds(probe)) s)",
+                    engine: engine,
+                    waitBudget: realAVFoundationProgressTimeout,
+                    waited: waited
+                )
+                #expect(Bool(false), Comment(rawValue: "\(diagnostic); media_state=\(describeState())"))
+            } else {
+                print("DULCET UNDECODABLE HOST AUDIO STALL independent AudioQueue did not prime within " +
+                    "\(formatSeconds(audioOutputProbeTimeout)) s; \(describeState())")
+                try await waitUntil(
+                    "AVFoundation never reported the undecodable item as failed, and the host's audio " +
+                        "output was stalled (an independent AudioQueue could not prime silence)",
+                    engine: engine,
+                    timeout: hostAudioStallGrace,
+                    mediaState: describeState,
+                    condition: verdictArrived
+                )
+            }
         }
         // The experiment is the one intended: the item was read through the loader, so the
         // failure is AVFoundation's verdict on these bytes, not a refusal before it saw them.
@@ -82,6 +125,85 @@ struct AVPlayerDecodeFailureTests {
         print("DULCET UNDECODABLE ENGINE OBSERVED failures=\(failures()) requests=\(resource.requests.count)")
         _ = await execute(engine, .release(commandID: .init("undecodable-release")))
     }
+}
+
+/// An independent AudioQueue answering within this is a host whose audio output works. Measured
+/// locally, a healthy one primes in tens of milliseconds.
+private let audioOutputProbeTimeout: TimeInterval = 5
+
+/// Extra time for the verdict ONLY after the probe measured a stalled host audio output. The
+/// stalls that motivated it (#154, #159) released after roughly 65-70 s of test time.
+private let hostAudioStallGrace: TimeInterval = 90
+
+private func poll(for timeout: TimeInterval, until condition: @Sendable () -> Bool) async -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(timeout))
+    while !condition(), clock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return condition()
+}
+
+/// Primes one buffer of silence through a fresh AudioQueue, on its own thread, and returns how
+/// long that took -- or nil if it had not finished within `timeout`. This measures the host's audio
+/// output independently of AVFoundation and of the engine: it shares neither their player nor
+/// their queues. A probe that never returns is abandoned, never waited for.
+private func independentAudioQueuePrimeSeconds(timeout: TimeInterval) async -> TimeInterval? {
+    let gate = ProbeResultGate()
+    return await withCheckedContinuation { continuation in
+        let thread = Thread {
+            let started = ContinuousClock.now
+            var format = AudioStreamBasicDescription(
+                mSampleRate: 44_100,
+                mFormatID: kAudioFormatLinearPCM,
+                mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+                mBytesPerPacket: 2,
+                mFramesPerPacket: 1,
+                mBytesPerFrame: 2,
+                mChannelsPerFrame: 1,
+                mBitsPerChannel: 16,
+                mReserved: 0
+            )
+            var queue: AudioQueueRef?
+            if AudioQueueNewOutput(&format, { _, _, _ in }, nil, nil, nil, 0, &queue) == noErr, let queue {
+                var buffer: AudioQueueBufferRef?
+                let byteCount: UInt32 = 4_096
+                if AudioQueueAllocateBuffer(queue, byteCount, &buffer) == noErr, let buffer {
+                    memset(buffer.pointee.mAudioData, 0, Int(byteCount))
+                    buffer.pointee.mAudioDataByteSize = byteCount
+                    // A queue that answers with an error still answered; only silence is a stall.
+                    if AudioQueueEnqueueBuffer(queue, buffer, 0, nil) == noErr {
+                        _ = AudioQueuePrime(queue, 0, nil)
+                    }
+                }
+                AudioQueueDispose(queue, true)
+            }
+            let elapsed = durationSeconds(started.duration(to: ContinuousClock.now))
+            if gate.claim() { continuation.resume(returning: elapsed) }
+        }
+        thread.start()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+            if gate.claim() { continuation.resume(returning: nil) }
+        }
+    }
+}
+
+private final class ProbeResultGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
+}
+
+/// The case name alone: the associated attempt ids would bury the sequence a failure needs to show.
+private func eventName(_ event: DulcetPlaybackEvent) -> String {
+    String(String(describing: event).prefix { $0 != "(" })
 }
 
 /// An ID3 tag, then MP3 frame headers (MPEG-1 Layer III, 128 kbit/s, 44.1 kHz) each followed by a
