@@ -834,7 +834,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     }
 
     private func timeControlStatusChanged() {
-        guard let current else { return }
+        // A failed item's player goes on changing status; none of it is news about the attempt.
+        guard let current, !current.failureEmitted else { return }
         switch player.timeControlStatus {
         case .waitingToPlayAtSpecifiedRate:
             beginBuffering(current)
@@ -1181,7 +1182,29 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func emit(_ event: DulcetPlaybackEvent) {
         dispatchPrecondition(condition: .onQueue(queue))
+        if Self.describesPlayback(event), context(for: event.attemptID)?.failureEmitted == true {
+            // A failed attempt is over. The player's status goes on changing after the item
+            // fails -- it pauses, its time-control observer fires later -- and a Paused, Resumed
+            // or position report for that attempt would read to the core as the attempt still
+            // being played, taking it out of Failed so Try Again had nothing to retry.
+            return
+        }
         listener?(event)
+    }
+
+    /// Events that describe an attempt being played, as opposed to ending, failing or being
+    /// replaced. None of these is true of an attempt after its failure.
+    private static func describesPlayback(_ event: DulcetPlaybackEvent) -> Bool {
+        switch event {
+        case .ready, .playbackProgressBegan, .buffering, .bufferingEnded, .paused, .resumed,
+             .positionChanged, .durationChanged, .seekCompleted, .seekFailed, .endedNaturally,
+             .routeChanged, .interruptionBegan, .interruptionEnded, .rateChanged,
+             .sourceRefreshRequired:
+            true
+        case .preparing, .skipped, .failedBeforeStart, .failedAfterPartial, .attemptReplaced,
+             .advancedToPreloaded, .engineTornDown, .observationResynced:
+            false
+        }
     }
 
     private func enqueue(_ operation: @escaping @Sendable (DulcetAVPlayerEngine) -> Void) {

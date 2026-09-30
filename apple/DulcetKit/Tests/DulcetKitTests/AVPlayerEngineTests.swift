@@ -477,6 +477,43 @@ struct AVPlayerEngineTests {
 
         _ = await execute(engine, .release(commandID: .init("loopback-release")))
     }
+
+    /// Nothing may be said about an attempt after its failure. The core reads a `Paused` that
+    /// follows `FailedAfterPartial` as the failed attempt pausing, which takes it out of Failed;
+    /// Try Again and Play then have nothing to retry. On the real stack the player's
+    /// time-control status goes on changing after the item fails, and its observer fires later,
+    /// on its own schedule -- so this waits for KVO to deliver rather than reading synchronously.
+    @Test
+    func noEventFollowsTheFailureOfThePlayingItemOnTheRealStack() async throws {
+        let engine = DulcetAVPlayerEngine(
+            player: AVQueuePlayer(),
+            systemMediaControls: RecordingSystemMediaControls()
+        )
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 20)))
+        _ = await execute(engine, .prepare(commandID: .init("fail-prepare"), plan: playbackPlan))
+        _ = await execute(engine, .play(commandID: .init("fail-play")))
+        try await waitUntil(
+            "the real player never advanced media time",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            events.containsProgressBegan
+        }
+
+        engine.reportCurrentItemFailedForTesting(.transport)
+        let afterFailure = try #require(events.snapshot.lastIndex { event in
+            if case .failedAfterPartial = event { true } else { false }
+        }, "the failure state must be reached, or the rest proves nothing")
+        // Long enough for the player's rate and time-control changes to be observed and for the
+        // engine queue to run what they enqueued.
+        try await Task.sleep(for: .seconds(2))
+        _ = await engine.probeQueueLivenessForTesting(timeout: 5)
+        let trailing = Array(events.snapshot.dropFirst(afterFailure + 1))
+        #expect(trailing.isEmpty, "events after the failure: \(trailing)")
+        _ = await execute(engine, .release(commandID: .init("fail-release")))
+    }
     #endif
 
     @Test
