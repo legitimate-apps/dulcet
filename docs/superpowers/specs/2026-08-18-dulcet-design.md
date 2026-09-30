@@ -4666,11 +4666,15 @@ about publication, not about the cache:
   press on a star, or a menu choice, is absolute and allowed. Now Playing shows the playing track's
   stars beside its heart, only while the reader holds the track's account; a queued track carries
   no rating of its own, so Now Playing shows what the server is last known to hold — on Apple, what
-  a screen published while no change of this session was pending, a saved change's value or a
-  superseding server value, never the value tapped; on Android, the reader's watch (the same watch
+  a screen published that this session did not set while a change was pending (every value set
+  since the ratings last settled counts, since an earlier tap's overlay can be published late), a
+  saved change's value or a superseding server value, never the value tapped; on Android, the reader's watch (the same watch
   as the heart, keeping the value the server acknowledged for a track with no cache row). An
   outcome never erases a known server value: the flush republishes the open screens **before** it
-  tells the outcome, so the screens may already hold the server's value when it arrives. Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
+  tells the outcome, so the screens may already hold the server's value when it arrives. A saved
+  outcome for an earlier value (4 saved while a later 5 is still on its way) records the 4 as the
+  server's and leaves the 5 shown, pending or held, until its own outcome. On every platform an
+  unknown rating's stars are also dimmed, so it looks different from a known 0. Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
   Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84's
   rating half runs against the disposable server through the production session
   (`RatingConformanceTest`), reading the server's `userRating` back after every write.
@@ -7382,7 +7386,12 @@ outcome erase the known server value — copied from the heart — so after a su
 Playing showed empty stars and the next adjust sent a rating of 1 over the server's 5. The flush
 republishes before it tells the outcome, so the erase removed the value the republish had just
 recorded. Unknown is now its own state, never stepped from, and an outcome only adds what the
-server holds (a saved value, a superseding value).
+server holds (a saved value, a superseding value). A second review found two more ways the tap
+leaked in on Apple, both now closed: a saved outcome for an earlier tap (4, then 5, then Saved(4))
+cleared the later pending 5, so the stars fell back to 4 and a held 5 stopped being said; and only
+the latest tap was excluded from what the server holds, so a late overlay of the earlier tap was
+recorded as the server's. Android now dims an unknown rating's stars as Apple does, and its track
+menu treats a row with no rating as unknown instead of 0.
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
