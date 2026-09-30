@@ -400,6 +400,26 @@ open class PlaybackScrobbleConformanceTest {
                 "CONF-92 capped legacy stream failed after the capability precondition passed",
             )
             assertTrue(legacyCapped.bytes.hasMp3Signature(), "CONF-92 capped legacy stream is not MP3")
+            assertEquals(AudioContainer.Mp3, legacyCapped.validation.container, "CONF-92 the MP3 that arrived is recorded")
+
+            // A cap the source already meets is not sent: its bitrate is read first, and a device
+            // that plays FLAC streams the original, seekable and never re-encoded.
+            val roomyCap = StreamingQuality.Kbps128
+            assertTrue(
+                sourceKbps <= roomyCap.maxBitRateKbps!!,
+                "CONF-92 precondition failed: source ${sourceKbps} kbps is above the ${roomyCap.maxBitRateKbps} kbps cap",
+            )
+            val fittingPlan = assertIs<PlaybackResolutionResult.Resolved>(
+                playback.resolve(legacyRequest(source).copy(deviceProfile = DIRECT_PLAY_FLAC_PROFILE).withStreamingQuality(roomyCap)),
+                "CONF-92 fitting-source plan did not resolve",
+            ).plan
+            assertEquals(
+                PlaybackWireTranscodeDecision.LegacyHint(null, null),
+                fittingPlan.transcode,
+                "CONF-92 a source within the cap must not be transcoded",
+            )
+            val fitting = requireAudio(playback.load(fittingPlan), "CONF-92 fitting-source original did not load")
+            assertTrue(fitting.bytes.matchesAscii(0, "fLaC"), "CONF-92 the fitting source is not the FLAC original")
 
             // Transcoding extension: the cap lowers the ClientInfo limits of a profile that
             // direct-plays this FLAC file without it.

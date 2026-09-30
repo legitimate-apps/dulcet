@@ -29,17 +29,31 @@ internal fun interface AndroidPlaybackResource {
 /**
  * The factory belongs to an immutable attempt, including its signature witness. The resource is
  * the server's for a streamed plan and the promoted file's for a downloaded one; either way no byte
- * reaches the player before the prefix has matched [expectedContainer]'s signature.
+ * reaches the player before the prefix has matched the signature of one of [acceptedContainers].
+ * There is more than one only where a server may ignore a legacy format hint and send the original
+ * (spec §12.5). The container the first response proved is recorded in [arrivedContainer], and
+ * every later range must be that same container.
  */
 internal class AndroidPlaybackDataSourceFactory(
-    private val expectedContainer: AudioContainer,
+    private val acceptedContainers: List<AudioContainer>,
     private val resource: AndroidPlaybackResource,
     private val observed: (Long) -> Unit = {},
 ) : DataSource.Factory {
+    constructor(expectedContainer: AudioContainer, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
+        this(listOf(expectedContainer), resource, observed)
+
     constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
-        this(plan.expectedContainer, resource, observed)
+        this(plan.acceptedContainers(), resource, observed)
+
+    init {
+        require(acceptedContainers.isNotEmpty())
+    }
 
     @Volatile private var signatureValidated = false
+
+    /** The container the stream's leading bytes proved; null until they have. */
+    @Volatile internal var arrivedContainer: AudioContainer? = null
+        private set
 
     override fun createDataSource(): DataSource = object : BaseDataSource(true) {
         private var response: AndroidPlaybackResponse? = null
@@ -87,12 +101,16 @@ internal class AndroidPlaybackDataSourceFactory(
                     if (count < 0) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
                     continue
                 }
-                val validation = validateAndroidPlaybackPrefix(expectedContainer, loaded, prefix, needsSignature)
+                val candidates = arrivedContainer?.let(::listOf) ?: acceptedContainers
+                val validation = validateAndroidPlaybackPrefix(candidates, loaded, prefix, needsSignature)
                 when (validation) {
-                    is PlaybackStreamValidationResult.Audio -> validated = true
+                    is PlaybackStreamValidationResult.Audio -> {
+                        validated = true
+                        if (needsSignature) arrivedContainer = validation.container
+                    }
                     is PlaybackStreamValidationResult.Failure -> {
                         if (validation.error != DomainError.Protocol.UnexpectedBinary || count < 0 ||
-                            !needsSignature || expectedContainer != AudioContainer.Flac ||
+                            !needsSignature || AudioContainer.Flac !in candidates ||
                             !prefix.take(3).toByteArray().contentEquals("ID3".toByteArray()))
                             throw AndroidPlaybackIOException(validation.error)
                     }
@@ -160,10 +178,17 @@ internal fun validateAndroidPlaybackPrefix(
     response: AndroidPlaybackResponse,
     bytes: ByteArray,
     requiresSignature: Boolean,
-): PlaybackStreamValidationResult = validateAndroidPlaybackPrefix(plan.expectedContainer, response, bytes, requiresSignature)
+): PlaybackStreamValidationResult = validateAndroidPlaybackPrefix(plan.acceptedContainers(), response, bytes, requiresSignature)
 
 internal fun validateAndroidPlaybackPrefix(
     expectedContainer: AudioContainer,
+    response: AndroidPlaybackResponse,
+    bytes: ByteArray,
+    requiresSignature: Boolean,
+): PlaybackStreamValidationResult = validateAndroidPlaybackPrefix(listOf(expectedContainer), response, bytes, requiresSignature)
+
+internal fun validateAndroidPlaybackPrefix(
+    acceptedContainers: List<AudioContainer>,
     response: AndroidPlaybackResponse,
     bytes: ByteArray,
     requiresSignature: Boolean,
@@ -180,7 +205,7 @@ internal fun validateAndroidPlaybackPrefix(
             formAuthenticationParameters = emptySet(), channels = emptySet(),
             requestedProtocolVersion = AccountConnectionContract.protocolVersion, saltFingerprint = null,
         ),
-    ), expectedContainer, requiresSignature,
+    ), acceptedContainers, requiresSignature,
 )
 
 private fun validateRange(response: AndroidPlaybackResponse, position: Long, length: Long): Long? {

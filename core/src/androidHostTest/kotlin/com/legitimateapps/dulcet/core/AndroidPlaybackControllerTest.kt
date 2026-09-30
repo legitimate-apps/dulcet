@@ -1278,7 +1278,7 @@ class AndroidPlaybackControllerTest {
 
             f.controller.playSong(OWNER, "cellular", "On cellular")
             val capped = requests.last()
-            assertEquals(LegacyPlaybackPreference(AudioContainer.Mp3, 128), capped.legacyPreference)
+            assertEquals(LegacyPlaybackPreference(AudioContainer.Mp3, 128, originalWhenItFits = true), capped.legacyPreference)
             assertEquals(128_000, capped.deviceProfile.maxAudioBitrate)
             assertEquals(128_000, capped.deviceProfile.maxTranscodingAudioBitrate)
             assertEquals(listOf("wifi", "cellular"), f.prepared.map { it.itemId.rawId })

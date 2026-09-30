@@ -70,6 +70,30 @@ public sealed interface PlaybackStreamValidationResult {
 }
 
 internal object PlaybackStreamValidator {
+    /**
+     * Validates [response] as any one of [acceptedContainers], in order, and answers the first that
+     * passes in full — content type, signature and length, exactly as for a single container
+     * (trap 4); the result's [PlaybackStreamValidationResult.Audio.container] records which one
+     * arrived. A response that passes as none answers the first container's failure. Used where a
+     * hint may be ignored: a legacy `format` hint the server may answer with the original file
+     * (spec §12.5).
+     */
+    fun validate(
+        response: AuthenticatedEndpointResponse,
+        acceptedContainers: List<AudioContainer>,
+        requiresAudioSignature: Boolean = true,
+        totalBodyLength: Long = response.body.size.toLong(),
+    ): PlaybackStreamValidationResult {
+        require(acceptedContainers.isNotEmpty()) { "at least one container is accepted" }
+        var first: PlaybackStreamValidationResult? = null
+        for (container in acceptedContainers.distinct()) {
+            val result = validate(response, container, requiresAudioSignature, totalBodyLength)
+            if (result is PlaybackStreamValidationResult.Audio) return result
+            if (first == null) first = result
+        }
+        return checkNotNull(first)
+    }
+
     fun validate(
         response: AuthenticatedEndpointResponse,
         expectedContainer: AudioContainer,

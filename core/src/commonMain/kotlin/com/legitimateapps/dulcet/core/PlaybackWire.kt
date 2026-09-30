@@ -105,7 +105,15 @@ public data class PlaybackDeviceProfile(
 public data class LegacyPlaybackPreference(
     val format: AudioContainer?,
     val maxBitRateKbps: Int?,
+    /**
+     * True for a streaming-quality cap (spec §12.5): the resolve plays the original file instead
+     * when the device plays its container and its own bitrate is at or below [maxBitRateKbps]. An
+     * adapter's explicit hint is false and always asks for the transcode.
+     */
+    val originalWhenItFits: Boolean,
 ) {
+    public constructor(format: AudioContainer?, maxBitRateKbps: Int?) : this(format, maxBitRateKbps, false)
+
     init {
         require(maxBitRateKbps == null || maxBitRateKbps > 0)
     }
@@ -137,6 +145,10 @@ public data class PlaybackResolveRequest(
      * the legacy path it is the `maxBitRate` hint, and a format is always named with it: without
      * one the server picks its own downsampling format, and the validator and the engine would not
      * know which container to expect. The named format is the profile's own transcoding target.
+     * The server may ignore the hint and send the original file; the plan accepts either
+     * ([acceptedContainers]). Where the request carried no hint of its own, a source this device
+     * plays at or below the cap is streamed as the original instead, read before the stream
+     * ([LegacyPlaybackPreference.originalWhenItFits]).
      * [StreamingQuality.Original] returns this request unchanged. Never applied to a download.
      */
     public fun withStreamingQuality(quality: StreamingQuality): PlaybackResolveRequest {
@@ -150,6 +162,8 @@ public data class PlaybackResolveRequest(
             legacyPreference = LegacyPlaybackPreference(
                 format = legacyPreference.format ?: deviceProfile.transcodingProfiles.first().container,
                 maxBitRateKbps = minOf(legacyPreference.maxBitRateKbps ?: capKbps, capKbps),
+                // Only a cap on a request with no hint of its own may yield to the original.
+                originalWhenItFits = !legacyPreference.requestsTranscode,
             ),
         )
     }
@@ -369,7 +383,7 @@ public class PlaybackWireClient private constructor(
             if (request.supportsTranscodingExtension) {
                 resolveExtension(request)
             } else {
-                PlaybackResolutionResult.Resolved(resolveLegacy(request))
+                PlaybackResolutionResult.Resolved(resolveLegacy(withoutAHintTheSourceMeets(request)))
             }
         } catch (_: CancellationException) {
             PlaybackResolutionResult.Failed(DomainError.Transport.Cancelled)
@@ -410,7 +424,7 @@ public class PlaybackWireClient private constructor(
                     },
                 ),
             )
-            val validation = PlaybackStreamValidator.validate(response, plan.expectedContainer)
+            val validation = PlaybackStreamValidator.validate(response, plan.acceptedContainers())
             if (validation is PlaybackStreamValidationResult.Audio) {
                 return PlaybackLoadResult.Audio(
                     bytes = response.body,
@@ -557,6 +571,39 @@ public class PlaybackWireClient private constructor(
         return PlaybackResolutionResult.Failed(DomainError.Playback.NoPlayableSource)
     }
 
+    /**
+     * A streaming-quality cap the original file already meets is dropped, so the original plays:
+     * seekable, resumable and never re-encoded (spec §12.5). It applies only where this device
+     * plays the source's container directly and the source's own bitrate, read with `getSong`, is
+     * at or below the hint. An unreadable bitrate keeps the hint — the cap is honoured when in
+     * doubt. A server-offset request always keeps it: `timeOffset` needs a transcode.
+     */
+    private suspend fun withoutAHintTheSourceMeets(request: PlaybackResolveRequest): PlaybackResolveRequest {
+        if (!request.legacyPreference.originalWhenItFits) return request
+        val capKbps = request.legacyPreference.maxBitRateKbps ?: return request
+        if (request.legacyTimeOffset != null) return request
+        if (request.deviceProfile.directPlayProfiles.none { request.sourceContainer in it.containers }) {
+            return request
+        }
+        val sourceKbps = sourceBitRateKbps(request.itemId.rawId) ?: return request
+        if (sourceKbps > capKbps) return request
+        return request.copy(legacyPreference = LegacyPlaybackPreference(format = null, maxBitRateKbps = null))
+    }
+
+    private suspend fun sourceBitRateKbps(rawId: String): Int? = try {
+        val response = transport.get(SONG_ENDPOINT, linkedMapOf("id" to rawId))
+        val envelope = parseLibraryEnvelope(response.body.decodeToString())
+        val song = envelope?.takeIf { response.statusCode in 200..299 && it.status == "ok" }
+            ?.payload?.get("song") as? JsonObject
+        (song?.get("id") as? JsonPrimitive)?.contentOrNull?.takeIf { it == rawId }?.let {
+            (song["bitRate"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()?.takeIf { kbps -> kbps > 0 }
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        null
+    }
+
     private fun resolveLegacy(request: PlaybackResolveRequest): RemotePlaybackWirePlan {
         val preference = request.legacyPreference
         val parameters = linkedMapOf("id" to request.itemId.rawId).apply {
@@ -605,9 +652,27 @@ public class PlaybackWireClient private constructor(
     private companion object {
         const val BAD_REQUEST = 400
         const val LEGACY_STREAM_ENDPOINT = "stream"
+        const val SONG_ENDPOINT = "getSong"
         const val TRANSCODE_DECISION_ENDPOINT = "getTranscodeDecision"
         const val TRANSCODE_STREAM_ENDPOINT = "getTranscodeStream"
         const val MEDIA_TYPE_SONG = "song"
+    }
+}
+
+/**
+ * The containers a response to this plan may validly be. A legacy `format` hint is a hint: a server
+ * without a working transcoder answers it with the original file (trap 28), which played before a
+ * cap was chosen and must still play. So a hinted plan accepts the hinted format first and the
+ * source's own container second, each under its full signature check. Every other plan expects
+ * exactly one container.
+ */
+internal fun RemotePlaybackWirePlan.acceptedContainers(): List<AudioContainer> {
+    val hint = transcode as? PlaybackWireTranscodeDecision.LegacyHint
+    val source = resolutionRequest.sourceContainer
+    return if (path == PlaybackDeliveryPath.Legacy && hint?.format != null && source != expectedContainer) {
+        listOf(expectedContainer, source)
+    } else {
+        listOf(expectedContainer)
     }
 }
 

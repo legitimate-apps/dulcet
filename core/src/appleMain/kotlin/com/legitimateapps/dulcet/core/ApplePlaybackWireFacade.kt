@@ -60,6 +60,12 @@ public class ApplePlaybackValidationOutcomeDto internal constructor(
     public val responseShape: String?,
     /** Core-derived Retry-After duration, or -1 when absent/not applicable. */
     public val retryAfterMilliseconds: Long,
+    /**
+     * The container the accepted response is (an [AudioContainer] name), or null when rejected.
+     * It differs from the plan's `expectedContainer` when a server ignored a legacy format hint
+     * and sent the original file (spec §12.5); the engine is told what actually arrived.
+     */
+    public val container: String? = null,
 )
 
 public class ApplePlaybackRedirectDecisionDto internal constructor(
@@ -196,7 +202,7 @@ public class ApplePlaybackWireClient(
         )
         val validation = PlaybackStreamValidator.validate(
             response,
-            plan.corePlan.expectedContainer,
+            plan.corePlan.acceptedContainers(),
             requiresAudioSignature,
         )
         if (validation is PlaybackStreamValidationResult.Failure) {
@@ -244,6 +250,7 @@ public class ApplePlaybackWireClient(
             refreshReason = null,
             responseShape = null,
             retryAfterMilliseconds = -1,
+            container = validation.container.name,
         )
     } catch (_: Throwable) {
         ApplePlaybackValidationOutcomeDto(

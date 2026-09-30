@@ -131,7 +131,8 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
         return .accepted(
             contentInformation: DulcetPlaybackContentInformation(
                 contentLength: outcome.contentLength,
-                supportsByteRanges: outcome.supportsByteRanges
+                supportsByteRanges: outcome.supportsByteRanges,
+                container: outcome.container.flatMap(DulcetAudioContainer.init(coreName:))
             )
         )
     }

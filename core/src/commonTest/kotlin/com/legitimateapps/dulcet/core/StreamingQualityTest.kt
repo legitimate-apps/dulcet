@@ -141,6 +141,105 @@ class StreamingQualityTest {
         assertFailsWith<IllegalArgumentException> { plan.asOriginalFileDownload() }
     }
 
+    @Test
+    fun aServerThatIgnoresTheFormatHintStillPlaysTheOriginalFileItSends() = runTest {
+        // A reference server without a working transcoder answers a hinted stream with the
+        // original file (trap 28). It played before a cap was chosen and must still play.
+        val flac = "fLaC".encodeToByteArray() + ByteArray(60)
+        val client = PlaybackWireClient(
+            ACCOUNT,
+            QualityRecordingTransport(gets = mapOf("stream" to audio(flac, "audio/flac"))),
+        )
+        val plan = assertIs<PlaybackResolutionResult.Resolved>(
+            client.resolve(legacyRequest().withStreamingQuality(StreamingQuality.Kbps128)),
+        ).plan
+        assertEquals(AudioContainer.Mp3, plan.expectedContainer)
+
+        val loaded = assertIs<PlaybackLoadResult.Audio>(client.load(plan))
+        assertEquals(AudioContainer.Flac, loaded.validation.container, "the container that arrived is recorded")
+
+        // Either container still gets its whole signature check: a body declared FLAC that is not
+        // FLAC, and not MP3 either, is refused.
+        val forged = PlaybackWireClient(
+            ACCOUNT,
+            QualityRecordingTransport(gets = mapOf("stream" to audio(ByteArray(64) { 0x41 }, "audio/flac"))),
+        )
+        assertIs<PlaybackLoadResult.Failed>(forged.load(plan))
+
+        // A plan with no hint accepts only its own container, as before.
+        val original = assertIs<PlaybackResolutionResult.Resolved>(client.resolve(legacyRequest())).plan
+        assertEquals(listOf(AudioContainer.Flac), original.acceptedContainers())
+        assertEquals(listOf(AudioContainer.Mp3, AudioContainer.Flac), plan.acceptedContainers())
+    }
+
+    @Test
+    fun aSourceAlreadyWithinTheCapStreamsAsTheOriginalFile() = runTest {
+        val mp3Source = legacyRequest().copy(sourceContainer = AudioContainer.Mp3)
+
+        val within = QualityRecordingTransport(gets = mapOf("getSong" to song(bitRateKbps = 128)))
+        val fits = assertIs<PlaybackResolutionResult.Resolved>(
+            PlaybackWireClient(ACCOUNT, within).resolve(mp3Source.withStreamingQuality(StreamingQuality.Kbps192)),
+        ).plan
+        assertEquals(listOf("getSong"), within.getEndpoints)
+        assertEquals(linkedMapOf("id" to MEDIA_ID), fits.parameters, "no transcode is asked for")
+        assertFalse(fits.isTranscoded(), "so it stays seekable and resumable")
+
+        val above = assertIs<PlaybackResolutionResult.Resolved>(
+            PlaybackWireClient(ACCOUNT, QualityRecordingTransport(gets = mapOf("getSong" to song(bitRateKbps = 320))))
+                .resolve(mp3Source.withStreamingQuality(StreamingQuality.Kbps192)),
+        ).plan
+        assertEquals("192", above.parameters["maxBitRate"])
+
+        // An unreadable bitrate keeps the cap: when in doubt, the person's data is not spent.
+        val unread = assertIs<PlaybackResolutionResult.Resolved>(
+            PlaybackWireClient(ACCOUNT, QualityRecordingTransport())
+                .resolve(mp3Source.withStreamingQuality(StreamingQuality.Kbps192)),
+        ).plan
+        assertEquals("192", unread.parameters["maxBitRate"])
+
+        // An adapter's own hint is a request for a transcode and is never second-guessed.
+        val explicit = QualityRecordingTransport(gets = mapOf("getSong" to song(bitRateKbps = 64)))
+        val hinted = assertIs<PlaybackResolutionResult.Resolved>(
+            PlaybackWireClient(ACCOUNT, explicit).resolve(
+                mp3Source.copy(legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 128)),
+            ),
+        ).plan
+        assertTrue(explicit.getEndpoints.isEmpty())
+        assertEquals("128", hinted.parameters["maxBitRate"])
+    }
+
+    private fun song(bitRateKbps: Int) = response(
+        """{"subsonic-response":{"status":"ok","song":{"id":"$MEDIA_ID","suffix":"mp3","bitRate":$bitRateKbps}}}"""
+            .encodeToByteArray(),
+        "application/json",
+    )
+
+    private fun audio(body: ByteArray, contentType: String) = response(body, contentType)
+
+    private fun response(body: ByteArray, contentType: String) = AuthenticatedEndpointResponse(
+        statusCode = 200,
+        body = body,
+        redactedUrl = "https://music.invalid:443/rest/quality.view?<redacted>",
+        headers = AuthenticatedEndpointResponseHeaders(
+            contentType = contentType,
+            contentLength = PlaybackContentLength.Exact(body.size.toLong()),
+            retryAfter = null,
+            acceptRanges = null,
+            contentRange = null,
+        ),
+        requestTrace = RequestTrace.observed(
+            endpoint = "quality",
+            method = "GET",
+            redactedUrl = "https://music.invalid:443/rest/quality.view?<redacted>",
+            authenticationLocation = AuthenticationLocation.Query,
+            queryAuthenticationParameters = emptySet(),
+            formAuthenticationParameters = emptySet(),
+            channels = emptySet(),
+            requestedProtocolVersion = "1.16.1",
+            saltFingerprint = "fixture",
+        ),
+    )
+
     private suspend fun postedClientInfo(quality: StreamingQuality) = QualityRecordingTransport().let { transport ->
         PlaybackWireClient(ACCOUNT, transport).resolve(
             legacyRequest().copy(supportsTranscodingExtension = true).withStreamingQuality(quality),
@@ -158,14 +257,20 @@ class StreamingQualityTest {
         legacyPreference = LegacyPlaybackPreference(null, null),
     )
 
-    private class QualityRecordingTransport : PlaybackEndpointTransport {
+    private class QualityRecordingTransport(
+        val gets: Map<String, AuthenticatedEndpointResponse> = emptyMap(),
+    ) : PlaybackEndpointTransport {
         val posts = mutableListOf<String>()
+        val getEndpoints = mutableListOf<String>()
 
         override suspend fun get(
             endpoint: String,
             parameters: Map<String, String>,
             options: AuthenticatedEndpointRequestOptions,
-        ): AuthenticatedEndpointResponse = error("unexpected GET $endpoint")
+        ): AuthenticatedEndpointResponse {
+            getEndpoints += endpoint
+            return gets[endpoint] ?: error("unexpected GET $endpoint")
+        }
 
         override suspend fun postJson(
             endpoint: String,
