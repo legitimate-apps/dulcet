@@ -263,7 +263,7 @@ public object PlaylistConformanceContract {
     public suspend fun editorRoundTrip(request: PlaylistConformanceRequest): PlaylistRoundTripResult = withSession(request) { env ->
         val songs = env.songs
         val observations = mutableListOf<PlaylistEditObservation>()
-        suspend fun step(edit: String, expectedEntries: List<String>, expectedHeader: String?, id: () -> String, act: () -> Unit) {
+        suspend fun step(edit: String, expectedEntries: List<String>, expectedHeader: String?, id: () -> String, act: suspend () -> Unit) {
             val before = env.writes.size
             env.outcomes.clear()
             act()
@@ -281,7 +281,11 @@ public object PlaylistConformanceContract {
         var id = ""
         step("create", listOf(songs[0], songs[1], songs[0]), "CONF-89 round trip|made here|public", { env.session.reader.playlistOverlay.resolve(localId) }) {
             localId = env.session.playlists.create("CONF-89 round trip", listOf(songs[0], songs[1], songs[0]), "made here", true).localId!!
+            // Reachable again, the reader reconnects, and the reconnect's first step is the flush that
+            // sends the create; it has ended before the step's own flush runs, so the two never race.
             env.session.setOnline(true)
+            val reconnected = env.session.reader.reconnect()
+            check(reconnected is ReaderConnectionOutcome.Read) { "CONF-89: the reconnect did not read the server: $reconnected" }
         }
         id = env.session.reader.playlistOverlay.resolve(localId)
         env.cleanup += id
@@ -505,7 +509,11 @@ public object PlaylistConformanceContract {
         val afterConcurrent = env.raw.entries(id).orEmpty()
         val writesBefore = env.writes.size
         env.outcomes.clear()
+        // The reconnect's flush is the one that meets the concurrent change; it has ended before the
+        // named flush runs, so the two never race.
         env.session.setOnline(true)
+        val reconnected = env.session.reader.reconnect()
+        check(reconnected is ReaderConnectionOutcome.Read) { "CONF-90: the reconnect did not read the server: $reconnected" }
         env.session.playlists.flush()
         val refusal = env.outcomes.lastOrNull()?.let(::outcomeName) ?: "none"
         val editorWrites = env.writes.drop(writesBefore)
