@@ -56,6 +56,7 @@ import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
 import com.legitimateapps.dulcet.ui.MAX_RATING
 import com.legitimateapps.dulcet.ui.adjustableRating
+import com.legitimateapps.dulcet.ui.ratingAlpha
 import com.legitimateapps.dulcet.ui.ratingForTap
 import com.legitimateapps.dulcet.ui.ratingStarAction
 import com.legitimateapps.dulcet.ui.ratingState
@@ -65,6 +66,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -335,11 +337,11 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
 private fun TvRatingStars(rating: TvPlayerRating) {
     val latest by rememberUpdatedState(rating)
     val resources = LocalContext.current.resources
-    // Null is unknown: no star selected, said "Rating unknown", and no relative adjust (adjustableRating).
+    // Null is unknown: no star selected, dimmed, said "Rating unknown", and no relative adjust (adjustableRating).
     val shown = rating.rating?.coerceIn(0, MAX_RATING)
     val filled = shown ?: 0
     val label = stringResource(SharedR.string.library_rating)
-    Row(Modifier.padding(top = 4.dp).testTag("tv.player.rating").semantics {
+    Row(Modifier.padding(top = 4.dp).alpha(ratingAlpha(shown)).testTag("tv.player.rating").semantics {
         adjustableRating(label, resources.ratingState(shown), shown, resources) { latest.rate(it) }
     }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         for (star in 1..MAX_RATING) {

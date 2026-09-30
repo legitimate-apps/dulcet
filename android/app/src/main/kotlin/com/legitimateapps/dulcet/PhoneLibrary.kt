@@ -960,7 +960,7 @@ internal fun TrackRow(
                     if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
                     // The row's context menu. An append is not positional, so it needs no view (§18.6).
                     if (onAddToPlaylist != null) TrackMenu(rowTag, onAddToPlaylist, download, queue.takeIf { !unavailable },
-                        onRate?.let { TrackRating(track.rating ?: 0, it) })
+                        onRate?.let { TrackRating(track.rating, it) })
                 }
             }
         },
@@ -1036,11 +1036,12 @@ internal class TrackDownload(
 internal class TrackQueue(val onPlayNext: () -> Unit, val onAddToQueue: () -> Unit)
 
 /**
- * A row's rating (§16.20): [value] is the publication's, with any change made here already in it,
+ * A row's rating (§16.20): [value] is the publication's, with any change made here already in it —
+ * null when the row does not carry one, which is unknown, never 0 —
  * and [onRate] sets one, 0 removing it. A rating is sent on reconnect, as a heart is, so a track that
  * cannot play offline can still be rated.
  */
-internal class TrackRating(val value: Int, val onRate: (Int) -> Unit)
+internal class TrackRating(val value: Int?, val onRate: (Int) -> Unit)
 
 /** The row's context menu: what can be done to one song besides playing it. */
 @Composable
@@ -1063,7 +1064,7 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: Track
             )
             if (rating != null) DropdownMenuItem(
                 text = { Text(stringResource(SharedR.string.library_rating_menu)) },
-                leadingIcon = { Icon(if (rating.value > 0) DulcetIcons.Star else DulcetIcons.StarBorder, null) },
+                leadingIcon = { Icon(if ((rating.value ?: 0) > 0) DulcetIcons.Star else DulcetIcons.StarBorder, null) },
                 onClick = { open = false; rateOpen = true },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.rate"),
             )

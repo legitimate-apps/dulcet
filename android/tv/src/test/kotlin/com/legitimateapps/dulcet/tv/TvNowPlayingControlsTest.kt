@@ -272,6 +272,8 @@ class TvNowPlayingControlsTest {
         val node = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode()
         assertEquals("Rating unknown", node.config[SemanticsProperties.StateDescription])
         assertTrue((1..5).none { selected("tv.player.rating.$it") }, "no star is selected while the rating is unknown")
+        assertEquals(com.legitimateapps.dulcet.ui.UNKNOWN_RATING_ALPHA, starAlpha("tv.player.rating"),
+            "an unknown rating's stars are dimmed, so they do not look like a known 0")
         assertTrue(SemanticsProperties.ProgressBarRangeInfo !in node.config, "an unknown rating has no range to step through")
         assertTrue(SemanticsActions.SetProgress !in node.config, "and no relative adjust")
         val offered = node.config[SemanticsActions.CustomActions]
@@ -279,6 +281,7 @@ class TvNowPlayingControlsTest {
         compose.runOnIdle { offered[1].action() }
         compose.waitForIdle()
         assertEquals(listOf(2), rated, "an absolute action sets exactly its rating")
+        assertEquals(1f, starAlpha("tv.player.rating"), "a known rating's stars are not dimmed")
 
         rating = null
         compose.waitForIdle()
@@ -292,6 +295,16 @@ class TvNowPlayingControlsTest {
         assertEquals(listOf(2, 1), rated)
         assertEquals("Remove the rating of 1 star", description("tv.player.rating.1"), "one star, singular")
     }
+
+    /**
+     * The opacity the stars tagged [tag] are drawn at: `Modifier.alpha` adds a graphics layer only
+     * below 1, so no layer is fully opaque.
+     */
+    private fun starAlpha(tag: String): Float =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().layoutInfo.getModifierInfo().firstNotNullOfOrNull { info ->
+            (info.modifier as? androidx.compose.ui.platform.InspectableValue)?.inspectableElements
+                ?.firstOrNull { it.name == "alpha" }?.value as? Float
+        } ?: 1f
 
     private fun sharedString(id: Int, vararg args: Any): String = resources.getString(id, *args)
 

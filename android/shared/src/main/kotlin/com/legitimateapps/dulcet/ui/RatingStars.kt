@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +35,15 @@ public const val MAX_RATING: Int = 5
  * when it is the rating already shown, so the stars alone can take a rating away.
  */
 public fun ratingForTap(shown: Int?, star: Int): Int = if (star == shown) 0 else star.coerceIn(1, MAX_RATING)
+
+/**
+ * How opaque the stars are drawn: dimmed while the rating is unknown (null), so an unknown rating
+ * and a known 0 look different as well as sound different — both fill no star (§16.20).
+ */
+public fun ratingAlpha(rating: Int?): Float = if (rating == null) UNKNOWN_RATING_ALPHA else 1f
+
+/** The opacity of stars whose rating this device does not know. */
+public const val UNKNOWN_RATING_ALPHA: Float = 0.45f
 
 /** The rating an accessibility service's `setProgress` asks for, as a whole number of stars. */
 public fun ratingForProgress(value: Float): Int = value.roundToInt().coerceIn(0, MAX_RATING)
@@ -83,8 +93,8 @@ public fun SemanticsPropertyReceiver.adjustableRating(
 }
 
 /**
- * Five stars for a 0–5 rating (§16.20), or for an unknown one (null: none filled, said as unknown,
- * never as "not rated"): filled up to [rating], which already carries any change made
+ * Five stars for a 0–5 rating (§16.20), or for an unknown one (null: none filled and dimmed, said as
+ * unknown, never as "not rated"): filled up to [rating], which already carries any change made
  * here, sent or not — offline, a rating is a rating and is labelled nowhere, as a heart is; only an
  * outcome that needs words is said, by the screen's outcome line. A tap on a star sets that rating, a
  * tap on the star already shown removes it ([ratingForTap]). For a screen reader it is one adjustable
@@ -107,7 +117,7 @@ public fun RatingStars(
     val label = resources.getString(R.string.library_rating)
     val state = resources.ratingState(shown)
     Row(
-        modifier.clearAndSetSemantics {
+        modifier.alpha(ratingAlpha(shown)).clearAndSetSemantics {
             testTag = tag
             adjustableRating(label, state, shown, resources, onRate)
         },

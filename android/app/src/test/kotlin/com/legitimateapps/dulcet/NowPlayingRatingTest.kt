@@ -84,12 +84,29 @@ class NowPlayingRatingTest {
     private fun range(tag: String): ProgressBarRangeInfo =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo]
 
-    private fun shown(tag: String = "player.rating"): Int = range(tag).current.toInt()
+    /**
+     * The stars shown, or null while the rating is unknown. An unknown rating has no range at all,
+     * and the frame before a tap recomposes is still unknown, so a poll must read that as "not yet"
+     * rather than throw on its first look.
+     */
+    private fun shown(tag: String = "player.rating"): Int? =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config
+            .getOrElseNullable(SemanticsProperties.ProgressBarRangeInfo) { null }?.current?.toInt()
 
     private fun unknown(tag: String = "player.rating"): Boolean =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config.let {
             SemanticsProperties.ProgressBarRangeInfo !in it && it[SemanticsProperties.StateDescription] == "Rating unknown"
         }
+
+    /**
+     * The opacity the stars tagged [tag] are drawn at: `Modifier.alpha` adds a graphics layer only
+     * below 1, so no layer is fully opaque.
+     */
+    private fun starAlpha(tag: String = "player.rating"): Float =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().layoutInfo.getModifierInfo().firstNotNullOfOrNull { info ->
+            (info.modifier as? androidx.compose.ui.platform.InspectableValue)?.inspectableElements
+                ?.firstOrNull { it.name == "alpha" }?.value as? Float
+        } ?: 1f
 
     private fun state(tag: String = "player.rating"): String =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.StateDescription]
@@ -112,8 +129,10 @@ class NowPlayingRatingTest {
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
         assertTrue(unknown(), "control: a track this device has never seen has an unknown rating, not a 0")
+        assertEquals(com.legitimateapps.dulcet.ui.UNKNOWN_RATING_ALPHA, starAlpha(), "an unknown rating's stars are dimmed")
         tapStar(4)
         settle("four stars shown") { shown() == 4 }
+        assertEquals(1f, starAlpha(), "a known rating's stars are not dimmed")
         settle("the rating sent") { server.answered("setRating") == 1 }
         assertEquals(listOf(mapOf("id" to TRACK, "rating" to "4")),
             server.requests("setRating").map { it.filterKeys { key -> key == "id" || key == "rating" } },
@@ -179,7 +198,7 @@ class NowPlayingRatingTest {
         val offered = node.config[SemanticsActions.CustomActions]
         assertEquals((1..5).map { "Rate $it of 5 stars" }, offered.map { it.label })
         compose.runOnIdle { offered[1].action() }
-        settle("two stars shown") { SemanticsProperties.ProgressBarRangeInfo in compose.onNodeWithTag("player.rating").fetchSemanticsNode().config && shown() == 2 }
+        settle("two stars shown") { shown() == 2 }
         settle("the absolute rating sent") { server.answered("setRating") == 1 }
         assertEquals("2", server.requests("setRating").single()["rating"])
 
@@ -195,6 +214,7 @@ class NowPlayingRatingTest {
         compose.onNodeWithTag("player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         settle("the rating taken away") { shown() == 0 }
         assertEquals("Not rated", state(), "a known 0 is Not rated, distinct from unknown")
+        assertEquals(1f, starAlpha(), "and looks distinct: a known 0 is not dimmed")
     }
 
     /** The row menu's Rate… opens the stars; a tap rates the song, and the row's value is what it shows. */
@@ -225,7 +245,34 @@ class NowPlayingRatingTest {
         compose.onNodeWithTag("album.track.0.rating.done").performClick()
     }
 
-    private fun trackWith(track: AndroidLibraryItem.Track, rating: Int) = track.copy(rating = rating)
+    /**
+     * A row that carries no rating — the reader has not read one — opens its stars as unknown, never
+     * as a known 0: no star, dimmed, said "Rating unknown", and the first star rates rather than removes.
+     */
+    @Test fun aRowWithNoRatingOpensItsStarsAsUnknownNotAsZero() {
+        val rated = mutableListOf<Int>()
+        val track = AndroidLibraryItem.Track(TRACK, "Star Fixture", "album-stars", "Star Album", "Dulcet Fixtures", null, 1, 1,
+            200_000, null, null, favourite = false, rating = null, playCount = null,
+            playability = com.legitimateapps.dulcet.core.AndroidLibraryPlayability.Streamable, metadataMissing = false)
+        compose.setContent {
+            MaterialTheme {
+                TrackRow(trackWith(track, null), 1, false, androidx.compose.ui.Modifier, onUnavailable = {},
+                    favouriteTag = "album.track.0.favourite", onAddToPlaylist = {},
+                    onRate = { rated += it }) {}
+            }
+        }
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onNodeWithTag("album.track.0.menu.rate").performClick()
+        compose.waitForIdle()
+        assertTrue(unknown("album.track.0.rating"), "a row with no rating opens its stars as unknown, not Not rated")
+        assertEquals(com.legitimateapps.dulcet.ui.UNKNOWN_RATING_ALPHA, starAlpha("album.track.0.rating"))
+        tapStar(1, "album.track.0.rating")
+        compose.waitForIdle()
+        assertEquals(listOf(1), rated, "from unknown the first star rates one; it does not send 0")
+        compose.onNodeWithTag("album.track.0.rating.done").performClick()
+    }
+
+    private fun trackWith(track: AndroidLibraryItem.Track, rating: Int?) = track.copy(rating = rating)
 
     /** Answers `ok` — or, when [refuse], error 70 to `setRating` — and records every request. */
     private class RecordingServer : AutoCloseable {
