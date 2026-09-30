@@ -1312,6 +1312,7 @@ final class DulcetiOSUITests: XCTestCase {
         ) else { return }
         let notice = run.sighting
         XCTAssertTrue(notice.label.contains("Unplayable Probe"), "notice=\(notice.label)")
+        assertAlbumHeaderReadsAtTheLargestTextSize(run)
         let placement = assertNoticeClearsNavigation(notice)
         // The experiment is the one intended: at this size the sentence wraps, so the notice is
         // several lines tall rather than the one line of the default size.
@@ -1337,12 +1338,30 @@ final class DulcetiOSUITests: XCTestCase {
             extraLaunchArguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         ) else { return }
         let notice = run.sighting
+        assertAlbumHeaderReadsAtTheLargestTextSize(run)
         let placement = assertNoticeClearsNavigation(notice)
         XCTAssertEqual(notice.label, "Couldn\u{2019}t play a track. Skipped.",
                        "The notice must show the sentence without the title; \(placement)")
         XCTAssertFalse(notice.label.contains("Concerto"), "notice=\(notice.label)")
         attachScreenshot(named: "skipped-track-notice-ax5-long-title", app: run.app)
         print("DULCET AUTO SKIP AX5 LONG TITLE OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
+    }
+
+    /// At the largest text size the album page is taller than the screen: its first track starts
+    /// below the fold, so the proof reached it by scrolling -- the path a person takes -- and the
+    /// header's Play and Shuffle each keep their label on one line, full width, rather than
+    /// wrapping it a letter per line into a button taller than the screen.
+    @MainActor
+    private func assertAlbumHeaderReadsAtTheLargestTextSize(_ run: SkipProbeRun) {
+        let frames = run.headerActions.map { "\($0)" }.joined(separator: " ")
+        print("DULCET SKIP PROBE AX5 HEADER row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        XCTAssertGreaterThanOrEqual(run.rowSwipes, 1,
+                                    "At this size the first track must start below the fold; header=\(frames)")
+        for frame in run.headerActions {
+            XCTAssertFalse(frame.isEmpty, "Play and Shuffle must both be on the page; header=\(frames)")
+            XCTAssertGreaterThan(frame.width, 2 * frame.height,
+                                 "A header action must keep its label on one line; header=\(frames)")
+        }
     }
 
     private struct SkipProbeRun {
@@ -1352,6 +1371,10 @@ final class DulcetiOSUITests: XCTestCase {
         /// What the notice and the bars were at the instant it was seen, from one snapshot.
         let sighting: NoticeSighting
         let markersBefore: [String]
+        /// How many swipes brought the unplayable track into reach: zero when it was on screen.
+        let rowSwipes: Int
+        /// The album header's Play and Shuffle frames, read when the page opened.
+        let headerActions: [CGRect]
     }
 
     /// The notice and everything its placement is judged against, read from ONE accessibility
@@ -1480,18 +1503,35 @@ final class DulcetiOSUITests: XCTestCase {
         // The fixture is the one intended: the unplayable track first, a playable one after it.
         let unplayableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", probe.unplayableTitle)).firstMatch
         let playableRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", probe.playableTitle)).firstMatch
-        guard unplayableRow.waitForExistence(timeout: 15), scrollIntoView(unplayableRow, in: app),
-              playableRow.waitForExistence(timeout: 5),
+        // The page is open once its title is. The tracks follow the header, and the list realizes
+        // rows as they scroll into view, so at the largest text size -- where the artwork, title
+        // and buttons fill more than a screen -- the first track does not exist until the page
+        // scrolls to it. Scroll, bounded, rather than wait for a row that is not built yet.
+        let header = app.staticTexts["dulcet.album.title"].firstMatch
+        guard header.waitForExistence(timeout: 15) else {
+            XCTFail("The \(probe.album) album page must open: " + app.debugDescription)
+            return nil
+        }
+        let headerActions = ["dulcet.album.play", "dulcet.album.shuffle"].map { app.buttons[$0].firstMatch.frame }
+        let rowSwipes = scrollIntoViewCountingSwipes(unplayableRow, in: app)
+        guard let rowSwipes, playableRow.waitForExistence(timeout: 5),
               unplayableRow.frame.minY < playableRow.frame.minY else {
-            XCTFail("The \(probe.album) album must list \(probe.unplayableTitle) before \(probe.playableTitle): "
-                + app.debugDescription)
+            XCTFail("The \(probe.album) album must list \(probe.unplayableTitle) before \(probe.playableTitle)"
+                + " within the swipe bound: " + app.debugDescription)
             return nil
         }
         let markersBefore = proofMarkers(in: app)
         unplayableRow.tap()
         let notice = app.descendants(matching: .any)["dulcet.playback.skipped-notice"].firstMatch
         guard let sighting = sightNotice(in: app, markersBefore: markersBefore, timeout: 30) else { return nil }
-        return SkipProbeRun(app: app, notice: notice, sighting: sighting, markersBefore: markersBefore)
+        return SkipProbeRun(
+            app: app,
+            notice: notice,
+            sighting: sighting,
+            markersBefore: markersBefore,
+            rowSwipes: rowSwipes,
+            headerActions: headerActions
+        )
     }
 
     /// The notice is drawn over no navigation control: not the navigation bar, not the tab bar,
@@ -2751,10 +2791,25 @@ final class DulcetiOSUITests: XCTestCase {
         in app: XCUIApplication,
         probingBlockingSystemAlerts: Bool = true
     ) -> Bool {
+        scrollIntoViewCountingSwipes(
+            element,
+            in: app,
+            probingBlockingSystemAlerts: probingBlockingSystemAlerts
+        ) != nil
+    }
+
+    /// `scrollIntoView`, answering how many swipes it took (at most six), or nil when the element
+    /// never became reachable.
+    @MainActor
+    private func scrollIntoViewCountingSwipes(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        probingBlockingSystemAlerts: Bool = true
+    ) -> Int? {
         let window = app.windows.firstMatch
         guard window.exists else {
             XCTFail("Dulcet's app window is unavailable because the app terminated or was backgrounded")
-            return false
+            return nil
         }
 
         var swipeCount = 0
@@ -2768,7 +2823,7 @@ final class DulcetiOSUITests: XCTestCase {
                 case .handled:
                     continue
                 case .unsupported:
-                    return false
+                    return nil
                 case .absent:
                     break
                 }
@@ -2779,11 +2834,11 @@ final class DulcetiOSUITests: XCTestCase {
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
                 if !frame.isEmpty && !frame.isInfinite &&
                     window.frame.contains(midpoint) && element.isHittable {
-                    return true
+                    return swipeCount
                 }
             }
 
-            guard swipeCount < 6 else { return false }
+            guard swipeCount < 6 else { return nil }
 
             // This must remain a real event rather than an isHittable-gated preflight. Tap paths
             // can still invoke the interruption monitors installed as a backstop.
