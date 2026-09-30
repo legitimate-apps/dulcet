@@ -4659,11 +4659,18 @@ about publication, not about the cache:
   stars; pressing the star already shown removes the rating, which sends `setRating` with 0. For a
   screen reader the stars are one adjustable element on the platforms whose readers adjust (VoiceOver
   on macOS and iOS, TalkBack), 0 to 5 in whole stars. On a television each star is its own focus
-  stop, set with Select or the centre key. Now Playing shows the playing track's stars beside its
-  heart, only while the reader holds the track's account; a queued track carries no rating of its
-  own, so Now Playing shows what the screens last published or, on Android, what the reader's watch
-  knows (the same watch as the heart, keeping the value the server acknowledged for a track with no
-  cache row). Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
+  stop, set with Select or the centre key. **Unknown is not unrated.** A rating this device has
+  no value for — a track no screen of the session has published, such as a restored queue's — is
+  drawn with no star filled and said as unknown, and a relative step (a screen reader's adjust)
+  from it sends nothing, because a step from a guessed 0 would overwrite the server's rating; a
+  press on a star, or a menu choice, is absolute and allowed. Now Playing shows the playing track's
+  stars beside its heart, only while the reader holds the track's account; a queued track carries
+  no rating of its own, so Now Playing shows what the server is last known to hold — on Apple, what
+  a screen published while no change of this session was pending, a saved change's value or a
+  superseding server value, never the value tapped; on Android, the reader's watch (the same watch
+  as the heart, keeping the value the server acknowledged for a track with no cache row). An
+  outcome never erases a known server value: the flush republishes the open screens **before** it
+  tells the outcome, so the screens may already hold the server's value when it arrives. Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
   Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84's
   rating half runs against the disposable server through the production session
   (`RatingConformanceTest`), reading the server's `userRating` back after every write.
@@ -7369,7 +7376,13 @@ the value the screens last published for it and Android gains `watchRating` besi
 which keeps the acknowledged value for a track with no cache row for the same reason the heart's
 watch does. The core gains `RatingConformanceContract`, driving the production session against the
 disposable server: rate, offline compaction and reconnect, and 0, each read back raw. Lock-screen
-rating stays unregistered (§12.10): no system entry reaches the outbox yet.
+rating stays unregistered (§12.10): no system entry reaches the outbox yet. (4) **Unknown is not
+unrated** (review of the first cut): the first Apple cut drew an unknown rating as 0 and let an
+outcome erase the known server value — copied from the heart — so after a superseded change Now
+Playing showed empty stars and the next adjust sent a rating of 1 over the server's 5. The flush
+republishes before it tells the outcome, so the erase removed the value the republish had just
+recorded. Unknown is now its own state, never stepped from, and an outcome only adds what the
+server holds (a saved value, a superseding value).
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
