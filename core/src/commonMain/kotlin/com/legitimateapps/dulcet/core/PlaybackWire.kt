@@ -130,6 +130,30 @@ public data class PlaybackResolveRequest(
         )
     }
 
+    /**
+     * This request with the person's streaming quality applied — one preference, two encodings
+     * (spec §12.5). On the transcoding extension's path the cap lowers the `ClientInfo` limits for
+     * both direct play and transcoding, in bits per second, so a source above it is transcoded. On
+     * the legacy path it is the `maxBitRate` hint, and a format is always named with it: without
+     * one the server picks its own downsampling format, and the validator and the engine would not
+     * know which container to expect. The named format is the profile's own transcoding target.
+     * [StreamingQuality.Original] returns this request unchanged. Never applied to a download.
+     */
+    public fun withStreamingQuality(quality: StreamingQuality): PlaybackResolveRequest {
+        val capKbps = quality.maxBitRateKbps ?: return this
+        val capBitsPerSecond = capKbps * 1_000
+        return copy(
+            deviceProfile = deviceProfile.copy(
+                maxAudioBitrate = minOf(deviceProfile.maxAudioBitrate, capBitsPerSecond),
+                maxTranscodingAudioBitrate = minOf(deviceProfile.maxTranscodingAudioBitrate, capBitsPerSecond),
+            ),
+            legacyPreference = LegacyPlaybackPreference(
+                format = legacyPreference.format ?: deviceProfile.transcodingProfiles.first().container,
+                maxBitRateKbps = minOf(legacyPreference.maxBitRateKbps ?: capKbps, capKbps),
+            ),
+        )
+    }
+
     override fun toString(): String = "PlaybackResolveRequest(<redacted>)"
 }
 

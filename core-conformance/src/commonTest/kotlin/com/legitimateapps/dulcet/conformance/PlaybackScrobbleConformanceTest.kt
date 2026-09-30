@@ -28,6 +28,7 @@ import com.legitimateapps.dulcet.core.SaltSource
 import com.legitimateapps.dulcet.core.ScrobbleEndpointRequest
 import com.legitimateapps.dulcet.core.ScrobbleEndpointSender
 import com.legitimateapps.dulcet.core.ScrobbleSendResult
+import com.legitimateapps.dulcet.core.StreamingQuality
 import com.legitimateapps.dulcet.core.TranscodingAudioProfile
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
@@ -356,6 +357,95 @@ open class PlaybackScrobbleConformanceTest {
         }
     }
 
+    /**
+     * Spec §12.5: the streaming-quality cap is one preference with two encodings, and both change
+     * what the server sends. Each path is measured twice on one source through the production
+     * resolver and loader, the only difference being the quality: Original is the control that
+     * plays the FLAC file itself, the cap must turn it into MP3. The cap is below the source's
+     * bitrate, asserted, so the extension's decision can only change because of it.
+     */
+    @Test
+    fun conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths() = runTest {
+        withFixture {
+            val source = requireSong("CONF-92", HEALTH_PROBE_TITLE)
+            // Without ffmpeg the server would silently send the original: a capability, asserted.
+            requireTranscodingCapability("CONF-92", source)
+            val cap = StreamingQuality.Kbps96
+            val capKbps = cap.maxBitRateKbps!!
+            val sourceKbps = source.bitRateKbps
+                ?: error("CONF-92 precondition failed: the server reported no source bitrate")
+            assertEquals(AudioContainer.Flac, source.container, "CONF-92 source fixture drifted")
+            assertTrue(
+                sourceKbps > capKbps,
+                "CONF-92 precondition failed: source ${sourceKbps} kbps is not above the ${capKbps} kbps cap",
+            )
+
+            // Legacy `stream`: the cap is the maxBitRate hint with a named format.
+            val legacyOriginal = requireAudio(
+                playback.load(requireLegacyPlan("CONF-92 original", source)),
+                "CONF-92 legacy original did not load",
+            )
+            assertTrue(legacyOriginal.bytes.matchesAscii(0, "fLaC"), "CONF-92 legacy control is not the FLAC original")
+            val legacyCappedPlan = assertIs<PlaybackResolutionResult.Resolved>(
+                playback.resolve(legacyRequest(source).withStreamingQuality(cap)),
+                "CONF-92 capped legacy plan did not resolve",
+            ).plan
+            assertEquals(PlaybackDeliveryPath.Legacy, legacyCappedPlan.path)
+            assertEquals(
+                PlaybackWireTranscodeDecision.LegacyHint(AudioContainer.Mp3, capKbps),
+                legacyCappedPlan.transcode,
+            )
+            val legacyCapped = requireAudio(
+                playback.load(legacyCappedPlan),
+                "CONF-92 capped legacy stream failed after the capability precondition passed",
+            )
+            assertTrue(legacyCapped.bytes.hasMp3Signature(), "CONF-92 capped legacy stream is not MP3")
+
+            // Transcoding extension: the cap lowers the ClientInfo limits of a profile that
+            // direct-plays this FLAC file without it.
+            val extensionOriginalPlan = assertIs<PlaybackResolutionResult.Resolved>(
+                playback.resolve(qualityExtensionRequest(source, StreamingQuality.Original)),
+                "CONF-92 uncapped extension plan did not resolve",
+            ).plan
+            assertEquals(
+                PlaybackDeliveryPath.ExtensionDirect,
+                extensionOriginalPlan.path,
+                "CONF-92 control: the uncapped FLAC profile must direct-play",
+            )
+            val extensionOriginal = requireAudio(
+                playback.load(extensionOriginalPlan),
+                "CONF-92 uncapped extension stream did not load",
+            )
+            assertTrue(extensionOriginal.bytes.matchesAscii(0, "fLaC"), "CONF-92 extension control is not FLAC")
+            val extensionCappedPlan = assertIs<PlaybackResolutionResult.Resolved>(
+                playback.resolve(qualityExtensionRequest(source, cap)),
+                "CONF-92 capped extension plan did not resolve",
+            ).plan
+            assertEquals(
+                PlaybackDeliveryPath.ExtensionTranscode,
+                extensionCappedPlan.path,
+                "CONF-92 the capped ClientInfo did not turn direct play into a transcode",
+            )
+            val extensionCapped = requireAudio(
+                playback.load(extensionCappedPlan),
+                "CONF-92 capped extension stream failed after the capability precondition passed",
+            )
+            assertTrue(extensionCapped.bytes.hasMp3Signature(), "CONF-92 capped extension stream is not MP3")
+            // The same audio at no more than the cap: at most the original's size scaled by
+            // cap/source, with room for frame and header overhead on a two-second file.
+            val ceiling = legacyOriginal.bytes.size.toDouble() * capKbps / sourceKbps * CAP_SIZE_TOLERANCE
+            assertTrue(legacyCapped.bytes.size <= ceiling, "CONF-92 legacy capped ${legacyCapped.bytes.size} bytes > $ceiling")
+            assertTrue(extensionCapped.bytes.size <= ceiling, "CONF-92 extension capped ${extensionCapped.bytes.size} bytes > $ceiling")
+            record(
+                "CONF-92 OBSERVED source_kbps=$sourceKbps cap_kbps=$capKbps " +
+                    "duration_seconds=${source.durationSeconds} " +
+                    "legacy_original_bytes=${legacyOriginal.bytes.size} legacy_capped_bytes=${legacyCapped.bytes.size} " +
+                    "extension_original_bytes=${extensionOriginal.bytes.size} " +
+                    "extension_capped_bytes=${extensionCapped.bytes.size}",
+            )
+        }
+    }
+
     @Test
     fun conf22NowPlayingDoesNotIncrementButSubmittedScrobbleDoes() = runTest {
         withFixture {
@@ -575,6 +665,7 @@ open class PlaybackScrobbleConformanceTest {
             title = title,
             container = container,
             durationSeconds = match.intField("duration", confId),
+            bitRateKbps = (match["bitRate"] as? JsonPrimitive)?.intOrNull,
         )
     }
 
@@ -686,6 +777,12 @@ open class PlaybackScrobbleConformanceTest {
             legacyTimeOffset = legacyOffsetSeconds?.seconds,
         )
 
+    private fun qualityExtensionRequest(song: SeedSong, quality: StreamingQuality) =
+        extensionRequest(song).copy(
+            attemptId = AttemptId("attempt:${song.title}:quality:${quality.wireName}"),
+            deviceProfile = DIRECT_PLAY_FLAC_PROFILE,
+        ).withStreamingQuality(quality)
+
     private suspend fun <T> withFixture(block: suspend PlaybackFixture.() -> T): T {
         val fixture = PlaybackFixture()
         return try {
@@ -746,6 +843,7 @@ open class PlaybackScrobbleConformanceTest {
         const val CONF_17_COLD_BITRATE_KBPS = 73
         const val CONF_51_COLD_BITRATE_KBPS = 81
         const val OFFSET_RATIO_TOLERANCE = 0.03
+        const val CAP_SIZE_TOLERANCE = 1.15
         const val CONF_22_SESSION_TIME = 1_788_220_000_001
         const val CONF_23_REPEATED_SESSION_TIME = 1_788_230_000_001
 
@@ -760,6 +858,28 @@ open class PlaybackScrobbleConformanceTest {
                 DirectPlayAudioProfile(
                     containers = listOf(AudioContainer.Ogg),
                     audioCodecs = listOf("vorbis"),
+                    maxAudioChannels = 2,
+                ),
+            ),
+            transcodingProfiles = listOf(
+                TranscodingAudioProfile(
+                    container = AudioContainer.Mp3,
+                    audioCodec = "mp3",
+                    maxAudioChannels = 2,
+                ),
+            ),
+        )
+
+        /** A profile that direct-plays FLAC up to CD bitrate: only a cap can make it transcode. */
+        val DIRECT_PLAY_FLAC_PROFILE = PlaybackDeviceProfile(
+            name = "Dulcet Conformance Quality",
+            platform = "Kotlin Multiplatform",
+            maxAudioBitrate = 1_411_200,
+            maxTranscodingAudioBitrate = 320_000,
+            directPlayProfiles = listOf(
+                DirectPlayAudioProfile(
+                    containers = listOf(AudioContainer.Flac),
+                    audioCodecs = listOf("flac"),
                     maxAudioChannels = 2,
                 ),
             ),
@@ -1055,6 +1175,7 @@ private data class SeedSong(
     val title: String,
     val container: AudioContainer,
     val durationSeconds: Int,
+    val bitRateKbps: Int? = null,
 ) {
     val itemId = ProviderItemId(CONFORMANCE_PROVIDER_ID, id)
     override fun toString(): String = "SeedSong(title=$title, id=<redacted>)"
