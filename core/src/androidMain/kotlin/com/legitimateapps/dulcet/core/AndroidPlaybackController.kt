@@ -99,6 +99,9 @@ public data class AndroidQueueEntry(val queueEntryId: String, val track: Android
 
 public enum class AndroidQueueSource { Album, Artist, Library, Search }
 
+/** Where [AndroidPlaybackController.addToQueue] puts tracks: straight after the current entry, or at the end. */
+public enum class AndroidQueueInsertion { PlayNext, AddToQueue }
+
 public enum class AndroidRepeatMode { Off, All, One }
 
 /** Service-owned composition root. Core policy, queue identities and outbox are reused unchanged. */
@@ -466,6 +469,96 @@ public class AndroidPlaybackController internal constructor(
         if (!live() || refuseForeignQueue()) return
         wantsPlay = true
         transition(queue.jumpTo(QueueEntryId(queueEntryId)))
+    }
+
+    /**
+     * Play Next and Add to Queue (spec §14.1): [tracks] go straight after the current entry, in the
+     * order given, or at the end. With no queue of this account's to add to, they play instead, as
+     * a new queue from the first of them -- "Play Next" in an empty player means "play this".
+     * Adding never touches the current session. The same rules as the Apple shells', through the
+     * same core call.
+     *
+     * False, and nothing changed, when refused: a closed controller, no tracks, a track of another
+     * account, or a new queue still resolving -- whatever was added now would be replaced by it the
+     * moment it starts, so the person is told instead of losing the tracks silently.
+     */
+    public fun addToQueue(
+        tracks: List<AndroidTrack>,
+        insertion: AndroidQueueInsertion,
+        source: AndroidQueueSource,
+        sourceName: String,
+        sourceRawId: String? = null,
+    ): Boolean {
+        if (!live()) return false
+        val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
+        require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
+        if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
+        if (resolution?.isActive == true) return false
+        // The core's queue decides emptiness, not what a surface shows: an entry still resolving
+        // shows no title yet, and playing instead would throw away what the person just started.
+        if (!ownsActiveQueue() || queue.snapshot().entries.isEmpty()) {
+            playQueue(tracks, 0, source, sourceName, sourceRawId)
+            return true
+        }
+        tracks.forEach { remember(it) }
+        return edit {
+            queue.enqueue(PlaybackQueueInsertion(
+                tracks.map { PlaybackQueueItem(ProviderItemId(it.providerInstanceId, it.rawId), it.durationMilliseconds?.milliseconds) },
+                QueueSourceContext(source.kind(), sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
+                    sourceName.ifBlank { source.name }),
+                when (insertion) {
+                    AndroidQueueInsertion.PlayNext -> QueueInsertionMode.PlayNext
+                    AndroidQueueInsertion.AddToQueue -> QueueInsertionMode.Append
+                }))
+        }
+    }
+
+    /**
+     * Moves the entry named by [queueEntryId] to [toIndex] in [AndroidPlaybackState.queue], which is
+     * the whole queue in the order the listener sees. The current session plays on. False, and
+     * nothing changed, for an entry no longer queued or a position outside the queue.
+     */
+    public fun moveEntry(queueEntryId: String, toIndex: Int): Boolean {
+        if (!live() || refuseForeignQueue()) return false
+        return edit { queue.move(QueueEntryId(queueEntryId), toIndex) }
+    }
+
+    /**
+     * Removes an entry that is not playing. The current entry is refused rather than interpreted
+     * (spec §14.1): removing it would either stop the music or start something, and Next and Pause
+     * already say which. False, and nothing changed, for the current entry or one no longer queued.
+     */
+    public fun removeEntry(queueEntryId: String): Boolean {
+        if (!live() || refuseForeignQueue()) return false
+        return edit { queue.remove(QueueEntryId(queueEntryId)) }
+    }
+
+    /** Removes every entry after the current one (spec §14.1). The current session plays on. */
+    public fun clearUpcoming(): Boolean {
+        if (!live() || refuseForeignQueue()) return false
+        return edit { queue.clearUpcoming() }
+    }
+
+    /**
+     * Applies a queue edit. No edit is a session boundary (spec §14.1), so unlike [transition] this
+     * stops nothing and starts nothing: it republishes the queue. The core starts an entry from an
+     * edit only when the edit discards a preload it had held a natural end for, and Android registers
+     * no preload (the engine refuses one, spec §8); should that ever change, the entry starts here.
+     */
+    private inline fun edit(change: () -> PlaybackQueueTransition): Boolean {
+        val result = try { change() } catch (_: IllegalArgumentException) { return false }
+        if (result.startDirective != null) { transition(result); return true }
+        capture(result.effects)
+        publish()
+        fillQueueMetadata()
+        return true
+    }
+
+    private fun AndroidQueueSource.kind(): QueueSourceKind = when (this) {
+        AndroidQueueSource.Album -> QueueSourceKind.Album
+        AndroidQueueSource.Artist -> QueueSourceKind.Artist
+        AndroidQueueSource.Library -> QueueSourceKind.Library
+        AndroidQueueSource.Search -> QueueSourceKind.Search
     }
 
     public fun setShuffle(enabled: Boolean) {

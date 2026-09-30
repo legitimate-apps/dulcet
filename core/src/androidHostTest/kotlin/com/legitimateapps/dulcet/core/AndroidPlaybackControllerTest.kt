@@ -171,6 +171,139 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * Play Next lands straight after the playing entry, in the order given; Add to Queue appends.
+     * Neither touches the playing session: same entry, session and attempt, nothing prepared again.
+     */
+    @Test fun playNextInsertsAfterTheCurrentEntryAndAddToQueueAppendsWithoutTouchingTheSession() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            val before = f.controller.state.value
+            assertTrue(f.controller.addToQueue(album("x", "y"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            assertEquals(listOf("t1", "x", "y", "t2", "t3"), f.controller.state.value.queue.map { it.track.rawId })
+            assertTrue(f.controller.addToQueue(album("z"), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Album, "Other", "other-album"))
+            val after = f.controller.state.value
+            assertEquals(listOf("t1", "x", "y", "t2", "t3", "z"), after.queue.map { it.track.rawId })
+            assertEquals("Title x", after.queue[1].track.title, "an added track is titled from what the caller held")
+            assertEquals(0, after.currentIndex)
+            assertEquals(before.queueEntryId, after.queueEntryId)
+            assertEquals(before.playbackSessionId, after.playbackSessionId, "an edit is not a session boundary")
+            assertEquals(before.attemptId, after.attemptId)
+            assertEquals(before.phase, after.phase)
+            assertTrue(after.playWhenReady)
+            assertEquals(listOf("t1"), f.prepared.map { it.itemId.rawId }, "adding starts nothing")
+            val stored = PersistentQueueStore(f.store.database).load(ServerId(OWNER)).entries
+            assertEquals(listOf(QueueAddedBy.PlayNow, QueueAddedBy.PlayNext, QueueAddedBy.PlayNext, QueueAddedBy.PlayNow,
+                QueueAddedBy.PlayNow, QueueAddedBy.AddToQueue), stored.map { it.addedBy })
+            assertEquals(QueueSourceContext(QueueSourceKind.Album, ProviderItemId(OWNER, "other-album"), "Other"),
+                stored.last().sourceContext, "an added entry says where it came from")
+            // Next now reaches the first track played next.
+            f.controller.next()
+            assertEquals(listOf("t1", "x"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    /** "Play Next" in an empty player means "play this": there is no queue to add to. */
+    @Test fun addingToNoQueuePlaysTheTracksAsANewQueue() {
+        for (insertion in AndroidQueueInsertion.entries) {
+            Fixture().use { f ->
+                assertTrue(f.controller.addToQueue(album("a", "b"), insertion, AndroidQueueSource.Album, "Album", "album-id"))
+                val state = f.controller.state.value
+                assertEquals(listOf("a", "b"), state.queue.map { it.track.rawId }, "$insertion")
+                assertEquals(0, state.currentIndex)
+                assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+                assertTrue(f.probe.requested)
+            }
+        }
+    }
+
+    /** Another account's queue is not one to add to; the tracks play as this account's own queue. */
+    @Test fun addingOverAnotherAccountsQueuePlaysTheTracksAndLeavesThatQueueAlone() {
+        Fixture(savedOwner = "different-account", savedSongs = listOf("x", "y")).use { f ->
+            val foreign = PersistentQueueStore(f.store.database).load(ServerId("different-account"))
+            assertTrue(f.controller.addToQueue(album("a"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            assertEquals(listOf("a"), f.controller.state.value.queue.map { it.track.rawId })
+            assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
+            assertEquals(foreign, PersistentQueueStore(f.store.database).load(ServerId("different-account")))
+            assertFalse(f.controller.addToQueue(listOf(AndroidTrack("different-account", "q", "Q")),
+                AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Library, "Library"), "a foreign track is refused")
+            assertEquals(listOf("a"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    /**
+     * A new queue that is still resolving replaces whatever is queued when it starts, so a track
+     * added in that window would vanish. The addition is refused, and said, rather than lost.
+     */
+    @Test fun addingWhileANewQueueResolvesIsRefusedRatherThanLost() {
+        var pending: Continuation<AuthenticatedEndpointResponse>? = null
+        Fixture(loadSong = { id ->
+            if (id == "n1") suspendCoroutine<AuthenticatedEndpointResponse> { pending = it } else song(id)
+        }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "New", "new-album")
+            val held = assertNotNull(pending, "setup: the new queue must be resolving")
+            assertFalse(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            assertEquals(listOf("t1", "t2"), f.controller.state.value.queue.map { it.track.rawId }, "nothing was added")
+            held.resume(song("n1"))
+            assertEquals(listOf("n1", "n2"), f.controller.state.value.queue.map { it.track.rawId })
+            assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"),
+                "once the queue has started, adding works again")
+            assertEquals(listOf("n1", "x", "n2"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    /**
+     * Move and Remove name entries by identity, the playing session plays on through both, and the
+     * current entry cannot be removed (spec §14.1). A refused edit changes nothing and says so.
+     */
+    @Test fun moveAndRemoveKeepTheSessionAndTheCurrentEntryCannotBeRemoved() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3", "t4"), 1, AndroidQueueSource.Album, "Album", "album-id")
+            val before = f.controller.state.value
+            val ids = before.queue.associate { it.track.rawId to it.queueEntryId }
+
+            assertTrue(f.controller.moveEntry(ids.getValue("t4"), 2), "Move up")
+            assertEquals(listOf("t1", "t2", "t4", "t3"), f.controller.state.value.queue.map { it.track.rawId })
+            assertTrue(f.controller.moveEntry(ids.getValue("t4"), 3), "Move down")
+            assertEquals(listOf("t1", "t2", "t3", "t4"), f.controller.state.value.queue.map { it.track.rawId })
+
+            assertFalse(f.controller.removeEntry(ids.getValue("t2")), "the playing entry cannot be removed")
+            assertFalse(f.controller.removeEntry("no-such-entry"))
+            assertFalse(f.controller.moveEntry(ids.getValue("t3"), 9), "a position outside the queue")
+            assertFalse(f.controller.moveEntry("no-such-entry", 0))
+            assertEquals(listOf("t1", "t2", "t3", "t4"), f.controller.state.value.queue.map { it.track.rawId })
+
+            assertTrue(f.controller.removeEntry(ids.getValue("t3")))
+            assertEquals(listOf("t1", "t2", "t4"), f.controller.state.value.queue.map { it.track.rawId })
+            val after = f.controller.state.value
+            assertEquals(1, after.currentIndex)
+            assertEquals(before.queueEntryId, after.queueEntryId)
+            assertEquals(before.playbackSessionId, after.playbackSessionId, "an edit is not a session boundary")
+            assertEquals(before.attemptId, after.attemptId)
+            assertEquals(before.phase, after.phase)
+            assertNull(after.error, "a refused edit is not a playback failure")
+            assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId }, "no edit starts anything")
+            assertTrue(f.probe.requested)
+        }
+    }
+
+    /** Clear removes every entry after the current one and nothing before it; the session plays on. */
+    @Test fun clearUpcomingKeepsThePlayedEntriesAndTheSession() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3", "t4"), 1, AndroidQueueSource.Album, "Album", "album-id")
+            val before = f.controller.state.value
+            assertTrue(f.controller.clearUpcoming())
+            val after = f.controller.state.value
+            assertEquals(listOf("t1", "t2"), after.queue.map { it.track.rawId })
+            assertEquals(1, after.currentIndex)
+            assertEquals(before.playbackSessionId, after.playbackSessionId)
+            assertEquals(before.attemptId, after.attemptId)
+            assertFalse(after.canGoNext, "nothing follows the playing entry now")
+            assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
     @Test fun naturalCompletionAdvancesToTheNextAlbumTrack() {
         Fixture().use { f ->
             f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
@@ -362,6 +495,8 @@ class AndroidPlaybackControllerTest {
             val entry = foreign.entries[1].queueEntryId.value
             f.controller.play(); f.controller.next(); f.controller.previous(); f.controller.skipToPrevious()
             f.controller.jumpTo(entry); f.controller.setShuffle(true); f.controller.cycleRepeatMode()
+            assertFalse(f.controller.moveEntry(entry, 0)); assertFalse(f.controller.removeEntry(entry))
+            assertFalse(f.controller.clearUpcoming())
             f.controller.sessionPlayer.seekToNext(); f.controller.sessionPlayer.play()
             assertTrue(loaded.isEmpty(), "No request may be made for another account's queue")
             assertTrue(f.prepared.isEmpty())
@@ -381,6 +516,9 @@ class AndroidPlaybackControllerTest {
             f.controller.previous(); f.controller.skipToPrevious(); f.controller.seek(1); f.controller.stop()
             f.controller.jumpTo("anything"); f.controller.setShuffle(true); f.controller.cycleRepeatMode()
             f.controller.playSong(OWNER, "a", "A"); f.controller.rememberTracks(album("c"))
+            assertFalse(f.controller.addToQueue(album("c"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            assertFalse(f.controller.moveEntry("anything", 0)); assertFalse(f.controller.removeEntry("anything"))
+            assertFalse(f.controller.clearUpcoming())
             f.controller.sessionPlayer.play(); f.controller.sessionPlayer.seekForward(); f.controller.sessionPlayer.setVolume(0.5f)
             assertEquals(listOf("a"), f.prepared.map { it.itemId.rawId })
         }

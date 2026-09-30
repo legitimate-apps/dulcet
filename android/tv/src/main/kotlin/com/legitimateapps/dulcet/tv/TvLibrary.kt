@@ -126,6 +126,12 @@ import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.playAlbum
 import com.legitimateapps.dulcet.library.playArtist
 import com.legitimateapps.dulcet.library.playTracks
+import com.legitimateapps.dulcet.library.canBeQueued
+import com.legitimateapps.dulcet.library.playableTracks
+import com.legitimateapps.dulcet.library.queueAlbum
+import com.legitimateapps.dulcet.library.queueTrack
+import com.legitimateapps.dulcet.core.AndroidQueueInsertion
+import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.rememberHomeRows
 import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.library.subtitle
@@ -747,6 +753,8 @@ private fun TvAlbumScreen(
     val outcomeLines = rememberOutcomeLines(session,
         listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
+    var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
+    TvAddToUpNext(adding) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
     fun play(current: AndroidLibraryPublication, trackRawId: String?, shuffle: Boolean) {
@@ -823,6 +831,16 @@ private fun TvAlbumScreen(
                                     } else if (state.downloadable > 0) TvAction(resources.getString(SharedR.string.download_album),
                                         "album.download", icon = DulcetIcons.Download) { requests.download(tracks) }
                                 }
+                                // Play Next and Add to Queue for the album, beside its download (spec §14.1).
+                                if (playable) TvAction(resources.getString(SharedR.string.queue_add_options), "album.queue",
+                                    icon = DulcetIcons.QueueMusic) {
+                                    val shownNow = shown ?: return@TvAction
+                                    fun add(insertion: AndroidQueueInsertion) {
+                                        if (!queueAlbum(playback, provider, shownNow, insertion)) queueEditRefused(context)
+                                    }
+                                    adding = TvQueueAddition((shownNow.header as? AndroidLibraryItem.Album)?.title.orEmpty(),
+                                        { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
+                                }
                             }
                             if (current.itemsState == AndroidLibraryItemsState.Present) {
                                 context.resources.albumDownloadLine(AlbumDownloads.of(
@@ -867,6 +885,7 @@ private fun TvAlbumScreen(
                         item.downloadItem() != null -> { { requests.download(listOf(item)) } }
                         else -> null
                     },
+                    onQueue = tvTrackAddition(context, playback, provider, item, album)?.let { addition -> { adding = addition } },
                 )
             }
         }
@@ -899,6 +918,8 @@ private fun TvFavouritesScreen(
     val artists = items.filterIsInstance<AndroidLibraryItem.Artist>()
     val outcomeLines = rememberOutcomeLines(session, items.mapNotNull { it.favouriteTarget() })
     var note by remember { mutableStateOf<String?>(null) }
+    var adding by remember { mutableStateOf<TvQueueAddition?>(null) }
+    TvAddToUpNext(adding) { adding = null }
     val shown by rememberUpdatedState(publication)
     val title = resources.getString(SharedR.string.library_home_favourites)
     LazyColumn(
@@ -941,6 +962,8 @@ private fun TvFavouritesScreen(
                     },
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
+                    onQueue = tvTrackAddition(context, playback, account.providerInstanceId, track, null)
+                        ?.let { addition -> { adding = addition } },
                 )
             }
         }
@@ -992,6 +1015,34 @@ private fun TvDownloadButton(requested: Boolean, tag: String, onClick: () -> Uni
     }
 }
 
+/** Opens Play Next and Add to Queue for what it sits beside. */
+@Composable
+private fun TvQueueButton(tag: String, onClick: () -> Unit) {
+    val resources = libraryResources()
+    IconButton(onClick = onClick, modifier = Modifier.tvFocus(tag)) {
+        Icon(DulcetIcons.QueueMusic, resources.getString(SharedR.string.queue_add_options))
+    }
+}
+
+/**
+ * Play Next and Add to Queue for one track, as the phone's row menu offers them, or null for a track
+ * that cannot be queued now. A refusal is said.
+ */
+internal fun tvTrackAddition(
+    context: android.content.Context,
+    playback: AndroidPlaybackController?,
+    provider: String,
+    track: AndroidLibraryItem.Track,
+    album: AndroidLibraryItem.Album?,
+): TvQueueAddition? {
+    if (!track.canBeQueued()) return null
+    val library = context.getString(R.string.tv_library_title)
+    fun add(insertion: AndroidQueueInsertion) {
+        if (!queueTrack(playback, provider, track, insertion, library, album)) queueEditRefused(context)
+    }
+    return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
+}
+
 @Composable
 private fun TvFavouriteButton(favourite: Boolean, tag: String, onClick: () -> Unit) {
     val resources = libraryResources()
@@ -1012,8 +1063,9 @@ private fun TvFavouriteButton(favourite: Boolean, tag: String, onClick: () -> Un
 internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                        onUnavailable: () -> Unit, onFavourite: (() -> Unit)? = null, tagPrefix: String = "album.track",
                        default: Boolean = false, byPosition: Boolean = false,
-                       download: AndroidDownloadStatus? = null, onDownloadToggle: (() -> Unit)? = null) {
-    if (onFavourite == null) {
+                       download: AndroidDownloadStatus? = null, onDownloadToggle: (() -> Unit)? = null,
+                       onQueue: (() -> Unit)? = null) {
+    if (onFavourite == null && onQueue == null) {
         TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth(), byPosition, download)
         return
     }
@@ -1021,9 +1073,11 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
     // row stays one target whose action is play.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.weight(1f), byPosition, download)
-        TvFavouriteButton(track.isFavourite(), "$tagPrefix.$position.favourite", onFavourite)
+        if (onFavourite != null) TvFavouriteButton(track.isFavourite(), "$tagPrefix.$position.favourite", onFavourite)
         // The track's own download, one more focus target to the right (spec §14.5).
         if (onDownloadToggle != null) TvDownloadButton(download != null, "$tagPrefix.$position.download", onDownloadToggle)
+        // Play Next and Add to Queue, the last target to the right (spec §14.1).
+        if (onQueue != null) TvQueueButton("$tagPrefix.$position.queue", onQueue)
     }
 }
 
@@ -1117,6 +1171,8 @@ private fun TvPlaylistScreen(
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     var note by remember(rawId) { mutableStateOf<String?>(null) }
+    var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
+    TvAddToUpNext(adding) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
     fun play(current: AndroidLibraryPublication, position: Int, shuffle: Boolean) {
@@ -1202,6 +1258,7 @@ private fun TvPlaylistScreen(
                         onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                         tagPrefix = "playlist.entry",
                         byPosition = true,
+                        onQueue = tvTrackAddition(context, playback, provider, item, null)?.let { addition -> { adding = addition } },
                     )
                 }
             }
