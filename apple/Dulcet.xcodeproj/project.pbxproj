@@ -49,6 +49,7 @@
 		4F48B88859268A5889608532 /* ShellLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F67FB23599436B58646641 /* ShellLayoutTests.swift */; };
 		4F82C110ECDD6A1FBC386F63 /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
 		4FBD72A472F47E81D0CDB4A5 /* PlaybackResourceLoadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA2CF9278ECFE5438004376 /* PlaybackResourceLoadingTests.swift */; };
+		52FA3FB9C4186438307D4881 /* StreamingQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA35037A1C67AF7F16950E02 /* StreamingQualityTests.swift */; };
 		5669BC0C6BCA15020EE89718 /* PlayerTintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F7960D633A721CFE78E827C /* PlayerTintTests.swift */; };
 		57E70A80B0CB0A7E88A62776 /* DulcetAppleProduction.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0981D7D7493E2D1ED3C611B /* DulcetAppleProduction.swift */; };
 		58BF95EDC47EA62C04893F46 /* SQLiteLoadExtensionUnsupported.c in Sources */ = {isa = PBXBuildFile; fileRef = E622424025E4EC04C102373D /* SQLiteLoadExtensionUnsupported.c */; };
@@ -128,6 +129,7 @@
 		F102F29962BAFAAE1D0152DF /* DulcetTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1578A2BFB3C7DA35B067CE9 /* DulcetTVApp.swift */; };
 		F58D0E82A4044C129B8D9243 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5E145A7A5E41CF1ABD3DCC79 /* Assets.xcassets */; };
 		F625D393D296C4E3300A33B2 /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
+		F7C240AD5542032259B0B627 /* StreamingQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA35037A1C67AF7F16950E02 /* StreamingQualityTests.swift */; };
 		FA1287E6812EAB7024215120 /* SystemNowPlayingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD26A3595D7E4C680CDEC168 /* SystemNowPlayingTests.swift */; };
 		FB35628798C11C9BC5749114 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6100847F878919924D928191 /* PrivacyInfo.xcprivacy */; };
 		FFF0C0E1A2D18A4B7F84D4DA /* DulcetCoreDownloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8028BF0FABA383220186FA62 /* DulcetCoreDownloads.swift */; };
@@ -235,6 +237,7 @@
 		DDCE1BDC116FE7FA531E59B7 /* DulcetLibrarySyncAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetLibrarySyncAppTests.swift; sourceTree = "<group>"; };
 		E2B67E5861B5E0CE8DBD6E56 /* DulcetCorePlaybackSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlaybackSystemTests.swift; sourceTree = "<group>"; };
 		E622424025E4EC04C102373D /* SQLiteLoadExtensionUnsupported.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = SQLiteLoadExtensionUnsupported.c; sourceTree = "<group>"; };
+		EA35037A1C67AF7F16950E02 /* StreamingQualityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingQualityTests.swift; sourceTree = "<group>"; };
 		EBEE55499C6E454B3A373AE1 /* DulcetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DulcetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EDFA01E56F7770E58C5D0D00 /* AudioSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionPolicyTests.swift; sourceTree = "<group>"; };
 		F2F83D78299EE3EF933374F5 /* DulcetKitIOSTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DulcetKitIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -435,6 +438,7 @@
 				4F7960D633A721CFE78E827C /* PlayerTintTests.swift */,
 				480370FE166DA88FF853AA52 /* PlaylistsAndLyricsTests.swift */,
 				85F67FB23599436B58646641 /* ShellLayoutTests.swift */,
+				EA35037A1C67AF7F16950E02 /* StreamingQualityTests.swift */,
 				AD26A3595D7E4C680CDEC168 /* SystemNowPlayingTests.swift */,
 				72E86CDF4178AF7B2C5B6AC2 /* UpNextModelTests.swift */,
 			);
@@ -1223,6 +1227,7 @@
 				5669BC0C6BCA15020EE89718 /* PlayerTintTests.swift in Sources */,
 				35B7C8B8870F98AAB99495C6 /* PlaylistsAndLyricsTests.swift in Sources */,
 				16D6049D45117C154FD64119 /* ShellLayoutTests.swift in Sources */,
+				52FA3FB9C4186438307D4881 /* StreamingQualityTests.swift in Sources */,
 				FA1287E6812EAB7024215120 /* SystemNowPlayingTests.swift in Sources */,
 				68FFA0AB77EC8F3B923D2559 /* UpNextModelTests.swift in Sources */,
 			);
@@ -1278,6 +1283,7 @@
 				8D36C8B9E77B9D719582A9EE /* PlayerTintTests.swift in Sources */,
 				6B18C8DCB0C60F90ED3F2BD5 /* PlaylistsAndLyricsTests.swift in Sources */,
 				4F48B88859268A5889608532 /* ShellLayoutTests.swift in Sources */,
+				F7C240AD5542032259B0B627 /* StreamingQualityTests.swift in Sources */,
 				768BBDDAA7FC916FA1FBEB14 /* SystemNowPlayingTests.swift in Sources */,
 				4E23EAAA07826D5A4366E240 /* UpNextModelTests.swift in Sources */,
 			);
