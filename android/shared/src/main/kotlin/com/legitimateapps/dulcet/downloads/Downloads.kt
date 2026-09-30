@@ -58,19 +58,26 @@ public object AndroidDownloads {
 
     /**
      * Stops every download task of [serverId] and closes its controller (spec §14.7 step 4), before
-     * its files and rows are deleted. Returns once WorkManager has recorded the cancellation.
+     * its files and rows are deleted. Returns once WorkManager has recorded the cancellation and a
+     * transfer running in this process has stopped writing (bounded by [TASK_STOP_WAIT_MILLISECONDS]:
+     * a transfer blocked in a read stops when the read returns or times out).
      */
     public suspend fun releaseForSignOut(context: Context, serverId: String) {
-        synchronized(this) {
-            current?.takeIf { it.providerInstanceId == serverId }?.let { it.close(); current = null }
+        val released = synchronized(this) {
+            current?.takeIf { it.providerInstanceId == serverId }?.also { it.close(); current = null }
         }
         // WorkManager initialises itself at process start through its startup provider; only a host
         // test that never initialised it has no instance, and such a test enqueued nothing.
-        if (!WorkManager.isInitialized()) return
-        withContext(Dispatchers.IO) {
-            WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(accountTag(serverId)).result.get()
+        if (WorkManager.isInitialized()) {
+            withContext(Dispatchers.IO) {
+                WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(accountTag(serverId)).result.get()
+            }
         }
+        released?.awaitTasksStopped(TASK_STOP_WAIT_MILLISECONDS)
     }
+
+    /** Longer than the transfer's 15 s read timeout, so a blocked read ends before the wait does. */
+    internal const val TASK_STOP_WAIT_MILLISECONDS: Long = 20_000
 
     /** The WorkManager task registry for [accountId]'s downloads (spec §14.5). */
     public fun tasksFor(context: Context, accountId: String): AndroidDownloadTasks =

@@ -912,17 +912,17 @@ public class AndroidLibraryReader internal constructor(
             return reader
         }
 
-        /**
-         * Closes the process's reader, if any, and calls [completion] on the main thread once it has
-         * terminated (see [close]). A sign-out or account removal waits for it before deleting the
-         * account's rows (§14.7 step 6): [AndroidAccountData.removeAccountData] waits for it.
-         */
         /** [downloadsChanged] on the process's reader, if one is open. */
         @JvmStatic
         public fun notifyDownloadsChanged(rawIds: Set<String>) {
             synchronized(lock) { current }?.downloadsChanged(rawIds)
         }
 
+        /**
+         * Closes the process's reader, if any, and calls [completion] on the main thread once it has
+         * terminated (see [close]). A sign-out or account removal waits for it before deleting the
+         * account's rows (§14.7 step 6): [AndroidAccountData.removeAccountData] waits for it.
+         */
         @JvmStatic
         public fun closeCurrent(completion: () -> Unit = {}) {
             // The current reader, or the one still closing: either may still be using the database.

@@ -16,6 +16,8 @@ import com.legitimateapps.dulcet.core.AndroidLocalPlaybackSource
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.downloads.AndroidDownloads
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** One owner for playback across both native shells, activity recreation and backgrounding. */
 class PlaybackService : MediaSessionService() {
@@ -70,7 +72,11 @@ class PlaybackService : MediaSessionService() {
         val controller = AndroidPlaybackController(this, PlaybackEndpointAccount(
             account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp),
             AndroidLocalPlaybackSource { rawId ->
-                AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }?.localPlan(rawId)
+                // Called from the player's main-thread callbacks: opening the controller reads the
+                // Keystore-backed account record and the database, so none of it runs on main.
+                withContext(Dispatchers.IO) {
+                    AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }?.localPlan(rawId)
+                }
             })
         playback = controller
         playbackAccountId = account.id
