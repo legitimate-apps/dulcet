@@ -72,6 +72,7 @@ struct DulcetAccountConnectionView: View {
                     heading
                     connectionForm
                     statusPanel
+                    DulcetStreamingQualitySection(store: store)
                 }
             }
             .padding(DulcetSpacing.xl)

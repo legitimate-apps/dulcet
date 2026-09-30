@@ -110,6 +110,12 @@ public class StreamingQualityPolicy(preference: StreamingQualityPreference = Str
     /** @return whether [currentQuality] changed. */
     public fun setPreference(preference: StreamingQualityPreference): Boolean = update(State(preference, state.network))
 
+    /**
+     * Restores the preference from its stored form ([StreamingQualityPreference.encoded]); an
+     * unreadable value restores the default. @return whether [currentQuality] changed.
+     */
+    public fun restore(stored: String?): Boolean = setPreference(StreamingQualityPreference.decode(stored))
+
     /** @return whether [currentQuality] changed. */
     public fun setNetwork(network: NetworkCostClass): Boolean = update(State(state.preference, network))
 

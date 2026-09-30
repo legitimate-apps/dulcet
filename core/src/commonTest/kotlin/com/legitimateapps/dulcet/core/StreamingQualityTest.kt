@@ -107,6 +107,11 @@ class StreamingQualityTest {
         )
         assertTrue(policy.setNetwork(NetworkCostClass.Metered))
         assertEquals(StreamingQuality.Kbps256, policy.currentQuality)
+
+        assertTrue(policy.restore("unmetered=original;metered=96"))
+        assertEquals(StreamingQuality.Kbps96, policy.currentQuality)
+        assertTrue(policy.restore(null), "an absent stored value restores Original")
+        assertEquals(StreamingQualityPreference.Default, policy.preference)
     }
 
     @Test
