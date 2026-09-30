@@ -7203,6 +7203,22 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-09-30 — Android genres and album orders (§16.9, §16.14).** The Android library showed no
+genres, and its Albums screen read `alphabeticalByName` only, where the Apple shells offer a Genres
+section and a sort picker. Both apps now open the same reader windows the Apple facade opens:
+`getGenres` for the genre list, `getSongsByGenre` for a genre's page (its name, its song count, Play,
+Shuffle and its songs, as on Apple), and `getAlbumList2` with the order chosen from the Apple shells'
+seven (`alphabeticalByName`, `alphabeticalByArtist`, `newest`, `recent`, `frequent`, `highest`,
+`random`). Each order is its own window, read from its start; nothing is re-sorted in the shell. The
+choice is kept on the device, whatever account is signed in, as Apple keeps it. On the TV the orders
+are a row of buttons above the albums, and choosing one leaves the remote on it; the library keeps
+its default focus. One adjacent gap closed: the TV's list status never said "Available offline" for
+a local view (§16.14's table), which an order never read and chosen offline reaches; it now does, as
+the phone's did. Evidence is host tests over the production `LibrarySession` and
+`AndroidLibraryReader` against a loopback server: the disposable server's corpus carries no genres
+(§16.9), so no live run opens a genre. Left open: genre play is observed at the action the phone's
+screen calls, and not at all on the TV.
+
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
 Both apps now offer most of what the Apple shells offer (not yet: Play Next and Add to Queue on search
