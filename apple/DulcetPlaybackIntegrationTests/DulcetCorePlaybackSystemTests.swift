@@ -136,6 +136,60 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                       "the discard must be what restarted playback: \(fixture.controller.preloadLog)")
     }
 
+    /// `Stopped` also follows a natural end. While a preload takes over, the ended session stays
+    /// current, reading Stopped, until `AdvancedToPreloaded` -- and the lock screen already offers
+    /// Play for it. A Play pressed in that gap (a remote Play, a media key, the app's own) is not
+    /// Play after a stop: restarting there would discard the preload and replay the ended entry
+    /// over the one about to play. It goes to the engine as a plain play, as it always did.
+    func testAPlayWhileAnEndIsHeldForThePreloadDoesNotReplayTheEndedEntry() async throws {
+        for press in ["remote", "app"] {
+            let fixture = makeFixture(tracks: ["a", "b"])
+            fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+            let first = try await fixture.waitForPrepare(rawID: "a")
+            fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+            fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+            let preload = try await fixture.waitForPreload(rawID: "b")
+            await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+            let endedSession = try XCTUnwrap(
+                fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
+
+            fixture.emit(.ready(attemptID: preload.attempt, duration: 120, seekability: .seekable))
+            fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+            await fixture.waitFor { fixture.queue.snapshot().snapshot?.currentSession?.phase == "Stopped" }
+            // The held end is reached, or nothing below means anything.
+            XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.phase, "Stopped", press)
+            XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId,
+                           endedSession, "\(press): the ended session is still current")
+            XCTAssertTrue(fixture.controller.preloadLog.contains("in-engine"), press)
+
+            let preparesBefore = fixture.engine.count("prepare")
+            let playsBefore = fixture.engine.count("play")
+            let stopsBefore = fixture.engine.count("stop")
+            if press == "remote" {
+                let router = try XCTUnwrap(fixture.engine.remoteRouter)
+                XCTAssertTrue(router.handleRemotePlaybackCommand(.play(sessionID: .init(endedSession))), press)
+            } else {
+                fixture.controller.send(.play)
+            }
+            // A replay would prepare a again; give it the whole window to happen.
+            await fixture.waitFor { fixture.engine.count("prepare") > preparesBefore }
+            XCTAssertEqual(fixture.engine.count("prepare"), preparesBefore,
+                           "\(press): the ended entry must not be prepared again")
+            XCTAssertEqual(fixture.engine.count("discard"), 0, "\(press): the preload must not be dropped")
+            XCTAssertEqual(fixture.engine.count("stop"), stopsBefore, "\(press): nor the engine stopped")
+            XCTAssertFalse(fixture.controller.preloadLog.contains { $0.hasPrefix("discarded") },
+                           "\(press): \(fixture.controller.preloadLog)")
+            XCTAssertEqual(fixture.engine.count("play"), playsBefore + 1,
+                           "\(press): the Play reaches the engine as a plain play, as before")
+
+            fixture.emit(.advancedToPreloaded(oldAttemptID: first, newAttemptID: preload.attempt))
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.current.id.rawID == "b" }
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.current.id.rawID, "b",
+                           "\(press): the preload takes over")
+            XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 1, press)
+        }
+    }
+
     /// Moves are expressed against what the app can SHOW; entries the catalog cannot name are
     /// absent there but present in the core, so the controller must map the position.
     func testAMoveAgainstAPresentationThatHidesAnEntryLandsWhereTheListShowsIt() async throws {
@@ -460,6 +514,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             XCTAssertEqual(fixture.controller.currentPresentation.status, .ready, press)
             XCTAssertEqual(atRest.current.id.rawID, "a", press)
             XCTAssertFalse(atRest.isPlaying, press)
+            XCTAssertEqual(atRest.elapsed, .seconds(40),
+                           "\(press): shown where Play will resume, the position the stop saved")
 
             let preparesBefore = fixture.engine.count("prepare")
             let playsBefore = fixture.engine.count("play")

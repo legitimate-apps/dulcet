@@ -441,6 +441,25 @@ internal class PlaybackQueueController(
         return restoreCurrentPaused()
     }
 
+    /**
+     * Play after a stop (§12.1): restarts the selected entry, as [restartCurrent] does, only when
+     * the current attempt was STOPPED -- its terminal outcome is `Skipped`. `Stopped` also follows a
+     * natural end, and while an end is held for a preload (§12.8) the ended session stays current
+     * until `AdvancedToPreloaded`: restarting there would discard the preload the engine is about
+     * to play and replay the ended entry over it. So a natural end, a held end, a live, failed or
+     * absent session all change nothing.
+     */
+    fun restartAfterStop(): PlaybackQueueTransition {
+        if (endHeldForPreload) return emptyTransition()
+        val session = playback.currentSession ?: return emptyTransition()
+        val attempt = session.currentAttempt
+        if (attempt.phase != PlaybackAttemptPhase.Stopped) return emptyTransition()
+        val outcome = session.terminalOutcomes.lastOrNull { it.attemptId == attempt.attemptId }
+        if (outcome !is PlaybackTerminalOutcome.Skipped) return emptyTransition()
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        return restartCurrent(serverId)
+    }
+
     /** Transport restart keeps the persisted selection and every queue entry identity. */
     fun restartCurrent(serverId: ServerId): PlaybackQueueTransition {
         if (queues.activeServerId() != serverId) return emptyTransition()

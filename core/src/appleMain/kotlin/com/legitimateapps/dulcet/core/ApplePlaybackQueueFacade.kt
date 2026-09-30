@@ -378,24 +378,15 @@ public class ApplePlaybackQueueClient private constructor(
     }
 
     /**
-     * Play after a stop (§12.1): the engine holds nothing for the current session -- its attempt
-     * was `Stopped` by a skip or torn down by the system -- so a play addressed to it would reach
-     * no item. The selected entry starts again as a new session, as Android's Play after Stop
-     * does, through the same core call ([PlaybackQueueController.restartCurrent]); a position the
-     * stop saved is restored as it is for any start. Any other session -- one the engine still
-     * holds, one that failed (that is [retryCurrent]), or none -- changes nothing.
+     * Play after a stop (§12.1): the current attempt was stopped (`Skipped`), the engine's stop
+     * removed its item, and a play addressed to it would reach nothing. The selected entry starts
+     * again as a new session, as Android's Play after Stop does, through the same core restart
+     * ([PlaybackQueueController.restartAfterStop]); a position the stop saved is restored as it is
+     * for any start. A session that ended naturally -- including one whose end is held while a
+     * preload takes over -- or is live, failed (that is [retryCurrent]) or absent changes nothing.
      */
     public fun restartStoppedCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
-        val controller = controllerOrThrow()
-        val phase = controller.snapshot().currentSession?.currentAttempt?.phase
-        val server = controller.activeServerId()
-        if (server == null ||
-            (phase != PlaybackAttemptPhase.Stopped && phase != PlaybackAttemptPhase.TornDown)
-        ) {
-            PlaybackQueueTransition(controller.snapshot(), null, emptyList())
-        } else {
-            controller.restartCurrent(server)
-        }
+        controllerOrThrow().restartAfterStop()
     }
 
     public fun preloadNextForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =

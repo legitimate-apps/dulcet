@@ -550,6 +550,37 @@ class ApplePlaybackQueueFacadeTest {
         driver.close()
     }
 
+    @Test
+    fun aNaturalEndHeldForAPreloadIsNotAStopAndIsNeverRestarted() {
+        val fixture = fixture()
+        val client = fixture.client
+        val started = assertNotNull(
+            client.replaceAndStart(queueRequest(listOf("track-a", "track-b"))).startDirective,
+        )
+        client.recordReady(started.attemptId, 180_000, "seekable")
+        client.recordPlaybackProgressBegan(started.attemptId, 1_788_000_000_000, 1_000)
+        val preload = assertNotNull(client.preloadNextForSession(started.playbackSessionId).preloadDirective)
+        assertEquals("track-b", preload.rawId)
+
+        val ended = client.recordEndedNaturally(started.attemptId, 180_000)
+        // The held end: the ended session stays current, reading Stopped, until the takeover. The
+        // control -- without it this state is never reached and the call below proves nothing.
+        assertNull(ended.startDirective, "the end is held for the preload")
+        assertEquals("Stopped", ended.snapshot?.currentSession?.phase)
+        assertEquals(started.playbackSessionId, ended.snapshot?.currentSession?.playbackSessionId)
+
+        val play = client.restartStoppedCurrent()
+        assertNull(play.startDirective, "a Play in the held end must not replay the ended entry")
+        assertNull(play.discardedPreloadAttemptId, "nor discard the preload about to play")
+        assertEquals(started.playbackSessionId, play.snapshot?.currentSession?.playbackSessionId)
+
+        // The takeover still happens, onto the preload.
+        val advanced = client.recordAdvancedToPreloaded(started.attemptId, preload.attemptId)
+        assertEquals(preload.playbackSessionId, advanced.snapshot?.currentSession?.playbackSessionId)
+        assertEquals(1, advanced.snapshot?.currentIndex)
+        fixture.driver.close()
+    }
+
     private fun insertion(rawIds: List<String>, mode: String) = ApplePlaybackQueueInsertionDto(
         items = rawIds.map { ApplePlaybackQueueItemDto("server", it, 180_000) },
         sourceKind = "search",

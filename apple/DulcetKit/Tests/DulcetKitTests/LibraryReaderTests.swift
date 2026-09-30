@@ -889,11 +889,16 @@ private final class HeartTestPlayback: DulcetPlaybackControlling {
     }
 }
 
-/// How a flush tells a save on this platform, in the order the core's outbox does it (spec §18.3):
-/// the acknowledgement is adopted into the cache, every open window and search mentioning the
-/// target is republished, and only THEN is the outcome told -- two posts to the main thread with a
-/// gap between them. Android's watch read the state inside that gap and drew a saved heart hollow
-/// (#172). The Apple heart must stay filled through it, however long it lasts.
+/// A save told in the order the core's outbox tells it (spec §18.3): the republication of every
+/// open window mentioning the target, then the outcome, as two separate main-thread deliveries.
+/// Android's watch read the core's state between the two and drew a saved heart hollow (#172).
+///
+/// What this guards is the SWIFT side: the library session's overlay and recorded value, read at
+/// each delivery. The reader here is a synchronous fake, so the core's own order -- adopting the
+/// acknowledgement into the cache before republishing, so the republication carries the saved
+/// value -- is ASSUMED from `MutationOutbox.flush`, not measured by this test; the republication
+/// below is scripted to carry that value. Nothing on Apple reads the core's favourite state
+/// between the two deliveries, which is the read Android's defect needed.
 enum HeartScreen: Sendable {
     /// A track with no cache row -- only ever seen in a queue -- so no screen shows it and the
     /// flush republishes nothing for it. Android's failing case.
@@ -958,10 +963,7 @@ func heartThroughASave(on screen: HeartScreen) async throws -> [String] {
     // The flush: republished with the adopted value (or nothing, with no screen) ...
     albumScreen?.publish(window([item("track", "t-playing", favourite: true)], sequence: 3))
     look("republished")
-    // ... the gap between the two posts, drawn at its widest ...
-    try await Task.sleep(for: .milliseconds(200))
-    look("gap")
-    // ... and only then the outcome.
+    // ... and only then, as a separate delivery, the outcome.
     reader.outcomeHandler?(DulcetFavouriteOutcome(
         kind: "saved", targetKind: "track", rawID: "t-playing", field: "favourite", errorKind: nil))
     look("saved")
@@ -979,7 +981,6 @@ func theSavedHeartOfThePlayingTrackStaysFilledBetweenTheRepublicationAndTheOutco
         "tapped: filled",
         "pending: filled",
         "republished: filled",
-        "gap: filled",
         "saved: filled",
     ], "the heart of a saved track never shows hollow, at any step of the flush (\(screen))")
 }
