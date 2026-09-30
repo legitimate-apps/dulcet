@@ -292,6 +292,14 @@ struct DulcetNowPlayingView: View {
     static let coverToTitleSpacing = DulcetSpacing.lg
     static let playerToQueueSpacing = DulcetSpacing.xl
     static let sheetVerticalPadding = DulcetSpacing.md
+    /// Each of the player's rating stars: a touch target, and on a television a focus target.
+    static var ratingStarSide: CGFloat {
+#if os(tvOS)
+        64
+#else
+        44
+#endif
+    }
     static let minimumHorizontalPadding = DulcetSpacing.lg
 
     /// Lyrics in one column: a phone's or a narrow window's width, and on a television wide enough
@@ -626,6 +634,10 @@ struct DulcetNowPlayingView: View {
     @ViewBuilder
     private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
         VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
+#if !os(macOS)
+            // The playing track's stars (§16.20); the Mac draws them in the window's toolbar.
+            DulcetNowPlayingRatingControl(track: player.current, size: .title3, minimumSide: Self.ratingStarSide)
+#endif
 #if os(tvOS)
             // The heart and lyrics sit under the transport, where Down from it lands.
             HStack(spacing: DulcetSpacing.lg) {
