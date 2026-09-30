@@ -138,6 +138,7 @@ internal enum class PlaybackEventDisposition {
     RejectedUnregisteredPreload,
     RejectedInvalidPreload,
     RejectedAttemptCollision,
+    DroppedAfterFailure,
 }
 
 internal data class PlaybackEventRecordResult(
@@ -330,6 +331,13 @@ internal class PlaybackCoreStateMachine {
 
         if (event is PlaybackEngineEvent.AttemptReplaced) {
             return recordAttemptReplaced(session, event)
+        }
+        if (session.currentAttempt.phase == PlaybackAttemptPhase.Failed && event.reportsPlayback()) {
+            // A failed attempt is over. A platform player goes on changing state after its item
+            // fails -- it pauses, its observers fire late -- and a report of that would move the
+            // attempt out of Failed, leaving Try Again (§12.1) nothing to retry. Terminal events
+            // (a stop, a teardown, a replacement) still apply.
+            return PlaybackEventRecordResult(PlaybackEventDisposition.DroppedAfterFailure, emptyList())
         }
         if (event is PlaybackEngineEvent.PositionChanged) {
             val cadence = PositionCadenceCoalescer.reduce(cadenceState, event)
@@ -806,6 +814,26 @@ internal class PlaybackCoreStateMachine {
                     diagnostics.retiredAttemptTombstoneEvictionCount + 1,
             )
         }
+    }
+
+    /** Reports of an attempt being played, as opposed to its ending, failing or being replaced. */
+    private fun PlaybackEngineEvent.reportsPlayback(): Boolean = when (this) {
+        is PlaybackEngineEvent.Ready,
+        is PlaybackEngineEvent.PlaybackProgressBegan,
+        is PlaybackEngineEvent.Buffering,
+        is PlaybackEngineEvent.BufferingEnded,
+        is PlaybackEngineEvent.Paused,
+        is PlaybackEngineEvent.Resumed,
+        is PlaybackEngineEvent.PositionChanged,
+        is PlaybackEngineEvent.DurationChanged,
+        is PlaybackEngineEvent.SeekCompleted,
+        is PlaybackEngineEvent.SeekFailed,
+        is PlaybackEngineEvent.RouteChanged,
+        is PlaybackEngineEvent.InterruptionBegan,
+        is PlaybackEngineEvent.InterruptionEnded,
+        is PlaybackEngineEvent.RateChanged,
+        -> true
+        else -> false
     }
 
     private fun droppedUnknownAttempt(): PlaybackEventRecordResult {

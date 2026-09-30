@@ -153,6 +153,43 @@ class PlaybackRetryScrobbleTest {
         assertEquals(1, rig.submittedPlays, "the accumulator carries across the attempts")
     }
 
+    /**
+     * A platform player goes on changing state after its item fails -- it pauses, its observers
+     * fire late -- and a report of that must not take the attempt out of Failed: a trailing
+     * Paused used to make it Paused, and Try Again then had nothing to retry.
+     */
+    @Test
+    fun playbackReportsTrailingAFailureLeaveItFailedAndRetryable() = rig(600.seconds) { rig ->
+        val start = assertNotNull(rig.controller.replaceAndStart(rig.request).startDirective)
+        rig.play(start.attemptId, 600.seconds, 0, 40)
+        rig.event(
+            PlaybackEngineEvent.FailedAfterPartial(start.attemptId, 40.seconds, DomainError.Transport.Unreachable),
+        )
+        fun phase() = rig.controller.snapshot().currentSession?.currentAttempt?.phase
+        assertEquals(PlaybackAttemptPhase.Failed, phase(), "the failure state must be reached")
+
+        listOf(
+            PlaybackEngineEvent.Paused(start.attemptId, 40.seconds),
+            PlaybackEngineEvent.Resumed(start.attemptId, 40.seconds),
+            PlaybackEngineEvent.PlaybackProgressBegan(
+                start.attemptId,
+                PlaybackWallClockTime(1_788_000_900_000),
+                40.seconds,
+            ),
+            PlaybackEngineEvent.PositionChanged(start.attemptId, 41.seconds, PlaybackMonotonicTime(900.seconds)),
+            PlaybackEngineEvent.Buffering(start.attemptId, 41.seconds),
+            PlaybackEngineEvent.BufferingEnded(start.attemptId, 41.seconds),
+            PlaybackEngineEvent.Ready(start.attemptId, 600.seconds, PlaybackSeekability.Seekable),
+        ).forEach { trailing ->
+            rig.event(trailing)
+            assertEquals(PlaybackAttemptPhase.Failed, phase(), "after $trailing")
+        }
+
+        val retried = rig.retry()
+        assertEquals(start.playbackSessionId, retried.playbackSessionId, "same session")
+        assertEquals(40.seconds, retried.resumePosition, "from where it failed, not where a late report said")
+    }
+
     @Test
     fun tryingAgainTwiceBeforeStartStaysInOneSession() = rig(180.seconds) { rig ->
         val start = assertNotNull(rig.controller.replaceAndStart(rig.request).startDirective)
