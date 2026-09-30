@@ -58,6 +58,18 @@
     <string name="library_local_view">Available offline</string>
 
     <string name="library_not_available_offline">Not available offline</string>
+    <string name="download_album">Download</string>
+    <string name="download_album_remove">Remove download</string>
+    <string name="download_track">Download</string>
+    <string name="download_track_remove">Remove download</string>
+    <string name="download_downloaded">Downloaded</string>
+    <string name="download_queued">Waiting to download</string>
+    <string name="download_in_progress">Downloading</string>
+    <string name="download_in_progress_percent">Downloading %1$d%%</string>
+    <string name="download_will_retry">Download will try again</string>
+    <string name="download_needs_attention">Download stopped. Reconnect your account.</string>
+    <string name="download_album_progress">%1$d of %2$d downloaded</string>
+    <string name="download_album_complete">Downloaded</string>
     <string name="library_plays_on_reconnect">Not downloaded. It\'ll play when you reconnect.</string>
     <string name="library_artist_nothing_playable">Nothing on this artist\'s albums can play right now.</string>
     <string name="library_try_again">Try again</string>
