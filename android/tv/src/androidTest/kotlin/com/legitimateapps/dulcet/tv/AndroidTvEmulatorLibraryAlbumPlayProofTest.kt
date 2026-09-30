@@ -28,10 +28,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The TV app's library on an Android TV emulator, driven with remote keys: at launch focus is on
- * Search in the navigation row with no on-screen keyboard; the search field is reached with DOWN and
- * brings up the keyboard only when selected; RIGHT from Search reaches Library; the albums screen
- * opens; an album with several tracks opens with focus on Play; the centre key plays it. Required:
+ * The TV app's library on an Android TV emulator, driven with remote keys: the app opens on the
+ * library, with focus on the bar's Library tab or the first card and no on-screen keyboard; in
+ * search, the field is reached with DOWN and brings up the keyboard only when selected; RIGHT from
+ * Search reaches Library; the albums screen opens; an album with several tracks opens with focus on Play; the centre key plays it. Required:
  * the production service queues
  * every track of the album in the server's order, media time advances on the first, and the TV's
  * Now Playing is in front. The screen's semantics only say where things are; every action is a key
@@ -56,11 +56,20 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
             val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ActivityScenario.launch<TvSearchActivity>(launch).use { scenario ->
-                // Launch: the remote starts on Search in the navigation row, and nothing brings up
-                // the on-screen keyboard, which would take the D-pad until Back closed it.
-                awaitNode("Search in the navigation row focused at launch") { focused("search.open") }
-                check(!focused("search.query")) { "The search field must not take focus at launch" }
+                // Launch: the library, with the remote on the bar's Library tab or, once the home
+                // rows arrive, their first card -- never on Sign out -- and no on-screen keyboard,
+                // which would take the D-pad until Back closed it.
+                awaitNode("the library at launch, the remote on it") {
+                    exists("library.surface") && (focused("library.open") || focused("library.home.0.item.0"))
+                }
+                check(!exists("search.query")) { "The app must not open on search" }
                 check(!keyboardShown(scenario)) { "No on-screen keyboard at launch" }
+                // Search, from the bar: the remote rests on its tab, not in the field.
+                focus("search.open")
+                remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                awaitNode("search open, the remote on its tab") { exists("search.query") && focused("search.open") }
+                check(!focused("search.query")) { "The search field must not take focus when search opens" }
+                check(!keyboardShown(scenario)) { "No on-screen keyboard when search opens" }
                 // DOWN reaches the field without the keyboard; selecting it with the centre key asks
                 // for the keyboard, and Back closes it and leaves the field focused.
                 remote(KeyEvent.KEYCODE_DPAD_DOWN)

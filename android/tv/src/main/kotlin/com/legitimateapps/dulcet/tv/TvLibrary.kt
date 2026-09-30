@@ -132,8 +132,9 @@ import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /*
- * The TV app once an account exists (spec §3, Phase 5): search and the library, each a root, with the
- * library's album, artist, albums and artists screens pushed above it. Library data comes from the
+ * The TV app once an account exists (spec §3, Phase 5): the library and search, each a root, with the
+ * library's album, artist, albums and artists screens pushed above it. The app opens on the library,
+ * as the phone does: a person turning on the TV expects their music, not an empty search field. Library data comes from the
  * account's one LibrarySession (§16.18), whose windows each screen opens while it is composed and
  * closes when it goes, as the phone's do; playing goes through the service's controller with the
  * phone's own queue builders (`LibraryPlay.kt`). Now Playing is its own activity, reachable from the
@@ -175,7 +176,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
     val context = LocalContext.current
     val foreground = hostInForeground()
     val session = remember(account) { LibrarySession(context, account, foreground) }
-    val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_SEARCH) }
+    val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
     val playback = rememberPlaybackController()
@@ -186,16 +187,16 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
         if (routes.size > 1) {
             val left = routes.removeAt(routes.lastIndex)
             if (left !in routes) { states.removeState(left); memory.forget(left) }
-        } else if (routes.single() != ROUTE_SEARCH) {
-            show(routes, states, memory, ROUTE_SEARCH)
+        } else if (routes.single() != ROUTE_LIBRARY) {
+            show(routes, states, memory, ROUTE_LIBRARY)
         }
     }
     val navigator = remember(routes) {
         TvNavigator(open = { route -> routes += route }, back = ::back)
     }
-    // Back walks down the routes, then from the library root to search, the screen the app opens on;
-    // from search it leaves the app.
-    BackHandler(enabled = routes.size > 1 || routes.single() != ROUTE_SEARCH) { navigator.back() }
+    // Back walks down the routes, then from the search root to the library, the screen the app opens
+    // on; from the library it leaves the app.
+    BackHandler(enabled = routes.size > 1 || routes.single() != ROUTE_LIBRARY) { navigator.back() }
 
     val top = routes.last()
     val navigation = remember { TvNavigationFocus() }
@@ -237,8 +238,8 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
         }
     }
     // On a return to the foreground the screens above are already open when start() reconnects. At
-    // launch the TV shows search, and the library's windows open when the person turns to it —
-    // usually after the reconnect has read the epoch; each publishes its cache before its own read.
+    // launch the TV shows the library, whose home rows open as it composes; each publishes its cache
+    // before its own read, as the phone's do.
     LibraryLifecycle(session)
 }
 
@@ -259,7 +260,7 @@ internal class TvNavigationFocus {
     val search = FocusRequester()
     val library = FocusRequester()
     val account = FocusRequester()
-    var current: FocusRequester = search
+    var current: FocusRequester = library
 }
 
 /**
@@ -342,7 +343,8 @@ internal val LocalTvNavFocus = staticCompositionLocalOf<FocusRequester?> { null 
 
 /**
  * Whose account, on which server, and Sign out. Pushed above whatever was showing, so Back returns
- * to it; the bar's Account tab stays lit meanwhile.
+ * to it; the bar's Account tab stays lit meanwhile. It opens with focus on Back, never on Sign out:
+ * a destructive action is never where a remote's centre key lands unasked.
  */
 @Composable
 internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
@@ -355,7 +357,7 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Row { TvAction(stringResource(R.string.tv_back), "account.back", onClick = navigator.back) }
+            Row { TvAction(stringResource(R.string.tv_back), "account.back", default = true, onClick = navigator.back) }
         }
         item {
             Text(stringResource(SharedR.string.account_signout_account_title), style = MaterialTheme.typography.displaySmall)
@@ -368,7 +370,7 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        item { TvSignOutEntry(default = true) }
+        item { TvSignOutEntry() }
     }
 }
 
@@ -439,6 +441,14 @@ private fun pendingPosition(prefix: String): Int? =
 private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playback: AndroidPlaybackController?,
                           navigator: TvNavigator) {
     EnterRoute()
+    // The screen the app opens on. Its first card takes focus when it arrives; until then — an empty
+    // library, one still loading, or one that cannot be read — the remote waits on the bar's Library
+    // tab, so the first key press moves from a known place rather than from nowhere.
+    val route = LocalTvRouteFocus.current
+    val navFocus = LocalTvNavFocus.current
+    LaunchedEffect(Unit) {
+        if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
+    }
     val rows = rememberHomeRows(session)
     val observation by session.observation.collectAsState()
     val list = rememberLazyListState()

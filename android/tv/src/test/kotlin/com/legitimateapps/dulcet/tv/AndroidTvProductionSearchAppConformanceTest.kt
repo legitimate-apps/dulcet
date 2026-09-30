@@ -27,6 +27,9 @@ class AndroidTvProductionSearchAppConformanceTest {
 
     @Test fun conf41ProductionQueryMergesAndRoutesOpaqueId() {
         val app = RuntimeEnvironment.getApplication()
+        // The app opens on the library; search is the bar's other root.
+        compose.onNodeWithTag("search.open").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { compose.onAllNodesWithTag("search.query").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("search.query").performClick()
         compose.onNodeWithTag("search.query").performKeyInput {
             pressKey(Key.D)

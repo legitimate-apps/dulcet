@@ -213,8 +213,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("Back to the artists, on $ARTIST") { focused(artist) }
         back()
         await("Back to the library, on Artists") { focused("library.view.artists") }
+        // The library is the screen the app opens on: Back from search returns to it.
+        show("search.open")
+        await("search") { exists("search.query") && !exists("library.surface") }
         back()
-        await("Back from the library to search") { exists("search.query") && !exists("library.surface") }
+        await("Back from search to the library") { exists("library.surface") && !exists("search.query") }
         println("TV NAVIGATION OBSERVED albums=$album artist=$ARTIST artist-album=$second")
     }
 

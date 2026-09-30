@@ -95,13 +95,14 @@ internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?>
 
 /**
  * The Sign out entry. It lives in the shell's account places — the library's Account screen, and
- * the connect screen when a saved account cannot be read — never in the navigation bar.
+ * the connect screen when a saved account cannot be read — never in the navigation bar. It is never
+ * a screen's default focus: a remote reaches it only by moving to it.
  */
 @Composable
-internal fun TvSignOutEntry(default: Boolean = false, modifier: Modifier = Modifier) {
+internal fun TvSignOutEntry(modifier: Modifier = Modifier) {
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
-    Button(onClick = actions.requestSignOut, modifier = modifier.tvFocus("tv.account.signout", default)) {
+    Button(onClick = actions.requestSignOut, modifier = modifier.tvFocus("tv.account.signout")) {
         Text(stringResource(SharedR.string.account_signout_action))
     }
 }
