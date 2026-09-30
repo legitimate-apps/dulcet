@@ -4652,6 +4652,21 @@ about publication, not about the cache:
   menu. It is offered only while the reader holds the account the track came from. The Mac draws it
   in the Now Playing window's toolbar; iPhone and iPad in the player's footer beside AirPlay and
   Lyrics; Apple TV under the transport, reached by focus and pressed with the remote.
+- **The rating control (2026-09-30).** A rating is five stars on every platform, set through the
+  same session and outbox as the heart and presented the same way: the value set shows at once, a
+  pending or held change is marked as the heart marks it, and a change that is not saved or is
+  superseded shows the server's value again with the heart's words. Pressing a star rates that many
+  stars; pressing the star already shown removes the rating, which sends `setRating` with 0. For a
+  screen reader the stars are one adjustable element on the platforms whose readers adjust (VoiceOver
+  on macOS and iOS, TalkBack), 0 to 5 in whole stars. On a television each star is its own focus
+  stop, set with Select or the centre key. Now Playing shows the playing track's stars beside its
+  heart, only while the reader holds the track's account; a queued track carries no rating of its
+  own, so Now Playing shows what the screens last published or, on Android, what the reader's watch
+  knows (the same watch as the heart, keeping the value the server acknowledged for a track with no
+  cache row). Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
+  Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84's
+  rating half runs against the disposable server through the production session
+  (`RatingConformanceTest`), reading the server's `userRating` back after every write.
 - The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value;
   they use the same outbox and the same publish-time overlay with a verified delivery of their own
   (§18.6).
@@ -7342,6 +7357,19 @@ service is bound instead of refusing with a notice. OBSERVED in host tests only
 `TvQueueAdditionTest`); not yet driven on an emulator or device. One known difference from Apple: a
 stop while the new queue is still loading keeps the old queue on Android (ASSUMED that Apple installs
 the new one stopped).
+
+**2026-09-30 — Ratings: five stars on every platform (§16.20).** The outbox, the overlay and the
+facades already carried `setRating`; no shell offered it, so CONF-84's rating half was exercised by
+core tests alone. Every platform now has a 0-5 star control on Now Playing, beside the heart, and in
+the track menu where the platform has one; §16.20 gains the control's rules. Three are new. (1)
+Pressing the star already shown removes the rating (`setRating` 0), so no separate clear control is
+needed. (2) Accessibility: one adjustable element where the screen reader adjusts, one focus stop
+per star on a television. (3) Now Playing's value: a queued track carries no rating, so Apple reads
+the value the screens last published for it and Android gains `watchRating` beside `watchFavourite`,
+which keeps the acknowledged value for a track with no cache row for the same reason the heart's
+watch does. The core gains `RatingConformanceContract`, driving the production session against the
+disposable server: rate, offline compaction and reconnect, and 0, each read back raw. Lock-screen
+rating stays unregistered (§12.10): no system entry reaches the outbox yet.
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
