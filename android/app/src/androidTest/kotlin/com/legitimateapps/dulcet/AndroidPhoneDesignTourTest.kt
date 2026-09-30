@@ -89,7 +89,9 @@ class AndroidPhoneDesignTourTest {
             // lyrics sheet are shot with lines that light up.
             shots.step("now-playing") {
                 click("playlist.entry.1")
-                awaitTag("player.full") && awaitText(LYRICS_TRACK) && shots.settle(4_000)
+                // The track's title IN THE PLAYER: the page beneath can match a plain text wait while
+                // a cold service is still publishing the queue. Then prove it held to the shot.
+                awaitTag("player.full") && awaitPlayerTitle() && shots.settle(2_000) && awaitPlayerTitle() && shots.settle(2_000)
             }
             shots.step("up-next") {
                 click("player.queue")
@@ -166,9 +168,11 @@ class AndroidPhoneDesignTourTest {
         }
     }.isSuccess
 
-    private fun awaitText(text: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
-        compose.waitUntil("$text on screen", timeoutMillis) {
-            compose.onAllNodes(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+    /** The playing track's title as the player itself shows it, not a row on the page beneath. */
+    private fun awaitPlayerTitle(timeoutMillis: Long = 30_000): Boolean = runCatching {
+        compose.waitUntil("player title", timeoutMillis) {
+            compose.onAllNodes(hasText(LYRICS_TRACK) and hasAnyAncestor(hasTestTag("player.full")), useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
         }
     }.isSuccess
 
