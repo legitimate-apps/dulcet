@@ -299,6 +299,41 @@ class DownloadPolicyTest {
         )
     }
 
+    @Test
+    fun removingOneDownloadDeletesItsFilesAndRowAndLeavesEveryOtherRow() = withFixture { fixture ->
+        fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        val completed = fixture.engine.enqueue(request())
+        fixture.engine.writeCompletedTemporaryFile(completed.downloadId, MP3_BYTES)
+        assertIs<DownloadPromotionResult.Promoted>(
+            fixture.engine.promote(
+                completed.downloadId,
+                DownloadResponseMetadata("audio/mpeg", PlaybackContentLength.Exact(MP3_BYTES.size.toLong())),
+            ),
+        )
+        val partial = fixture.engine.enqueue(
+            request(identity = DownloadIdentity(SERVER_ID, "opaque:partial", DownloadIdentity.ORIGINAL_PROFILE)),
+        )
+        fixture.engine.writeCompletedTemporaryFile(partial.downloadId, MP3_BYTES)
+        val kept = fixture.engine.enqueue(
+            request(identity = DownloadIdentity(SERVER_ID, "opaque:kept", DownloadIdentity.ORIGINAL_PROFILE)),
+        )
+        assertEquals(
+            listOf(completed.downloadId, partial.downloadId, kept.downloadId),
+            fixture.engine.records(SERVER_ID).map(DownloadRecord::downloadId),
+        )
+
+        assertEquals(completed.downloadId, fixture.engine.remove(completed.identity)?.downloadId)
+        assertEquals(partial.downloadId, fixture.engine.remove(partial.identity)?.downloadId)
+
+        assertFalse(FileSystem.SYSTEM.exists(fixture.files.destinationPath(completed)))
+        assertFalse(FileSystem.SYSTEM.exists(fixture.files.temporaryPath(partial)))
+        assertNull(fixture.engine.record(completed.downloadId))
+        assertNull(fixture.engine.record(partial.downloadId))
+        assertIs<OfflinePlaybackPlanResult.NotDownloaded>(fixture.engine.offlinePlaybackPlan(completed.identity))
+        assertEquals(listOf(kept.downloadId), fixture.engine.records(SERVER_ID).map(DownloadRecord::downloadId))
+        assertNull(fixture.engine.remove(completed.identity), "a second removal finds nothing to remove")
+    }
+
     private fun seedEveryNonDownloadServerTable(fixture: Fixture) {
         val statements = listOf(
             "INSERT INTO mutation_outbox VALUES ('$SERVER_ID', 'target', 'starred', 'true', 1, $NOW)",

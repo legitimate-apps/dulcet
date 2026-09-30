@@ -537,6 +537,30 @@ internal class DownloadPolicyEngine(
         check(queries.countRowsForServer(serverId).executeAsOne().sum == 0L)
     }
 
+    /**
+     * Removes one download at the person's request (§14.6: a complete explicit download is evicted
+     * only by explicit user action or account removal). Files go first, then the row, for the
+     * reason [removeAccountData] gives: a crash between the two leaves a row that names nothing,
+     * which the next relaunch reconciliation marks interrupted, never a file with no owner. Returns
+     * the removed row, or null when there was none. An executor still writing the row's temporary
+     * file afterwards writes under a name no row gives, which the launch sweep deletes (§14.5).
+     */
+    fun remove(identity: DownloadIdentity): DownloadRecord? {
+        requireReconciled()
+        val row = store.byIdentity(identity) ?: return null
+        files.deleteTemporary(row)
+        files.deleteDestination(row)
+        store.delete(row.downloadId)
+        return row
+    }
+
+    /** Every row of one server, in enqueue order. */
+    fun records(serverId: String): List<DownloadRecord> {
+        requireReconciled()
+        require(serverId.isNotBlank())
+        return store.forServer(serverId)
+    }
+
     fun record(downloadId: DownloadId): DownloadRecord? {
         requireReconciled()
         return store.byId(downloadId)
