@@ -4574,6 +4574,12 @@ about publication, not about the cache:
   compacted away, because the server may already hold it.
 - Offline, the overlay is what the person sees, labelled nowhere: a favourite is a favourite. The
   outbox is flushed first on reconnect (§16.14).
+- **The playing track has a heart on Now Playing on every platform** (2026-09-30 for Apple). It is
+  the rows' heart: it names the track, goes through the same session and outbox, and so a pending,
+  held or saved change reads the same on the player as on the track's row, the lock screen and the
+  menu. It is offered only while the reader holds the account the track came from. The Mac draws it
+  in the Now Playing window's toolbar; iPhone and iPad in the player's footer beside AirPlay and
+  Lyrics; Apple TV under the transport, reached by focus and pressed with the remote.
 - The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value;
   they use the same outbox and the same publish-time overlay with a verified delivery of their own
   (§18.6).
@@ -5060,7 +5066,11 @@ multilingual file it returns one language only.
 
 *For the shells* — the Now Playing panel is W17's UI half, built on Apple (2026-09-29) and on
 Android (a sheet from the phone player, a panel in place of Up Next on the TV) over the
-`AndroidLibraryLyrics` facade. On Android, media time between the playback controller's samples
+`AndroidLibraryLyrics` facade. On Apple TV (2026-09-30) a Lyrics control sits beside the heart
+under the transport, reached by focus; it opens the same panel and model as the other Apple players,
+in one column up to 1,200 points wide, and keeps focus on itself so the same press closes it. The
+remote scrolls only by moving focus, so plain lyrics make each line focusable, while synced lyrics
+follow the current line on their own. On Android, media time between the playback controller's samples
 (about every 500 ms) is interpolated on the monotonic clock while playback progresses, never more
 than 1 s past the last sample. Render the selected
 layer; when synced, call `cursorAtMilliseconds(position)` on each position update, scroll to `index`
@@ -7237,6 +7247,16 @@ starts nothing: the controller's other queue verbs stop the engine and start an 
 routed through them would have ended the playing session. OBSERVED in Robolectric compositions and
 controller host tests (`AndroidPlaybackControllerTest`, `PhoneQueueEditingTest`,
 `TvNowPlayingControlsTest`, `TvQueueAdditionTest`); not yet driven on an emulator or device.
+
+**2026-09-30 — Apple: the playing track's heart on every Now Playing, and lyrics on Apple TV
+(§16.20, §18.4).** The heart for the playing track was drawn only in the Mac's toolbar; iPhone, iPad
+and Apple TV had none on the player, although §16.20's rule was never Mac-only. It now sits in the
+player's footer on iPhone and iPad and under the transport on Apple TV, through the same store and
+session path as the Mac toolbar and the rows, so nothing about pending, held or saved differs by
+where it was pressed. Apple TV's Now Playing had no lyrics control at all; it now opens the same
+panel as the other Apple players, wider in one column, with focus kept on the control across the
+layout change and plain lyrics made focusable so the remote can scroll them. §16.20 and §18.4 are
+amended in place.
 
 **2026-09-30 — Android TV opens on the library; its Sign out is never the default focus and is
 reachable at 1080p (§14.7).** A connected TV opened on an empty search field. It now opens on the

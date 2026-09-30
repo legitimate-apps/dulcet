@@ -1780,6 +1780,126 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET LYRICS PROOF PASS destination=\(compact ? "compact" : "regular") lit=\(lit.debugDescription)")
     }
 
+    /// Now Playing's heart for the playing track (spec §16.20) on iPhone, in the player sheet.
+    @MainActor
+    func testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPhone() {
+        proveNowPlayingHeartFillsAtOnceAndReachesTheServer(compact: true)
+    }
+
+    /// Now Playing's heart for the playing track (spec §16.20) on iPad, in the full-screen player.
+    @MainActor
+    func testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS() {
+        proveNowPlayingHeartFillsAtOnceAndReachesTheServer(compact: false)
+    }
+
+    /// The heart fills with the tap, before the server answers, and the star reaches the server
+    /// for the playing track. Taking it off again empties it at once and unstars the track, so the
+    /// proof leaves the server as it found it. Each destination has its own test, and each fails
+    /// on the other's window class, so an iPhone run cannot stand as iPad evidence.
+    @MainActor
+    private func proveNowPlayingHeartFillsAtOnceAndReachesTheServer(compact expectedCompact: Bool) {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", configuration.serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
+        let compact = window.frame.width < 700
+        guard compact == expectedCompact else {
+            XCTFail(expectedCompact
+                ? "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
+                : "This proof requires a regular-width iPad window; an iPhone is invalid evidence")
+            return
+        }
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The live account connection must succeed first")
+            return
+        }
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return }
+        app.buttons["dulcet.album.play"].firstMatch.tap()
+        guard openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 10) && title.label == track,
+            "Now Playing must show the track this proof stars: " + app.debugDescription)
+        let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
+        guard heart.waitForExistence(timeout: 10) else {
+            XCTFail("Now Playing must offer the playing track's heart: " + app.debugDescription)
+            return
+        }
+        // From a known starting point, whatever an earlier run left.
+        if heart.label == "Remove Favorite" {
+            heart.tap()
+            guard waitForLabel("Favorite", of: heart, timeout: 5),
+                  awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30) == false else {
+                XCTFail("An earlier run's favourite could not be cleared first")
+                return
+            }
+        }
+        XCTAssertEqual(readServerSongStarred(track, album: album, configuration: configuration), false,
+            "The control: the server must not already hold the favourite this proof makes")
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "The heart must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: true, timeout: 30), true,
+            "The star must reach the server for the playing track")
+        XCTAssertEqual(title.label, track, "Starring must not change what is playing")
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30), false,
+            "Removing the favourite must reach the server")
+        print("DULCET NOW PLAYING HEART PROOF PASS destination=\(compact ? "compact" : "regular")"
+            + " window-width=\(Int(window.frame.width)) track=\(track.debugDescription) starred=true->false")
+    }
+
+    /// Whether the server holds the named track of `album` as a favourite, read over
+    /// `/rest/search3`. Nil, with the reason printed, unless exactly one song matches.
+    @MainActor
+    private func readServerSongStarred(_ track: String, album: String, configuration: LivePlaybackConfiguration) -> Bool? {
+        guard let envelope = restCall("search3", [
+            URLQueryItem(name: "query", value: track),
+            URLQueryItem(name: "songCount", value: "20"),
+            URLQueryItem(name: "albumCount", value: "0"),
+            URLQueryItem(name: "artistCount", value: "0"),
+        ], configuration: configuration) else { return nil }
+        let songs = (envelope["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let matches = songs.filter { $0["title"] as? String == track && $0["album"] as? String == album }
+        guard matches.count == 1, let match = matches.first else {
+            print("DULCET REST search3 matched \(matches.count) songs named \(track) on \(album); exactly one is required")
+            return nil
+        }
+        // Subsonic carries `starred` only on a favourite.
+        return match["starred"] != nil
+    }
+
+    /// Polls until the server's favourite state for the track is `expected` or the timeout passes.
+    @MainActor
+    private func awaitServerSongStarred(
+        _ track: String,
+        album: String,
+        configuration: LivePlaybackConfiguration,
+        expected: Bool,
+        timeout: TimeInterval
+    ) -> Bool? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = readServerSongStarred(track, album: album, configuration: configuration)
+        while observed != nil, observed != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            observed = readServerSongStarred(track, album: album, configuration: configuration)
+        }
+        return observed
+    }
+
     /// Library > Playlists: a row of the phone's Library, a sidebar section on a regular width.
     @MainActor
     private func openLibraryPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
