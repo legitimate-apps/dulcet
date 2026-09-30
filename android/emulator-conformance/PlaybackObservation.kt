@@ -56,11 +56,11 @@ fun awaitQueuedBroadcastsDelivered(timeoutSeconds: Long = 120): Long {
 }
 
 /** Connects the app's saved account through the production connect sequence, as its connect screen does. */
-fun connectSavedAccount(context: Context, probe: DisposableServerProbe) {
+fun connectSavedAccount(context: Context, probe: DisposableServerProbe, serverUrl: String = probe.baseUrl) {
     val store = AndroidAccountCredentialStore(context)
     check(store.load() == null) { "Emulator playback tests require an app installation with no saved account" }
     val outcome = runBlocking {
-        connectAndSaveAccount(AccountConnectionRequest(probe.baseUrl, DisposableServerProbe.USER,
+        connectAndSaveAccount(AccountConnectionRequest(serverUrl, DisposableServerProbe.USER,
             DisposableServerProbe.PASSWORD, allowLocalHttp = true), AccountConnector()::connect, store)
     }
     check(outcome is AccountConnectOutcome.Connected) { "The disposable server refused the production connect: $outcome" }

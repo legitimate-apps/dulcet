@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -69,6 +70,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.AndroidDownloadStatus
+import com.legitimateapps.dulcet.downloads.AccountDownloadRequests
+import com.legitimateapps.dulcet.downloads.AlbumDownloads
+import com.legitimateapps.dulcet.downloads.DownloadRequests
+import com.legitimateapps.dulcet.downloads.albumDownloadLine
+import com.legitimateapps.dulcet.downloads.downloadItem
+import com.legitimateapps.dulcet.downloads.downloadLine
+import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
 import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
@@ -429,8 +438,12 @@ internal fun AlbumScreen(
     rawId: String,
     playingRawId: String?,
     actions: PhoneActions,
+    downloadRequests: DownloadRequests? = null,
 ) {
     val surface = rememberSurface(session, "album:$rawId") { openAlbum(rawId) }
+    val context = LocalContext.current
+    val requests = downloadRequests ?: remember(context) { AccountDownloadRequests.of(context) }
+    val downloads = rememberDownloadStatuses(requests)
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     // Only outcomes about this album and its tracks are said here, and they go when the screen does.
@@ -457,6 +470,18 @@ internal fun AlbumScreen(
                         shown.items.filterIsInstance<AndroidLibraryItem.Track>().map { it.rawId }))
                 }, modifier = Modifier.testTag("album.addToPlaylist")) {
                     Icon(DulcetIcons.PlaylistAdd, stringResource(R.string.playlist_add_to))
+                }
+            }
+            if (album != null && shown != null && shown.itemsState == AndroidLibraryItemsState.Present) {
+                val albumTracks = shown.items.filterIsInstance<AndroidLibraryItem.Track>()
+                val state = AlbumDownloads.of(albumTracks, downloads)
+                if (state.anyRequested) IconButton(onClick = { requests.remove(albumTracks.map { it.rawId }.filter { it in downloads }) },
+                    modifier = Modifier.testTag("album.download.remove")) {
+                    Icon(DulcetIcons.DownloadDone, stringResource(SharedR.string.download_album_remove),
+                        tint = MaterialTheme.colorScheme.primary)
+                } else if (state.downloadable > 0) IconButton(onClick = { requests.download(albumTracks) },
+                    modifier = Modifier.testTag("album.download")) {
+                    Icon(DulcetIcons.Download, stringResource(SharedR.string.download_album))
                 }
             }
             if (album != null) FavouriteButton(album.favourite == true, "album.favourite") {
@@ -496,6 +521,10 @@ internal fun AlbumScreen(
                             songs?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
                             album.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) }).joinToString(" · "),
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LocalContext.current.resources.albumDownloadLine(AlbumDownloads.of(tracks, downloads))?.let { line ->
+                            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("album.download.progress"))
+                        }
                         Spacer(Modifier.height(16.dp))
                         PlayShuffleButtons(
                             onPlay = { actions.playAlbum(current, 0, false) },
@@ -520,7 +549,10 @@ internal fun AlbumScreen(
                             onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                             onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
                             favouriteTag = "album.track.$position.favourite",
-                            onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(item.rawId), item.title.orEmpty())) }) {
+                            onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(item.rawId), item.title.orEmpty())) },
+                            download = TrackDownload(downloads[item.rawId],
+                                onDownload = { requests.download(listOf(item)) }.takeIf { item.downloadItem() != null },
+                                onRemove = { requests.remove(listOf(item.rawId)) })) {
                             note = null
                             actions.playAlbum(current, position, false)
                         }
@@ -712,6 +744,7 @@ internal fun TrackRow(
     onFavourite: (() -> Unit)? = null,
     favouriteTag: String? = null,
     onAddToPlaylist: (() -> Unit)? = null,
+    download: TrackDownload? = null,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
@@ -721,7 +754,10 @@ internal fun TrackRow(
         else -> MaterialTheme.colorScheme.onSurface
     }
     val resources = libraryResources()
-    val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline) else track.artistName
+    val downloadLine = download?.status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
+    val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
+        else downloadLine ?: track.artistName
+    val rowTag = favouriteTag?.removeSuffix(".favourite")
     ListItem(
         headlineContent = {
             Text(track.title ?: stringResource(R.string.unknown_title), maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent)
@@ -734,14 +770,19 @@ internal fun TrackRow(
                     style = MaterialTheme.typography.bodyMedium)
             }
         },
-        trailingContent = if (track.durationMilliseconds == null && onFavourite == null && onAddToPlaylist == null) null else {
+        trailingContent = if (track.durationMilliseconds == null && onFavourite == null && onAddToPlaylist == null && download == null) null else {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The downloaded marker: this track plays with no network (spec §14.5).
+                    if (download?.status?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
+                        stringResource(SharedR.string.download_downloaded),
+                        Modifier.padding(end = 6.dp).size(18.dp).testTag((rowTag ?: "track") + ".downloaded"),
+                        tint = MaterialTheme.colorScheme.primary)
                     track.durationMilliseconds?.let { Text(formatDuration(it), style = MaterialTheme.typography.bodySmall) }
                     // A heart on a track that cannot play offline still works: a favourite is sent on reconnect.
                     if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
                     // The row's context menu. An append is not positional, so it needs no view (§18.6).
-                    if (onAddToPlaylist != null) TrackMenu(favouriteTag?.removeSuffix(".favourite"), onAddToPlaylist)
+                    if (onAddToPlaylist != null) TrackMenu(rowTag, onAddToPlaylist, download)
                 }
             }
         },
@@ -802,9 +843,17 @@ internal fun longDuration(milliseconds: Long): String {
     else stringResource(R.string.duration_hours_minutes, minutes / 60, minutes % 60)
 }
 
+/** One track's download on its row: its status, if any, and what the row's menu may ask. */
+internal class TrackDownload(
+    val status: AndroidDownloadStatus?,
+    /** Null when the track has no download (its original file would not play here). */
+    val onDownload: (() -> Unit)?,
+    val onRemove: () -> Unit,
+)
+
 /** The row's context menu: what can be done to one song besides playing it. */
 @Composable
-private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit) {
+private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: TrackDownload? = null) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.testTag((tag ?: "track") + ".menu")) {
@@ -816,6 +865,17 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit) {
                 leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
                 onClick = { open = false; onAddToPlaylist() },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.addToPlaylist"),
+            )
+            if (download?.status != null) DropdownMenuItem(
+                text = { Text(stringResource(SharedR.string.download_track_remove)) },
+                leadingIcon = { Icon(DulcetIcons.Delete, null) },
+                onClick = { open = false; download.onRemove() },
+                modifier = Modifier.testTag((tag ?: "track") + ".menu.removeDownload"),
+            ) else if (download?.onDownload != null) DropdownMenuItem(
+                text = { Text(stringResource(SharedR.string.download_track)) },
+                leadingIcon = { Icon(DulcetIcons.Download, null) },
+                onClick = { open = false; download.onDownload.invoke() },
+                modifier = Modifier.testTag((tag ?: "track") + ".menu.download"),
             )
         }
     }

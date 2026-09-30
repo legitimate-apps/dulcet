@@ -14,17 +14,25 @@ import java.security.SecureRandom
  * the disposable server only, and its credentials are the published fixture constants.
  */
 class DisposableServerProbe private constructor(val baseUrl: String) {
-    fun call(endpoint: String, parameters: Map<String, String> = emptyMap()): JSONObject =
-        callPairs(endpoint, parameters.entries.map { it.toPair() })
+    /** A request URL signed with a fresh salt, as every Subsonic client signs one. */
+    fun signedUrl(endpoint: String, parameters: Map<String, String> = emptyMap()): String =
+        signedUrlPairs(endpoint, parameters.entries.map { it.toPair() })
 
-    /** The same call with a repeated parameter (Subsonic takes many `songId`s to one playlist). */
-    fun callPairs(endpoint: String, parameters: List<Pair<String, String>>): JSONObject {
+    private fun signedUrlPairs(endpoint: String, parameters: List<Pair<String, String>>): String {
         val salt = ByteArray(16).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
         val token = MessageDigest.getInstance("MD5").digest((PASSWORD + salt).toByteArray())
             .joinToString("") { "%02x".format(it) }
         val query = (listOf("u" to USER, "t" to token, "s" to salt, "v" to "1.16.1", "c" to CLIENT, "f" to "json") + parameters)
             .joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
-        val connection = URL("$baseUrl/rest/$endpoint.view?$query").openConnection() as HttpURLConnection
+        return "$baseUrl/rest/$endpoint.view?$query"
+    }
+
+    fun call(endpoint: String, parameters: Map<String, String> = emptyMap()): JSONObject =
+        callPairs(endpoint, parameters.entries.map { it.toPair() })
+
+    /** The same call with a repeated parameter (Subsonic takes many `songId`s to one playlist). */
+    fun callPairs(endpoint: String, parameters: List<Pair<String, String>>): JSONObject {
+        val connection = URL(signedUrlPairs(endpoint, parameters)).openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
         connection.readTimeout = 10_000
         try {

@@ -184,6 +184,35 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun aDownloadedSongPlaysFromItsFileWithoutAskingTheServerAndTheNextStreams() {
+        val songReads = mutableListOf<String>()
+        val file = java.io.File.createTempFile("dulcet-local", ".wav")
+        try {
+            Fixture(loadSong = { id -> songReads += id; song(id) }, localPlans = { rawId ->
+                if (rawId != "down") null else LocalPlaybackPlan(DownloadId("download:down"),
+                    DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path)
+            }).use { f ->
+                f.controller.playQueue(album("down", "net"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                assertEquals(file.path, f.preparedLocal.single().local.absolutePath)
+                assertTrue(f.prepared.isEmpty(), "a downloaded song is never resolved against the server")
+                assertTrue(songReads.isEmpty(), "a downloaded song's start reads nothing from the server")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                assertTrue(f.controller.state.value.playingDownload)
+                assertEquals("Title down", f.controller.state.value.title)
+
+                f.probe.state = androidx.media3.common.Player.STATE_ENDED
+                f.probe.events()
+                assertEquals(listOf("net"), f.prepared.map { it.itemId.rawId })
+                assertEquals(listOf("net"), songReads)
+                assertFalse(f.controller.state.value.playingDownload)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
     @Test fun anEndedQueueReportsNoSessionAndNoStalePosition() {
         Fixture().use { f ->
             f.controller.playQueue(album("only"), 0, AndroidQueueSource.Album, "Album", "album-id")
@@ -1101,6 +1130,7 @@ class AndroidPlaybackControllerTest {
         onDelivery: ((Fixture, RecordedPlaybackEvent) -> Unit)? = { _, _ -> },
         realPlayer: Boolean = false,
         baseUrl: String = "http://127.0.0.1:4533",
+        localPlans: AndroidLocalPlaybackSource? = null,
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -1109,6 +1139,7 @@ class AndroidPlaybackControllerTest {
         val store = DulcetDatabaseStore.open(DulcetDriverFactory(context, databaseName).createDriver())
         val probe = PlayerProbe()
         val prepared = mutableListOf<RemotePlaybackWirePlan>()
+        val preparedLocal = mutableListOf<AndroidLocalPlaybackPlan>()
         val controller: AndroidPlaybackController
         init {
             if (savedOwner != null) {
@@ -1121,7 +1152,9 @@ class AndroidPlaybackControllerTest {
                 PlaybackEndpointAccount(OWNER, baseUrl, "controller-canary", "controller-password-canary", true),
                 AndroidPlaybackControllerBoundaries(store, if (realPlayer) null else probe.player,
                     if (realPlayer) null else { plan -> prepared += plan }, loadSong, resolve,
-                    onDelivery?.let { callback -> { event -> callback(this, event) } }))
+                    onDelivery?.let { callback -> { event -> callback(this, event) } },
+                    localPlans = localPlans,
+                    prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan }))
         }
         override fun close() {
             try {

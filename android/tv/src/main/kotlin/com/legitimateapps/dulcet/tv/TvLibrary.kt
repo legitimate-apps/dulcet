@@ -85,6 +85,14 @@ import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.legitimateapps.dulcet.core.AndroidDownloadStatus
+import com.legitimateapps.dulcet.downloads.AccountDownloadRequests
+import com.legitimateapps.dulcet.downloads.AlbumDownloads
+import com.legitimateapps.dulcet.downloads.DownloadRequests
+import com.legitimateapps.dulcet.downloads.albumDownloadLine
+import com.legitimateapps.dulcet.downloads.downloadItem
+import com.legitimateapps.dulcet.downloads.downloadLine
+import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
 import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
@@ -725,10 +733,13 @@ private fun TvAlbumScreen(
     playingRawId: String?,
     rawId: String,
     navigator: TvNavigator,
+    downloadRequests: DownloadRequests? = null,
 ) {
     EnterRoute()
     val surface = rememberSurface(session, ALBUM + rawId) { openAlbum(rawId) }
     val context = LocalContext.current
+    val requests = downloadRequests ?: remember(context) { AccountDownloadRequests.of(context) }
+    val downloads = rememberDownloadStatuses(requests)
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     // Only outcomes about this album and its tracks are said here, and they go when the screen does.
@@ -803,6 +814,20 @@ private fun TvAlbumScreen(
                                         if (favourite) SharedR.string.library_favourite_on else SharedR.string.library_favourite_add),
                                     icon = if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
                                 ) { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId)) }
+                                if (current.itemsState == AndroidLibraryItemsState.Present) {
+                                    val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
+                                    val state = AlbumDownloads.of(tracks, downloads)
+                                    if (state.anyRequested) TvAction(resources.getString(SharedR.string.download_album_remove),
+                                        "album.download.remove", icon = DulcetIcons.DownloadDone) {
+                                        requests.remove(tracks.map { it.rawId }.filter { it in downloads })
+                                    } else if (state.downloadable > 0) TvAction(resources.getString(SharedR.string.download_album),
+                                        "album.download", icon = DulcetIcons.Download) { requests.download(tracks) }
+                                }
+                            }
+                            if (current.itemsState == AndroidLibraryItemsState.Present) {
+                                context.resources.albumDownloadLine(AlbumDownloads.of(
+                                    current.items.filterIsInstance<AndroidLibraryItem.Track>(), downloads))
+                                    ?.let { TvStatement(it, "album.download.progress") }
                             }
                         }
                         TvOutcomeLines(outcomeLines, target, "album.outcome")
@@ -836,6 +861,12 @@ private fun TvAlbumScreen(
                     },
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
+                    download = downloads[item.rawId],
+                    onDownloadToggle = when {
+                        item.rawId in downloads -> { { requests.remove(listOf(item.rawId)) } }
+                        item.downloadItem() != null -> { { requests.download(listOf(item)) } }
+                        else -> null
+                    },
                 )
             }
         }
@@ -951,6 +982,16 @@ private fun TvOutcomeLines(lines: List<Pair<AndroidLibraryEntity, String>>, prim
  * The heart beside a row or on a card's line: its own focus target, so the row keeps its one action
  * (play). Filled is a favourite, with any pending change in it (§16.20).
  */
+/** A track's download: adds it, or — once requested — removes it. */
+@Composable
+private fun TvDownloadButton(requested: Boolean, tag: String, onClick: () -> Unit) {
+    val resources = libraryResources()
+    IconButton(onClick = onClick, modifier = Modifier.tvFocus(tag).semantics { selected = requested }) {
+        Icon(if (requested) DulcetIcons.DownloadDone else DulcetIcons.Download,
+            resources.getString(if (requested) SharedR.string.download_track_remove else SharedR.string.download_track))
+    }
+}
+
 @Composable
 private fun TvFavouriteButton(favourite: Boolean, tag: String, onClick: () -> Unit) {
     val resources = libraryResources()
@@ -968,25 +1009,28 @@ private fun TvFavouriteButton(favourite: Boolean, tag: String, onClick: () -> Un
  * accessibility services.
  */
 @Composable
-private fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
+internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                        onUnavailable: () -> Unit, onFavourite: (() -> Unit)? = null, tagPrefix: String = "album.track",
-                       default: Boolean = false, byPosition: Boolean = false) {
+                       default: Boolean = false, byPosition: Boolean = false,
+                       download: AndroidDownloadStatus? = null, onDownloadToggle: (() -> Unit)? = null) {
     if (onFavourite == null) {
-        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth(), byPosition)
+        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth(), byPosition, download)
         return
     }
     // The heart is beside the row, a focus target of its own: RIGHT from the row reaches it, and the
     // row stays one target whose action is play.
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.weight(1f), byPosition)
+        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.weight(1f), byPosition, download)
         TvFavouriteButton(track.isFavourite(), "$tagPrefix.$position.favourite", onFavourite)
+        // The track's own download, one more focus target to the right (spec §14.5).
+        if (onDownloadToggle != null) TvDownloadButton(download != null, "$tagPrefix.$position.download", onDownloadToggle)
     }
 }
 
 @Composable
 private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                            onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
-                           byPosition: Boolean = false) {
+                           byPosition: Boolean = false, download: AndroidDownloadStatus? = null) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -1032,6 +1076,12 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
         }
         Text(track.title.orEmpty(), Modifier.weight(1f), color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (unavailable) Text(resources.getString(SharedR.string.library_not_available_offline), color = content)
+        else if (download != null && !download.playsOffline) LocalContext.current.resources.downloadLine(download)?.let {
+            Text(it, Modifier.testTag("$tagPrefix.$position.download.status"), color = content)
+        }
+        if (download?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
+            resources.getString(SharedR.string.download_downloaded),
+            Modifier.size(20.dp).testTag("$tagPrefix.$position.downloaded"), tint = content)
         track.durationMilliseconds?.let { Text(clock(it), color = content) }
     }
 }

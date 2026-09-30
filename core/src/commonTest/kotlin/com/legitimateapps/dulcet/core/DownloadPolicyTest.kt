@@ -1,7 +1,11 @@
 package com.legitimateapps.dulcet.core
 
+import okio.Buffer
 import okio.FileSystem
+import okio.ForwardingFileSystem
+import okio.ForwardingSource
 import okio.Path
+import okio.Source
 import okio.Path.Companion.toPath
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -299,6 +303,135 @@ class DownloadPolicyTest {
         )
     }
 
+    @Test
+    fun removingOneDownloadDeletesItsFilesAndRowAndLeavesEveryOtherRow() = withFixture { fixture ->
+        fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        val completed = fixture.engine.enqueue(request())
+        fixture.engine.writeCompletedTemporaryFile(completed.downloadId, MP3_BYTES)
+        assertIs<DownloadPromotionResult.Promoted>(
+            fixture.engine.promote(
+                completed.downloadId,
+                DownloadResponseMetadata("audio/mpeg", PlaybackContentLength.Exact(MP3_BYTES.size.toLong())),
+            ),
+        )
+        val partial = fixture.engine.enqueue(
+            request(identity = DownloadIdentity(SERVER_ID, "opaque:partial", DownloadIdentity.ORIGINAL_PROFILE)),
+        )
+        fixture.engine.writeCompletedTemporaryFile(partial.downloadId, MP3_BYTES)
+        val kept = fixture.engine.enqueue(
+            request(identity = DownloadIdentity(SERVER_ID, "opaque:kept", DownloadIdentity.ORIGINAL_PROFILE)),
+        )
+        assertEquals(
+            listOf(completed.downloadId, partial.downloadId, kept.downloadId),
+            fixture.engine.records(SERVER_ID).map(DownloadRecord::downloadId),
+        )
+
+        assertEquals(completed.downloadId, fixture.engine.remove(completed.identity)?.downloadId)
+        assertEquals(partial.downloadId, fixture.engine.remove(partial.identity)?.downloadId)
+
+        assertFalse(FileSystem.SYSTEM.exists(fixture.files.destinationPath(completed)))
+        assertFalse(FileSystem.SYSTEM.exists(fixture.files.temporaryPath(partial)))
+        assertNull(fixture.engine.record(completed.downloadId))
+        assertNull(fixture.engine.record(partial.downloadId))
+        assertIs<OfflinePlaybackPlanResult.NotDownloaded>(fixture.engine.offlinePlaybackPlan(completed.identity))
+        assertEquals(listOf(kept.downloadId), fixture.engine.records(SERVER_ID).map(DownloadRecord::downloadId))
+        assertNull(fixture.engine.remove(completed.identity), "a second removal finds nothing to remove")
+    }
+
+    @Test
+    fun aFileFarLargerThanTheValidationWindowPromotesFromABoundedPrefix() {
+        val reading = CountingFileSystem(FileSystem.SYSTEM)
+        withFixture(reading) { fixture ->
+            fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+            val large = wav(DOWNLOAD_VALIDATION_WINDOW_BYTES.toInt() * 16 + 3)
+            val row = fixture.engine.enqueue(request(declaredLength = PlaybackContentLength.Exact(large.size.toLong()), container = AudioContainer.Wav))
+            fixture.engine.writeCompletedTemporaryFile(row.downloadId, large)
+            reading.bytesRead = 0
+
+            val promoted = assertIs<DownloadPromotionResult.Promoted>(
+                fixture.engine.promote(
+                    row.downloadId,
+                    DownloadResponseMetadata("audio/wav", PlaybackContentLength.Exact(large.size.toLong())),
+                ),
+            )
+
+            assertEquals(large.size.toLong(), promoted.record.fileSizeBytes, "the size is the file's length on disk")
+            assertTrue(
+                reading.bytesRead in 1..DOWNLOAD_VALIDATION_WINDOW_BYTES,
+                "validation read ${reading.bytesRead} of ${large.size} bytes; it may read only its window",
+            )
+            val plan = assertIs<OfflinePlaybackPlanResult.Available>(fixture.engine.offlinePlaybackPlan(row.identity)).plan
+            reading.bytesRead = 0
+            assertEquals(OfflinePlaybackVerification.Valid, fixture.engine.verifyOffline(plan))
+            assertTrue(reading.bytesRead in 1..DOWNLOAD_VALIDATION_WINDOW_BYTES, "offline verification reads only its window")
+        }
+    }
+
+    @Test
+    fun aLargeFileWhoseLengthOnDiskDiffersFromTheExactLengthIsRejected() = withFixture { fixture ->
+        fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        val large = wav(DOWNLOAD_VALIDATION_WINDOW_BYTES.toInt() * 4)
+        val row = fixture.engine.enqueue(request(declaredLength = null, container = AudioContainer.Wav))
+        fixture.engine.writeCompletedTemporaryFile(row.downloadId, large)
+
+        // The prefix is flawless; only the length on disk, beyond the window, betrays the truncation.
+        assertIs<DownloadPromotionResult.Rejected>(
+            fixture.engine.promote(
+                row.downloadId,
+                DownloadResponseMetadata("audio/wav", PlaybackContentLength.Exact(large.size + 1L)),
+            ),
+        )
+        assertFalse(fixture.engine.destinationExists(row.downloadId))
+    }
+
+    @Test
+    fun aFlacBehindAnId3TagLargerThanTheWindowIsStillRecognised() = withFixture { fixture ->
+        fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        val tagPayload = DOWNLOAD_VALIDATION_WINDOW_BYTES.toInt() * 2 + 17
+        val flac = id3Header(tagPayload) + ByteArray(tagPayload) { 0x20 } + "fLaC".encodeToByteArray() + ByteArray(4_096)
+        val row = fixture.engine.enqueue(
+            DownloadRequest(
+                identity = DownloadIdentity(SERVER_ID, "raw:flac", DownloadIdentity.ORIGINAL_PROFILE),
+                expectedContainer = AudioContainer.Flac,
+                declaredContentLength = null,
+                serverSnapshot = DownloadServerSnapshot(1_000, null),
+                credentialGeneration = 1,
+                wallClockMilliseconds = NOW,
+            ),
+        )
+        fixture.engine.writeCompletedTemporaryFile(row.downloadId, flac)
+
+        assertIs<DownloadPromotionResult.Promoted>(
+            fixture.engine.promote(
+                row.downloadId,
+                DownloadResponseMetadata("audio/flac", PlaybackContentLength.Exact(flac.size.toLong())),
+            ),
+        )
+    }
+
+    private fun wav(size: Int): ByteArray = ByteArray(size) { (it % 251).toByte() }.also { bytes ->
+        "RIFF".encodeToByteArray().copyInto(bytes, 0)
+        "WAVE".encodeToByteArray().copyInto(bytes, 8)
+    }
+
+    /** An ID3v2.4 header declaring a [payload]-byte tag, its size in four 7-bit bytes. */
+    private fun id3Header(payload: Int): ByteArray = "ID3".encodeToByteArray() + byteArrayOf(
+        4, 0, 0,
+        (payload shr 21 and 0x7F).toByte(),
+        (payload shr 14 and 0x7F).toByte(),
+        (payload shr 7 and 0x7F).toByte(),
+        (payload and 0x7F).toByte(),
+    )
+
+    /** Counts every byte read through [source], so a test can bound what validation reads. */
+    private class CountingFileSystem(delegate: FileSystem) : ForwardingFileSystem(delegate) {
+        var bytesRead = 0L
+        override fun source(file: Path): Source = object : ForwardingSource(super.source(file)) {
+            override fun read(sink: Buffer, byteCount: Long): Long =
+                super.read(sink, byteCount).also { if (it > 0) bytesRead += it }
+        }
+    }
+
     private fun seedEveryNonDownloadServerTable(fixture: Fixture) {
         val statements = listOf(
             "INSERT INTO mutation_outbox VALUES ('$SERVER_ID', 'target', 'starred', 'true', 1, $NOW)",
@@ -331,9 +464,10 @@ class DownloadPolicyTest {
             DownloadIdentity.ORIGINAL_PROFILE,
         ),
         declaredLength: PlaybackContentLength? = PlaybackContentLength.Exact(MP3_BYTES.size.toLong()),
+        container: AudioContainer = AudioContainer.Mp3,
     ): DownloadRequest = DownloadRequest(
         identity = identity,
-        expectedContainer = AudioContainer.Mp3,
+        expectedContainer = container,
         declaredContentLength = declaredLength,
         serverSnapshot = DownloadServerSnapshot(
             durationMilliseconds = 1_000,
@@ -357,11 +491,13 @@ class DownloadPolicyTest {
         playbackSessionActive = playbackSessionActive,
     )
 
-    private fun withFixture(block: (Fixture) -> Unit) {
+    private fun withFixture(block: (Fixture) -> Unit) = withFixture(FileSystem.SYSTEM, block)
+
+    private fun withFixture(fileSystem: FileSystem, block: (Fixture) -> Unit) {
         val database = DulcetDatabaseStore.open(createTestDriver())
         val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
             "dulcet-download-test-${secureRandomBytes(8).toLowerHex()}"
-        val files = DownloadFileStore(root.toString(), FileSystem.SYSTEM)
+        val files = DownloadFileStore(root.toString(), fileSystem)
         val fixture = Fixture(database, files, DownloadPolicyEngine(database.database, files), root)
         try {
             block(fixture)

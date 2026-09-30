@@ -71,6 +71,8 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.media3.session)
     testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.work.runtime)
+    testImplementation(libs.androidx.work.testing)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
@@ -78,6 +80,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.media3.session)
+    androidTestImplementation(libs.androidx.work.runtime)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
 }
 

@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.milliseconds
@@ -55,8 +56,19 @@ public data class AndroidPlaybackState(
      * shown is the surface's decision, measured from [AndroidSkipNotice.postedAtElapsedMillis].
      */
     val skipNotice: AndroidSkipNotice? = null,
+    /** The current attempt reads a downloaded file on this device, not the server (spec §14.5). */
+    val playingDownload: Boolean = false,
 ) {
     val hasSession: Boolean get() = playbackSessionId != null
+}
+
+/**
+ * Where a downloaded song's local plan comes from: the account's download subsystem, which answers
+ * null for a song with no complete, present download. Asked before anything is read from the
+ * server, so a downloaded song starts with the network gone (spec §14.5).
+ */
+public fun interface AndroidLocalPlaybackSource {
+    public suspend fun localPlan(rawId: String): LocalPlaybackPlan?
 }
 
 /**
@@ -94,8 +106,11 @@ public class AndroidPlaybackController internal constructor(
     context: Context,
     private val account: PlaybackEndpointAccount,
     private val boundaries: AndroidPlaybackControllerBoundaries?,
+    private val localPlans: AndroidLocalPlaybackSource? = boundaries?.localPlans,
 ) : AutoCloseable {
-    public constructor(context: Context, account: PlaybackEndpointAccount) : this(context, account, null)
+    public constructor(context: Context, account: PlaybackEndpointAccount) : this(context, account, boundaries = null, localPlans = null)
+    public constructor(context: Context, account: PlaybackEndpointAccount, localPlans: AndroidLocalPlaybackSource?) :
+        this(context, account, boundaries = null, localPlans = localPlans)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val store = boundaries?.store ?: DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
     private val resumes = PersistentResumePositionStore(store.database)
@@ -113,7 +128,7 @@ public class AndroidPlaybackController internal constructor(
     private var retryDelivery: Job? = null
     private var resolution: Job? = null
     private var startJob: Job? = null
-    private var activePlan: RemotePlaybackWirePlan? = null
+    private var activePlan: PlaybackPlan? = null
     private var wantsPlay = false
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
@@ -145,12 +160,22 @@ public class AndroidPlaybackController internal constructor(
     }, prepareSource = { plan ->
         val attemptConsumed = AtomicLong()
         consumed = attemptConsumed
-        val factory = AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, requests)) { bytes ->
-            attemptConsumed.addAndGet(bytes)
-        }
+        val count: (Long) -> Unit = { bytes -> attemptConsumed.addAndGet(bytes) }
         val item = mediaItem(plan)
-        if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
-        else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(factory).createMediaSource(item))
+        when (plan) {
+            // A download plays through the same validating data source, reading the promoted file.
+            is AndroidLocalPlaybackPlan -> if (boundaries?.prepareLocalSource != null) boundaries.prepareLocalSource.invoke(plan)
+                else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(AndroidPlaybackDataSourceFactory(
+                    plan.local.container,
+                    AndroidLocalFilePlaybackResource(File(plan.local.absolutePath), plan.local.exactByteLength),
+                    count,
+                )).createMediaSource(item))
+            is RemotePlaybackWirePlan -> if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
+                else (exo as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(
+                    AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, requests), count),
+                ).createMediaSource(item))
+            else -> error("unsupported plan")
+        }
     })
 
     /**
@@ -304,7 +329,14 @@ public class AndroidPlaybackController internal constructor(
         val chosen = tracks[startIndex]
         resolution = scope.launch {
             try {
-                val song = loadSong(chosen.rawId)
+                // A downloaded song starts from its file: its row already holds everything the
+                // queue needs, and offline the song's own read would fail before the file was tried.
+                val downloaded = localPlans?.let { plans ->
+                    try { plans.localPlan(chosen.rawId) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                } != null
+                val song = if (downloaded) null else loadSong(chosen.rawId)
                 if (generation != requestGeneration) return@launch
                 command(PlaybackCommand.Stop(id()))
                 failure = null; consumed = AtomicLong()
@@ -317,7 +349,7 @@ public class AndroidPlaybackController internal constructor(
                 val transition = queue.replaceAndStart(PlaybackQueueRequest(
                     tracks.map { track ->
                         val id = ProviderItemId(track.providerInstanceId, track.rawId)
-                        PlaybackQueueItem(id, if (track.rawId == chosen.rawId) song.duration
+                        PlaybackQueueItem(id, if (track.rawId == chosen.rawId && song != null) song.duration
                             else track.durationMilliseconds?.milliseconds)
                     },
                     QueueSourceContext(kind, sourceRawId?.let { ProviderItemId(account.providerInstanceId, it) },
@@ -325,7 +357,7 @@ public class AndroidPlaybackController internal constructor(
                     if (shuffle) null else startIndex, shuffle))
                 capture(transition.effects)
                 val directive = transition.startDirective!!
-                start(directive, song.takeIf { directive.itemId.rawId == chosen.rawId })
+                start(directive, song?.takeIf { directive.itemId.rawId == chosen.rawId })
             } catch (_: CancellationException) { throw CancellationException() }
             catch (error: AndroidPlaybackIOException) { failure = error.error; publish() }
             catch (_: Exception) { failure = DomainError.Transport.Unreachable; publish() }
@@ -515,8 +547,8 @@ public class AndroidPlaybackController internal constructor(
             track.durationMilliseconds ?: known.durationMilliseconds, track.artworkKey ?: known.artworkKey)
     }
 
-    private fun mediaItem(plan: RemotePlaybackWirePlan): MediaItem {
-        val track = metadata[plan.itemId]
+    private fun mediaItem(plan: PlaybackPlan): MediaItem {
+        val track = plan.androidItemId?.let { metadata[it] }
         val art = artworkBytes?.takeIf { it.first == track?.artworkKey }?.second
         val details = MediaMetadata.Builder()
             .setTitle(track?.title?.ifBlank { null })
@@ -526,7 +558,7 @@ public class AndroidPlaybackController internal constructor(
             .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
         track?.durationMilliseconds?.let { details.setDurationMs(it) }
         art?.let { details.setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
-        return MediaItem.Builder().setMediaId(plan.attemptId.value).setUri("dulcet://resource")
+        return MediaItem.Builder().setMediaId(checkNotNull(plan.androidAttemptId).value).setUri("dulcet://resource")
             .setMediaMetadata(details.build()).build()
     }
 
@@ -534,9 +566,9 @@ public class AndroidPlaybackController internal constructor(
      * Cover art reaches the media session as validated bytes after preparation begins, so a slow
      * cover never delays sound. Only the attempt that asked for it may be updated.
      */
-    private fun loadArtwork(plan: RemotePlaybackWirePlan) {
+    private fun loadArtwork(plan: PlaybackPlan) {
         artworkJob?.cancel()
-        val key = metadata[plan.itemId]?.artworkKey ?: return
+        val key = plan.androidItemId?.let { metadata[it] }?.artworkKey ?: return
         if (artworkBytes?.first == key) return
         val repository = artwork ?: return
         artworkJob = scope.launch {
@@ -544,7 +576,7 @@ public class AndroidPlaybackController internal constructor(
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { null } ?: return@launch
             artworkBytes = key to bytes
-            if (closed || activePlan?.attemptId != plan.attemptId) return@launch
+            if (closed || activePlan?.androidAttemptId != plan.androidAttemptId) return@launch
             val player = exo as? ExoPlayer ?: return@launch
             if (player.mediaItemCount == 1) player.replaceMediaItem(0, mediaItem(plan))
         }
@@ -588,6 +620,24 @@ public class AndroidPlaybackController internal constructor(
         startJob?.cancel()
         startJob = scope.launch {
             try {
+                // A downloaded song plays from its file, and nothing is asked of the server first:
+                // offline, the song's own read would fail before the file was ever tried.
+                val local = localPlans?.let { source ->
+                    try { source.localPlan(directive.itemId.rawId) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                }
+                if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
+                if (local != null) {
+                    command(PlaybackCommand.Stop(id()))
+                    val plan = AndroidLocalPlaybackPlan(session, directive.attemptId, directive.itemId, local)
+                    activePlan = plan
+                    pendingResume = directive.resumePosition?.inWholeMilliseconds
+                    command(PlaybackCommand.Prepare(id(), plan.attemptId, plan))
+                    command(if (wantsPlay) PlaybackCommand.Play(id()) else PlaybackCommand.Pause(id()))
+                    loadArtwork(plan)
+                    return@launch
+                }
                 val song = knownSong ?: loadSong(directive.itemId.rawId)
                 // A format with no direct-play container goes through the profile's transcoding
                 // target on the legacy path (`stream?format=`). That path reads the source container
@@ -714,7 +764,8 @@ public class AndroidPlaybackController internal constructor(
             canRestart = session != null && activePlan != null &&
                 engine.seekability == PlaybackSeekability.Seekable &&
                 exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS,
-            skipNotice = skipNotice)
+            skipNotice = skipNotice,
+            playingDownload = session != null && activePlan is AndroidLocalPlaybackPlan)
     }
 
     override fun close() {
@@ -758,4 +809,6 @@ internal class AndroidPlaybackControllerBoundaries(
     val resolve: (suspend (PlaybackResolveRequest) -> PlaybackResolutionResult)? = null,
     val enqueueDelivery: ((RecordedPlaybackEvent) -> Unit)?,
     val artwork: AndroidArtworkRepository? = null,
+    val localPlans: AndroidLocalPlaybackSource? = null,
+    val prepareLocalSource: ((AndroidLocalPlaybackPlan) -> Unit)? = null,
 )

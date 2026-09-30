@@ -6,15 +6,18 @@ import com.legitimateapps.dulcet.core.AndroidAccountData
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidLibraryReaderAccount
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import com.legitimateapps.dulcet.downloads.AndroidDownloads
 import com.legitimateapps.dulcet.playback.releasePlaybackForSignOut
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 /** What an account has not yet sent its server (spec §14.7 step 2). */
@@ -88,11 +91,19 @@ public class CoreAccountDataGateway(context: Context) : AccountDataGateway {
     }
 
     override suspend fun removeAccountData(serverId: String) {
+        // Step 4: no download task of the account runs on, or writes a file, once its data goes.
+        AndroidDownloads.releaseForSignOut(context, serverId)
         AndroidAccountData(context, serverId).removeAccountData()
     }
 
-    override suspend fun sweep(activeAccountId: () -> String?): Set<String> =
-        AndroidAccountData.sweepAccountsOtherThan(context, activeAccountId)
+    override suspend fun sweep(activeAccountId: () -> String?): Set<String> {
+        val swept = AndroidAccountData.sweepAccountsOtherThan(context, activeAccountId)
+        swept.forEach { AndroidDownloads.releaseForSignOut(context, it) }
+        // Every launch comes through here: the saved account's download controller is created now,
+        // so its relaunch reconciliation (spec §14.5) runs whether or not a screen shows downloads.
+        withContext(Dispatchers.IO) { AndroidDownloads.controller(context) }
+        return swept
+    }
 
     /**
      * The process's reader for the account: the one its screens already use, since the account is
@@ -205,8 +216,8 @@ public sealed interface SignOutState {
  * identity, or a larger count of changes — is offered again rather than discarded unseen. Then the
  * account's `removing` entry is written, its credential deleted (step 3), and — once the process's
  * library reader has terminated — its cached artwork and downloaded media (step 5) and every row it
- * owns (step 6) deleted. Android downloads nothing, so step 4 has no tasks, and the credential store
- * is the account record, so step 7 is step 3. A removal whose data step fails — including a reader
+ * owns (step 6) deleted. Step 4 cancels the account's download tasks and closes its download
+ * controller just before step 5, and the credential store is the account record, so step 7 is step 3. A removal whose data step fails — including a reader
  * that has not terminated within its bound — keeps its entry, lands on the connect form like a
  * finished one, and is finished at a later launch by [resumeInterrupted].
  *

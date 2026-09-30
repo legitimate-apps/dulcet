@@ -52,6 +52,8 @@ public object DulcetIcons {
     public val ArrowDown: ImageVector = icon("ArrowDown", "M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z")
     public val Remove: ImageVector = icon("Remove", "M19 13H5v-2h14v2z")
     public val Check: ImageVector = icon("Check", "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
+    public val Download: ImageVector = icon("Download", "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z")
+    public val DownloadDone: ImageVector = icon("DownloadDone", "M5 18h14v2H5v-2zm4.6-2.7L5 10.7l2-1.9 2.6 2.6L17 4l2 2-9.4 9.3z")
     public val Lyrics: ImageVector = icon("Lyrics",
         "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z")
 

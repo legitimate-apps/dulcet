@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import com.legitimateapps.dulcet.database.DulcetDatabase
+import okio.Buffer
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -181,6 +182,12 @@ public sealed interface OfflinePlaybackLoadResult {
     public data object InvalidFile : OfflinePlaybackLoadResult
 }
 
+public enum class OfflinePlaybackVerification {
+    Valid,
+    MissingFile,
+    InvalidFile,
+}
+
 public sealed interface DownloadResumeDecision {
     public data class Resume(val data: ByteArray) : DownloadResumeDecision
     public data object RestartFromZero : DownloadResumeDecision
@@ -350,22 +357,23 @@ internal class DownloadPolicyEngine(
         }
         if (!files.temporaryExists(row)) return DownloadPromotionResult.MissingTemporaryFile
 
-        // The executor has closed the response body before delivery reaches this method. Reading the
-        // complete temp file is therefore the terminal-body boundary for estimated legacy streams.
-        val bytes = files.readTemporary(row)
-        val validation = validateDownloadBytes(
-            bytes = bytes,
+        // The executor has closed the response body before delivery reaches this method, so the temp
+        // file's on-disk length is the terminal-body boundary for estimated legacy streams. Only a
+        // bounded prefix is read: a file is never loaded whole, whatever its size (spec §14.5).
+        val validation = validateDownloadFile(
+            files = files,
+            path = files.temporaryPath(row),
             container = row.expectedContainer,
             contentType = metadata.contentType,
             contentLength = metadata.contentLength,
         )
-        if (validation is PlaybackStreamValidationResult.Failure) {
-            return DownloadPromotionResult.Rejected(validation.error)
+        if (validation.result is PlaybackStreamValidationResult.Failure) {
+            return DownloadPromotionResult.Rejected(validation.result.error)
         }
 
         // This ordering is the integrity boundary: no destination can appear before validation.
         files.atomicPromote(row)
-        store.markComplete(downloadId, bytes.size.toLong())
+        store.markComplete(downloadId, validation.fileLength)
         return DownloadPromotionResult.Promoted(requireNotNull(store.byId(downloadId)))
     }
 
@@ -388,22 +396,40 @@ internal class DownloadPolicyEngine(
         )
     }
 
-    fun loadOffline(plan: LocalPlaybackPlan): OfflinePlaybackLoadResult {
+    /**
+     * Checks [plan]'s file from a bounded prefix and its on-disk length, never reading it whole. A
+     * platform hands the path to its player afterwards; this is the check that must stay cheap.
+     */
+    fun verifyOffline(plan: LocalPlaybackPlan): OfflinePlaybackVerification {
         requireReconciled()
-        val bytes = files.readOrNull(plan.absolutePath.toPath())
-            ?: return OfflinePlaybackLoadResult.MissingFile
-        val validation = validateDownloadBytes(
-            bytes = bytes,
+        val path = plan.absolutePath.toPath()
+        if (!files.exists(path)) return OfflinePlaybackVerification.MissingFile
+        val validation = validateDownloadFile(
+            files = files,
+            path = path,
             container = plan.container,
             contentType = "application/octet-stream",
             contentLength = PlaybackContentLength.Exact(plan.exactByteLength),
         )
-        return if (validation is PlaybackStreamValidationResult.Audio) {
-            OfflinePlaybackLoadResult.Audio(bytes, plan)
+        return if (validation.result is PlaybackStreamValidationResult.Audio) {
+            OfflinePlaybackVerification.Valid
         } else {
-            OfflinePlaybackLoadResult.InvalidFile
+            OfflinePlaybackVerification.InvalidFile
         }
     }
+
+    /**
+     * [verifyOffline], then the file's bytes. This reads the whole file into memory, so it is for the
+     * conformance contract and tests only; product code plays from [LocalPlaybackPlan.absolutePath].
+     */
+    fun loadOffline(plan: LocalPlaybackPlan): OfflinePlaybackLoadResult =
+        when (verifyOffline(plan)) {
+            OfflinePlaybackVerification.MissingFile -> OfflinePlaybackLoadResult.MissingFile
+            OfflinePlaybackVerification.InvalidFile -> OfflinePlaybackLoadResult.InvalidFile
+            OfflinePlaybackVerification.Valid -> files.readOrNull(plan.absolutePath.toPath())
+                ?.let { OfflinePlaybackLoadResult.Audio(it, plan) }
+                ?: OfflinePlaybackLoadResult.MissingFile
+        }
 
     fun recordFailure(
         downloadId: DownloadId,
@@ -453,6 +479,12 @@ internal class DownloadPolicyEngine(
             return DownloadResumeDecision.RestartFromZero
         }
         return DownloadResumeDecision.Resume(data.copyOf())
+    }
+
+    /** Forgets [downloadId]'s resume data without changing its state. */
+    fun clearResumeData(downloadId: DownloadId) {
+        requireReconciled()
+        store.clearResumeData(downloadId)
     }
 
     fun rejectResumeData(downloadId: DownloadId) {
@@ -537,6 +569,30 @@ internal class DownloadPolicyEngine(
         check(queries.countRowsForServer(serverId).executeAsOne().sum == 0L)
     }
 
+    /**
+     * Removes one download at the person's request (§14.6: a complete explicit download is evicted
+     * only by explicit user action or account removal). Files go first, then the row, for the
+     * reason [removeAccountData] gives: a crash between the two leaves a row that names nothing,
+     * which the next relaunch reconciliation marks interrupted, never a file with no owner. Returns
+     * the removed row, or null when there was none. An executor still writing the row's temporary
+     * file afterwards writes under a name no row gives, which the launch sweep deletes (§14.5).
+     */
+    fun remove(identity: DownloadIdentity): DownloadRecord? {
+        requireReconciled()
+        val row = store.byIdentity(identity) ?: return null
+        files.deleteTemporary(row)
+        files.deleteDestination(row)
+        store.delete(row.downloadId)
+        return row
+    }
+
+    /** Every row of one server, in enqueue order. */
+    fun records(serverId: String): List<DownloadRecord> {
+        requireReconciled()
+        require(serverId.isNotBlank())
+        return store.forServer(serverId)
+    }
+
     fun record(downloadId: DownloadId): DownloadRecord? {
         requireReconciled()
         return store.byId(downloadId)
@@ -548,15 +604,15 @@ internal class DownloadPolicyEngine(
     }
 
     private fun recoverDestination(row: DownloadRecord): Boolean {
-        val bytes = files.readDestination(row)
-        val validation = validateDownloadBytes(
-            bytes = bytes,
+        val validation = validateDownloadFile(
+            files = files,
+            path = files.destinationPath(row),
             container = row.expectedContainer,
             contentType = "application/octet-stream",
             contentLength = row.exactByteLength?.let(PlaybackContentLength::Exact),
         )
-        return if (validation is PlaybackStreamValidationResult.Audio) {
-            store.markComplete(row.downloadId, bytes.size.toLong())
+        return if (validation.result is PlaybackStreamValidationResult.Audio) {
+            store.markComplete(row.downloadId, validation.fileLength)
             true
         } else {
             files.deleteDestination(row)
@@ -596,12 +652,18 @@ internal class DownloadFileStore(
         fileSystem.write(temporaryPath(row)) { write(bytes) }
     }
 
-    fun readTemporary(row: DownloadRecord): ByteArray = fileSystem.read(temporaryPath(row)) {
-        readByteArray()
-    }
+    fun exists(path: Path): Boolean = fileSystem.exists(path)
 
-    fun readDestination(row: DownloadRecord): ByteArray = fileSystem.read(destinationPath(row)) {
-        readByteArray()
+    /** The file's length on disk, or null when it is gone. */
+    fun lengthOrNull(path: Path): Long? = fileSystem.metadataOrNull(path)?.size
+
+    /** At most [maxBytes] leading bytes of [path], streamed; never the whole of a larger file. */
+    fun readPrefix(path: Path, maxBytes: Long): ByteArray = fileSystem.read(path) {
+        val prefix = Buffer()
+        while (prefix.size < maxBytes) {
+            if (read(prefix, maxBytes - prefix.size) == -1L) break
+        }
+        prefix.readByteArray()
     }
 
     fun readOrNull(path: Path): ByteArray? = if (fileSystem.exists(path)) {
@@ -800,8 +862,43 @@ private fun downloadRecord(
     resumeDataCreatedAtWallClock = resumeDataCreatedAtWallClock,
 )
 
+/** A validation of a file on disk, with the length it was measured at. */
+private class DownloadFileValidation(val result: PlaybackStreamValidationResult, val fileLength: Long)
+
+/**
+ * Validates the file at [path] from a bounded prefix plus its on-disk length: the envelope and
+ * signature checks see at most [DOWNLOAD_VALIDATION_WINDOW_BYTES] leading bytes (widened only as far
+ * as an ID3v2 tag needs, up to [DOWNLOAD_VALIDATION_CEILING_BYTES]), and the declared exact length is
+ * compared with the length on disk. Memory stays bounded however large the file is.
+ */
+private fun validateDownloadFile(
+    files: DownloadFileStore,
+    path: Path,
+    container: AudioContainer,
+    contentType: String?,
+    contentLength: PlaybackContentLength?,
+): DownloadFileValidation {
+    val fileLength = files.lengthOrNull(path) ?: 0L
+    var prefix = files.readPrefix(path, DOWNLOAD_VALIDATION_WINDOW_BYTES)
+    val needed = prefix.audioSignatureWindowBytes().coerceAtMost(DOWNLOAD_VALIDATION_CEILING_BYTES)
+    if (needed > prefix.size && prefix.size.toLong() < fileLength) {
+        prefix = files.readPrefix(path, needed)
+    }
+    return DownloadFileValidation(
+        result = validateDownloadBytes(prefix, fileLength, container, contentType, contentLength),
+        fileLength = fileLength,
+    )
+}
+
+/** Enough for every envelope and every audio signature that does not follow an ID3v2 tag. */
+internal const val DOWNLOAD_VALIDATION_WINDOW_BYTES = 64L * 1024
+
+/** The most a large ID3v2 tag of embedded artwork may widen the validation window to. */
+internal const val DOWNLOAD_VALIDATION_CEILING_BYTES = 16L * 1024 * 1024
+
 private fun validateDownloadBytes(
     bytes: ByteArray,
+    totalLength: Long,
     container: AudioContainer,
     contentType: String?,
     contentLength: PlaybackContentLength?,
@@ -830,6 +927,7 @@ private fun validateDownloadBytes(
         ),
     ),
     expectedContainer = container,
+    totalBodyLength = totalLength,
 )
 
 private fun AudioContainer.databaseValue(): String = when (this) {

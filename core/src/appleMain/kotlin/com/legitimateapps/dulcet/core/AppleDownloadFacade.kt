@@ -409,15 +409,15 @@ public class AppleDownloadClient(
         requireReconciled()
         val policy = requireNotNull(engine)
         when (val result = policy.offlinePlaybackPlan(originalIdentity(rawId))) {
-            is OfflinePlaybackPlanResult.Available -> when (policy.loadOffline(result.plan)) {
-                is OfflinePlaybackLoadResult.Audio -> AppleLocalPlaybackPlanOutcomeDto(
+            is OfflinePlaybackPlanResult.Available -> when (policy.verifyOffline(result.plan)) {
+                OfflinePlaybackVerification.Valid -> AppleLocalPlaybackPlanOutcomeDto(
                     AppleLocalPlaybackPlanDto(result.plan),
                     unavailableKind = null,
                     errorKind = null,
                 )
-                OfflinePlaybackLoadResult.InvalidFile ->
+                OfflinePlaybackVerification.InvalidFile ->
                     AppleLocalPlaybackPlanOutcomeDto(null, "invalidFile", null)
-                OfflinePlaybackLoadResult.MissingFile ->
+                OfflinePlaybackVerification.MissingFile ->
                     AppleLocalPlaybackPlanOutcomeDto(null, "missingFile", null)
             }
             OfflinePlaybackPlanResult.NotDownloaded ->
@@ -524,7 +524,7 @@ public class AppleDownloadClient(
                 retry?.retryAtWallClock,
             )
         }
-        val plan = (resolution as PlaybackResolutionResult.Resolved).plan
+        val plan = (resolution as PlaybackResolutionResult.Resolved).plan.asOriginalFileDownload()
         val prepared = requireNotNull(requestClient).prepareGetRequest(
             endpoint = plan.endpoint,
             parameters = plan.parameters,
