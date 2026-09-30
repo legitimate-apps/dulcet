@@ -17,7 +17,10 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * [show] names the current track. Its stored document is published first, with no request, then the
  * live read; an answer about a track that is no longer current is dropped, so a quick skip never
- * shows the previous song's words. Every decision — the endpoint, the breaker, the layer — is the
+ * shows the previous song's words. With nothing stored, that first answer is not published: it says
+ * only that this device has not seen the words, which the live read is about to settle, and shown
+ * it would tell a connected person to connect. The panel stays loading until the read answers —
+ * offline that answer is the same statement, a moment later (Apple's panel shows loading too). Every decision — the endpoint, the breaker, the layer — is the
  * core's; this only keeps the latest publication for the current track.
  */
 public class SessionLyrics internal constructor(
@@ -44,7 +47,7 @@ public class SessionLyrics internal constructor(
         val asked = generation
         val lyrics = session.lyricsFacade(preferredLanguages)
         val stored = order.next()
-        lyrics.cached(track) { deliver(asked, stored, it) }
+        lyrics.cached(track) { if (it.freshness !is AndroidLibraryFreshness.Unavailable) deliver(asked, stored, it) }
         val live = order.next()
         lyrics.read(track) { deliver(asked, live, it) }
     }
