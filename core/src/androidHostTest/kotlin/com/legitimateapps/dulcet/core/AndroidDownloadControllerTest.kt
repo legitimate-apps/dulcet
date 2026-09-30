@@ -259,6 +259,36 @@ class AndroidDownloadControllerTest {
         return partial
     }
 
+    @Test fun aSchedulingPassReturnsOnlyAfterAConcurrentPassHasStartedItsTask() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val tasks = object : RecordingTasks() {
+                override fun start(downloadId: String) {
+                    // The first start is held open, as a slow platform enqueue would be.
+                    if (started.isEmpty()) { entered.countDown(); check(release.await(10, TimeUnit.SECONDS)) }
+                    super.start(downloadId)
+                }
+            }
+            val controller = controller(server, tasks)
+            assertTrue(controller.awaitReconciled())
+            val first = CoroutineScope(Dispatchers.IO).async {
+                controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            }
+            assertTrue(entered.await(10, TimeUnit.SECONDS), "a pass decided to start the row")
+
+            // A second pass while the first is inside its start: the row is already marked started.
+            val second = CoroutineScope(Dispatchers.IO).async { controller.scheduleNext() }
+            delay(300)
+            assertFalse(second.isCompleted, "a pass may not return while another's start is still in flight")
+            release.countDown()
+            second.await()
+            assertEquals(1, tasks.started.size, "when any pass returns, the decided task has been started")
+            first.await()
+            assertEquals(1, tasks.started.size, "and it is started exactly once")
+        }
+    }
+
     @Test fun serverRefusalsAreRecordedWithTheirRetryBoundary() = runBlocking {
         WireServer { WireReply(429, byteArrayOf(), retryAfter = "30") }.use { server ->
             var now = NOW
@@ -425,7 +455,7 @@ class AndroidDownloadControllerTest {
 
     private fun files(): List<File> = root.walkTopDown().filter { it.isFile }.toList()
 
-    private class RecordingTasks(private val outstanding: List<String> = emptyList()) : AndroidDownloadTasks {
+    private open class RecordingTasks(private val outstanding: List<String> = emptyList()) : AndroidDownloadTasks {
         val started = CopyOnWriteArrayList<String>()
         val cancelled = CopyOnWriteArrayList<String>()
         val wakes = CopyOnWriteArrayList<Long>()

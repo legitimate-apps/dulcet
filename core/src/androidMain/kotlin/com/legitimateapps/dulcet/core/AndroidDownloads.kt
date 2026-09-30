@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -158,6 +160,13 @@ public class AndroidDownloadController internal constructor(
     private val mutableStatuses = MutableStateFlow<Map<String, AndroidDownloadStatus>>(emptyMap())
     @Volatile private var closed = false
     private val runningTasks = MutableStateFlow(0)
+    /**
+     * Held from a scheduling decision until its task is started, so a scheduling pass never returns
+     * while another's start is still in flight. Without it, the pass that relaunch reconciliation
+     * launches could mark a new row started while [download]'s own pass found it already running and
+     * returned: [download] would return with its task not yet started (OBSERVED on a CI host).
+     */
+    private val scheduling = Mutex()
 
     /** Every download of the account, by raw id, with the transfer under way's progress. */
     public val statuses: StateFlow<Map<String, AndroidDownloadStatus>> = mutableStatuses
@@ -199,7 +208,9 @@ public class AndroidDownloadController internal constructor(
     /**
      * Downloads [items], each the original file (spec §14.5 identity `(server, raw id, original)`).
      * A track already downloaded or under way is left as it is. Each row is written, and its track's
-     * metadata pinned against seen-cache eviction (§16.13), before any file exists.
+     * metadata pinned against seen-cache eviction (§16.13), before any file exists. It returns once
+     * scheduling has settled: the next download's task is started, or a wake is requested, whichever
+     * scheduling pass made that decision.
      */
     public suspend fun download(items: List<AndroidDownloadItem>) {
         if (items.isEmpty() || !awaitReconciled()) return
@@ -258,6 +269,11 @@ public class AndroidDownloadController internal constructor(
      */
     public suspend fun scheduleNext() {
         if (closed || !awaitReconciled()) return
+        scheduling.withLock { scheduleNextLocked() }
+    }
+
+    private suspend fun scheduleNextLocked() {
+        if (closed) return
         val decision = withContext(database) {
             val rows = engine.records(account.providerInstanceId)
             if (rows.any { it.state == DownloadState.Downloading }) return@withContext null
