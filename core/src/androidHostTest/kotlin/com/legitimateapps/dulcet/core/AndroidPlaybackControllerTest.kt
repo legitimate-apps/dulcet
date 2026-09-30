@@ -299,6 +299,8 @@ class AndroidPlaybackControllerTest {
             assertEquals(1, after.currentIndex)
             assertEquals(before.playbackSessionId, after.playbackSessionId)
             assertEquals(before.attemptId, after.attemptId)
+            assertEquals(before.phase, after.phase, "the playing entry plays on")
+            assertTrue(after.playWhenReady)
             assertFalse(after.canGoNext, "nothing follows the playing entry now")
             assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId })
         }

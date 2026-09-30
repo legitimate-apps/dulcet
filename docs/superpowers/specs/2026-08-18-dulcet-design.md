@@ -2186,7 +2186,9 @@ It now keeps the whole contract, as the Apple shell does:
   The Play that follows begins a new attempt through the core. Pause always reaches the engine, so
   in that window it stops asking to play at once rather than when the next entry starts. Skip (`next`), Previous (`previous`), a pick
   from a list (a new queue), a pick in Up Next (`jumpTo`), shuffle and repeat call the core
-  functions that begin a pass. Previous on the first entry of a stream that cannot seek restarts it
+  functions that begin a pass, and so do queue edits (revision of 2026-09-30): Play Next and Add
+  to Queue (`enqueue`), Move Up and Move Down (`move`), Remove (`remove`) and Clear
+  (`clearUpcoming`), the same calls the Apple facade makes. Previous on the first entry of a stream that cannot seek restarts it
   as a new session (`restartCurrent`); it reports the press first, so it begins a pass there too. The engine
   reports a natural end (`EndedNaturally`, from Media3's `STATE_ENDED`). The core's
   Play-with-no-session reset is not reached: Android's session ends only with the queue's natural
@@ -2194,8 +2196,7 @@ It now keeps the whole contract, as the Apple shell does:
 - **Unreachable on Android, so neither reported nor tested there:** a gapless handover (the Media3
   engine refuses `PreloadNext`, so `AdvancedToPreloaded` never occurs); a Try Again control (there
   is none; after a connection failure Play is Try Again, `retryCurrent`, and the failure line says
-  so); queue
-  edits (no surface moves, removes or adds an entry); and a disconnect, sign-out or change of
+  so); and a disconnect, sign-out or change of
   server (no Android surface offers one). The controller lives as long as its account's playback
   service, and closing it withdraws the notice. A skip while the TV's browse screens are in front is
   silent there: TV draws the notice only in its player, and the browse screens have no playback
@@ -2686,6 +2687,11 @@ either stop the music or silently start something; Next and Pause already say wh
 upcoming* removes everything after the current entry. *Jump* (tapping a queue row) is a next-item
 boundary: the outgoing session is finalized (§12.1). No edit is a session boundary, and no edit
 starts or stops anything except Jump.
+
+**Android (2026-09-30)** edits through the same core calls. Its shell differs in one respect: a
+new queue starts only once its first entry has been read from the server, so for that moment the
+core still holds the old queue, and an addition made then would be replaced when the new one
+starts. Android refuses it, and says so, rather than losing the tracks.
 
 **Restoration recovery:** before creating a playback session from a persisted queue, check whether
 its selection can resolve in the supplied playback catalog for the active account. If it cannot,
@@ -7196,6 +7202,24 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
+and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
+Both apps now offer what the Apple shells offer, through the same core calls the Apple facade makes
+(`enqueue`, `move`, `remove`, `clearUpcoming`): Play Next and Add to Queue on track rows and for an
+album, and, for the entries after the playing one, Move Up, Move Down, Remove and Clear. The playing
+entry and those before it offer no edit, as on Apple; the core refuses removing the playing entry.
+With no queue of the account's own to add to, an addition plays instead. A refused edit is said, in
+the Apple shells' words. The phone offers the Up Next edits in a row menu and as accessibility
+actions; the TV, which has no swipe, drag or dependable long-press menu, in a dialog opened from a
+button to the right of the row, where Clear Up Next is one of the choices -- a Clear beside the
+heading sat between the transport and the list, and DOWN from the transport no longer reached the list (OBSERVED in a Robolectric composition at 960 x 540 dp, whether Clear followed the heading or ended it). One
+rule is Android's own: an addition made while a new queue is still being read from the server is
+refused, because that queue replaces the old one when it starts (§14.1). An Android edit stops and
+starts nothing: the controller's other queue verbs stop the engine and start an entry, and an edit
+routed through them would have ended the playing session. OBSERVED in Robolectric compositions and
+controller host tests (`AndroidPlaybackControllerTest`, `PhoneQueueEditingTest`,
+`TvNowPlayingControlsTest`, `TvQueueAdditionTest`); not yet driven on an emulator or device.
 
 **2026-09-30 — Android TV opens on the library; its Sign out is never the default focus and is
 reachable at 1080p (§14.7).** A connected TV opened on an empty search field. It now opens on the
