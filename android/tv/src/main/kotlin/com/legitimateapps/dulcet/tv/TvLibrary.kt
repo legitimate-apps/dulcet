@@ -355,11 +355,10 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(SharedR.string.account_signout_account_title), Modifier.weight(1f),
-                    style = MaterialTheme.typography.displaySmall)
-                TvAction(stringResource(R.string.tv_back), "account.back", onClick = navigator.back)
-            }
+            Row { TvAction(stringResource(R.string.tv_back), "account.back", onClick = navigator.back) }
+        }
+        item {
+            Text(stringResource(SharedR.string.account_signout_account_title), style = MaterialTheme.typography.displaySmall)
         }
         item {
             Text(
@@ -444,7 +443,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     val observation by session.observation.collectAsState()
     val list = rememberLazyListState()
     // A focus returning to a row the list had scrolled past: bring that row back first. Two items
-    // precede the rows: the heading with its actions, then the connection notices.
+    // precede the rows: the sections with Refresh, then the connection notices.
     val returning = LocalTvRouteFocus.current?.pending?.let { HOME_ROW.find(it) }?.groupValues?.get(1)?.toIntOrNull()
     LaunchedEffect(returning) { if (returning != null) list.scrollToItem(returning + 2) }
     LazyColumn(
@@ -454,19 +453,15 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         item {
-            // The heading gets its own line, the four sections a row of their own beneath it: the
-            // heading and the ways into the library read as two stops, not one crowded line.
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.tv_library_title), Modifier.weight(1f), style = MaterialTheme.typography.displaySmall)
-                    TvAction(stringResource(R.string.tv_refresh), "library.refresh", icon = DulcetIcons.Refresh, onClick = session::refresh)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
-                    TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
-                    TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
-                    TvAction(stringResource(R.string.tv_library_playlists), "library.view.playlists") { navigator.open(ROUTE_PLAYLISTS) }
-                }
+            // No "Library" heading: the bar's lit tab names the screen. The ways into the library
+            // are one row of their own, with Refresh at its end.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvAction(stringResource(R.string.tv_library_albums), "library.view.albums") { navigator.open(ROUTE_ALBUMS) }
+                TvAction(stringResource(R.string.tv_library_artists), "library.view.artists") { navigator.open(ROUTE_ARTISTS) }
+                TvAction(stringResource(R.string.tv_library_favourites), "library.view.favourites") { navigator.open(ROUTE_FAVOURITES) }
+                TvAction(stringResource(R.string.tv_library_playlists), "library.view.playlists") { navigator.open(ROUTE_PLAYLISTS) }
+                Spacer(Modifier.weight(1f))
+                TvAction(stringResource(R.string.tv_refresh), "library.refresh", icon = DulcetIcons.Refresh, onClick = session::refresh)
             }
         }
         item { TvConnectionNotices(session, accountNotices = true) }
@@ -818,12 +813,14 @@ private fun TvFavouritesScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TvAction(stringResource(R.string.tv_back), "library.favourites.back", onClick = navigator.back)
+                TvAction(stringResource(R.string.tv_refresh), "library.favourites.refresh", onClick = session::refresh)
+            }
+        }
+        item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.tv_library_favourites), Modifier.weight(1f), style = MaterialTheme.typography.displaySmall)
-                    TvAction(stringResource(R.string.tv_back), "library.favourites.back", onClick = navigator.back)
-                    TvAction(stringResource(R.string.tv_refresh), "library.favourites.refresh", onClick = session::refresh)
-                }
+                Text(stringResource(R.string.tv_library_favourites), style = MaterialTheme.typography.displaySmall)
                 TvConnectionNotices(session, accountNotices = false)
                 if (current != null) {
                     if (current.items.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&

@@ -82,13 +82,14 @@ class AndroidPhoneDesignTourTest {
             shots.step("playlist") {
                 compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(PLAYLIST))
                 compose.onNode(hasText(PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
-                awaitTag("playlist.title") && shots.settle()
+                // The page paints from the cache and re-reads at once; let the entries land.
+                awaitTag("playlist.title") && awaitTag("playlist.entry.0") && shots.settle(2_500)
             }
             // The playlist's second entry carries the corpus's synced lyrics, so the player and the
             // lyrics sheet are shot with lines that light up.
             shots.step("now-playing") {
                 click("playlist.entry.1")
-                awaitTag("player.full") && awaitText(LYRICS_TRACK) && shots.settle(3_000)
+                awaitTag("player.full") && awaitText(LYRICS_TRACK) && shots.settle(4_000)
             }
             shots.step("up-next") {
                 click("player.queue")
