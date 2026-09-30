@@ -2779,7 +2779,27 @@ and reconciliation against a changed server item. The platform owns the **execut
   a row written before its first file is always safe; `enqueue` already inserts the row before any
   file exists. An executor must keep both rules: write a file only after its row, and only under a
   name the row gives it. A file written first, or under any other name, is deleted at the next
-  launch. Android has no executor yet, so nothing writes a file there today.
+  launch. The Android executor (§28, 2026-09-30) keeps both: `download` inserts the row, and pins
+  the track's metadata, before any task starts, and a transfer writes only
+  `.tmp/<downloadId>.partial` before the core promotes it to the row's `file_relative_path`.
+- **The Android executor (§28, 2026-09-30).** `AndroidDownloadController` (core `androidMain`) runs
+  this policy for the saved account; the shells reach it through one per-process registry, because
+  `reconcile` must run once per launch before anything else. Its platform tasks are WorkManager
+  work, one unique work per `downloadId`, tagged with the account and with that id, constrained to a
+  connected network; `outstanding()` maps WorkManager's unfinished work back to ids, so a task that
+  survived process death keeps its row and a lost one is interrupted and restarted. Work is not
+  expedited, since that would need a foreground-service type for data sync. One transfer runs at a
+  time: the signed legacy `stream` request for the original file, never a transcode, which leaves a
+  track whose container this device cannot play without a download control. The disk budget is
+  the lesser of 10 GiB and what is used plus free space less 256 MiB, with a 512 MiB reservation for
+  an unknown length. A failure is recorded with the core, which owns the retry boundary, and the
+  executor asks WorkManager to wake it at that boundary rather than retrying by itself. A transfer
+  restarts from zero; resume data is not kept. A downloaded song plays through the same validating
+  Media3 data source as a stream (§12.4), over the promoted file, so a file changed since promotion
+  is refused rather than played. The playback controller asks for the local plan before any server
+  read, including the queue's own song read, which offline would otherwise fail first. The library
+  reader's playability comes from the account's `complete` and `stale` rows. Android TV has
+  downloads; only tvOS ships none.
 
 ### 14.6 Storage budget and eviction priority
 
@@ -2861,8 +2881,8 @@ has chosen to sign out, not at step 1, and runs the steps in this order:
    most 90 s on a monotonic clock, past the reader's own worst case of about 85 s. Past that nothing
    is deleted: the mark stays, the person lands on the connect form as after a finished sign-out,
    and a later launch's sweep deletes the data;
-7. the account's artwork cache and downloaded files are deleted, then its database rows (steps 5
-   and 6). Android downloads nothing through a platform task, so step 4 has none to cancel;
+7. the account's download tasks are cancelled and its download controller closed (step 4), then
+   its artwork cache and downloaded files are deleted, then its database rows (steps 5 and 6);
 8. the `removing` mark is cleared.
 
 Whenever an activity creates its sign-out — at every launch, and when an activity is re-created in
@@ -7214,6 +7234,22 @@ OBSERVED with a failing test on the reviewed code; the tests are in `PlaylistRec
   instance: an account switch builds a new reader, so it never crosses accounts, and a relaunch loses
   it — a candidate written by the offer survives in the cache, but the list itself is not re-read
   until its screen reads.
+
+**2026-09-30 — Android downloads (§14.5).** Android gains the download executor the policy had
+waited for: a core `AndroidDownloadController` over `DownloadPolicyEngine`, WorkManager tasks named by
+`downloadId`, per-track and per-album download and removal on the phone and TV album pages, a
+downloaded marker and progress, local-file playback through the validating data source, and removal
+of an account's tasks and files at sign-out. `DownloadPolicyEngine` gains `remove` (temporary file,
+promoted file, then row) and `records`. Three contracts changed: §14.5's Android precondition now
+names the executor that keeps it; §14.7's Android step 7 now cancels tasks (step 4) instead of
+saying there are none; and a found defect is recorded — the Android queue start read the song from
+the server before looking for a local plan, so offline a downloaded album could not start. Every
+start now asks for the local plan first. Evidence: Robolectric host tests of the controller against
+a loopback server (promotion, an HTTP 200 envelope rejected, a short or grown file refused, removal,
+relaunch reconciliation, `Retry-After`), of the WorkManager executor and sign-out, and of the phone
+and TV controls; emulator proofs of CONF-51 and CONF-52 on phone and TV are wired into the
+`android-emulator` job. Left open: resume data, and title metadata offline for tracks the reader
+never read.
 
 **2026-09-29 — Playlists and lyrics on Apple.** The Apple shells gain a Playlists section, a playlist
 page that plays in the playlist's own order, Add to Playlist on tracks and albums, create, rename and

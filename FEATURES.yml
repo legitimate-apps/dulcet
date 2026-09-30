@@ -1101,7 +1101,29 @@
           }
         },
         "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},
-        "android": {"status": "planned"}, "androidtv": {"status": "planned"}
+        "android": {
+          "status": "partial",
+          "evidence": [
+            {"observes": "on the phone app's unit-test runtime, the saved account's download controller from the process registry starts a WorkManager task tagged with the account and the row's download id; the task waits for a network, then its worker transfers the file from a loopback server and the core promotes exactly one file with the served bytes", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/aRequestedDownloadRunsAsAWorkManagerTaskAndIsPromoted"},
+            {"observes": "a relaunched process's controller leaves a download to the task WorkManager still holds and starts nothing more, and gives a row whose task WorkManager lost a new task that completes it", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/aRelaunchKeepsATaskWorkManagerStillHoldsAndRestartsOneItLost"},
+            {"observes": "removing the account through the production sign-out gateway cancels its outstanding download task and deletes its downloaded files", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/signingOutCancelsTheAccountsTasksAndDeletesItsDownloads"},
+            {"observes": "a downloaded track's row shows the downloaded marker and its menu offers Remove download, which removes it", "workflow": "core-ci", "job": "core-ci", "test": "PhoneDownloadControlsTest/aDownloadedTrackShowsItsMarkerAndItsMenuRemovesTheDownload"},
+            {"observes": "a track with no download has no marker and its menu offers Download, which requests it", "workflow": "core-ci", "job": "core-ci", "test": "PhoneDownloadControlsTest/aTrackWithNoDownloadHasNoMarkerAndItsMenuDownloadsIt"},
+            {"observes": "a transfer under way shows its percentage on the track row", "workflow": "core-ci", "job": "core-ci", "test": "PhoneDownloadControlsTest/aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist"}
+          ],
+          "unevidenced_conformance": {"CONF-51": "Wired as AndroidEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask in the android-emulator job against the disposable server; it has not yet been observed executing, so no passing run is cited.", "CONF-52": "Wired as AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithEveryNetworkDown in the android-emulator job against the disposable server; it has not yet been observed executing, so no passing run is cited, and whether the emulator's airplane mode takes the host loopback down is ASSUMED until it runs (the proof fails, never skips, if it does not)."},
+          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and — in core's Android host tests, which core-ci runs but does not upload — of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server are wired and not yet observed, so the cell is partial. Transfers restart from zero (no resume data), and a track never read by the library has no title offline."
+        },
+        "androidtv": {
+          "status": "partial",
+          "evidence": [
+            {"observes": "on the TV app, a track row's own download button, reached by focus and pressed with the remote's centre key, requests the track's download", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/theRowsDownloadButtonDownloadsATrackThatHasNone"},
+            {"observes": "a downloaded TV row shows its marker and its button, pressed with the remote, removes the download", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/aDownloadedRowShowsItsMarkerAndItsButtonRemovesIt"},
+            {"observes": "a transfer under way shows its percentage on the TV row", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/aTransferUnderWayShowsItsProgressOnTheRow"}
+          ],
+          "unevidenced_conformance": {"CONF-51": "Wired as AndroidTvEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask in the android-emulator job against the disposable server; it has not yet been observed executing, so no passing run is cited.", "CONF-52": "Wired as AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithEveryNetworkDown in the android-emulator job against the disposable server; it has not yet been observed executing, so no passing run is cited, and whether the emulator's airplane mode takes the host loopback down is ASSUMED until it runs (the proof fails, never skips, if it does not)."},
+          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 are wired and not yet observed, so the cell is partial."
+        }
       }
     },
     {
