@@ -316,11 +316,15 @@ extension View {
     }
 
     @ViewBuilder
-    func dulcetDefaultActionShortcut() -> some View {
+    func dulcetDefaultActionShortcut(_ isDefaultAction: Bool = true) -> some View {
 #if os(tvOS)
         self
 #else
-        keyboardShortcut(.defaultAction)
+        if isDefaultAction {
+            keyboardShortcut(.defaultAction)
+        } else {
+            self
+        }
 #endif
     }
 
@@ -330,20 +334,6 @@ extension View {
         buttonStyle(.borderedProminent)
 #else
         buttonStyle(.bordered)
-#endif
-    }
-
-    /// A prominent (accent-filled) action. On iOS its label takes the accent-fill contrast pair:
-    /// an ancestor's primary-text style would otherwise paint it dark on the dark accent of
-    /// light mode and light on the light accent of dark mode. macOS keeps the platform's own
-    /// prominent label: an explicit foreground there repaints the whole button, fill included.
-    @ViewBuilder
-    func dulcetProminentActionStyle() -> some View {
-#if os(iOS)
-        buttonStyle(.borderedProminent)
-            .dulcetForeground(.labelOnAccentFill)
-#else
-        buttonStyle(.borderedProminent)
 #endif
     }
 }

@@ -158,6 +158,8 @@ public struct DulcetCaptureView: View {
             }
         }
         .environment(store)
+        // The app root's tint, so the capture draws accent-driven controls as the app does.
+        .tint(.dulcetAccent)
     }
 }
 #endif

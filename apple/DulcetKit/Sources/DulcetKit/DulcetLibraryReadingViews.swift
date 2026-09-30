@@ -208,11 +208,13 @@ struct DulcetReaderAccountBanner: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: DulcetSpacing.xs) {
-                Button(DulcetStrings.reconnect, systemImage: "arrow.clockwise") {
+                DulcetProminentAction(
+                    DulcetStrings.reconnect,
+                    systemImage: "arrow.clockwise",
+                    isEnabled: store.snapshot.accountConnection != .connecting
+                ) {
                     store.submitAccountConnection()
                 }
-                .dulcetProminentActionStyle()
-                .disabled(store.snapshot.accountConnection == .connecting)
                 .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
                 .accessibilityIdentifier("dulcet.reader.reconnect")
                 if store.snapshot.accountConnection == .connecting {
@@ -446,6 +448,10 @@ struct DulcetReaderTile: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
     let width: CGFloat
+    /// The line under the title, when the grid's own would repeat where these are: on an
+    /// artist's page the artist's name is the page's, so the year alone carries it. Nil draws
+    /// the item's own line.
+    var subtitle: String? = nil
 
     var body: some View {
         Button {
@@ -464,8 +470,8 @@ struct DulcetReaderTile: View {
                     Spacer(minLength: 0)
                     DulcetFavouriteIndicator(id: item.id, published: item.isFavourite)
                 }
-                if !subtitle.isEmpty {
-                    Text(subtitle)
+                if !resolvedSubtitle.isEmpty {
+                    Text(resolvedSubtitle)
                         .font(.caption)
                         .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
@@ -481,7 +487,11 @@ struct DulcetReaderTile: View {
         .dulcetReaderItemContextMenu(item)
     }
 
-    private var subtitle: String {
+    private var resolvedSubtitle: String {
+        subtitle ?? defaultSubtitle
+    }
+
+    private var defaultSubtitle: String {
         switch item.kind {
         case .album: item.albumSubtitle
         case .artist: item.albumCount.map { DulcetStrings.readerCount(.albums, $0) } ?? ""
@@ -492,7 +502,7 @@ struct DulcetReaderTile: View {
     }
 
     private var accessibilityLabel: String {
-        let base = subtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, subtitle)
+        let base = resolvedSubtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, resolvedSubtitle)
         guard store.librarySession?.isFavourite(item.id, published: item.isFavourite) == true else { return base }
         return DulcetStrings.readerFavoriteAccessibility(base)
     }
@@ -725,6 +735,9 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 struct DulcetReaderGrid: View {
     let model: DulcetLibraryWindowModel
     let width: CGFloat
+    /// The tiles' line under the title, when the item's own would repeat the page's; nil leaves
+    /// each item's own line.
+    var tileSubtitle: ((DulcetReaderItem) -> String)? = nil
 
     var body: some View {
         let insets = DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2
@@ -746,7 +759,7 @@ struct DulcetReaderGrid: View {
             spacing: DulcetSpacing.md
         ) {
             ForEach(Array((model.window?.items ?? []).enumerated()), id: \.element.id) { index, item in
-                DulcetReaderTile(item: item, width: tile)
+                DulcetReaderTile(item: item, width: tile, subtitle: tileSubtitle?(item))
                     .dulcetReaderRow(index, in: model)
             }
         }
@@ -1316,14 +1329,14 @@ struct DulcetReaderTrackListPage: View {
 
     private func playButton(_ window: DulcetLibraryWindow, fills: Bool) -> some View {
         let playable = window.playableTracks
-        return Button {
+        return DulcetProminentAction(
+            DulcetStrings.play,
+            systemImage: "play.fill",
+            isEnabled: !playable.isEmpty,
+            fillsWidth: fills
+        ) {
             store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
-        } label: {
-            Label(DulcetStrings.play, systemImage: "play.fill")
-                .frame(maxWidth: fills ? .infinity : nil)
         }
-        .dulcetProminentActionStyle()
-        .disabled(playable.isEmpty)
         .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
     }
 
@@ -1425,7 +1438,10 @@ struct DulcetReaderArtistPage: View {
                         }
                     }
                     DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { _ in
-                        DulcetReaderGrid(model: model, width: width)
+                        DulcetReaderGrid(model: model, width: width) { item in
+                            // The page says whose albums these are; the year is the tile's news.
+                            item.year.map(String.init) ?? ""
+                        }
                     }
                 } else {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 120)
