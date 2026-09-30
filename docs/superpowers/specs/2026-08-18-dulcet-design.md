@@ -7248,6 +7248,56 @@ focus is off the bar or on the showing root's own tab, decided once when the ele
 screen that has nothing to restore rests the remote on its root's tab until its default arrives, so
 focus that falls off a screen that just left is not mistaken for a move along the bar.
 
+**2026-09-30 — Apple: Play after a stop restarts the entry, as Android's does (§12.1).** Before,
+Play on an Apple session whose attempt was stopped was a bare engine play. The engine's stop removes
+its item and withdraws the system's Now Playing entry, so that play was refused (`invalidState`) and
+nothing sounded; the session was also presented as "nothing is playing", so no surface offered Play.
+Now the stopped entry is presented at rest, at the position Play will resume from, and Play (or a
+toggle) reports the person's Play and then restarts the entry as a new session through the facade's
+`restartStoppedCurrent`, i.e. the core's `restartAfterStop`, which ends in the same `restartCurrent`
+as Android's Play after Stop.
+- *`Stopped` is two things.* A natural end reads `Stopped` too, and while an end is held for a
+  preload (§12.8) the ended session stays current until `AdvancedToPreloaded` -- with the lock
+  screen already offering Play. Restarting there would discard the preload and replay the ended
+  entry over the next one. So the core restarts only when the current attempt's terminal outcome is
+  `Skipped` and no end is held; a natural end, a held end, and a live, failed (Try Again's) or
+  absent session change nothing, and the controller then sends the plain engine play it always
+  did. The check is the core's alone: after a stop the controller can still hold a preload
+  registration the engine's stop removed, so a controller-side preload check refused the restart
+  (measured: the stop test then failed on the missing prepare). A held end is never published,
+  so a presented `Stopped` session is a stop. Found in review; the first version restarted on any
+  `Stopped`.
+- *Resumes, and may count twice.* As for every start, a position the stop saved is restored, so the
+  restart is a new session resuming there, not necessarily from zero (a stop at or past a known end,
+  once the play has counted, restarts at zero). Stop then Play is two sessions, so a long track
+  listened to across a stop can count two plays. Accepted: it is Android's behaviour, through the
+  same core call.
+- *Reachability,* OBSERVED from the code and tests rather than on a device: Apple offers no Stop of
+  its own (the system stop command is disabled and no in-app control issues one), and the engine is
+  stopped only by the controller itself -- before a new start, at a queue's end (which ends the
+  session), and on sign-out (which forgets the account first, so that stop still presents
+  "unavailable"). `Stopped` is otherwise reached by a natural end, above. A system teardown ends the
+  core session outright (`ApplePlaybackQueueFacadeTest`), so Play there already started the entry
+  through `startCurrent`. The change therefore closes a stop path no current control reaches, and
+  makes any future Stop behave as Android's. A lock-screen Play after a stop still cannot arrive: the
+  entry is withdrawn, as after a queue's end.
+- *Evidence.* `ApplePlaybackQueueFacadeTest`: `playAfterAStopRestartsTheSelectedEntryAsANewSessionAndNothingElseDoes`
+  and `aNaturalEndHeldForAPreloadIsNotAStopAndIsNeverRestarted` (macOS native; the second fails on
+  the first version). `DulcetCorePlaybackSystemTests` (macOS host):
+  `testPlayAfterAStopRestartsTheEntryAsANewSession` fails before the change on the missing
+  presentation, and with the presentation but not the Play branch on the missing prepare;
+  `testAPlayWhileAnEndIsHeldForThePreloadDoesNotReplayTheEndedEntry` fails on the first version.
+  `AVPlayerEngineTests.aStopLeavesNoItemForAPlayToSoundAndWithdrawsTheSystemEntry` pins what the
+  engine's stop leaves behind. Not observed on a device.
+- *Not changed:* a `Stopped` session survives sign-out and sign-in, and restoration then does
+  nothing because a session exists, so the queue shows "nothing is playing". Recorded as a
+  follow-up.
+- *The saved heart (§18.3), checked at the same time:* Apple's Now Playing heart does not go hollow
+  between a flush's republication and its outcome, as Android's did (#172); nothing on Apple reads
+  the core's favourite state between them. `LibraryReaderTests` guards the Swift side (the session's
+  overlay and recorded value at each delivery); the core's adopt-then-republish order it relies on
+  is ASSUMED from `MutationOutbox.flush` there, not measured by that test.
+
 **2026-09-29 — A lost create's offer is actionable when made; an owed list re-read survives a
 cut-off (§16.14 step 3, §18.6).** A second review of the owed list re-read (§28 revision 104 item 33)
 found it could still be lost in two reachable ways, and the offer it serves not yet actionable, each

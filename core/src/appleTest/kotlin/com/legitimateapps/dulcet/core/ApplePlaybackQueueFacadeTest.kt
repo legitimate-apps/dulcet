@@ -486,6 +486,101 @@ class ApplePlaybackQueueFacadeTest {
         driver.close()
     }
 
+    @Test
+    fun playAfterAStopRestartsTheSelectedEntryAsANewSessionAndNothingElseDoes() {
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var identity = 0
+        // Store-backed, so the position the stop saves is really saved.
+        val client = ApplePlaybackQueueClient(
+            database = database,
+            controller = PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = resumePositions,
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+            resumePositions = resumePositions,
+        )
+        assertNull(client.restartStoppedCurrent().startDirective, "no queue, nothing to restart")
+        val started = assertNotNull(
+            client.replaceAndStart(queueRequest(listOf("track-a", "track-b"))).startDirective,
+        )
+        client.recordReady(started.attemptId, 180_000, "seekable")
+        client.recordPlaybackProgressBegan(started.attemptId, 1_788_000_000_000, 1_000)
+        // The engine still holds a playing attempt: Play is the engine's, never a restart.
+        assertNull(client.restartStoppedCurrent().startDirective, "a live session is not restarted")
+
+        val stopped = client.recordSkipped(started.attemptId, 40_000, "user")
+        // The stop is reached, and keeps its session, or nothing below means anything.
+        assertEquals("Stopped", stopped.snapshot?.currentSession?.phase)
+        assertEquals(started.playbackSessionId, stopped.snapshot?.currentSession?.playbackSessionId)
+
+        val restarted = client.restartStoppedCurrent()
+        assertNull(restarted.errorKind)
+        val directive = assertNotNull(restarted.startDirective, "Play after a stop starts the entry")
+        assertEquals("track-a", directive.rawId, "the selected entry, not the next")
+        assertNotEquals(started.playbackSessionId, directive.playbackSessionId, "as a new session")
+        assertEquals(true, directive.shouldAutoPlay)
+        assertEquals(0, restarted.snapshot?.currentIndex)
+        assertEquals(directive.playbackSessionId, restarted.snapshot?.currentSession?.playbackSessionId)
+        // Where it starts is what the stop saved, as for every start -- and as on Android, whose
+        // Play after Stop is this same core call.
+        assertEquals(40_000, directive.resumePositionMilliseconds)
+        // The restarted session is live: a second Play is the engine's, not another restart.
+        assertNull(client.restartStoppedCurrent().startDirective, "the restarted session is not stopped")
+
+        // A failed session is Try Again's, never a restart. A connection failure, which stops
+        // where it is; the item's own failure would skip on to the next entry (§12.12).
+        client.recordFailedBeforeStart(directive.attemptId, "transport")
+        assertEquals("Failed", client.snapshot().snapshot?.currentSession?.phase)
+        assertNull(client.restartStoppedCurrent().startDirective, "a failure is retried, not restarted")
+
+        // The system's own stop -- the engine torn down -- ends the session outright, so Play
+        // there is a finished queue's: the selected entry again, as a new session.
+        val retried = assertNotNull(client.retryCurrent().startDirective)
+        client.recordReady(retried.attemptId, 180_000, "seekable")
+        val tornDown = client.recordEngineTornDown(retried.attemptId, "systemReclaimed")
+        assertNull(tornDown.snapshot?.currentSession, "a teardown leaves no session behind")
+        assertNull(client.restartStoppedCurrent().startDirective, "with no session, a restart is not this call's")
+        val replay = assertNotNull(client.startCurrent().startDirective)
+        assertEquals("track-a", replay.rawId)
+        assertNotEquals(retried.playbackSessionId, replay.playbackSessionId)
+        client.close()
+        driver.close()
+    }
+
+    @Test
+    fun aNaturalEndHeldForAPreloadIsNotAStopAndIsNeverRestarted() {
+        val fixture = fixture()
+        val client = fixture.client
+        val started = assertNotNull(
+            client.replaceAndStart(queueRequest(listOf("track-a", "track-b"))).startDirective,
+        )
+        client.recordReady(started.attemptId, 180_000, "seekable")
+        client.recordPlaybackProgressBegan(started.attemptId, 1_788_000_000_000, 1_000)
+        val preload = assertNotNull(client.preloadNextForSession(started.playbackSessionId).preloadDirective)
+        assertEquals("track-b", preload.rawId)
+
+        val ended = client.recordEndedNaturally(started.attemptId, 180_000)
+        // The held end: the ended session stays current, reading Stopped, until the takeover. The
+        // control -- without it this state is never reached and the call below proves nothing.
+        assertNull(ended.startDirective, "the end is held for the preload")
+        assertEquals("Stopped", ended.snapshot?.currentSession?.phase)
+        assertEquals(started.playbackSessionId, ended.snapshot?.currentSession?.playbackSessionId)
+
+        val play = client.restartStoppedCurrent()
+        assertNull(play.startDirective, "a Play in the held end must not replay the ended entry")
+        assertNull(play.discardedPreloadAttemptId, "nor discard the preload about to play")
+        assertEquals(started.playbackSessionId, play.snapshot?.currentSession?.playbackSessionId)
+
+        // The takeover still happens, onto the preload.
+        val advanced = client.recordAdvancedToPreloaded(started.attemptId, preload.attemptId)
+        assertEquals(preload.playbackSessionId, advanced.snapshot?.currentSession?.playbackSessionId)
+        assertEquals(1, advanced.snapshot?.currentIndex)
+        fixture.driver.close()
+    }
+
     private fun insertion(rawIds: List<String>, mode: String) = ApplePlaybackQueueInsertionDto(
         items = rawIds.map { ApplePlaybackQueueItemDto("server", it, 180_000) },
         sourceKind = "search",

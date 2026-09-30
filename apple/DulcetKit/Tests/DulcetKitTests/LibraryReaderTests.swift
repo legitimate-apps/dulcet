@@ -865,3 +865,122 @@ func theLockScreenHeartIsOfferedOnlyWithAHandlerAndACurrentTrack() {
     command.setToggleHandler(nil)
     #expect(!center.likeCommand.isEnabled)
 }
+
+// MARK: - The playing track's heart through a save
+
+/// Publishes whatever the test hands it; the heart's source is the library session, not this.
+@MainActor
+private final class HeartTestPlayback: DulcetPlaybackControlling {
+    private var handler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
+    private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
+
+    func setPresentationHandler(_ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void) {
+        self.handler = handler
+    }
+    func configure(account: DulcetPlaybackAccount) {}
+    func restorePersistedQueue(with tracks: [DulcetTrack], catalogCoverage: DulcetLibraryCatalogCoverage) {}
+    func replaceQueueAndPlay(_ intent: DulcetPlaybackQueueIntent) {}
+    func send(_ intent: DulcetPlaybackControlIntent) {}
+    func disconnect() {}
+
+    func publish(_ presentation: DulcetPlaybackPresentation) {
+        currentPresentation = presentation
+        handler?(presentation)
+    }
+}
+
+/// A save told in the order the core's outbox tells it (spec §18.3): the republication of every
+/// open window mentioning the target, then the outcome, as two separate main-thread deliveries.
+/// Android's watch read the core's state between the two and drew a saved heart hollow (#172).
+///
+/// What this guards is the SWIFT side: the library session's overlay and recorded value, read at
+/// each delivery. The reader here is a synchronous fake, so the core's own order -- adopting the
+/// acknowledgement into the cache before republishing, so the republication carries the saved
+/// value -- is ASSUMED from `MutationOutbox.flush`, not measured by this test; the republication
+/// below is scripted to carry that value. Nothing on Apple reads the core's favourite state
+/// between the two deliveries, which is the read Android's defect needed.
+enum HeartScreen: Sendable {
+    /// A track with no cache row -- only ever seen in a queue -- so no screen shows it and the
+    /// flush republishes nothing for it. Android's failing case.
+    case noScreenShowsTheTrack
+    /// An album screen is open on the track: its republication carries the adopted value.
+    case anOpenScreenShowsTheTrack
+}
+
+@MainActor
+func heartThroughASave(on screen: HeartScreen) async throws -> [String] {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    let playback = HeartTestPlayback()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ReaderTestConnector(),
+        credentialStore: ReaderTestCredentials(
+            persisted: DulcetAccountConnectRequest(
+                serverURL: "https://music.example.invalid",
+                username: "listener",
+                password: "fixture-password",
+                allowLocalHTTP: false
+            ),
+            providerInstanceID: "provider-reader"
+        ),
+        playbackController: playback,
+        librarySession: session
+    ))
+    let reader = try #require(factory.made.first)
+    let id = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "t-playing")
+    // The queue's copy of the track says what the server said when it was queued: not a favourite.
+    let queued = DulcetTrack(
+        id: id, title: "Playing", credits: [], albumTitle: "Album", duration: .seconds(180),
+        mediaSourceID: nil, artwork: DulcetArtwork(seed: "t-playing", palette: .indigoCoral),
+        isFavorite: false
+    )
+    playback.publish(DulcetPlaybackPresentation(status: .ready, nowPlaying: DulcetNowPlaying(
+        sessionID: DulcetPlaybackSessionID("session-heart"), current: queued, queue: [queued],
+        elapsed: .seconds(3), isPlaying: true, outputName: "Fixture output", volume: 1,
+        audioFormat: DulcetAudioFormat(codec: "MP3", sampleRateKilohertz: 44.1)
+    )))
+    // Held for the whole flush: the screen hears its subscription only while it is alive.
+    let screenModel = DulcetLibraryWindowModel(query: .albums(.newest))
+    var albumScreen: RecordingWindow?
+    if screen == .anOpenScreenShowsTheTrack {
+        screenModel.open(in: session)
+        albumScreen = try #require(reader.windows.last)
+        albumScreen?.publish(window([item("track", "t-playing", favourite: false)]))
+        // The control: the screen's publications reach the session, or this case tests nothing.
+        #expect(session.knownFavourites[id] == false, "the open screen's publication was not heard")
+    }
+    var seen: [String] = []
+    func look(_ step: String) {
+        let heart = store.playingTrackFavourite?.isFavourite
+        seen.append("\(step): \(heart.map { $0 ? "filled" : "hollow" } ?? "absent")")
+    }
+    look("before")
+    #expect(store.togglePlayingTrackFavourite())
+    look("tapped")
+    // A publication while the change waits carries the overlay (rule 2), as the core's does.
+    albumScreen?.publish(window([item("track", "t-playing", favourite: true)], sequence: 2))
+    look("pending")
+    // The flush: republished with the adopted value (or nothing, with no screen) ...
+    albumScreen?.publish(window([item("track", "t-playing", favourite: true)], sequence: 3))
+    look("republished")
+    // ... and only then, as a separate delivery, the outcome.
+    reader.outcomeHandler?(DulcetFavouriteOutcome(
+        kind: "saved", targetKind: "track", rawID: "t-playing", field: "favourite", errorKind: nil))
+    look("saved")
+    withExtendedLifetime(screenModel) {}
+    return seen
+}
+
+@Test(arguments: [HeartScreen.noScreenShowsTheTrack, .anOpenScreenShowsTheTrack]) @MainActor
+func theSavedHeartOfThePlayingTrackStaysFilledBetweenTheRepublicationAndTheOutcome(
+    screen: HeartScreen
+) async throws {
+    let seen = try await heartThroughASave(on: screen)
+    #expect(seen == [
+        "before: hollow",
+        "tapped: filled",
+        "pending: filled",
+        "republished: filled",
+        "saved: filled",
+    ], "the heart of a saved track never shows hollow, at any step of the flush (\(screen))")
+}

@@ -377,6 +377,18 @@ public class ApplePlaybackQueueClient private constructor(
         controllerOrThrow().retryCurrent()
     }
 
+    /**
+     * Play after a stop (§12.1): the current attempt was stopped (`Skipped`), the engine's stop
+     * removed its item, and a play addressed to it would reach nothing. The selected entry starts
+     * again as a new session, as Android's Play after Stop does, through the same core restart
+     * ([PlaybackQueueController.restartAfterStop]); a position the stop saved is restored as it is
+     * for any start. A session that ended naturally -- including one whose end is held while a
+     * preload takes over -- or is live, failed (that is [retryCurrent]) or absent changes nothing.
+     */
+    public fun restartStoppedCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().restartAfterStop()
+    }
+
     public fun preloadNextForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
         runClosed { controllerOrThrow().preloadNext(PlaybackSessionId(playbackSessionId)) }
 

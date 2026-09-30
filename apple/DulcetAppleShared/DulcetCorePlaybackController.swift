@@ -303,6 +303,18 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
             // is ready the engine reports nothing, and a failure can come before Ready.
             _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+            // `Stopped` is two things. After a STOP the engine holds nothing -- its stop removed
+            // the item and withdrew the system's Now Playing entry -- so a play addressed to the
+            // stopped attempt is refused and nothing sounds; Play restarts the entry instead, as
+            // Android's Play after Stop does, and the Play reported above began a new pass
+            // (§12.12). After a NATURAL END the session reads Stopped too, and while a preload
+            // takes over the ended session stays current until `AdvancedToPreloaded`: restarting
+            // there would replay the ended entry over the one about to play. The core tells the
+            // two apart and restarts only after a stop; otherwise Play goes to the engine as before.
+            // (No preload check here: after a real stop the controller may still hold a
+            // registration the engine's stop already removed; the core's check is the one that
+            // knows whether an end is held.)
+            if session.phase == Self.stoppedPhase, restartStoppedEntry() { return }
             execute(.play(commandID: commandID("play")))
         case .pause:
             guard queueClient.acceptsCommand(
@@ -355,6 +367,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         guard transition.startDirective != nil else { return }
         publishPreparing()
         start(transition.startDirective)
+    }
+
+    /// Play after a stop: the selected entry again, as a new session (spec §12.1), resuming where
+    /// the stop saved its position as every start does. The core decides; a session that was not
+    /// stopped -- one that ended naturally, above all one whose end is held for a preload -- has
+    /// nothing to restart. Returns whether this handled the Play.
+    private func restartStoppedEntry() -> Bool {
+        guard account != nil else { return false }
+        let transition = queueClient.restartStoppedCurrent()
+        guard transition.errorKind == nil else {
+            publishFailure()
+            return true
+        }
+        guard transition.startDirective != nil else { return false }
+        publishPreparing()
+        start(transition.startDirective)
+        return true
     }
 
     /// Next past the last entry finalizes the session and starts nothing; the engine must then
@@ -1076,7 +1105,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // through `Task { @MainActor }`, so it lands AFTER `disconnect()` has published
             // `.unavailable` and overwrites it. Mapping the phase correctly removes the harm
             // rather than ordering around it: both paths now publish the same thing.
-            publishUnavailable()
+            publishStopped(snapshot)
             return
         case "Ready", "Progressing", "Buffering", "Paused":
             break
@@ -1172,9 +1201,35 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         return (entries, currentEntryIndex)
     }
 
-    /// No session. After a queue finishes the core keeps the last entry selected (spec §14.3), so
-    /// this presents that track stopped at its start -- as Music does -- instead of "Nothing is
-    /// playing". With no selection, or a selection the catalog cannot name, nothing is playing.
+    /// A session whose attempt is over: stopped, or ended (a held end for a preload is never
+    /// published; see `receiveEngineEvent`). With the account still here the queue is too, so
+    /// the entry is shown at rest, as a finished queue's is, and Play is offered -- and after a
+    /// stop, Play restarts it (`send`). `disconnect()` forgets the account before it issues its
+    /// stop, so that stop, landing late, still publishes `.unavailable`.
+    private func publishStopped(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        guard account != nil else { return publishUnavailable() }
+        publishWithoutSession(snapshot)
+    }
+
+    /// Where Play will start the entry shown at rest. A stopped session saved its position and
+    /// the restart resumes there (§12.1), so that is what is shown. A stop at or past a known end
+    /// is shown at the start: the core clears that position once the play has counted, so the
+    /// restart then begins at zero. With no session, a finished queue replays from the start.
+    private static func restartPosition(of session: ApplePlaybackCoreSessionDto?) -> Duration {
+        guard let session, session.phase == stoppedPhase, session.positionMilliseconds > 0 else {
+            return .zero
+        }
+        if session.durationMilliseconds > 0, session.positionMilliseconds >= session.durationMilliseconds {
+            return .zero
+        }
+        return .milliseconds(session.positionMilliseconds)
+    }
+
+    /// No session, or one whose attempt is over. After a queue finishes the core keeps the last
+    /// entry selected (spec §14.3), so this presents that track at rest at its start -- as Music
+    /// does -- instead of "Nothing is playing"; a stopped session's entry is presented the same
+    /// way, at the position Play will resume from. With no selection, or a selection the catalog
+    /// cannot name, nothing is playing.
     private func publishWithoutSession(_ snapshot: ApplePlaybackQueueSnapshotDto) {
         let index = Int(snapshot.currentIndex)
         guard snapshot.entries.indices.contains(index),
@@ -1195,7 +1250,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 queue: queueEntries.map(\.track),
                 currentIndex: currentEntryIndex ?? index,
                 sourceDisplayName: snapshot.entries[index].sourceDisplayName,
-                elapsed: .zero,
+                elapsed: Self.restartPosition(of: snapshot.currentSession),
                 isPlaying: false,
                 outputName: DulcetPlaybackStrings.thisDevice,
                 volume: 1,
@@ -1327,6 +1382,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// case's own name, and tools/verify-playback-phase-parity holds the phase switch in
     /// `publish` to the enum. Decisions outside that switch read the name from here.
     private static let failedPhase = "Failed"
+    /// The wire name of `PlaybackAttemptPhase.Stopped`: a stop, or a natural end (the core tells
+    /// them apart). Named from the enum as `failedPhase` is. (A teardown leaves no session.)
+    private static let stoppedPhase = "Stopped"
 
     private static let defaultBusyBackoff: TimeInterval = 5
     private static let minimumBusyBackoff: TimeInterval = 1
