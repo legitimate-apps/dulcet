@@ -11,8 +11,9 @@ import org.junit.runner.RunWith
 
 /**
  * The phone app, a real emulator and the disposable server: a download through the production
- * controller and WorkManager is validated and atomically promoted (CONF-51), and with the network
- * down the production play entry plays the identical local bytes (CONF-52). See [DownloadProof].
+ * controller and WorkManager is validated and atomically promoted (CONF-51), and with the server
+ * unreachable to the app the production play entry plays the identical local bytes (CONF-52). See
+ * [DownloadProof].
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorDownloadConformanceTest {
@@ -22,7 +23,7 @@ class AndroidEmulatorDownloadConformanceTest {
         DownloadProof(context, DisposableServerProbe.fromInstrumentation()).conf51()
     }
 
-    @Test fun conf52ADownloadedSongPlaysTheIdenticalFileWithEveryNetworkDown() {
+    @Test fun conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable() {
         DownloadProof(context, DisposableServerProbe.fromInstrumentation()).conf52 { account, rawId ->
             val intent = PlaybackIntents.playTrack(context, account.id, rawId, DisposableServerProbe.CANARY_TITLE)
                 .setClassName(context, PLAYBACK_ENTRY_ALIAS)

@@ -82,7 +82,10 @@ class DownloadExecutorTest {
         WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(task.id)
         awaitDownloaded(controller)
 
-        assertEquals(WorkInfo.State.SUCCEEDED, WorkManager.getInstance(context).getWorkInfoById(task.id).get()!!.state)
+        // The row is promoted inside the worker, which then schedules the next download before it
+        // returns, so the task may still be RUNNING here (OBSERVED on a CI host). Wait for it to
+        // finish, then require that it SUCCEEDED: a failed or cancelled task still fails this.
+        assertEquals(WorkInfo.State.SUCCEEDED, awaitFinished(task.id))
         assertEquals(1, server.requests.size)
         val files = root.walkTopDown().filter { it.isFile }.toList()
         assertEquals(1, files.size, "exactly one promoted file: $files")
@@ -163,6 +166,16 @@ class DownloadExecutorTest {
             val matching = downloadTasks().filter(which)
             if (matching.isNotEmpty()) return matching.singleOrNull() ?: error("More than one download task: $matching")
             check(System.currentTimeMillis() < deadline) { "No download task was started" }
+            Thread.sleep(20)
+        }
+    }
+
+    private fun awaitFinished(id: java.util.UUID): WorkInfo.State {
+        val deadline = System.currentTimeMillis() + 15_000
+        while (true) {
+            val state = WorkManager.getInstance(context).getWorkInfoById(id).get()!!.state
+            if (state.isFinished) return state
+            check(System.currentTimeMillis() < deadline) { "The download task never finished: $state" }
             Thread.sleep(20)
         }
     }

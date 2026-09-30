@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet.emulator
 
 import android.content.Context
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
@@ -26,35 +25,44 @@ import java.security.MessageDigest
  * temporary file left, its length the exact length the row records, and its bytes those of the
  * server's original file read independently by the probe.
  *
- * CONF-52: with every network down — proved by the probe's own request failing — the production
- * play entry plays that song from the file: media time advances, the controller reports it is
- * playing a download, and the file is still byte-identical to the server's original.
+ * CONF-52: with the server unreachable to the app, the production play entry plays that song from
+ * the file: media time advances, the controller reports it is playing a download, and the file is
+ * still byte-identical to the server's original. The app's server is a [ServerRelay] this process
+ * owns, and cutting it is the network going away. Radios are not the instrument: CI's emulator
+ * reaches the server over loopback or a host alias, which airplane mode leaves in place (OBSERVED:
+ * the TV emulator's server still answered with airplane mode, Wi-Fi and data off). Before playback,
+ * a request to the app's server URL must fail while the server itself still answers the probe.
+ * Afterwards the relay must have forwarded nothing since the cut.
  *
  * Afterwards the account's data is removed through the sign-out gateway, which must leave no
  * download file and no download task behind (spec §14.7).
  */
 class DownloadProof(private val context: Context, private val probe: DisposableServerProbe) {
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
     // The app-private download root (AndroidAccountData.downloadRootFor).
     private val root = File(context.noBackupFilesDir, "downloads")
 
     /** CONF-51: a download through the production controller and WorkManager, validated and promoted. */
-    fun conf51() = session { controller, _, rawId, container, duration, original ->
-        println("ANDROID DOWNLOAD CONF-51 OBSERVED " + proveDownload(controller, rawId, container, duration, original))
+    fun conf51() = session { controller, _, rawId, container, duration, original, relay ->
+        val proved = proveDownload(controller, rawId, container, duration, original)
+        // The app reached the server only through the relay, so the transfer crossed it.
+        check(relay.forwardedBytes.get() >= original.size) {
+            "The relay carried ${relay.forwardedBytes.get()} bytes, fewer than the ${original.size}-byte file"
+        }
+        println("ANDROID DOWNLOAD CONF-51 OBSERVED $proved relay-bytes=${relay.forwardedBytes.get()}")
     }
 
-    /** CONF-52: the downloaded song plays from the identical file with every network down. */
+    /** CONF-52: the downloaded song plays from the identical file with the server unreachable to the app. */
     fun conf52(startPlayback: (StoredAccount, String) -> AutoCloseable) =
-        session { controller, account, rawId, container, duration, original ->
+        session { controller, account, rawId, container, duration, original, relay ->
             proveDownload(controller, rawId, container, duration, original)
-            println("ANDROID DOWNLOAD CONF-52 OBSERVED " + proveOfflinePlayback(account, rawId, original, startPlayback))
+            println("ANDROID DOWNLOAD CONF-52 OBSERVED " + proveOfflinePlayback(account, rawId, original, relay, startPlayback))
         }
 
     /**
      * Connects the saved account, runs [proof] on its download controller, then removes the account
      * through the sign-out gateway and requires that no download file or task survives it.
      */
-    private fun session(proof: (AndroidDownloadController, StoredAccount, String, AudioContainer, Long, ByteArray) -> Unit) {
+    private fun session(proof: (AndroidDownloadController, StoredAccount, String, AudioContainer, Long, ByteArray, ServerRelay) -> Unit) {
         val rawId = probe.songId(DisposableServerProbe.CANARY_TITLE)
         val song = probe.call("getSong", mapOf("id" to rawId)).getJSONObject("song")
         val container = when (song.getString("suffix").lowercase()) {
@@ -69,14 +77,16 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
         check(original.size > 1024) { "The probe read too little of the original file to compare: ${original.size} bytes" }
         awaitQueuedBroadcastsDelivered()
         check(root.walkTopDown().none { it.isFile }) { "The installation already holds download files: nothing here would be this run's" }
-        connectSavedAccount(context, probe)
+        val relay = ServerRelay(probe.baseUrl)
+        connectSavedAccount(context, probe, relay.url)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
+        check(account.serverUrl.trimEnd('/') == relay.url) { "The saved account does not name the relay: ${account.serverUrl}" }
         try {
             val controller = checkNotNull(AndroidDownloads.controller(context)) { "No download controller for the saved account" }
             check(runBlocking { controller.awaitReconciled() }) { "Download reconciliation did not run" }
-            proof(controller, account, rawId, container, song.optLong("duration") * 1000, original)
+            proof(controller, account, rawId, container, song.optLong("duration") * 1000, original, relay)
         } finally {
-            setAirplaneMode(false)
+            relay.close()
             val removal = runCatching { runBlocking { CoreAccountDataGateway(context).removeAccountData(account.id) } }
             AndroidAccountCredentialStore(context).delete()
             removal.getOrThrow()
@@ -96,10 +106,14 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
             check(status?.needsAttention != true) { "The server refused the download: $status" }
             status?.state == AndroidDownloadState.Downloaded
         }
-        // The file came through a WorkManager task, not a call made here.
-        val work = WorkManager.getInstance(context).getWorkInfosByTag("dulcet.download.account:" +
-            controller.providerInstanceId).get()
-        val succeeded = work.count { it.state == WorkInfo.State.SUCCEEDED && it.tags.any { tag -> tag.startsWith("dulcet.download.id:") } }
+        // The file came through a WorkManager task, not a call made here. The row is promoted inside
+        // the worker, which schedules the next download before it returns, so wait for the task to
+        // finish rather than read its state the moment the row is promoted.
+        fun downloadTasks() = WorkManager.getInstance(context).getWorkInfosByTag("dulcet.download.account:" +
+            controller.providerInstanceId).get().filter { it.tags.any { tag -> tag.startsWith("dulcet.download.id:") } }
+        await("the download task to finish", timeoutMillis = 30_000) { downloadTasks().all { it.state.isFinished } }
+        val work = downloadTasks()
+        val succeeded = work.count { it.state == WorkInfo.State.SUCCEEDED }
         check(succeeded >= 1) { "No download task ran to completion: ${work.map { it.state to it.tags }}" }
         val files = root.walkTopDown().filter { it.isFile }.toList()
         check(files.none { it.name.endsWith(".partial") }) { "A temporary file was left behind: $files" }
@@ -112,40 +126,46 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
         return "files=1 temp-left=false bytes=${promoted.length()} sha256=${sha256(original).take(16)} worker-succeeded=$succeeded"
     }
 
-    private fun proveOfflinePlayback(account: StoredAccount, rawId: String, original: ByteArray,
+    private fun proveOfflinePlayback(account: StoredAccount, rawId: String, original: ByteArray, relay: ServerRelay,
                                      startPlayback: (StoredAccount, String) -> AutoCloseable): String {
-        setAirplaneMode(true)
-        await("the disposable server to be unreachable", timeoutMillis = 30_000) { runCatching { probe.call("ping") }.isFailure }
+        relay.cut()
+        // The app's server URL no longer answers; the server itself still does, so the cut, not a
+        // stopped server, is what the app meets.
+        check(!reaches(account.serverUrl)) { "The app's server URL still answers after the relay was cut" }
+        check(relay.refusedConnections.get() >= 1) { "The control request never reached the cut relay; it proved nothing" }
+        check(runCatching { probe.call("ping") }.isSuccess) { "The disposable server itself stopped answering" }
+        val forwardedAtCut = relay.forwardedBytes.get()
+        val refusedBefore = relay.refusedConnections.get()
         PlaybackObserver(context).use { observer ->
             startPlayback(account, rawId).use {
                 observer.bind()
                 val position = requireMediaTimeAdvances(observer, "offline")
                 check(observer.state().playingDownload) { "Playback advanced, but not from the download" }
-                check(runCatching { probe.call("ping") }.isFailure) { "The server became reachable during the offline proof" }
+                // Read before any further control request: an HTTP client may retry a refused
+                // request (MEASURED on the JVM: one failed GET arrived as two connections), so the
+                // count is taken while only the app can have added to it.
+                val appAttempts = relay.refusedConnections.get() - refusedBefore
+                check(relay.forwardedBytes.get() == forwardedAtCut) {
+                    "The relay forwarded ${relay.forwardedBytes.get() - forwardedAtCut} bytes to the server during offline playback"
+                }
+                check(!reaches(account.serverUrl)) { "The app's server URL became reachable during the offline proof" }
                 val file = root.walkTopDown().single { it.isFile }
                 check(file.readBytes().contentEquals(original)) { "The played file is not the server's original" }
                 observer.stopPlayback()
                 observer.unbind()
-                return "network=down(probe-refused) playing-download=true media-ms=$position bytes-identical=true"
+                return "server=unreachable(relay-cut, control-refused) server-requests-during-playback=0 " +
+                    "app-attempts-refused=$appAttempts playing-download=true media-ms=$position bytes-identical=true"
             }
         }
     }
 
-    /**
-     * Every radio down, or back up. Airplane mode alone can leave Wi-Fi on where the person chose
-     * that, so Wi-Fi and mobile data are switched too; the proof's own control — the probe failing
-     * to reach the server — decides whether the network is actually gone.
-     */
-    private fun setAirplaneMode(enabled: Boolean) {
-        val commands = if (enabled) listOf("cmd connectivity airplane-mode enable", "svc wifi disable", "svc data disable")
-            else listOf("svc wifi enable", "svc data enable", "cmd connectivity airplane-mode disable")
-        for (command in commands) instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
-            java.io.FileInputStream(descriptor.fileDescriptor).bufferedReader().readText()
-        }
-        if (!enabled) await("the disposable server to answer again", timeoutMillis = 60_000) {
-            runCatching { probe.call("ping") }.isSuccess
-        }
-    }
+    /** True when a request to [serverUrl] gets any HTTP answer at all. */
+    private fun reaches(serverUrl: String): Boolean = runCatching {
+        val connection = URL("${serverUrl.trimEnd('/')}/rest/ping.view").openConnection() as HttpURLConnection
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 5_000
+        try { connection.responseCode } finally { connection.disconnect() }
+    }.isSuccess
 
     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 }

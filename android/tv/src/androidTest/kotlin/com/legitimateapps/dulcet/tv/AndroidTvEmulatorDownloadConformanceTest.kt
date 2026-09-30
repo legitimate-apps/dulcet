@@ -24,7 +24,7 @@ class AndroidTvEmulatorDownloadConformanceTest {
         DownloadProof(context, DisposableServerProbe.fromInstrumentation()).conf51()
     }
 
-    @Test fun conf52ADownloadedSongPlaysTheIdenticalFileWithEveryNetworkDown() {
+    @Test fun conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable() {
         check(context.packageManager.hasSystemFeature("android.software.leanback")) {
             "This proof must run on an Android TV device or emulator"
         }
