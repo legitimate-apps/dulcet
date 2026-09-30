@@ -119,6 +119,17 @@ public fun rememberWatchedFavourite(session: LibrarySession, target: AndroidLibr
     return state.value
 }
 
+/** The rating of [target] as this device knows it (0 unrated), for Now Playing; null while unknown. */
+@Composable
+public fun rememberWatchedRating(session: LibrarySession, target: AndroidLibraryEntity?): Int? {
+    val state = remember(session, target) { mutableStateOf<Int?>(null) }
+    DisposableEffect(session, target) {
+        val watch = target?.let { session.watchRating(it) { value -> state.value = value } }
+        onDispose { watch?.close() }
+    }
+    return state.value
+}
+
 /** What a heart on this row changes: an album, an artist or a track; null for anything else. */
 public fun AndroidLibraryItem.favouriteTarget(): AndroidLibraryEntity? = when (this) {
     is AndroidLibraryItem.Album -> AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)

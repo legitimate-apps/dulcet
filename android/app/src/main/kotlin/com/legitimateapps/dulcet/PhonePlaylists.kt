@@ -337,7 +337,8 @@ internal fun PlaylistScreen(
                                 onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                                 favouriteTag = "playlist.entry.$position.favourite",
                                 onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) },
-                                queue = actions.trackQueue(track, null)) {
+                                queue = actions.trackQueue(track, null),
+                                onRate = { session.setRating(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId), it) }) {
                                 note = null
                                 actions.playPlaylist(current, position, false)
                             }

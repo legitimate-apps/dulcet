@@ -8,6 +8,8 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.outcomeLine
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
+import com.legitimateapps.dulcet.library.rememberWatchedRating
+import com.legitimateapps.dulcet.ui.RatingStars
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -170,6 +172,8 @@ internal fun NowPlayingScreen(
             }
         }
     } }
+    // The playing track's stars, under its title and artist (§16.20).
+    val rating: (@Composable () -> Unit)? = library?.let { session -> { NowPlayingRating(session, state) } }
     val surface = MaterialTheme.colorScheme.surface
     val accent = state.artworkKey?.let { ArtworkImages.accent(account, it) }
     val top by animateColorAsState(accent?.copy(alpha = 0.55f)?.compositeOver(surface) ?: MaterialTheme.colorScheme.primaryContainer,
@@ -186,7 +190,7 @@ internal fun NowPlayingScreen(
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             // The app locks no orientation and runs in split screen, so the player lays itself out for
             // the window it is given (`PlayerLayout`).
-            PlayerLayout(account, state, playback, close, { showQueue = true }, heart,
+            PlayerLayout(account, state, playback, close, { showQueue = true }, heart, rating,
                 Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
         }
     }
@@ -257,6 +261,7 @@ private fun PlayerLayout(
     close: () -> Unit,
     openQueue: () -> Unit,
     heart: (@Composable () -> Unit)?,
+    rating: (@Composable () -> Unit)?,
     modifier: Modifier,
 ) {
     val card = rememberSkipNoticeCard(state.skipNotice, MaterialTheme.typography.bodyMedium)
@@ -273,7 +278,7 @@ private fun PlayerLayout(
         val header = subcompose(PlayerSlot.Header) {
             PlayerHeader(state, close, openQueue, heart, vertical = if (short) 0.dp else if (wide) 4.dp else 8.dp)
         }.single().measure(Constraints(maxWidth = inner))
-        val info = subcompose(PlayerSlot.Info) { PlayerInfo(state) }.single()
+        val info = subcompose(PlayerSlot.Info) { PlayerInfo(state, rating) }.single()
         val error = subcompose(PlayerSlot.Error) { PlayerError(state) }.single()
         val scrubber = subcompose(PlayerSlot.Scrubber) { Column(Modifier.fillMaxWidth()) { Scrubber(state, playback) } }.single()
         val titleLine = measurer.measure("Ag", titleStyle, density = this).size.height
@@ -434,7 +439,7 @@ private fun PlayerCover(account: SearchAccount, state: AndroidPlaybackState, not
 
 /** The title and artist, scrolling in their own region when cut short. */
 @Composable
-private fun PlayerInfo(state: AndroidPlaybackState) {
+private fun PlayerInfo(state: AndroidPlaybackState, rating: (@Composable () -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Text(state.title.ifBlank {
                 stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
@@ -443,6 +448,7 @@ private fun PlayerInfo(state: AndroidPlaybackState) {
             modifier = Modifier.testTag("player.title").basicMarquee())
         Text(state.artist.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
             overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary)
+        rating?.invoke()
     }
 }
 
@@ -698,4 +704,20 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
         }
     }
     FavouriteButton(favourite, "player.favourite", Modifier.size(TOUCH_TARGET)) { session.setFavourite(target, !favourite) }
+}
+
+/**
+ * The playing track's stars (§16.20): the rating this device knows for it, the change shown with the
+ * tap, before any request. Their outcome is said by the heart's message ([NowPlayingFavourite]), which
+ * reports every change to the playing track, a rating's included — saying it here too would say it
+ * twice. Nothing while no track is current.
+ */
+@Composable
+private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackState) {
+    val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId ?: return
+    val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
+    val rating = rememberWatchedRating(session, target) ?: 0
+    RatingStars(rating, { session.setRating(target, it) }, "player.rating",
+        onColor = MaterialTheme.colorScheme.primary, offColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp), starSize = 22.dp, touchSize = TOUCH_TARGET)
 }

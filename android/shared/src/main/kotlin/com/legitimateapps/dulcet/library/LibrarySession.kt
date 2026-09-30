@@ -375,6 +375,33 @@ public class LibrarySession internal constructor(
         return handle
     }
 
+    /**
+     * Rates [target] 1–5, or removes its rating with 0 (§16.20); it shows in the next publication and
+     * on every rating watch, before any request. Anything else does nothing.
+     */
+    public fun setRating(target: AndroidLibraryEntity, rating: Int) {
+        if (!closed) reader.setRating(target, rating)
+    }
+
+    /**
+     * The rating of an entity no open window shows — Now Playing's track — as this device knows it,
+     * as [watchFavourite] tells a favourite: `0` is unrated, null unknown.
+     */
+    public fun watchRating(target: AndroidLibraryEntity, listener: (Int?) -> Unit): AutoCloseable {
+        if (closed) {
+            listener(null)
+            return AutoCloseable {}
+        }
+        lateinit var handle: AutoCloseable
+        val watch = reader.watchRating(target, listener)
+        handle = AutoCloseable {
+            watch.close()
+            watches -= handle
+        }
+        watches += handle
+        return handle
+    }
+
     private val watches = mutableListOf<AutoCloseable>()
 
     internal fun recordLyrics(publication: AndroidLyricsPublication) {

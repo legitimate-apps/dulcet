@@ -4,11 +4,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
@@ -208,7 +210,51 @@ class TvNowPlayingControlsTest {
             .config.getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString())
     }
 
-    private fun sharedString(id: Int): String = resources.getString(id)
+    /**
+     * The stars are under the title, UP from the scrubber; each is a focus stop RIGHT of the last, the
+     * centre key on one rates the track that many stars, and on the star already shown removes the
+     * rating. For accessibility services the row is one adjustable control, 0 to 5 in whole stars.
+     */
+    @Test fun theStarsAreUpFromTheScrubberAndTheCentreKeyRates() {
+        var rating by mutableStateOf(0)
+        val rated = mutableListOf<Int>()
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvNowPlayingScreen(null, playing(), actions, rating = TvPlayerRating(rating) { rated += it; rating = it })
+            }
+        }
+        compose.waitForIdle()
+        key("tv.player.playpause", Key.DirectionUp)
+        assertTrue(focused("tv.player.scrubber"), "setup: UP from Play/Pause reaches the scrubber")
+        key("tv.player.scrubber", Key.DirectionUp)
+        val first = (1..5).firstOrNull { focused("tv.player.rating.$it") }
+        assertTrue(first != null, "UP from the scrubber reaches the stars")
+        var at = first!!
+        while (at < 3) { key("tv.player.rating.$at", Key.DirectionRight); at++ }
+        while (at > 3) { key("tv.player.rating.$at", Key.DirectionLeft); at-- }
+        assertTrue(focused("tv.player.rating.3"), "LEFT and RIGHT move across the stars")
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_rating_set, 3), description("tv.player.rating.3"))
+        key("tv.player.rating.3", Key.DirectionCenter)
+        assertEquals(listOf(3), rated)
+        assertTrue((1..3).all { selected("tv.player.rating.$it") } && (4..5).none { selected("tv.player.rating.$it") },
+            "three stars fill with the press")
+        assertTrue(focused("tv.player.rating.3"), "focus stays on the star")
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_rating_clear, 3), description("tv.player.rating.3"),
+            "the shown star says it removes the rating")
+        key("tv.player.rating.3", Key.DirectionCenter)
+        assertEquals(listOf(3, 0), rated, "the centre key on the shown star removes the rating")
+        assertEquals(emptyList(), actions.calls, "rating changes the track, not playback")
+
+        val node = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode()
+        val range = node.config[SemanticsProperties.ProgressBarRangeInfo]
+        assertEquals(0f..5f, range.range)
+        assertEquals(4, range.steps)
+        compose.onNodeWithTag("tv.player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(4f) }
+        compose.waitForIdle()
+        assertEquals(listOf(3, 0, 4), rated, "an accessibility service sets the rating through setProgress")
+    }
+
+    private fun sharedString(id: Int, vararg args: Any): String = resources.getString(id, *args)
 
     private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 

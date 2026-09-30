@@ -53,6 +53,12 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
+import com.legitimateapps.dulcet.library.rememberWatchedRating
+import com.legitimateapps.dulcet.ui.MAX_RATING
+import com.legitimateapps.dulcet.ui.adjustableRating
+import com.legitimateapps.dulcet.ui.ratingForTap
+import com.legitimateapps.dulcet.ui.ratingStarAction
+import com.legitimateapps.dulcet.ui.ratingState
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import androidx.compose.runtime.remember
@@ -173,6 +179,13 @@ private class ControllerActions(private val controller: AndroidPlaybackControlle
  */
 internal class TvPlayerFavourite(val favourite: Boolean, val line: String?, val toggle: () -> Unit)
 
+/**
+ * The playing track's stars on the TV player: its rating as this device knows it (0 unrated), and
+ * [rate] to set one, 0 removing it. Its outcome is the heart's line ([TvPlayerFavourite.line]), which
+ * says every change to the playing track, a rating's included.
+ */
+internal class TvPlayerRating(val rating: Int, val rate: (Int) -> Unit)
+
 @Composable
 internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
     val context = LocalContext.current
@@ -192,8 +205,13 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     } else {
         null
     }
+    val rating = if (library != null && target != null) {
+        TvPlayerRating(rememberWatchedRating(library, target) ?: 0) { library.setRating(target, it) }
+    } else {
+        null
+    }
     val lyrics: (@Composable () -> Unit)? = library?.let { session -> { TvLyricsPanel(session, state) } }
-    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics)
+    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, rating)
 }
 
 /** Lean-back Now Playing for [state]; null [playback] before the service is bound or without an account. */
@@ -204,6 +222,7 @@ internal fun TvNowPlayingScreen(
     playback: TvPlayerActions?,
     favourite: TvPlayerFavourite? = null,
     lyrics: (@Composable () -> Unit)? = null,
+    rating: TvPlayerRating? = null,
 ) {
     val playFocus = remember { FocusRequester() }
     // The lyrics take Up Next's place while on (§18.4); the setting outlives a track change.
@@ -236,6 +255,8 @@ internal fun TvNowPlayingScreen(
                     Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
                         style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Under the title and artist, as on the phone: UP from the scrubber reaches them.
+                    if (rating != null) TvRatingStars(rating)
                     favourite?.line?.let {
                         Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 8.dp).testTag("tv.player.favourite.outcome"))
@@ -300,6 +321,31 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
         if (lyrics != null) {
             TvToggle(DulcetIcons.Lyrics, stringResource(SharedR.string.lyrics_title), on = lyrics, enabled = true,
                 tag = "tv.player.lyrics") { toggleLyrics() }
+        }
+    }
+}
+
+/**
+ * The stars, under the title and artist and so UP from the scrubber: each its own focus target, so
+ * the D-pad moves across them as across the transport, and the centre key on a star sets that rating — on the star already shown, removes
+ * it ([ratingForTap]). Each says what pressing it does and is selected up to the rating. For
+ * accessibility services the row is also one adjustable control ([adjustableRating]).
+ */
+@Composable
+private fun TvRatingStars(rating: TvPlayerRating) {
+    val latest by rememberUpdatedState(rating)
+    val resources = LocalContext.current.resources
+    val shown = rating.rating.coerceIn(0, MAX_RATING)
+    val label = stringResource(SharedR.string.library_rating)
+    Row(Modifier.padding(top = 4.dp).testTag("tv.player.rating").semantics {
+        adjustableRating(label, resources.ratingState(shown), shown) { latest.rate(it) }
+    }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (star in 1..MAX_RATING) {
+            IconButton(onClick = { latest.rate(ratingForTap(latest.rating, star)) },
+                modifier = Modifier.size(40.dp).testTag("tv.player.rating.$star").semantics { selected = star <= shown }) {
+                Icon(if (star <= shown) DulcetIcons.Star else DulcetIcons.StarBorder,
+                    resources.ratingStarAction(shown, star), Modifier.size(22.dp))
+            }
         }
     }
 }
