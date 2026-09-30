@@ -513,6 +513,16 @@ public class AndroidLibraryReader internal constructor(
         }
     }
 
+    /**
+     * The downloads of [rawIds] became complete or were removed: every open screen showing one of
+     * them republishes, so its playability — the downloaded badge, and whether it plays offline —
+     * follows the `download` table (§16.14). No request is sent.
+     */
+    public fun downloadsChanged(rawIds: Set<String>) {
+        if (rawIds.isEmpty()) return
+        onReader { composition?.session?.reader?.republishPendingChanges(rawIds) }
+    }
+
     /** A metered connection: no speculative reads (§16.13). */
     public fun setNetworkConstrained(constrained: Boolean) {
         onReader {
@@ -907,6 +917,12 @@ public class AndroidLibraryReader internal constructor(
          * terminated (see [close]). A sign-out or account removal waits for it before deleting the
          * account's rows (§14.7 step 6): [AndroidAccountData.removeAccountData] waits for it.
          */
+        /** [downloadsChanged] on the process's reader, if one is open. */
+        @JvmStatic
+        public fun notifyDownloadsChanged(rawIds: Set<String>) {
+            synchronized(lock) { current }?.downloadsChanged(rawIds)
+        }
+
         @JvmStatic
         public fun closeCurrent(completion: () -> Unit = {}) {
             // The current reader, or the one still closing: either may still be using the database.
@@ -1013,8 +1029,9 @@ private fun productionComposer(
         val cache = SeenCacheStore(opened, AndroidLibraryReaderWallClock)
             .bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
         AndroidLibraryReaderComposition(
-            // No download source: downloads join the reader in phase R4, so nothing is published as
-            // `downloaded` yet, and Android TV must be given none then either.
+            // Downloads (§14.5) are read from the `download` table on the reader's own connection:
+            // a track whose file is complete publishes as `downloaded` and plays offline, on the
+            // phone and on Android TV alike, which has app-private storage and a download executor.
             // Playlist editing reaches the shells through [AndroidLibraryPlaylists]. The Android
             // account does not carry the server's extensions, so `formPost` is off, as on Apple:
             // without it an edit is batched within the parameter budget (§18.6), never refused for
@@ -1022,6 +1039,11 @@ private fun productionComposer(
             session = LibraryReaderSession(
                 opened.database, cache, live, scope,
                 epochIntervalMillis?.let { LibraryReaderConfig(epochIntervalMillis = it) } ?: LibraryReaderConfig(),
+                downloads = DownloadedTrackSource { serverId ->
+                    opened.database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
+                        .filter { it.state == "complete" || it.state == "stale" }
+                        .mapTo(mutableSetOf()) { it.raw_id }
+                },
                 formPost = false,
                 foreground = foreground,
             ),

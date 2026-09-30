@@ -26,12 +26,19 @@ internal fun interface AndroidPlaybackResource {
     fun open(position: Long, length: Long): AndroidPlaybackResponse
 }
 
-/** The factory belongs to an immutable attempt, including its signature witness. */
+/**
+ * The factory belongs to an immutable attempt, including its signature witness. The resource is
+ * the server's for a streamed plan and the promoted file's for a downloaded one; either way no byte
+ * reaches the player before the prefix has matched [expectedContainer]'s signature.
+ */
 internal class AndroidPlaybackDataSourceFactory(
-    private val plan: RemotePlaybackWirePlan,
+    private val expectedContainer: AudioContainer,
     private val resource: AndroidPlaybackResource,
     private val observed: (Long) -> Unit = {},
 ) : DataSource.Factory {
+    constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
+        this(plan.expectedContainer, resource, observed)
+
     @Volatile private var signatureValidated = false
 
     override fun createDataSource(): DataSource = object : BaseDataSource(true) {
@@ -80,12 +87,12 @@ internal class AndroidPlaybackDataSourceFactory(
                     if (count < 0) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
                     continue
                 }
-                val validation = validateAndroidPlaybackPrefix(plan, loaded, prefix, needsSignature)
+                val validation = validateAndroidPlaybackPrefix(expectedContainer, loaded, prefix, needsSignature)
                 when (validation) {
                     is PlaybackStreamValidationResult.Audio -> validated = true
                     is PlaybackStreamValidationResult.Failure -> {
                         if (validation.error != DomainError.Protocol.UnexpectedBinary || count < 0 ||
-                            !needsSignature || plan.expectedContainer != AudioContainer.Flac ||
+                            !needsSignature || expectedContainer != AudioContainer.Flac ||
                             !prefix.take(3).toByteArray().contentEquals("ID3".toByteArray()))
                             throw AndroidPlaybackIOException(validation.error)
                     }
@@ -153,6 +160,13 @@ internal fun validateAndroidPlaybackPrefix(
     response: AndroidPlaybackResponse,
     bytes: ByteArray,
     requiresSignature: Boolean,
+): PlaybackStreamValidationResult = validateAndroidPlaybackPrefix(plan.expectedContainer, response, bytes, requiresSignature)
+
+internal fun validateAndroidPlaybackPrefix(
+    expectedContainer: AudioContainer,
+    response: AndroidPlaybackResponse,
+    bytes: ByteArray,
+    requiresSignature: Boolean,
 ): PlaybackStreamValidationResult = PlaybackStreamValidator.validate(
     AuthenticatedEndpointResponse(
         response.status, bytes, "<redacted-url>",
@@ -166,7 +180,7 @@ internal fun validateAndroidPlaybackPrefix(
             formAuthenticationParameters = emptySet(), channels = emptySet(),
             requestedProtocolVersion = AccountConnectionContract.protocolVersion, saltFingerprint = null,
         ),
-    ), plan.expectedContainer, requiresSignature,
+    ), expectedContainer, requiresSignature,
 )
 
 private fun validateRange(response: AndroidPlaybackResponse, position: Long, length: Long): Long? {

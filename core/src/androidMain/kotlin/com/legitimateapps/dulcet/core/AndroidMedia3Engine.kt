@@ -14,7 +14,8 @@ import kotlin.time.Duration.Companion.milliseconds
 /** Media3 transport observations are translated into the existing core event vocabulary. */
 internal class AndroidMedia3Engine(
     internal val player: Player,
-    private val prepareSource: (RemotePlaybackWirePlan) -> Unit,
+    /** Sets the player's source for a streamed or a downloaded plan; the engine prepares it. */
+    private val prepareSource: (PlaybackPlan) -> Unit,
     private val handler: Handler = Handler(player.applicationLooper),
     private val monotonicMillis: () -> Long = SystemClock::elapsedRealtime,
     private val wallMillis: () -> Long = System::currentTimeMillis,
@@ -26,7 +27,9 @@ internal class AndroidMedia3Engine(
     private val onSystemPlayWhenReady: (Boolean) -> Unit = {},
 ) : PlaybackEngine {
     private var listener: PlaybackEngineEventListener? = null
-    private var current: RemotePlaybackWirePlan? = null
+    private var current: PlaybackPlan? = null
+    private val PlaybackPlan.attemptId: AttemptId get() = checkNotNull(androidAttemptId)
+    private val PlaybackPlan.playbackSessionId: PlaybackSessionId get() = checkNotNull(androidSessionId)
     private var released = false
     private var ready = false
     private var began = false
@@ -44,7 +47,8 @@ internal class AndroidMedia3Engine(
      * for a byte range of a transcode the server does not serve by range (the data source rejects
      * the 200 it answers with), and server-offset seeking is not built. Direct streams follow Media3.
      */
-    internal val seekability get() = if (current?.isTranscoded() != true && player.isCurrentMediaItemSeekable)
+    internal val seekability get() = if ((current as? RemotePlaybackWirePlan)?.isTranscoded() != true &&
+        player.isCurrentMediaItemSeekable)
         PlaybackSeekability.Seekable else PlaybackSeekability.NotSeekable
 
     private val sampler = object : Runnable {
@@ -168,13 +172,15 @@ internal class AndroidMedia3Engine(
         return try {
             when (command) {
                 is PlaybackCommand.Prepare, is PlaybackCommand.ReplaceCurrent -> {
+                    // A streamed plan over HTTP, or a downloaded one read from its promoted file.
                     val plan = (if (command is PlaybackCommand.Prepare) command.plan
-                        else (command as PlaybackCommand.ReplaceCurrent).plan) as? RemotePlaybackWirePlan
+                        else (command as PlaybackCommand.ReplaceCurrent).plan)
+                        .takeIf { it is AndroidLocalPlaybackPlan ||
+                            (it is RemotePlaybackWirePlan && it.deliveryProtocol == PlaybackDeliveryProtocol.HttpProgressive) }
                         ?: return rejected(PlaybackCommandRejectionReason.Unsupported)
                     val id = if (command is PlaybackCommand.Prepare) command.attemptId
                         else (command as PlaybackCommand.ReplaceCurrent).attemptId
-                    if (id != plan.attemptId || plan.deliveryProtocol != PlaybackDeliveryProtocol.HttpProgressive)
-                        return rejected(PlaybackCommandRejectionReason.Unsupported)
+                    if (id != plan.attemptId) return rejected(PlaybackCommandRejectionReason.Unsupported)
                     if (command is PlaybackCommand.Prepare && current != null) return rejected()
                     if (command is PlaybackCommand.ReplaceCurrent &&
                         (current?.playbackSessionId != plan.playbackSessionId || current?.attemptId == plan.attemptId)) return rejected()
