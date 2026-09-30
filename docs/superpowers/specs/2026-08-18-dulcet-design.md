@@ -7205,7 +7205,8 @@ argue against the recorded rationale — not as filling in a blank.
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.
-Both apps now offer what the Apple shells offer, through the same core calls the Apple facade makes
+Both apps now offer most of what the Apple shells offer (not yet: Play Next and Add to Queue on search
+results, and hiding the items while editing is unavailable), through the same core calls the Apple facade makes
 (`enqueue`, `move`, `remove`, `clearUpcoming`): Play Next and Add to Queue on track rows and for an
 album, and, for the entries after the playing one, Move Up, Move Down, Remove and Clear. The playing
 entry and those before it offer no edit, as on Apple; the core refuses removing the playing entry.
