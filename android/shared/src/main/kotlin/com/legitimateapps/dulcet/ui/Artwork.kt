@@ -10,6 +10,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidArtworkRepository
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
@@ -47,13 +48,34 @@ public object ArtworkImages {
             while (bounds.outWidth / (sample * 2) >= pixels && bounds.outHeight / (sample * 2) >= pixels) sample *= 2
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
                 BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@withContext null
-            accent.put(cacheKey(account, key, 0), averageColor(bitmap))
-            bitmap.asImageBitmap().also { decoded.put(cacheKey, it) }
+            val accentColor = averageColor(bitmap)
+            accent.put(cacheKey(account, key, 0), accentColor)
+            flattenTransparency(bitmap, accentColor).asImageBitmap().also { decoded.put(cacheKey, it) }
         }
     }
 
     /** A muted average of the cover, for backgrounds that follow the artwork. */
     public fun accent(account: SearchAccount, key: String): Color? = accent.get(cacheKey(account, key, 0))
+
+    /**
+     * Cover art with an alpha channel — a server's default art is often one — would float on the
+     * placeholder colour behind it: composite it over the cover's own accent, so the art fills its
+     * frame. Opaque covers are returned as decoded.
+     */
+    private fun flattenTransparency(bitmap: Bitmap, background: Color): Bitmap {
+        if (!bitmap.hasAlpha()) return bitmap
+        val edge = listOf(
+            0 to 0, bitmap.width - 1 to 0, 0 to bitmap.height - 1, bitmap.width - 1 to bitmap.height - 1,
+            bitmap.width / 2 to 0, 0 to bitmap.height / 2, bitmap.width - 1 to bitmap.height / 2,
+        ).any { (x, y) -> android.graphics.Color.alpha(bitmap.getPixel(x, y)) < 255 }
+        if (!edge) return bitmap
+        val flat = Bitmap.createBitmap(bitmap.width, bitmap.height, bitmap.config ?: Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(flat)
+        canvas.drawColor(background.toArgb())
+        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        bitmap.recycle()
+        return flat
+    }
 
     private fun averageColor(bitmap: Bitmap): Color {
         val tiny = Bitmap.createScaledBitmap(bitmap, ACCENT_SAMPLES, ACCENT_SAMPLES, true)
