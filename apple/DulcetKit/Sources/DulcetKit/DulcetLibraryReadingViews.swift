@@ -265,13 +265,16 @@ struct DulcetFavouriteButton: View {
                     Image(systemName: on ? "heart.fill" : "heart")
                         .font(size)
                         .dulcetForeground(.accentIconOnWindow)
-                    if state != .settled {
-                        Image(systemName: state == .pending ? "clock" : "exclamationmark.circle.fill")
-                            .font(.caption2.weight(.bold))
-                            .dulcetForeground(.secondaryTextOnWindow)
-                            .offset(x: 6, y: 4)
-                            .accessibilityHidden(true)
-                    }
+                    // Always present, hidden while settled: inserting it into the label on a
+                    // press took accessibility focus off the focused heart on Apple TV while the
+                    // focus effect stayed drawn on it (OBSERVED on a tvOS 26.5 simulator), so an
+                    // assistive reader lost the control the person had just pressed.
+                    Image(systemName: state == .settled || state == .pending ? "clock" : "exclamationmark.circle.fill")
+                        .font(.caption2.weight(.bold))
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .offset(x: 6, y: 4)
+                        .opacity(state == .settled ? 0 : 1)
+                        .accessibilityHidden(true)
                 }
                 .frame(minWidth: minimumSide, minHeight: minimumSide)
                 .contentShape(Rectangle())
@@ -1509,11 +1512,12 @@ struct DulcetReaderLibraryRoot: View {
 #if os(tvOS)
 /// The library's sections across the top of Library, under the app's own section bar.
 ///
-/// A launch that opens into Library puts remote focus here, on the section showing: it is always
-/// drawn, whatever the reader has painted yet, and one Up press from it reaches the app's bar.
+/// A launch that opens into Library, or the app bringing Library forward itself, puts remote focus
+/// here, on the section showing (``DulcetArrivalFocus``): it is always drawn, whatever the reader
+/// has painted yet, and one Up press from it reaches the app's bar.
 private struct DulcetReaderTVSectionBar: View {
     @Environment(DulcetPresentationStore.self) private var store
-    @Environment(DulcetLaunchFocus.self) private var launchFocus: DulcetLaunchFocus?
+    @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
     @FocusState private var focusedSection: DulcetLibrarySection?
 
     var body: some View {
@@ -1537,18 +1541,19 @@ private struct DulcetReaderTVSectionBar: View {
             .padding(.vertical, DulcetSpacing.xs)
         }
         .focusSection()
-        .onAppear(perform: claimLaunchFocus)
+        .onAppear(perform: claimArrivalFocus)
         // The focus engine can place launch focus on the app's bar after this appeared.
-        .onChange(of: launchFocus?.wantsSectionFocus == true) { _, wants in
-            if wants { claimLaunchFocus() }
+        .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
+            if wants { claimArrivalFocus() }
         }
         .onChange(of: focusedSection) { _, current in
-            if current != nil { launchFocus?.sectionControlFocused() }
+            if current != nil { arrivalFocus?.sectionControlFocused() }
         }
     }
 
-    private func claimLaunchFocus() {
-        guard let launchFocus, launchFocus.pending else { return }
+    private func claimArrivalFocus() {
+        // Under a pushed page this row is not on screen; the page is the arrival, not the row.
+        guard let arrivalFocus, arrivalFocus.pending, store.readerPath.isEmpty else { return }
         focusedSection = store.librarySection
     }
 }

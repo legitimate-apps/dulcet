@@ -658,13 +658,13 @@ private extension NSColor {
 }
 #endif
 
-// MARK: - Apple TV launch focus
+// MARK: - Apple TV arrival focus
 
 /// The engine's first placement on the bar leaves launch focus open for the section, including
 /// when the section's control only appears later.
 @Test @MainActor
-func launchFocusStaysOpenForTheSectionWhileTheEngineHoldsItOnTheBar() {
-    let focus = DulcetLaunchFocus()
+func arrivalFocusStaysOpenForTheSectionWhileTheEngineHoldsItOnTheBar() {
+    let focus = DulcetArrivalFocus()
     #expect(focus.pending)
     #expect(!focus.wantsSectionFocus, "nothing to take focus from before the bar holds it")
     focus.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
@@ -682,8 +682,8 @@ func launchFocusStaysOpenForTheSectionWhileTheEngineHoldsItOnTheBar() {
 /// A section control that takes focus before the engine ever places it settles the launch, so a
 /// later move to the bar is never mistaken for the engine's first pass.
 @Test @MainActor
-func launchFocusSettlesWhenASectionControlTakesItFirst() {
-    let focus = DulcetLaunchFocus()
+func arrivalFocusSettlesWhenASectionControlTakesItFirst() {
+    let focus = DulcetArrivalFocus()
     focus.sectionControlFocused()
     focus.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
     #expect(!focus.wantsSectionFocus)
@@ -691,20 +691,56 @@ func launchFocusSettlesWhenASectionControlTakesItFirst() {
 
 /// Any move the person makes before the section's content arrives ends the claim.
 @Test @MainActor
-func launchFocusClosesOnEveryMoveThePersonMakes() {
-    let alongTheBar = DulcetLaunchFocus()
+func arrivalFocusClosesOnEveryMoveThePersonMakes() {
+    let alongTheBar = DulcetArrivalFocus()
     alongTheBar.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
     alongTheBar.sectionBarFocusChanged(wasOnBar: true, isOnBar: true)
     #expect(!alongTheBar.wantsSectionFocus, "moving along the bar")
 
-    let downOutOfTheBar = DulcetLaunchFocus()
+    let downOutOfTheBar = DulcetArrivalFocus()
     downOutOfTheBar.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
     downOutOfTheBar.sectionBarFocusChanged(wasOnBar: true, isOnBar: false)
     downOutOfTheBar.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
     #expect(!downOutOfTheBar.wantsSectionFocus, "leaving the bar, then coming back to it")
 
-    let settled = DulcetLaunchFocus()
+    let settled = DulcetArrivalFocus()
     settled.settle()
     settled.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
-    #expect(!settled.wantsSectionFocus, "the exit button, or another section")
+    #expect(!settled.wantsSectionFocus, "the exit button")
+
+    let chosen = DulcetArrivalFocus()
+    chosen.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)
+    chosen.sectionChosenOnBar(.search)
+    chosen.sectionChanged(to: .search)
+    #expect(!chosen.wantsSectionFocus, "a section chosen on the bar keeps focus on the bar")
+}
+
+/// The app changing section for itself -- a search result opening Now Playing -- takes away the
+/// control that held focus, so the arriving section is asked to take it, not the bar.
+@Test @MainActor
+func arrivalFocusReopensWhenTheAppChangesSectionItself() {
+    let focus = DulcetArrivalFocus()
+    focus.sectionChosenOnBar(.search)
+    focus.sectionChanged(to: .search)
+    focus.sectionBarFocusChanged(wasOnBar: true, isOnBar: false)  // Down into the search field
+    #expect(!focus.pending)
+    focus.sectionChanged(to: .nowPlaying)
+    #expect(focus.pending)
+    focus.sectionBarFocusChanged(wasOnBar: false, isOnBar: true)  // the engine's fallback
+    #expect(focus.wantsSectionFocus, "Now Playing must be asked to take focus from the bar")
+
+    // A choice on the bar that changed nothing does not swallow the app's next change.
+    let stale = DulcetArrivalFocus()
+    stale.sectionChosenOnBar(.library)
+    stale.sectionChanged(to: .nowPlaying)
+    #expect(stale.pending)
+}
+
+/// Apple TV's Now Playing cover leaves the controls beside it on a 1080-point screen, and keeps
+/// its size bounds at both ends.
+@Test
+func televisionArtworkIsSizedFromTheHeight() {
+    #expect(DulcetNowPlayingView.televisionArtworkSize(height: 791) < 791 - 2 * DulcetSpacing.xl)
+    #expect(DulcetNowPlayingView.televisionArtworkSize(height: 2_000) == 560)
+    #expect(DulcetNowPlayingView.televisionArtworkSize(height: 300) == 280)
 }

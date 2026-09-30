@@ -164,23 +164,30 @@ public struct DulcetCaptureView: View {
 }
 #endif
 
-/// Where remote focus goes when the app launches on Apple TV, until the person moves it.
+/// Where remote focus goes on Apple TV when a section arrives without the person choosing it,
+/// until the person moves focus themselves.
 ///
-/// The section bar is the first focusable row on screen, so the focus engine's own first pass
-/// puts launch focus on it -- on the control for the section already showing, where the first
-/// press of Select does nothing. A section that opens with its own controls claims focus instead.
-/// Library's content can also arrive after that first pass, so the claim stays open while focus
-/// is only where the engine put it, and closes for good as soon as the person has moved focus
-/// themselves: along the bar, down out of it, with the exit button, or to another section.
+/// Two arrivals leave focus with nowhere to be but the section bar. At launch the bar is the
+/// first focusable row on screen, so the focus engine's own first pass puts focus on the control
+/// for the section already showing, where Select does nothing. And when the app changes section
+/// for itself -- activating a search result opens Now Playing -- the control that held focus goes
+/// away, and the engine again falls back to the bar. In both, the arriving section's own control
+/// claims focus instead. The content can arrive after the engine's pass, so the claim stays open
+/// while focus is only where the engine put it, and closes as soon as the person moves focus:
+/// along the bar, down out of it, with the exit button, or by choosing a section on the bar,
+/// which keeps focus on the bar where they put it.
 ///
 /// Platform-neutral so its decisions are testable off the device; only Apple TV installs one.
 @MainActor
 @Observable
-final class DulcetLaunchFocus {
-    /// True until launch focus has settled: a claim landed, or the person moved focus.
+final class DulcetArrivalFocus {
+    /// True while an arriving section's control should take focus: from launch, and again after
+    /// the app changed section for itself, until a claim lands or the person moves focus.
     private(set) var pending = true
     /// Whether the section bar holds focus, as the shell last reported it.
     private(set) var barHoldsFocus = false
+    /// The section the person last chose on the bar, until the change it asks for arrives.
+    private var chosenOnBar: DulcetSidebarDestination?
 
     /// True while a section's own control should take focus from the bar.
     var wantsSectionFocus: Bool { pending && barHoldsFocus }
@@ -198,7 +205,20 @@ final class DulcetLaunchFocus {
         pending = false
     }
 
-    /// The person acted: the exit button, or a change of section.
+    /// The person chose a section on the bar; its arrival leaves focus on the bar.
+    func sectionChosenOnBar(_ destination: DulcetSidebarDestination) {
+        pending = false
+        chosenOnBar = destination
+    }
+
+    /// The section showing changed. One the person chose on the bar settles focus there; any
+    /// other change is the app's own, and the arriving section is asked to take focus.
+    func sectionChanged(to destination: DulcetSidebarDestination) {
+        pending = destination != chosenOnBar
+        chosenOnBar = nil
+    }
+
+    /// The person pressed the exit button.
     func settle() {
         pending = false
     }
@@ -235,7 +255,7 @@ final class DulcetLaunchFocus {
 private struct DulcetTVSectionNavigation: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedSection: DulcetSidebarDestination?
-    @State private var launchFocus = DulcetLaunchFocus()
+    @State private var arrivalFocus = DulcetArrivalFocus()
 
     var body: some View {
         let selected = store.selectedDestination
@@ -248,18 +268,20 @@ private struct DulcetTVSectionNavigation: View {
                     }
             }
         }
-        .environment(launchFocus)
+        .environment(arrivalFocus)
         .onChange(of: focusedSection) { previous, current in
-            launchFocus.sectionBarFocusChanged(wasOnBar: previous != nil, isOnBar: current != nil)
+            arrivalFocus.sectionBarFocusChanged(wasOnBar: previous != nil, isOnBar: current != nil)
         }
-        .onChange(of: store.selectedDestination) { _, _ in launchFocus.settle() }
+        .onChange(of: store.selectedDestination) { _, destination in
+            arrivalFocus.sectionChanged(to: destination)
+        }
         // The exit button is how a person leaves a surface on this platform, so it returns focus
         // to the bar -- deterministically, rather than relying on the focus engine to find a
         // control several scroll views away. From the bar itself it stays unhandled, because
         // there the platform's own meaning is to leave the app, and consuming it would strand
         // the person inside.
         .dulcetOnExitCommand(perform: focusedSection == nil ? {
-            launchFocus.settle()
+            arrivalFocus.settle()
             focusedSection = selected
         } : nil)
     }
@@ -281,6 +303,7 @@ private struct DulcetTVSectionNavigation: View {
         HStack(spacing: DulcetSpacing.xs) {
             ForEach(DulcetSidebarDestination.allCases) { destination in
                 Button {
+                    arrivalFocus.sectionChosenOnBar(destination)
                     store.selectDestination(destination)
                 } label: {
                     Label(destination.windowTitle, systemImage: Self.symbolName(for: destination))

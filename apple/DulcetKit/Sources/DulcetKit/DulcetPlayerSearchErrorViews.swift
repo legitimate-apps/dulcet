@@ -146,6 +146,10 @@ struct DulcetNowPlayingView: View {
     /// control that did it, so focus is put back on that control rather than wherever the focus
     /// engine lands in the new layout.
     @FocusState private var focusedFooterControl: FooterControl?
+    /// Remote focus on play/pause, where Now Playing puts it when it arrives without the person
+    /// choosing it -- a search result activated, the control that held focus gone with Search.
+    @FocusState private var playPauseFocused: Bool
+    @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
 #endif
     /// The side-by-side player's own height, cover to footer, once laid out.
     @State private var sideBySidePlayerHeight: CGFloat?
@@ -222,6 +226,28 @@ struct DulcetNowPlayingView: View {
                 .frame(maxWidth: 600)
                 .frame(maxWidth: .infinity)
             } else {
+#if os(tvOS)
+                // A television is wide and short: the cover beside everything else, sized from
+                // the height, so the transport and the heart under it sit on screen, where the
+                // remote reaches them. Stacked, they fell below the bottom edge of a 1080-point
+                // screen, and Down from the section bar found nothing to land on.
+                ScrollView {
+                    HStack(alignment: .center, spacing: DulcetSpacing.xxl) {
+                        playerCover(size: Self.televisionArtworkSize(height: geometry.size.height))
+                        VStack(alignment: .center, spacing: Self.coverToTitleSpacing) {
+                            trackIdentity(alignment: .center)
+                            playbackProgress
+                            transportControls
+                            footer(alignment: .center, showsQueueToggle: true)
+                        }
+                        .frame(maxWidth: Self.televisionControlsWidth)
+                    }
+                    .padding(.horizontal, padding)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: geometry.size.height, alignment: .center)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+#else
                 ScrollView {
                     playerPanel(
                         artworkSize: stackedArtworkSize(innerWidth: max(0, width - 2 * padding)),
@@ -234,12 +260,30 @@ struct DulcetNowPlayingView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
+#endif
             }
         }
         .background(Color.dulcetWindow.ignoresSafeArea())
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.nowPlaying)
+#if os(tvOS)
+        .onAppear(perform: claimArrivalFocus)
+        // The focus engine can fall back to the section bar after this appeared.
+        .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
+            if wants { claimArrivalFocus() }
+        }
+        .onChange(of: playPauseFocused) { _, focused in
+            if focused { arrivalFocus?.sectionControlFocused() }
+        }
+#endif
     }
+
+#if os(tvOS)
+    private func claimArrivalFocus() {
+        guard let arrivalFocus, arrivalFocus.pending, !showingLyrics, !showingQueue else { return }
+        playPauseFocused = true
+    }
+#endif
 
     /// The gaps between the cover and the nearest text on every side. The cover's glow reaches
     /// less far than the smallest of them (``DulcetArtworkGlow/reach``), so no text on the player
@@ -295,6 +339,16 @@ struct DulcetNowPlayingView: View {
     static func sideBySideArtworkSize(height: CGFloat) -> CGFloat {
         min(520, max(280, height - 380))
     }
+
+    /// Apple TV's cover, beside the controls: as large as the height allows after the vertical
+    /// margins, and never so large that the controls' column is squeezed, or so small it stops
+    /// reading as the cover from across a room.
+    static func televisionArtworkSize(height: CGFloat) -> CGFloat {
+        min(560, max(280, height - 2 * DulcetSpacing.xl - 120))
+    }
+
+    /// Apple TV's controls column: wide enough that a long title is not broken after two words.
+    static let televisionControlsWidth: CGFloat = 760
 
     /// The queue column spans the player beside it -- cover, title, scrubber, transport and
     /// footer, as measured -- rather than the whole window, so the two read as one row; a window
@@ -431,15 +485,7 @@ struct DulcetNowPlayingView: View {
         showsQueueToggle: Bool
     ) -> some View {
         VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
-            DulcetPlayerCover(
-                artwork: player.current.artwork,
-                size: artworkSize,
-                isPlaying: player.isPlaying,
-                // Reduce Motion keeps the cover still: the play state is carried by the control.
-                scale: player.isPlaying || presentation == .destination || reduceMotion
-                    ? 1 : DulcetPlayerCover.pausedScale
-            )
-                .modifier(DulcetArtworkSwipes(player: player, onControl: onControl, onDismiss: onDismiss))
+            playerCover(size: artworkSize)
                 .frame(maxWidth: .infinity)
 
             trackIdentity(alignment: alignment)
@@ -450,6 +496,18 @@ struct DulcetNowPlayingView: View {
 
             footer(alignment: alignment, showsQueueToggle: showsQueueToggle)
         }
+    }
+
+    private func playerCover(size: CGFloat) -> some View {
+        DulcetPlayerCover(
+            artwork: player.current.artwork,
+            size: size,
+            isPlaying: player.isPlaying,
+            // Reduce Motion keeps the cover still: the play state is carried by the control.
+            scale: player.isPlaying || presentation == .destination || reduceMotion
+                ? 1 : DulcetPlayerCover.pausedScale
+        )
+        .modifier(DulcetArtworkSwipes(player: player, onControl: onControl, onDismiss: onDismiss))
     }
 
     private func trackIdentity(alignment: HorizontalAlignment) -> some View {
@@ -503,6 +561,9 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
+#if os(tvOS)
+            .focused($playPauseFocused)
+#endif
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(
                 symbol: "forward.fill",

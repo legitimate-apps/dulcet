@@ -528,7 +528,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: true, timeout: 30), true,
             "The star must reach the server for the playing track")
         XCTAssertEqual(title.label, track, "Starring must not change what is playing")
-        XCTAssertTrue(heart.hasFocus, "The press must leave focus on the heart")
+        XCTAssertTrue(heart.hasFocus, "The press must leave focus on the heart: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: false, timeout: 30), false,
