@@ -876,6 +876,52 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             "unstar-from-list=true cover-art=${coverArt()}")
     }
 
+    /**
+     * CONF-84's rating overlay through the app: a song's rating set from its row shows in the album's
+     * first publication after the tap, stands through the send, reaches the server as one `setRating`
+     * for that song — read back from the server's own `userRating` — and the star already shown, set
+     * again, sends 0, which the server takes as no rating. [rate] sets [star] stars on the row tagged
+     * with the given prefix the way a person does on this platform.
+     */
+    fun conf84RatingShowsWithTheTapReachesTheServerAndZeroClearsIt(rate: (row: String, star: Int) -> Unit) {
+        ui.openLibrary()
+        awaitHomeLive()
+        val album = server.albumId(OPENED_ALBUM)
+        val songId = server.get("getAlbum", mapOf("id" to album)).getJSONObject("album").getJSONArray("song").getJSONObject(0).getString("id")
+        assertEquals(0, server.songRating(songId), "setup: the run starts with the song unrated")
+        openHomeAlbum(OPENED_ALBUM)
+        await("the album live with its tracks") {
+            last("album:$album").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
+        }
+        awaitQuiet()
+        assertEquals(songId, last("album:$album").itemRawIds.first(), "setup: the first row is the song read from the server")
+        val song0 = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, songId)
+        fun saved(value: Int) = observed().changeOutcomes.count {
+            it is AndroidLibraryChangeOutcome.Saved && it.target == song0 && it.value == value
+        }
+        val before = frames("album:$album").size
+        val mark = proxy.log().size
+        rate("album.track.0", 4)
+        await("a publication after the tap") { frames("album:$album").size > before }
+        assertEquals(4, frames("album:$album")[before].itemRatings.first(), "the first publication after the tap shows the rating")
+        await("the rating saved") { saved(4) == 1 }
+        awaitQuiet()
+        val sends = readerRequests(mark).filter { it.endpoint == "setRating" }
+        assertEquals(listOf(songId to "4"), sends.map { it.parameters["id"] to it.parameters["rating"] }, "one setRating, for that song")
+        assertEquals(4, server.songRating(songId), "the server holds the rating")
+        assertTrue(frames("album:$album").drop(before).all { it.itemRatings.first() == 4 }, "no publication since the tap dropped the rating")
+
+        rate("album.track.0", 4)
+        await("the rating removed") { last("album:$album").itemRatings.first() == 0 }
+        await("the removal saved") { saved(0) == 1 }
+        awaitQuiet()
+        assertEquals("0", readerRequests(mark).last { it.endpoint == "setRating" }.parameters["rating"], "the shown star sends 0")
+        assertEquals(0, server.songRating(songId), "the server let the rating go")
+        assertNoCredentialLeak()
+        println("CONF-84 RATING OBSERVED $platform first-publication-after-tap=4 server-userRating=4 " +
+            "cleared-by-zero=true setRating-sent=${readerRequests(mark).count { it.endpoint == "setRating" }}")
+    }
+
     // ---- Playlists (§18.6) and lyrics (§18.4) ------------------------------------------------------
 
     /**

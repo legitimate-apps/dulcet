@@ -810,6 +810,8 @@ public data class LibraryFrame(
     val itemRawIds: List<String> = emptyList(),
     val favourite: Boolean?,
     val itemsUnavailableReason: com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason? = null,
+    /** Each row's rating, in [itemRawIds]' order, any pending change already in it; null for a row with none. */
+    val itemRatings: List<Int?> = emptyList(),
 ) {
     internal companion object {
         fun of(publication: AndroidLibraryPublication) = LibraryFrame(
@@ -826,6 +828,14 @@ public data class LibraryFrame(
                 else -> null
             },
             itemsUnavailableReason = publication.itemsUnavailableReason,
+            itemRatings = publication.items.map { item ->
+                when (item) {
+                    is AndroidLibraryItem.Album -> item.rating
+                    is AndroidLibraryItem.Artist -> item.rating
+                    is AndroidLibraryItem.Track -> item.rating
+                    else -> null
+                }
+            },
         )
     }
 }

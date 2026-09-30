@@ -3,7 +3,10 @@ package com.legitimateapps.dulcet
 import android.app.Application
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
 import com.legitimateapps.dulcet.search.conformance.LibraryReaderScenarios
 import com.legitimateapps.dulcet.search.conformance.ProductionLibraryEnvironment
@@ -72,6 +75,18 @@ class AndroidProductionLibraryReaderAppConformanceTest {
 
     @Test fun aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack() =
         scenarios.aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack()
+
+    /** The rating from the song's row menu: Rate…, then a tap on a star, as a finger does. */
+    @Test fun conf84RatingShowsWithTheTapReachesTheServerAndZeroClearsIt() =
+        scenarios.conf84RatingShowsWithTheTapReachesTheServerAndZeroClearsIt { row, star ->
+            compose.onNodeWithTag("$row.menu").performClick()
+            compose.onNodeWithTag("$row.menu.rate").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithTag("$row.rating").performTouchInput { click(Offset(width * (star - 0.5f) / 5f, height / 2f)) }
+            compose.waitForIdle()
+            compose.onNodeWithTag("$row.rating.done").performClick()
+            compose.waitForIdle()
+        }
 
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =
         scenarios.conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive()
