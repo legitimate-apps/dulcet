@@ -118,11 +118,11 @@ internal class AuthenticatedEndpointClient(
     saltSource: SaltSource? = null,
     logSink: LogSink? = null,
     hostResolver: HostResolver = systemHostResolver(),
+    private val clientTransport: AccountClientTransport = AccountClientTransport.Default(),
 ) {
     private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
     private val traceRecorder = RequestTraceRecorder(logSink, operationName)
-    private val clientTransport = AccountClientTransport.Default()
     private val client: HttpClient = createAccountHttpClient(clientTransport) {
         expectSuccess = false
         followRedirects = false
