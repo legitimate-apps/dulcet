@@ -99,7 +99,7 @@ private struct DulcetPlaylistPageContent: View {
     }
 
     private func page(_ model: DulcetLibraryWindowModel) -> some View {
-        DulcetReaderPage(title: model.window?.header?.displayTitle ?? "") { width in
+        DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false) { width in
             if let window = model.window {
                 header(window, width: width)
                 awaitingChoiceBanner

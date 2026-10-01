@@ -262,6 +262,62 @@ extension View {
     }
 #endif
 
+    /// A surface's navigation title. On Apple TV the section bar across the top already names
+    /// the section, and the navigation bar floats its copy of the title over the content's top
+    /// edge, dimmed, while reserving a tall band under itself (observed: a second Now Playing
+    /// above the player, Connection across the server address and Sign Out). So a surface whose
+    /// own content carries its name hides the bar; the title stays set on it. A launch surface
+    /// keeps its bar -- tests read the launch section from the bar's identifier. Hiding needs
+    /// tvOS 18; before it, the inline title is the smaller of the two.
+    ///
+    /// A kept bar's band is transparent, and giving it a background does nothing (measured on a
+    /// tvOS 26.5 simulator: `.toolbarBackground(.visible, for: .navigationBar)` in a signal
+    /// colour left the band pixel-identical). So a scrolled surface's content slid under the
+    /// band and met the floating title (observed: Connection, focus on the quality choices,
+    /// "Connection" across "Connected to navidrome", and a half-line in the seam under the
+    /// section bar). `dulcetTVNavigationBarBand` draws an opaque window-coloured band over the
+    /// region the bar floats over instead: the stack lays the surface out below that region, so
+    /// the band is shifted up by exactly the surface's top safe-area inset. It sits below the
+    /// bar itself, so the title still draws on top, and above the content, so whatever scrolls
+    /// under is occluded and never meets the title. Resting content begins below the band, so
+    /// it is untouched.
+    @ViewBuilder
+    func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false) -> some View {
+#if os(tvOS)
+        if #available(tvOS 18.0, *) {
+            navigationTitle(title)
+                .toolbarTitleDisplayMode(.inline)
+                .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
+                .dulcetTVNavigationBarBand(kept: keepsTVNavigationBar)
+        } else {
+            navigationTitle(title)
+                .toolbarTitleDisplayMode(.inline)
+                .dulcetTVNavigationBarBand(kept: true)
+        }
+#else
+        navigationTitle(title)
+#endif
+    }
+
+#if os(tvOS)
+    /// The opaque band under a kept Apple TV navigation bar; see ``dulcetNavigationTitle``.
+    @ViewBuilder
+    private func dulcetTVNavigationBarBand(kept: Bool) -> some View {
+        if kept {
+            overlay(alignment: .top) {
+                GeometryReader { proxy in
+                    Color.dulcetWindow
+                        .frame(width: proxy.size.width, height: proxy.safeAreaInsets.top)
+                        .offset(y: -proxy.safeAreaInsets.top)
+                        .accessibilityHidden(true)
+                }
+            }
+        } else {
+            self
+        }
+    }
+#endif
+
     @ViewBuilder
     func dulcetLinkButtonStyle() -> some View {
 #if os(macOS)
@@ -289,6 +345,18 @@ extension View {
 #else
         buttonStyle(.plain)
             .dulcetHoverEffect(hover)
+#endif
+    }
+
+    /// A list row's button style. On a television the borderless style draws nothing behind a
+    /// custom label, so a focused row read exactly like its neighbours (observed on Search);
+    /// the focused row lifts on the control fill, as a focused shelf tile does.
+    @ViewBuilder
+    func dulcetRowButtonStyle() -> some View {
+#if os(tvOS)
+        buttonStyle(DulcetTVFocusedRowButtonStyle())
+#else
+        dulcetMediaButtonStyle()
 #endif
     }
 
@@ -532,5 +600,25 @@ enum DulcetHoverEffect {
     /// Artwork rising toward the pointer, for a card that is mostly image.
     case lift
 }
+
+#if os(tvOS)
+/// How a remote-focused row reads: the system's borderless style draws no backdrop behind a
+/// custom label, so the focused row lifts on the control fill instead, as a focused shelf tile
+/// does, with the platform's own focus timing.
+struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                Color.dulcetControl.opacity(isFocused ? 1 : 0),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .scaleEffect(isFocused ? 1.02 : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+}
+#endif
 
 #endif

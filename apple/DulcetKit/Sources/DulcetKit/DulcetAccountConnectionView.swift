@@ -84,7 +84,9 @@ struct DulcetAccountConnectionView: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.settings)
+        // Connection is a launch surface: its navigation bar's identifier is how tests read the
+        // launch section, so the bar stays (and the content begins below it).
+        .dulcetNavigationTitle(DulcetStrings.settings, keepsTVNavigationBar: true)
 #if os(iOS)
         // Dragging the form puts the keyboard away, uncovering the tab bar.
         .scrollDismissesKeyboard(.interactively)

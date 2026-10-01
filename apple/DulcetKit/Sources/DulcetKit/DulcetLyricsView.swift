@@ -64,7 +64,7 @@ struct DulcetLyricsPanel: View {
                     notes(document)
                     ForEach(Array(document.lines.enumerated()), id: \.offset) { _, line in
                         Text(line.text.isEmpty ? DulcetStrings.lyricsPlainBlankLine : line.text)
-                            .font(.title3.weight(.semibold))
+                            .font(Self.plainLineFont)
                             .dulcetForeground(.primaryTextOnWindow)
                             .frame(maxWidth: .infinity, alignment: .leading)
 #if os(tvOS)
@@ -110,6 +110,15 @@ struct DulcetLyricsPanel: View {
             Text(DulcetStrings.lyricsTrimmed).font(.caption).dulcetForeground(.secondaryTextOnWindow)
         }
     }
+
+    /// Plain lyrics' lines, sized for the room: a television reads from a sofa.
+    private static var plainLineFont: Font {
+#if os(tvOS)
+        .title2.weight(.semibold)
+#else
+        .title3.weight(.semibold)
+#endif
+    }
 }
 
 /// Media time at a moment, and how far it has moved since while playing.
@@ -132,6 +141,17 @@ private struct DulcetSyncedLyrics: View {
     let status: String?
     let reduceMotion: Bool
 
+    /// The synced lines, sized for the room: on a television they are the screen, read from a
+    /// sofa. One size for lit and unlit lines alike, so the follow of the lit line never jumps
+    /// the layout; the lit line reads by its full-strength colour.
+    private static var lineFont: Font {
+#if os(tvOS)
+        .title.weight(.bold)
+#else
+        .title2.weight(.bold)
+#endif
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -145,7 +165,7 @@ private struct DulcetSyncedLyrics: View {
                     ForEach(Array(document.lines.enumerated()), id: \.offset) { index, line in
                         let lit = cursor.contains(index)
                         Text(line.text.isEmpty ? DulcetStrings.lyricsSyncedBlankLine : line.text)
-                            .font(.title2.weight(.bold))
+                            .font(Self.lineFont)
                             .dulcetForeground(lit ? .primaryTextOnWindow : .secondaryTextOnWindow)
                             .opacity(lit ? 1 : 0.55)
                             .frame(maxWidth: .infinity, alignment: .leading)

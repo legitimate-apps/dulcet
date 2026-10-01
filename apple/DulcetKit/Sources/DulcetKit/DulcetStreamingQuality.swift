@@ -88,19 +88,25 @@ struct DulcetStreamingQualitySection: View {
         choose: @escaping (DulcetStreamingQuality) -> Void
     ) -> some View {
 #if os(tvOS)
-        // A row of buttons a remote moves along; the chosen one carries a check.
+        // A row of buttons a remote moves along; the chosen one carries a check. The labels never
+        // wrap: squeezed past its ideal width a capsule broke "Original" a letter per line
+        // (observed), so each label holds its one line and the row's gaps give instead.
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Text(title).font(.headline)
-            HStack(spacing: DulcetSpacing.sm) {
+            HStack(spacing: DulcetSpacing.xs) {
                 ForEach(DulcetStreamingQuality.allCases) { quality in
                     Button {
                         choose(quality)
                     } label: {
-                        if quality == selection {
-                            Label(quality.label, systemImage: "checkmark")
-                        } else {
-                            Text(quality.label)
+                        Group {
+                            if quality == selection {
+                                Label(quality.label, systemImage: "checkmark")
+                            } else {
+                                Text(quality.label)
+                            }
                         }
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
                     .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
                     .accessibilityAddTraits(quality == selection ? .isSelected : [])
