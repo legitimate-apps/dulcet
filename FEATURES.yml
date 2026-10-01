@@ -647,7 +647,82 @@
       "gates": ["account:authenticated"],
       "conformance": ["CONF-76", "CONF-77", "CONF-82", "CONF-86", "CONF-87"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"}, "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "macos": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-76": "The macOS app-host proof observes the cached paint with no loading state, the grid-only header offline and online and the never-seen album unavailable, but counts no request, so publishing before any request is not observed.",
+            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, which apple-ci runs in :core:macosArm64Test but whose results no evidence-verified job exports; no test drives them through this app.",
+            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test in :core:macosArm64Test, whose results no evidence-verified job exports; no test drives the home screen's rows through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+          },
+          "evidence": [
+            {
+              "observes": "inside the macOS app host, over the production reader session, Kotlin facade and database against the disposable server, a connected launch publishes the albums live and the production root renders a tile the reader published; a relaunch with the account saved opens device-only, and its first album-list and album-page publications are what this device saw, cached offline, in the order seen, with no loading state; offline, an album seen only in the grid shows its cached header with its tracks unavailable and an album never seen is unavailable; Reconnect brings the library live in place, where the grid-only album paints its cached header with its tracks loading before they arrive live. No request is counted",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacAccountConnectAppTest/readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-reader-request-counting-app-proofs",
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86), window tearing and rebasing (CONF-82) or look-ahead (CONF-87) through this app. Until such tests exist no workflow, job or test can be named."
+          },
+          "reason": "The macOS app-host proof runs the production reader session, Kotlin facade and database against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier. Its credential store is in memory, because an ad-hoc signed host cannot reach the data-protection Keychain, so what it proves starts at the store boundary. It reads publications at the facade boundary and renders one tile through the production root; it does not drive the library screens by keyboard or pointer."
+        },
+        "ios": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-76": "The iPhone proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
+            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives them through this app.",
+            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives it through this app."
+          },
+          "evidence": [
+            {
+              "observes": "on the iPhone simulator (compact, tab navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-reader-request-counting-app-proofs",
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86), window tearing and rebasing (CONF-82) or look-ahead (CONF-87) through this app. Until such tests exist no workflow, job or test can be named."
+          },
+          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications."
+        },
+        "ipados": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-76": "The iPad proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
+            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives them through this app.",
+            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives it through this app."
+          },
+          "evidence": [
+            {
+              "observes": "on the iPad simulator (regular width, sidebar navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-reader-request-counting-app-proofs",
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86), window tearing and rebasing (CONF-82) or look-ahead (CONF-87) through this app. Until such tests exist no workflow, job or test can be named."
+          },
+          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "The Apple TV app reads the library through the reader (spec 16.18), but no test drives the TV library on the reader against a server, by the remote or otherwise, so no evidence exists for any declared id. The tvOS UI proofs in apple-ci cover search, the section bar and Now Playing, not library browse."
+        },
         "android": {
           "status": "partial",
           "unevidenced_conformance": {
