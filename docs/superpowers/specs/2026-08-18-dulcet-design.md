@@ -1723,7 +1723,11 @@ header overshot the complete body by approximately 2.3–2.5%. Without the flag 
 had no `Content-Length` and completed chunked; after the transcode cache warmed, the declared length
 was exact. The plan therefore records the response as `PlaybackContentLength.Estimated`, a distinct
 type from `PlaybackContentLength.Exact`. EOF before an estimate is completion; EOF before an exact
-length is truncation. No validator, download promoter, or platform media loader may collapse those
+length is truncation. **ASSUMED** (no real mid-transcode drop has been measured): a network drop
+part-way through a transcode arrives as the same connection-lost end after a prefix of the body, so
+it cannot be told from a body that ended short of its estimate and is accepted as the end of the
+representation -- the track ends early rather than failing; that has been the policy since revision
+84. No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
 this path so the UI never claims a negotiated result.
 
@@ -7350,6 +7354,29 @@ nobody was waiting for; that failure is now ignored. OBSERVED in host tests only
 (`AndroidPlaybackControllerTest`, `PlayBeforeBindTest`, `TvPlayBeforeBindTest`); not driven on an
 emulator or device.
 
+**2026-10-01 — The Darwin estimated-body end counts forwarded bytes, and its 2xx clause has a
+control (§12.5).** Follow-ups to the 2026-09-30 entry below:
+
+1. The byte clause counted the task's `countOfBytesReceived`. The session can receive bytes it never
+   hands the delegate (fact 2 below: often only the first read is handed over), and an end with
+   nothing forwarded would have become an empty success -- `UnexpectedBinary` to the playback
+   validator instead of the `Unreachable` the transcode budget and the circuit breaker should see.
+   The delegate now counts the bytes it forwarded to Ktor, per task, under a lock, and decides on
+   that count. Mutating the clause to accept zero turned the no-body control red -- which proves the
+   `> 0` clause, not the substitution: no test yet fails if the decision goes back to
+   `countOfBytesReceived`, because the loopback fixture never receives bytes it does not forward.
+2. OBSERVED on macOS with the loopback fixture: NSURLSession reports a short body as `-1005` only for
+   200 and 206. For 201, 202, 203, 299, 300, 302, 399, 400, 401, 404, 410, 416, 429, 500, 503 and 599
+   it completed without an error after handing over every byte. The 2xx clause therefore cannot be
+   reached over the wire on this platform; its control is a decision test, which went red when the
+   clause was removed, and a wire test pins the platform fact so that a change to it fails loudly.
+3. The production route -- `PlaybackWireClient.load` over `AuthenticatedEndpointClient` -- now has a
+   Darwin test against the same fixture: the capped legacy load succeeds with exactly the bytes the
+   delegate forwarded. With the rewrite disabled that load still succeeded, through the reader's own
+   recovery, because a read that starts with the response consumes the prefix before the completion
+   (3 of 3 runs); only the delegate's own marker told the two apart. The race fact 3 describes is
+   reached by a read made after the task ended, as `DarwinEstimatedLengthBodyTest` already does.
+
 **2026-09-30 — Android genres and album orders (§16.9, §16.14).** The Android library showed no
 genres, and its Albums screen read `alphabeticalByName` only, where the Apple shells offer a Genres
 section and a sort picker. Both apps now open the same reader windows the Apple facade opens:
@@ -7391,7 +7418,7 @@ request that asked for an estimate, carries no `Range` and was answered 2xx with
 byte, reports that one completion as success, so Ktor ends the channel normally with every byte it
 was handed. An exact length, a ranged request, and an estimated response with no body byte still
 fail; the estimate, `Range` and byte clauses were each mutated and their controls went red (the 2xx
-clause has no control). The Apple apps' own playback path uses its
+clause had no control; see the 2026-10-01 entry). The Apple apps' own playback path uses its
 own URLSession and is not changed; whether AVFoundation meets the same short prefix is not measured.
 
 **2026-09-30 — Android holds additions made while a queue loads, and offers queue edits from search (§14.1, §8).**

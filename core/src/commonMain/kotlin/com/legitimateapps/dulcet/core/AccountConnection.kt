@@ -885,10 +885,19 @@ internal sealed interface AccountClientTransport {
     val challengeTracker: UnsupportedAuthenticationChallengeTracker
     val diagnostics: AccountConnectionDiagnostics?
 
+    /**
+     * Told how many body bytes the session had forwarded when the Apple client ends an estimated
+     * body at its connection-lost completion (AccountHttpClient.apple.kt); never called elsewhere.
+     * An observation seam for tests: it is called on the session's delegate queue, and anything it
+     * throws is dropped there.
+     */
+    val estimatedBodyEndObserver: ((forwardedBytes: Long) -> Unit)?
+
     class Default(
         override val diagnostics: AccountConnectionDiagnostics? = null,
         override val challengeTracker: UnsupportedAuthenticationChallengeTracker =
             UnsupportedAuthenticationChallengeTracker(),
+        override val estimatedBodyEndObserver: ((forwardedBytes: Long) -> Unit)? = null,
     ) : AccountClientTransport
 
     data class ForwardProxy(
@@ -896,7 +905,9 @@ internal sealed interface AccountClientTransport {
         override val diagnostics: AccountConnectionDiagnostics? = null,
         override val challengeTracker: UnsupportedAuthenticationChallengeTracker =
             UnsupportedAuthenticationChallengeTracker(),
-    ) : AccountClientTransport
+    ) : AccountClientTransport {
+        override val estimatedBodyEndObserver: ((forwardedBytes: Long) -> Unit)? get() = null
+    }
 }
 
 internal val RequestTracePlugin = createClientPlugin("DulcetRequestTrace", ::RequestTracePluginConfig) {
