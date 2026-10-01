@@ -123,9 +123,10 @@ jobs:
             # any XML present afterwards was written by this execution. --rerun forces the task to
             # execute, and --no-build-cache stops its outputs being restored from an earlier one.
             rm -rf "$results_dir"
+            # The runner starts bash with -e: a failing Gradle run must be recorded, not end the soak.
+            gradle_exit=0
             ./gradlew --max-workers=2 --no-build-cache "$SOAK_TASK" --tests "$SOAK_TESTS" --rerun \
-              > "$RUNNER_TEMP/soak-$label.log" 2>&1
-            gradle_exit=$?
+              > "$RUNNER_TEMP/soak-$label.log" 2>&1 || gradle_exit=$?
             counts="$(python3 - "$results_dir" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
