@@ -137,6 +137,9 @@ public class AndroidPlaybackController internal constructor(
     private var wantsPlay = false
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
+    // Play Next and Add to Queue accepted while a new queue was still resolving, by the generation of
+    // that resolution; applied, in the order given, the moment that queue is in place.
+    private val heldAdditions = mutableListOf<HeldAddition>()
     private var closed = false
     // Presentation metadata by opaque identity. It never decides what plays: the core queue does.
     private val metadata = mutableMapOf<ProviderItemId, AndroidTrack>()
@@ -344,6 +347,8 @@ public class AndroidPlaybackController internal constructor(
         requestGeneration++
         wantsPlay = true
         val generation = requestGeneration
+        // Additions held for a queue this one supersedes would have been replaced by it.
+        heldAdditions.clear()
         resolution?.cancel()
         startJob?.cancel()
         tracks.forEach { remember(it) }
@@ -377,11 +382,13 @@ public class AndroidPlaybackController internal constructor(
                         sourceName.ifBlank { source.name }),
                     if (shuffle) null else startIndex, shuffle))
                 capture(transition.effects)
+                applyHeldAdditions(generation)
                 val directive = transition.startDirective!!
                 start(directive, song?.takeIf { directive.itemId.rawId == chosen.rawId })
             } catch (_: CancellationException) { throw CancellationException() }
-            catch (error: AndroidPlaybackIOException) { failure = error.error; publish() }
-            catch (_: Exception) { failure = DomainError.Transport.Unreachable; publish() }
+            // A queue that never came to be takes what was added to it along with it.
+            catch (error: AndroidPlaybackIOException) { heldAdditions.clear(); failure = error.error; publish() }
+            catch (_: Exception) { heldAdditions.clear(); failure = DomainError.Transport.Unreachable; publish() }
         }
     }
 
@@ -496,9 +503,13 @@ public class AndroidPlaybackController internal constructor(
      * Adding never touches the current session. The same rules as the Apple shells', through the
      * same core call.
      *
-     * False, and nothing changed, when refused: a closed controller, no tracks, a track of another
-     * account, or a new queue still resolving -- whatever was added now would be replaced by it the
-     * moment it starts, so the person is told instead of losing the tracks silently.
+     * While a new queue is still resolving the addition is accepted and held, then applied to that
+     * queue the moment it is in place, in the order the additions were made -- exactly where it would
+     * have landed had the queue already started, as the Apple shells accept it. Held additions share
+     * that queue's fate: one that is superseded, stopped or fails before it starts takes them with it.
+     *
+     * False, and nothing changed, when refused: a closed controller, no tracks, or a track of another
+     * account.
      */
     public fun addToQueue(
         tracks: List<AndroidTrack>,
@@ -511,13 +522,44 @@ public class AndroidPlaybackController internal constructor(
         val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
         require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
         if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
-        if (resolution?.isActive == true) return false
+        if (resolution?.isActive == true) {
+            heldAdditions += HeldAddition(requestGeneration, tracks.toList(), insertion, source, sourceName, sourceRawId)
+            return true
+        }
         // The core's queue decides emptiness, not what a surface shows: an entry still resolving
         // shows no title yet, and playing instead would throw away what the person just started.
         if (!ownsActiveQueue() || queue.snapshot().entries.isEmpty()) {
             playQueue(tracks, 0, source, sourceName, sourceRawId)
             return true
         }
+        return enqueue(tracks, insertion, source, sourceName, sourceRawId)
+    }
+
+    private class HeldAddition(
+        val generation: Long,
+        val tracks: List<AndroidTrack>,
+        val insertion: AndroidQueueInsertion,
+        val source: AndroidQueueSource,
+        val sourceName: String,
+        val sourceRawId: String?,
+    )
+
+    /** The additions held for the resolution of [generation], applied in the order they were made. */
+    private fun applyHeldAdditions(generation: Long) {
+        val held = heldAdditions.filter { it.generation == generation }
+        heldAdditions.clear()
+        for (addition in held) {
+            enqueue(addition.tracks, addition.insertion, addition.source, addition.sourceName, addition.sourceRawId)
+        }
+    }
+
+    private fun enqueue(
+        tracks: List<AndroidTrack>,
+        insertion: AndroidQueueInsertion,
+        source: AndroidQueueSource,
+        sourceName: String,
+        sourceRawId: String?,
+    ): Boolean {
         tracks.forEach { remember(it) }
         return edit {
             queue.enqueue(PlaybackQueueInsertion(
@@ -535,9 +577,19 @@ public class AndroidPlaybackController internal constructor(
      * Moves the entry named by [queueEntryId] to [toIndex] in [AndroidPlaybackState.queue], which is
      * the whole queue in the order the listener sees. The current session plays on. False, and
      * nothing changed, for an entry no longer queued or a position outside the queue.
+     *
+     * Only Up Next is reordered, as on the Apple shells, whose list moves only the rows after the
+     * playing one: the current entry, an entry already played, and a position at or before the
+     * current entry are refused. Moving onto the current entry's position would put the entry
+     * before it, where Next never reaches it. With no current entry the whole queue is Up Next.
      */
     public fun moveEntry(queueEntryId: String, toIndex: Int): Boolean {
         if (!live() || refuseForeignQueue()) return false
+        val snapshot = queue.snapshot()
+        snapshot.currentIndex?.let { current ->
+            val from = snapshot.entries.indexOfFirst { it.queueEntryId.value == queueEntryId }
+            if ((from != -1 && from <= current) || toIndex <= current) return false
+        }
         return edit { queue.move(QueueEntryId(queueEntryId), toIndex) }
     }
 
