@@ -117,6 +117,37 @@ class TvAccountEntryFocusTest {
         assertIs<SignOutState.Confirm>(signOut.state.value, "CENTER on Sign out asks first")
     }
 
+    /** Spec §12.5: below Sign out, the remote reaches the Wi-Fi choices and a choice is saved. */
+    @Test fun theRemoteChoosesAStreamingQualityBelowSignOut() {
+        store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
+        val settings = com.legitimateapps.dulcet.playback.StreamingQualitySettings.get(application)
+        compose.setContent {
+            MaterialTheme {
+                TvAccountHost(signOut, "id") {
+                    CompositionLocalProvider(LocalTvRouteFocus provides remember { TvRouteFocus() }) {
+                        TvAccountScreen(account, TvNavigator({}, {}))
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        awaitFocused("account.back", "the account screen opens on Back")
+        key("account.back", Key.DirectionDown)
+        assertTrue(focused("tv.account.signout"), "Sign out stays one step below Back")
+        key("tv.account.signout", Key.DirectionDown)
+        assertTrue(focused("quality.unmetered.original"), "DOWN from Sign out reaches the Wi-Fi choices")
+        key("quality.unmetered.original", Key.DirectionRight)
+        assertTrue(focused("quality.unmetered.320"))
+        key("quality.unmetered.320", Key.DirectionCenter)
+        compose.waitForIdle()
+        kotlin.test.assertEquals(
+            com.legitimateapps.dulcet.core.StreamingQuality.Kbps320,
+            settings.preference.value.unmetered,
+        )
+        kotlin.test.assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Original, settings.preference.value.metered)
+        application.getSharedPreferences("dulcet.streaming-quality", 0).edit().clear().commit()
+    }
+
     /**
      * More results than the screen has room for, walked to the end and back: every result is reached
      * by DOWN, including those composed only once focus moves toward them, and UP from the first

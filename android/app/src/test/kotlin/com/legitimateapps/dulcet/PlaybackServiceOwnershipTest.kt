@@ -38,3 +38,73 @@ class FixtureAccountStore {
         "http://127.0.0.1:9", "USER_CANARY", "PASSWORD_CANARY", true)
     @Implementation fun activeAccountId(): String = "service-fixture"
 }
+
+/**
+ * Spec §12.5: the service hands the controller the saved choice and the default network's cost, and
+ * follows both as they change, so the next item resolves at the quality for the network it is on.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], shadows = [FixtureAccountStore::class],
+    instrumentedPackages = ["com.legitimateapps.dulcet"])
+class PlaybackServiceStreamingQualityTest {
+    @Test fun theControllerFollowsTheSavedChoiceAndTheNetworksCost() {
+        val application = org.robolectric.RuntimeEnvironment.getApplication()
+        val settings = com.legitimateapps.dulcet.playback.StreamingQualitySettings.get(application)
+        settings.set(com.legitimateapps.dulcet.core.StreamingQualityPreference(
+            com.legitimateapps.dulcet.core.StreamingQuality.Original, com.legitimateapps.dulcet.core.StreamingQuality.Kbps192))
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val playback = assertNotNull(lifecycle.get().playback)
+            val connectivity = org.robolectric.Shadows.shadowOf(
+                application.getSystemService(android.net.ConnectivityManager::class.java))
+            val callback = connectivity.networkCallbacks.single()
+            val network = org.robolectric.shadows.ShadowNetwork.newInstance(1)
+            fun report(notMetered: Boolean) {
+                val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+                if (notMetered) org.robolectric.Shadows.shadowOf(capabilities)
+                    .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+                callback.onCapabilitiesChanged(network, capabilities)
+            }
+
+            // Before the OS has classified a network, the metered choice applies.
+            assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Kbps192, playback.nextStreamingQuality)
+            report(notMetered = true)
+            assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Original, playback.nextStreamingQuality)
+            settings.set(com.legitimateapps.dulcet.core.StreamingQualityPreference(
+                com.legitimateapps.dulcet.core.StreamingQuality.Kbps256, com.legitimateapps.dulcet.core.StreamingQuality.Kbps192))
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Kbps256, playback.nextStreamingQuality)
+            report(notMetered = false)
+            assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Kbps192, playback.nextStreamingQuality)
+        } finally {
+            lifecycle.destroy()
+            application.getSharedPreferences("dulcet.streaming-quality", 0).edit().clear().commit()
+        }
+        assertTrue(org.robolectric.Shadows.shadowOf(
+            application.getSystemService(android.net.ConnectivityManager::class.java)).networkCallbacks.isEmpty(),
+            "the service's network callback is removed with the service")
+    }
+
+    /** The first song must not resolve before the network is classified: onCreate reads it. */
+    @Test fun theNetworkIsClassifiedWhenTheServiceIsCreatedBeforeAnyCallback() {
+        val application = org.robolectric.RuntimeEnvironment.getApplication()
+        val settings = com.legitimateapps.dulcet.playback.StreamingQualitySettings.get(application)
+        settings.set(com.legitimateapps.dulcet.core.StreamingQualityPreference(
+            com.legitimateapps.dulcet.core.StreamingQuality.Original, com.legitimateapps.dulcet.core.StreamingQuality.Kbps96))
+        val manager = application.getSystemService(android.net.ConnectivityManager::class.java)
+        val shadow = org.robolectric.Shadows.shadowOf(manager)
+        val wifi = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(wifi).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        shadow.setNetworkCapabilities(manager.activeNetwork, wifi)
+        val lifecycle = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val playback = assertNotNull(lifecycle.get().playback)
+            // No callback has been delivered: the looper is not idled and none is invoked.
+            assertEquals(com.legitimateapps.dulcet.core.StreamingQuality.Original, playback.nextStreamingQuality)
+        } finally {
+            lifecycle.destroy()
+            shadow.setNetworkCapabilities(manager.activeNetwork, null)
+            application.getSharedPreferences("dulcet.streaming-quality", 0).edit().clear().commit()
+        }
+    }
+}

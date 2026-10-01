@@ -99,6 +99,31 @@ class AndroidPlaybackDataSourceTest {
         assertFailsWith<AndroidPlaybackIOException> { ranged.open(spec()) }
     }
 
+    /** Spec §12.5: a server may answer a capped stream's format hint with the original file. */
+    @Test fun aHintedStreamAnsweredWithTheOriginalPlaysAndLaterRangesMustBeThatOriginal() {
+        val flac = "fLaC".toByteArray() + ByteArray(9000)
+        val plan = playbackPlan(container = AudioContainer.Flac, transcodeTo = AudioContainer.Mp3)
+        var laterType = "audio/flac"
+        val factory = AndroidPlaybackDataSourceFactory(plan, { position, _ ->
+            if (position == 0L) response(flac, contentType = "audio/flac")
+            else response(flac.copyOfRange(position.toInt(), flac.size), status = 206, contentType = laterType,
+                range = "bytes $position-${flac.lastIndex}/${flac.size}")
+        })
+        factory.createDataSource().also { assertEquals(flac.size.toLong(), it.open(spec())); it.close() }
+        assertEquals(AudioContainer.Flac, factory.arrivedContainer, "what arrived is recorded")
+        factory.createDataSource().also { assertEquals((flac.size - 100).toLong(), it.open(spec(100))); it.close() }
+        // Once FLAC has arrived, a range that claims to be the hinted MP3 is not the same stream.
+        laterType = "audio/mpeg"
+        assertFailsWith<AndroidPlaybackIOException> { factory.createDataSource().open(spec(100)) }
+
+        // Either container keeps its whole signature check: a body that is neither is refused.
+        val neither = AndroidPlaybackDataSourceFactory(plan, { _, _ ->
+            response(ByteArray(9000) { 0x41 }, contentType = "audio/flac")
+        })
+        assertFailsWith<AndroidPlaybackIOException> { neither.createDataSource().open(spec()) }
+        assertEquals(null, neither.arrivedContainer)
+    }
+
     @Test fun aSeekRequiresInitialSignatureAndEveryResponseStillRejectsEnvelopes() {
         val bytes = wav() + ByteArray(9000)
         var injectEnvelope = false

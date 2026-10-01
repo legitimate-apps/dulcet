@@ -1,6 +1,7 @@
 import DulcetCore
 import DulcetKit
 import Foundation
+import Network
 
 /// Copies the exported Kotlin plan classes into DulcetKit value types at the Objective-C boundary.
 enum DulcetCorePlaybackPlanFactory {
@@ -130,7 +131,8 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
         return .accepted(
             contentInformation: DulcetPlaybackContentInformation(
                 contentLength: outcome.contentLength,
-                supportsByteRanges: outcome.supportsByteRanges
+                supportsByteRanges: outcome.supportsByteRanges,
+                container: outcome.container.flatMap(DulcetAudioContainer.init(coreName:))
             )
         )
     }
@@ -234,6 +236,89 @@ extension DulcetPlaybackFailure {
         case let .server(code): "serverKnown:\(code)"
         case let .unrecognizedServerError(code): "serverUnknown:\(code)"
         case let .capabilityUnsupported(feature): "capabilityUnsupported:\(feature)"
+        }
+    }
+}
+
+/// The device's streaming-quality setting (spec §12.5): the person's choice, saved in the core's
+/// stored form, and the network's cost as `NWPathMonitor` reports it. The core's policy decides
+/// which quality the next resolve uses; this only feeds it. A path the system calls expensive
+/// (cellular, a personal hotspot) or constrained (Low Data Mode) is metered. Until the first
+/// report the policy treats the network as metered.
+@MainActor
+final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
+    static let defaultsKey = "dulcet.streamingQuality"
+
+    private let policy = StreamingQualityPolicy(
+        preference: StreamingQualityPreference(unmetered: .original, metered: .original)
+    )
+    private let defaults: UserDefaults
+    /// Sendable, so the nonisolated deinit may cancel it.
+    private nonisolated let monitor: NWPathMonitor?
+    /// Called when the quality the next resolve would use has changed.
+    var onQualityChange: (@MainActor () -> Void)?
+
+    init(defaults: UserDefaults = .standard, monitorsNetwork: Bool = true) {
+        self.defaults = defaults
+        monitor = monitorsNetwork ? NWPathMonitor() : nil
+        _ = policy.restore(stored: defaults.string(forKey: Self.defaultsKey))
+        startMonitoring()
+    }
+
+    deinit {
+        monitor?.cancel()
+    }
+
+    /// The quality the next resolve applies.
+    var currentQuality: StreamingQuality { policy.currentQuality }
+
+    var preference: DulcetStreamingQualityPreference {
+        let stored = policy.preference
+        return DulcetStreamingQualityPreference(
+            unmetered: Self.presentation(stored.unmetered),
+            metered: Self.presentation(stored.metered)
+        )
+    }
+
+    func setPreference(_ preference: DulcetStreamingQualityPreference) {
+        let changed = policy.setPreference(preference: StreamingQualityPreference(
+            unmetered: Self.core(preference.unmetered),
+            metered: Self.core(preference.metered)
+        ))
+        defaults.set(policy.preference.encoded(), forKey: Self.defaultsKey)
+        if changed { onQualityChange?() }
+    }
+
+    /// What the current network costs. A path with no usable route is not reported: the last
+    /// classification stands until a usable path says otherwise.
+    func setNetwork(_ network: NetworkCostClass) {
+        if policy.setNetwork(network: network) { onQualityChange?() }
+    }
+
+    private func startMonitoring() {
+        guard let monitor else { return }
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            let metered = path.isExpensive || path.isConstrained
+            Task { @MainActor in
+                self?.setNetwork(metered ? .metered : .unmetered)
+            }
+        }
+        monitor.start(queue: .main)
+    }
+
+    static func presentation(_ quality: StreamingQuality) -> DulcetStreamingQuality {
+        DulcetStreamingQuality(rawValue: quality.wireName) ?? .original
+    }
+
+    static func core(_ quality: DulcetStreamingQuality) -> StreamingQuality {
+        switch quality {
+        case .original: .original
+        case .kbps320: .kbps320
+        case .kbps256: .kbps256
+        case .kbps192: .kbps192
+        case .kbps128: .kbps128
+        case .kbps96: .kbps96
         }
     }
 }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Streaming quality copy (spec §12.5), shared by the phone and TV apps. -->
+<resources>
+    <string name="streaming_quality_title">Streaming quality</string>
+    <string name="streaming_quality_body">Changes apply from the next song. A song the server converts to meet a limit can\'t be scrubbed, and restarts from the beginning if interrupted; a song already within the limit plays as the original. Downloads are always the original file.</string>
+    <string name="streaming_quality_unmetered">On Wi-Fi</string>
+    <string name="streaming_quality_metered">On cellular</string>
+    <string name="streaming_quality_metered_hint">Also used on networks your device treats as metered.</string>
+    <string name="streaming_quality_original">Original</string>
+    <string name="streaming_quality_kbps">%1$d kbps</string>
+    <!-- Spoken for one quality choice on TV: the network, then the choice. -->
+    <string name="streaming_quality_choice">%1$s: %2$s</string>
+    <string name="streaming_quality_choice_selected">%1$s: %2$s, selected</string>
+</resources>

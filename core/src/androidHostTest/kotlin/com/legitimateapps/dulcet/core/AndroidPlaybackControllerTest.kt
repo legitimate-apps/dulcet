@@ -1262,6 +1262,29 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /** Spec §12.5: the choice and the network reach the next resolve, and nothing already playing restarts. */
+    @Test fun theStreamingQualityForTheNetworkReachesTheNextResolveAndNeverRestartsTheCurrentOne() {
+        val requests = mutableListOf<PlaybackResolveRequest>()
+        Fixture(resolve = { r -> requests += r; resolved(r) }).use { f ->
+            f.controller.setStreamingQuality(StreamingQualityPreference(StreamingQuality.Original, StreamingQuality.Kbps128))
+            f.controller.setNetworkCostClass(NetworkCostClass.Unmetered)
+            f.controller.playSong(OWNER, "wifi", "On Wi-Fi")
+            assertEquals(LegacyPlaybackPreference(null, null), requests.single().legacyPreference)
+            assertEquals(1_411_200, requests.single().deviceProfile.maxAudioBitrate)
+
+            f.controller.setNetworkCostClass(NetworkCostClass.Metered)
+            assertEquals(1, f.prepared.size, "a network change must not restart what is playing")
+            assertEquals(1, requests.size, "a network change must not re-resolve what is playing")
+
+            f.controller.playSong(OWNER, "cellular", "On cellular")
+            val capped = requests.last()
+            assertEquals(LegacyPlaybackPreference(AudioContainer.Mp3, 128, originalWhenItFits = true), capped.legacyPreference)
+            assertEquals(128_000, capped.deviceProfile.maxAudioBitrate)
+            assertEquals(128_000, capped.deviceProfile.maxTranscodingAudioBitrate)
+            assertEquals(listOf("wifi", "cellular"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
     private class Fixture(
         savedOwner: String? = null,
         savedSongs: List<String> = listOf("saved-song"),

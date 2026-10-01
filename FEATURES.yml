@@ -1591,6 +1591,145 @@
           }
         }
       }
+    },
+    {
+      "id": "playback.quality",
+      "title": "Choose streaming quality for Wi-Fi and for cellular; downloads stay original",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#125-transcoding-two-distinct-paths",
+      "gates": [
+        "account:authenticated"
+      ],
+      "conformance": [
+        "CONF-92"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "mac-streaming-quality-ui-proof",
+            "reason": "No test drives the Mac Settings window or the Connection screen's Streaming Quality section and then plays a track from the disposable reference server to observe the capped stream. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-92",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            },
+            {
+              "observes": "a streaming-quality choice made in the presentation store is saved through the installed setting and shown back, and without a setting nothing is offered",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/aStreamingQualityChoiceIsSavedThroughTheInstalledSettingAndShown"
+            }
+          ],
+          "reason": "The Mac offers the choice in its Settings window (Dulcet > Settings) and on the Connection screen. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+        },
+        "ios": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ios-streaming-quality-ui-proof",
+            "reason": "No test drives the iPhone Connection screen's Streaming Quality section and plays a capped stream through the app. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-92",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            }
+          ],
+          "reason": "The iPhone offers the choice on the Connection screen, the app's settings surface. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+        },
+        "ipados": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "ipados-streaming-quality-ui-proof",
+            "reason": "No test drives the iPad Connection screen's Streaming Quality section and plays a capped stream through the app. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-92",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            }
+          ],
+          "reason": "The iPad offers the choice on the Connection screen, as the iPhone does. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+        },
+        "tvos": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-streaming-quality-ui-proof",
+            "reason": "The tvOS section is a row of focusable buttons per network that no test drives with the remote, and no test plays a capped stream through the tvOS app. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-92",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            }
+          ],
+          "reason": "Apple TV offers the choice on the Connection screen as a row of buttons per network, the chosen one checked. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+        },
+        "android": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-streaming-quality-device-proof",
+            "reason": "The choice is proved into the controller's next resolve by host tests; no emulator or device run plays a capped stream through the app and observes the server transcode it. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-92",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            },
+            {
+              "observes": "a cellular cap chosen in the phone's account dialog is saved in the core's stored form and reaches the playback settings for the next song",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PhoneStreamingQualityTest/aCellularCapChosenInTheAccountDialogIsSavedForTheNextSong"
+            },
+            {
+              "observes": "the playback service hands the controller the saved choice and the default network's cost as NET_CAPABILITY_NOT_METERED reports it, and follows both as they change",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackServiceStreamingQualityTest/theControllerFollowsTheSavedChoiceAndTheNetworksCost"
+            }
+          ],
+          "reason": "The phone offers the choice in the account dialog. core-ci runs CONF-92 in the Android host core-conformance runtime against the disposable reference server, transcoding asserted first. That the controller applies the quality to the next resolve and never re-resolves or restarts the current one is AndroidPlaybackControllerTest's, in :core:testAndroidHostTest, which core-ci runs but whose results are not among the evidence it verifies, so it is named and not cited. Robolectric compositions and host tests, not a device claim; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5)."
+        },
+        "androidtv": {
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "androidtv-streaming-quality-device-proof",
+            "reason": "The TV choice is proved by a Robolectric composition driven with remote keys; no emulator or device run plays a capped stream through the TV app. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-92",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            },
+            {
+              "observes": "on the TV's Account screen the remote moves down from Sign out to the streaming-quality rows, across to a cap, and saves it with the centre button, while the screen still opens on Back",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvAccountEntryFocusTest/theRemoteChoosesAStreamingQualityBelowSignOut"
+            }
+          ],
+          "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. Robolectric evidence, not a device claim; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5)."
+        }
+      }
     }
   ]
 }

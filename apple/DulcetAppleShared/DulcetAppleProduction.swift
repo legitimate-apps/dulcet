@@ -65,6 +65,13 @@ enum DulcetAppleProduction {
         // library browser stays only as the queue-restoration catalog for a queue saved before
         // the reader existed: it reads the local database and sends nothing, and no library sync
         // is started from any screen while the reader holds the account.
+        let playbackController = playbackController ?? DulcetCorePlaybackController(
+            downloadController: downloads,
+            artworkFetcher: artworkFetcher
+        )
+        // One streaming-quality setting: the settings screen writes it, playback reads it (§12.5).
+        let streamingQuality = DulcetCoreStreamingQuality()
+        playbackController.streamingQuality = streamingQuality
         let store = DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
@@ -72,10 +79,7 @@ enum DulcetAppleProduction {
                 libraryBrowser: DulcetCoreLibraryBrowser(),
                 artworkFetcher: artworkFetcher,
                 serverSearch: DulcetCoreServerSearch(),
-                playbackController: playbackController ?? DulcetCorePlaybackController(
-                    downloadController: downloads,
-                    artworkFetcher: artworkFetcher
-                ),
+                playbackController: playbackController,
                 downloadController: downloads,
                 providerInstanceIDFactory: {
                     credentialStore.activeAccountID ?? UUID().uuidString
@@ -88,6 +92,7 @@ enum DulcetAppleProduction {
             )
         )
         store.likeCommandDriver = DulcetLikeCommandDriver(store: store)
+        store.streamingQualitySetting = streamingQuality
         return store
     }
 }

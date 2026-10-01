@@ -140,6 +140,12 @@
 "account.connect.keychain" = "After a successful connection, Dulcet stores these credentials in the system Keychain.";
 "account.connect.tv.textEntryHint" = "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.";
 "account.remove.action" = "Sign Out";
+"settings.streamingQuality.title" = "Streaming Quality";
+"settings.streamingQuality.unmetered" = "On Wi-Fi";
+"settings.streamingQuality.metered" = "On Cellular";
+"settings.streamingQuality.footnote" = "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. A song the server converts to meet a limit may not be scrubbable; a song already within the limit plays as the original. Downloads are always the original file.";
+"settings.streamingQuality.original" = "Original";
+"settings.streamingQuality.kbps" = "%@ kbps";
 "account.remove.confirm.title" = "Sign out of this server?";
 "account.remove.confirm.body" = "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.";
 "account.remove.progress.title" = "Signing out…";

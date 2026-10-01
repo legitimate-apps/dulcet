@@ -26,6 +26,10 @@ struct DulcetMacApp: App {
         )) {
             await downloadController?.handleBackgroundSessionEvents()
         }
+        // Dulcet > Settings…: the streaming quality (spec §12.5), also on the Connection screen.
+        Settings {
+            DulcetSettingsView(store: presentation)
+        }
     }
 }
 

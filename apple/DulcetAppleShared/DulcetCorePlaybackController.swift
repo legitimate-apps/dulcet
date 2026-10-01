@@ -48,6 +48,9 @@ private struct DulcetPreloadInFlight {
     var resolve: (any ApplePlaybackWireOperation)?
     var corePlan: AppleRemotePlaybackPlanDto?
     var inEngine = false
+    /// The current item has ended naturally and the core holds that end for this preload: the
+    /// engine is handing over to it, and `AdvancedToPreloaded` is on its way.
+    var endHeld = false
 }
 
 @MainActor
@@ -120,6 +123,34 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
         }
         engine.setRemoteCommandRouter(remoteBridge)
+    }
+
+    /// The device's streaming-quality setting (spec §12.5). Each resolve reads it; a change drops
+    /// a gapless preload resolved at the old quality and asks for a new one, so the next item plays
+    /// at the new quality. What is playing is never re-resolved or restarted for it.
+    var streamingQuality: DulcetCoreStreamingQuality? {
+        didSet {
+            streamingQuality?.onQualityChange = { [weak self] in self?.streamingQualityChanged() }
+        }
+    }
+
+    /// The quality the next resolve applies; Original where no setting is installed.
+    private var nextStreamingQuality: StreamingQuality {
+        streamingQuality?.currentQuality ?? .original
+    }
+
+    private func streamingQualityChanged() {
+        // A downloaded file's preload carries no server plan, so no quality to change.
+        guard let preload, preload.resolve != nil || preload.corePlan != nil else { return }
+        // Once the engine is handing over to the preload, it IS the next item playing: discarding
+        // it would resume the held end and prepare that same track again. It plays at the quality
+        // it was resolved at, and the item after it at the new one.
+        guard !preload.endHeld else {
+            preloadLog.append("quality-kept-at-handover")
+            return
+        }
+        discardPreload(preload, reason: "quality")
+        requestPreloadIfNeeded()
     }
 
     func setPresentationHandler(
@@ -603,7 +634,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             deviceProfile: Self.deviceProfile,
             legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil),
             legacyTimeOffset: nil
-        )
+        ).withStreamingQuality(quality: nextStreamingQuality)
         resolveOperation = wireClient.startResolve(request: request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self,
@@ -671,6 +702,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 // outgoing session reads Stopped, and presenting that would flash "Nothing is
                 // playing" between two tracks of one album.
                 holdingForPreload = true
+                if !preload.endHeld { preloadLog.append("end-held") }
+                self.preload?.endHeld = true
             } else {
                 // Registered but not yet in the engine: nothing will advance into it, so let the
                 // core start the next entry normally rather than wait for a boundary that is
@@ -791,7 +824,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             deviceProfile: Self.deviceProfile,
             legacyPreference: LegacyPlaybackPreference(format: nil, maxBitRateKbps: nil),
             legacyTimeOffset: nil
-        )
+        ).withStreamingQuality(quality: nextStreamingQuality)
         inFlight.resolve = wireClient.startResolve(request: request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self, let current = self.preload,

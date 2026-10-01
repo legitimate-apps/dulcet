@@ -12,6 +12,107 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     /// process, so a fixed provider would let one test's queue decide what another test sees.
     private let provider = "system-provider-\(UUID().uuidString)"
 
+    /// Spec §12.5: the quality for the network reaches each resolve. A change replaces a preload
+    /// resolved at the old quality, so the next item plays at the new one, and never restarts or
+    /// re-prepares what is playing. The choice is saved in the core's stored form.
+    func testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"], sourceContainer: .flac)
+        let suite = "dulcet-quality-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+        let quality = DulcetCoreStreamingQuality(defaults: defaults, monitorsNetwork: false)
+        quality.setNetwork(.metered)
+        quality.setPreference(DulcetStreamingQualityPreference(unmetered: .original, metered: .kbps128))
+        fixture.controller.streamingQuality = quality
+
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "prepare" }?.container, .mp3,
+                       "on cellular the FLAC source is asked for as a capped MP3 stream")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let staleB = try await fixture.waitForPreload(rawID: "b")
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "preload" }?.container, .mp3)
+        let prepares = fixture.engine.count("prepare")
+        let stops = fixture.engine.count("stop")
+
+        quality.setNetwork(.unmetered)
+
+        await fixture.waitFor {
+            fixture.engine.commands.contains { $0.kind == "discard" && $0.attempt == staleB.attempt.rawValue }
+        }
+        await fixture.waitFor {
+            fixture.engine.commands.filter { $0.kind == "preload" && $0.title == "Track b" }.count == 2
+        }
+        let freshB = try XCTUnwrap(fixture.engine.commands.last { $0.kind == "preload" && $0.title == "Track b" })
+        XCTAssertNotEqual(freshB.attempt, staleB.attempt.rawValue)
+        XCTAssertEqual(freshB.container, .flac, "on Wi-Fi the next item is the original FLAC file")
+        XCTAssertEqual(fixture.engine.count("prepare"), prepares, "what is playing is not re-prepared")
+        XCTAssertEqual(fixture.engine.count("stop"), stops, "nor stopped")
+        XCTAssertTrue(fixture.controller.preloadLog.contains("discarded:quality"))
+
+        XCTAssertEqual(defaults.string(forKey: DulcetCoreStreamingQuality.defaultsKey), "unmetered=original;metered=128")
+        XCTAssertEqual(
+            DulcetCoreStreamingQuality(defaults: defaults, monitorsNetwork: false).preference,
+            DulcetStreamingQualityPreference(unmetered: .original, metered: .kbps128),
+            "the choice survives a relaunch"
+        )
+    }
+
+    /// A quality change while the engine hands over to the preload must not discard it: the core
+    /// holds the natural end for that preload, and discarding it would resume the held end and
+    /// prepare the very track the engine is starting.
+    func testAQualityChangeDuringTheHandoverKeepsThePreloadTheEngineIsStarting() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"], sourceContainer: .flac)
+        let suite = "dulcet-quality-held-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+        let quality = DulcetCoreStreamingQuality(defaults: defaults, monitorsNetwork: false)
+        quality.setNetwork(.unmetered)
+        quality.setPreference(DulcetStreamingQualityPreference(unmetered: .original, metered: .kbps128))
+        fixture.controller.streamingQuality = quality
+
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        let preload = try await fixture.waitForPreload(rawID: "b")
+        await fixture.waitFor { fixture.controller.preloadLog.contains("in-engine") }
+        let preparesBefore = fixture.engine.count("prepare")
+        let discardsBefore = fixture.engine.count("discard")
+
+        fixture.emit(.ready(attemptID: preload.attempt, duration: 120, seekability: .seekable))
+        fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
+        await fixture.waitFor { fixture.controller.preloadLog.contains("end-held") }
+        XCTAssertTrue(fixture.controller.preloadLog.contains("end-held"), "the handover must be under way")
+        quality.setNetwork(.metered)
+        await fixture.waitFor { fixture.controller.preloadLog.contains("quality-kept-at-handover") }
+
+        fixture.emit(.advancedToPreloaded(oldAttemptID: first, newAttemptID: preload.attempt))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.current.id.rawID == "b" }
+        XCTAssertEqual(fixture.engine.count("discard"), discardsBefore, "the handover's preload is kept")
+        XCTAssertEqual(fixture.engine.count("prepare"), preparesBefore, "and the track is not prepared again")
+        XCTAssertFalse(fixture.controller.preloadLog.contains("resumed-held-end"),
+                       "\(fixture.controller.preloadLog)")
+        XCTAssertTrue(fixture.controller.preloadLog.contains("advanced"))
+
+        // The item after it is resolved at the new quality.
+        fixture.emit(.playbackProgressBegan(attemptID: preload.attempt, wallClock: Date(), mediaPosition: 1))
+        _ = try await fixture.waitForPreload(rawID: "c")
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "preload" }?.container, .mp3)
+    }
+
+    /// Every choice the settings screen offers is a core choice with the same stored name.
+    func testEveryStreamingQualityChoiceIsTheCoresOwn() {
+        for choice in DulcetStreamingQuality.allCases {
+            let core = DulcetCoreStreamingQuality.core(choice)
+            XCTAssertEqual(core.wireName, choice.rawValue)
+            XCTAssertEqual(core.maxBitRateKbps?.intValue, choice.maxBitRateKbps)
+            XCTAssertEqual(DulcetCoreStreamingQuality.presentation(core), choice)
+        }
+        XCTAssertEqual(StreamingQuality.entries.count, DulcetStreamingQuality.allCases.count)
+    }
+
     func testPreloadIsRegisteredAfterProgressAndTheBoundaryIsNotAStopOrAnEmptyScreen() async throws {
         let fixture = makeFixture(tracks: ["a", "b", "c"], recordStatuses: true)
         fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
@@ -826,7 +927,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
-        recordStatuses: Bool = false
+        recordStatuses: Bool = false,
+        sourceContainer: DulcetAudioContainer = .mp3
     ) -> Fixture {
         let tracks = rawIDs.map { rawID in
             DulcetTrack(
@@ -835,6 +937,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
                 credits: [],
                 albumTitle: "System album",
                 duration: .seconds(120),
+                sourceContainer: sourceContainer,
                 mediaSourceID: nil,
                 artwork: DulcetArtwork(
                     seed: rawID,
@@ -988,6 +1091,7 @@ private struct RecordedCommand: Sendable {
     let session: String?
     let title: String?
     var position: TimeInterval? = nil
+    var container: DulcetAudioContainer? = nil
 }
 
 /// Accepts every command; emits nothing on its own.
@@ -1033,11 +1137,13 @@ private final class RecordingCommandEngine: DulcetCorePlaybackEngine, @unchecked
         switch command {
         case let .prepare(commandID, plan):
             entry = .init(kind: "prepare", attempt: plan.attemptID.rawValue,
-                          session: plan.playbackSessionID.rawValue, title: plan.metadata.title)
+                          session: plan.playbackSessionID.rawValue, title: plan.metadata.title,
+                          container: plan.expectedContainer)
             outcome = .accepted(commandID: commandID)
         case let .preloadNext(commandID, plan):
             entry = .init(kind: "preload", attempt: plan.attemptID.rawValue,
-                          session: plan.playbackSessionID.rawValue, title: plan.metadata.title)
+                          session: plan.playbackSessionID.rawValue, title: plan.metadata.title,
+                          container: plan.expectedContainer)
             outcome = .accepted(commandID: commandID)
         case let .discardPreloaded(commandID, attemptID):
             entry = .init(kind: "discard", attempt: attemptID.rawValue, session: nil, title: nil)

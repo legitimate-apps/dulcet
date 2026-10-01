@@ -28,11 +28,16 @@ public struct DulcetPlaybackResourceLoadRequest: Equatable, Sendable {
 public struct DulcetPlaybackContentInformation: Equatable, Sendable {
     public let contentLength: Int64
     public let supportsByteRanges: Bool
+    /// The container the validated response actually is, when the validator names one. A server
+    /// may ignore a legacy format hint and send the original file (spec §12.5); the engine is then
+    /// told what arrived rather than what was asked for. Nil means the plan's expected container.
+    public let container: DulcetAudioContainer?
 
-    public init(contentLength: Int64, supportsByteRanges: Bool) {
+    public init(contentLength: Int64, supportsByteRanges: Bool, container: DulcetAudioContainer? = nil) {
         precondition(contentLength >= 0)
         self.contentLength = contentLength
         self.supportsByteRanges = supportsByteRanges
+        self.container = container
     }
 }
 
@@ -613,7 +618,7 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         contentInformation = information
         lock.unlock()
         guard let target = loadingRequest.contentInformationRequest else { return }
-        target.contentType = expectedContainer.uniformTypeIdentifier
+        target.contentType = (information.container ?? expectedContainer).uniformTypeIdentifier
         target.contentLength = information.contentLength
         target.isByteRangeAccessSupported = information.supportsByteRanges
     }

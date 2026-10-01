@@ -147,6 +147,13 @@ public final class DulcetPresentationStore {
     @ObservationIgnored private var signOutOfferSequence = 0
     /// The lock screen's heart, kept for the store's lifetime by the app that installs it.
     @ObservationIgnored public var likeCommandDriver: DulcetLikeCommandDriver?
+    /// The device's streaming-quality setting (spec §12.5), installed by the production
+    /// composition. Without one the settings screen offers no choice.
+    @ObservationIgnored public var streamingQualitySetting: (any DulcetStreamingQualitySetting)? {
+        didSet { streamingQuality = streamingQualitySetting?.preference }
+    }
+    /// The streaming-quality choice as saved; nil where the setting is not installed.
+    public private(set) var streamingQuality: DulcetStreamingQualityPreference?
     /// The failure the person dismissed from the now-playing bar. Only that failure stays away:
     /// it is forgotten when playback does anything else -- however that was started, the lock
     /// screen and a headset included -- and whenever the person starts something through the
@@ -269,6 +276,14 @@ public final class DulcetPresentationStore {
 
     public func cancelAccountConnection() {
         source.send(.cancelAccountConnection)
+    }
+
+    /// Saves a streaming-quality choice. It applies from the next item played; what is playing
+    /// is never restarted for it.
+    public func setStreamingQuality(_ preference: DulcetStreamingQualityPreference) {
+        guard let streamingQualitySetting else { return }
+        streamingQualitySetting.setPreference(preference)
+        streamingQuality = streamingQualitySetting.preference
     }
 
     public func removeAccount() {
