@@ -1726,7 +1726,8 @@ type from `PlaybackContentLength.Exact`. EOF before an estimate is completion; E
 length is truncation. **ASSUMED** (no real mid-transcode drop has been measured): a network drop
 part-way through a transcode arrives as the same connection-lost end after a prefix of the body, so
 it cannot be told from a body that ended short of its estimate and is accepted as the end of the
-representation -- the track ends early rather than failing; that has been the policy since revision 84. No validator, download promoter, or platform media loader may collapse those
+representation -- the track ends early rather than failing; that has been the policy since revision
+84. No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
 this path so the UI never claims a negotiated result.
 
@@ -7361,7 +7362,9 @@ control (§12.5).** Follow-ups to the 2026-09-30 entry below:
    nothing forwarded would have become an empty success -- `UnexpectedBinary` to the playback
    validator instead of the `Unreachable` the transcode budget and the circuit breaker should see.
    The delegate now counts the bytes it forwarded to Ktor, per task, under a lock, and decides on
-   that count. Mutating the clause to accept zero turned the no-body control red.
+   that count. Mutating the clause to accept zero turned the no-body control red -- which proves the
+   `> 0` clause, not the substitution: no test yet fails if the decision goes back to
+   `countOfBytesReceived`, because the loopback fixture never receives bytes it does not forward.
 2. OBSERVED on macOS with the loopback fixture: NSURLSession reports a short body as `-1005` only for
    200 and 206. For 201, 202, 203, 299, 300, 302, 399, 400, 401, 404, 410, 416, 429, 500, 503 and 599
    it completed without an error after handing over every byte. The 2xx clause therefore cannot be

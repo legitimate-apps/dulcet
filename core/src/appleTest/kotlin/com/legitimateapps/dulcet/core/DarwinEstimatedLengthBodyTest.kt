@@ -129,8 +129,9 @@ class DarwinEstimatedLengthBodyTest {
      * 401, 404, 410, 416, 429, 500, 503 and 599 complete without an error after handing over every
      * byte. So the delegate's 2xx clause cannot be reached over the wire here, and its control is
      * [theDecisionEndsOnlyA2xxEstimatedUnrangedBodyWithForwardedBytes]. This pins the platform fact
-     * that makes that so: if a short non-2xx body ever does end in -1005, this fails, and the wire
-     * control becomes possible and should replace it.
+     * that makes that so for one representative status, 500 (the others above were observed once,
+     * not pinned): if a short 500 body ever does end in -1005, this fails, and the wire control
+     * becomes possible and should replace it.
      */
     @Test
     fun aShortNon2xxEstimatedBodyIsNotReportedAsConnectionLostAndIsNeverEndedByTheDelegate() = runBlocking {
