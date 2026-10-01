@@ -912,8 +912,12 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
     /// The production reader, through the production Kotlin facade, against the disposable
     /// server: a connected launch paints the library live and renders it; a relaunch with the
-    /// account saved paints the same library from what this device saw, before any loading state
-    /// and with nothing sent (CONF-76, CONF-10b); Reconnect then brings it live in place.
+    /// account saved, in device-only mode, paints the same library from what this device saw with
+    /// no loading state (CONF-76, CONF-10b), an album seen only in the grid shows its cached
+    /// header with its tracks unavailable, and an album never seen is unavailable offline;
+    /// Reconnect then brings it live in place, where the grid-only album paints its cached header
+    /// before its tracks are read. Requests are not counted: "before any request" is not observed
+    /// here, only that nothing published was a loading state.
     ///
     /// The credential store is in memory -- an ad-hoc signed host cannot reach the data-protection
     /// Keychain -- so what this proves starts at the store boundary: everything after it is the
@@ -974,6 +978,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
         let liveTitles = livePublications.last?.items.map(\.displayTitle) ?? []
         let doubleLines = try XCTUnwrap(livePublications.last?.items.first { $0.displayTitle == "Double Lines" })
+        // Seen in the grid and never opened: only its header is on this device.
+        let gridOnly = try XCTUnwrap(livePublications.last?.items.first { $0.displayTitle == "Threshold Boundary" })
         var liveAlbumPage: DulcetLibraryWindow?
         let albumPage = try XCTUnwrap(firstSession.reader).subscribeWindow(.album(rawID: doubleLines.id.rawID)) {
             liveAlbumPage = $0
@@ -1059,6 +1065,40 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertEqual(cachedAlbumPage[0].items.map(\.displayTitle), liveTrackTitles,
             "The album page paints the tracks this device saw")
 
+        // Offline, an album seen only in the grid shows its cached header and says its tracks are
+        // unavailable; an album this device never saw is unavailable, with no loading state.
+        var gridOnlyOffline: [DulcetLibraryWindow] = []
+        let gridOnlyOfflinePage = try XCTUnwrap(secondSession.reader).subscribeWindow(.album(rawID: gridOnly.id.rawID)) {
+            gridOnlyOffline.append($0)
+        }
+        var neverSeen: [DulcetLibraryWindow] = []
+        let neverSeenPage = try XCTUnwrap(secondSession.reader).subscribeWindow(
+            .album(rawID: "dulcet-never-seen-\(UUID().uuidString)")
+        ) {
+            neverSeen.append($0)
+        }
+        try await waitUntil(
+            timeout: .seconds(10),
+            failureMessage: "offline detail: gridOnly=\(gridOnlyOffline.map(\.freshness)) neverSeen=\(neverSeen.map(\.freshness))"
+        ) {
+            !gridOnlyOffline.isEmpty && !neverSeen.isEmpty
+        }
+        let gridOnlyFirst = gridOnlyOffline[0]
+        guard case .cached(.offline, _) = gridOnlyFirst.freshness else {
+            XCTFail("A grid-only album offline must show its cached header, offline, not \(gridOnlyFirst.freshness)")
+            return
+        }
+        XCTAssertEqual(gridOnlyFirst.header?.displayTitle, "Threshold Boundary",
+            "The grid-only album's header is the one the grid showed")
+        XCTAssertEqual(gridOnlyFirst.itemsState, .unavailable,
+            "Tracks never read are unavailable offline, not empty and not loading")
+        XCTAssertEqual(neverSeen[0].freshness, .unavailable(.notCachedOffline),
+            "An album this device never saw is unavailable offline")
+        XCTAssertFalse((gridOnlyOffline + neverSeen).contains { $0.freshness == .loading || $0.itemsState == .loading },
+            "Offline, no detail screen shows a loading state")
+        gridOnlyOfflinePage.close()
+        neverSeenPage.close()
+
         // 3. Reconnect, as the library's own button does: in place, and live again.
         dulcetReaderRetry(second)
         try await waitUntil(
@@ -1082,11 +1122,38 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
         XCTAssertEqual(reconnected?.items.map(\.displayTitle), liveTitles)
         liveAgain.close()
+
+        // Online, the grid-only album paints its cached header first, its tracks still to be read,
+        // and then its tracks live -- never a whole-screen loading state.
+        var gridOnlyOnline: [DulcetLibraryWindow] = []
+        let gridOnlyOnlinePage = try XCTUnwrap(secondSession.reader).subscribeWindow(.album(rawID: gridOnly.id.rawID)) {
+            gridOnlyOnline.append($0)
+        }
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "grid-only online: \(gridOnlyOnline.map { ($0.freshness, $0.itemsState) })"
+        ) {
+            gridOnlyOnline.last?.freshness == .live && gridOnlyOnline.last?.itemsState == .present
+        }
+        let gridOnlyOnlineFirst = gridOnlyOnline[0]
+        guard case .cached = gridOnlyOnlineFirst.freshness else {
+            XCTFail("A grid-only album online must paint its cached header first, not \(gridOnlyOnlineFirst.freshness)")
+            return
+        }
+        XCTAssertEqual(gridOnlyOnlineFirst.header?.displayTitle, "Threshold Boundary")
+        XCTAssertEqual(gridOnlyOnlineFirst.itemsState, .loading,
+            "Its first publication says its tracks are being read")
+        XCTAssertFalse(gridOnlyOnline.contains { $0.freshness == .loading },
+            "A cached header never gives way to a whole-screen loading state")
+        XCTAssertFalse(gridOnlyOnline.last?.items.isEmpty ?? true, "Its tracks arrive live")
+        gridOnlyOnlinePage.close()
         await withCheckedContinuation { continuation in
             secondSession.close { continuation.resume() }
         }
         print("DULCET MAC READER PASS albums=\(liveTitles.count) tracks=\(liveTrackTitles.count)"
-            + " first-cached=\(firstCached.freshness) tile=\(tileLabel.debugDescription)")
+            + " first-cached=\(firstCached.freshness) tile=\(tileLabel.debugDescription)"
+            + " grid-only-offline=\(gridOnlyFirst.itemsState) never-seen=\(neverSeen[0].freshness)"
+            + " grid-only-online-first=\(gridOnlyOnlineFirst.itemsState)")
     }
 
     private func waitUntil(

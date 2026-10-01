@@ -1091,6 +1091,12 @@ passing_cases = """\
             name="testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote" time="0.1" />
+  <testcase classname="DulcetMacAccountConnectAppTest"
+            name="readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'

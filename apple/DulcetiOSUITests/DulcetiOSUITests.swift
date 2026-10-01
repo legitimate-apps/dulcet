@@ -1062,20 +1062,37 @@ final class DulcetiOSUITests: XCTestCase {
             + " covered-tile=\(targetLabel.debugDescription) covered-opened=\(openedLabel.debugDescription)")
     }
 
-    /// The library is the reader's, end to end, on whichever destination runs this (the window's
-    /// width decides the navigation, and the log names it):
+    /// The saved-account reader proof on iPhone. Recorded against the ios cell: it fails on any
+    /// other idiom or on a regular-width window, so an iPad run cannot stand in for it.
+    @MainActor
+    func testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone() {
+        guard requireSimulator(.phone, "The saved-account reader proof on iPhone") else { return }
+        proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact: true)
+    }
+
+    /// The same proof on iPad, through the sidebar. Recorded against the ipados cell: it fails on
+    /// any other idiom or on a compact window, so an iPhone run cannot stand in for it.
+    @MainActor
+    func testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS() {
+        guard requireSimulator(.pad, "The saved-account reader proof on iPad") else { return }
+        proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact: false)
+    }
+
+    /// The library is the reader's, end to end, on the destination its caller names (the window's
+    /// width decides the navigation, must match that destination, and the log names it):
     ///
     /// 1. A favourite made on an album page shows at once and reaches the server (CONF-84).
     /// 2. Relaunched with the account saved and no account hook, the app opens straight into the
-    ///    library this device saw -- tiles painted, Reconnect offered, nothing sent (CONF-76,
-    ///    CONF-10b) -- and the favourite is still shown.
+    ///    library this device saw -- Reconnect offered, the album's tile opens its page, and that
+    ///    page says it is showing what this device saw (CONF-76, CONF-10b) -- and the favourite is
+    ///    still shown. Requests are not counted here, so "nothing is sent" is not observed.
     /// 3. Search there reads the device and says so (CONF-79's offline scope).
     /// 4. Reconnect brings the library back in place, and the favourite is removed again, so the
     ///    disposable server ends as it started.
     ///
     /// The server is read back over `/rest` with the disposable account; that read never writes.
     @MainActor
-    func testASavedAccountReopensIntoItsLibraryAndKeepsAFavourite() {
+    private func proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact expectedCompact: Bool) {
         guard let configuration = livePlaybackConfiguration() else { return }
         let album = "Double Lines"
         let app = XCUIApplication()
@@ -1093,6 +1110,10 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         let compact = window.frame.width < 700
         print("DULCET READER PROOF destination=\(compact ? "compact" : "regular") window=\(window.frame)")
+        guard compact == expectedCompact else {
+            XCTFail("The reader proof expected a \(expectedCompact ? "compact" : "regular") window, got \(window.frame)")
+            return
+        }
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
             XCTFail("The live account connection must succeed first")
             return

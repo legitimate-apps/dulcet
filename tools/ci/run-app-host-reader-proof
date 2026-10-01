@@ -1,0 +1,125 @@
+#!/bin/bash
+# Run one Apple reader proof (library.browse, spec §16.14 and §16.18) against the disposable server
+# and turn its result bundle into cited evidence.
+#
+# A file rather than inline YAML for the reason tools/ci/run-app-host-library-sync-proof gives: the
+# "Assert Darwin conformance preconditions" step is already the largest `run:` block in apple-ci,
+# and GitHub's remedy for a block that grows too large is to extract it. It must run INSIDE that
+# step, because the disposable server's lifetime is that step's shell.
+#
+# Usage:
+#   run-app-host-reader-proof macos
+#   run-app-host-reader-proof ipados <ipad-simulator-destination>
+#   run-app-host-reader-proof iphone
+#
+# One mode per call, so each proof keeps its own position in the calling step's sequence. The two
+# simulator proofs connect through the app's debug launch hook and then relaunch with the account
+# saved; earlier phases on the same device already leave a saved account and a seen-cache behind,
+# and the proof starts from its own connect whatever they left. Each simulator proof is its own
+# test method that fails on the other idiom and window class, so an iPhone run cannot stand as
+# iPad evidence.
+
+set -euo pipefail
+
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
+mode="${1:-}"
+case "$mode" in
+    macos|iphone)
+        [ "$#" -eq 1 ] || { echo "run-app-host-reader-proof $mode: takes no further arguments" >&2; exit 2; }
+        ;;
+    ipados)
+        [ "$#" -eq 2 ] || { echo "run-app-host-reader-proof ipados: needs the iPad destination" >&2; exit 2; }
+        ipad_destination="$2"
+        ;;
+    *)
+        echo "run-app-host-reader-proof: mode must be 'macos', 'ipados' or 'iphone', got '${mode}'" >&2
+        exit 2
+        ;;
+esac
+
+# The execution guard comes BEFORE junit generation in every mode: `swift-testing-junit` writes a
+# well-formed tests="0" file for an empty bundle, so a renamed or silently-matching-nothing test
+# would otherwise ship green. Each JUnit path is spelled out in full because
+# tools/verify_ci_policy.py greps for `$RUNNER_TEMP/<name>-junit/` to prove every directory
+# verify-parity-evidence reads is written by something.
+
+if [ "$mode" = macos ]; then
+    # A macOS host test does not inherit xcodebuild's environment, so the disposable-server
+    # contract is passed both as shell environment and as build settings, as the other macOS
+    # app-host proofs do. It reuses the product the first macOS app-host proof built.
+    DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+        DULCET_CONFORMANCE_DISPOSABLE=true \
+        xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetMac \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-mac-reader-test.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_ENTITLEMENTS= \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_TEST_CONFORMANCE_DISPOSABLE=true 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-reader-test.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-reader-test.xcresult" \
+        DulcetMacTests.DulcetMacAccountConnectAppTest \
+        readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-reader-test.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-reader-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
+        DulcetMacAccountConnectAppTest
+    exit 0
+fi
+
+# The account reaches the UI test as TEST_RUNNER_-prefixed variables in xcodebuild's own
+# environment; a trailing KEY=value would be parsed as a build setting and never arrive.
+ui_proof() {
+    slug="$1"
+    derived_data="$2"
+    destination="$3"
+    test_method="$4"
+    junit="$5"
+
+    result_bundle="$RUNNER_TEMP/dulcet-$slug-reader.xcresult"
+    TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+        TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+        TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+        xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination "$destination" \
+            -derivedDataPath "$derived_data" \
+            -resultBundlePath "$result_bundle" \
+            -parallel-testing-enabled NO \
+            -only-testing:"DulcetiOSUITests/DulcetiOSUITests/$test_method" 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-$slug-reader.log"
+    python3 tools/verify-xcode-test-execution \
+        "$result_bundle" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        "$test_method"
+    python3 tools/swift-testing-junit \
+        "$result_bundle" \
+        "$junit" \
+        DulcetiOSUITests
+}
+
+if [ "$mode" = ipados ]; then
+    python3 tools/ci/isolate-simulator --phase reader-ipad --keep "${ipad_destination##*id=}"
+    ui_proof ipados "$RUNNER_TEMP/DulcetiPadOSDerivedData" "$ipad_destination" \
+        testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS \
+        "$RUNNER_TEMP/dulcet-ipados-reader-junit/TEST-DulcetiOSUITests.xml"
+    exit 0
+fi
+
+python3 tools/ci/isolate-simulator --phase reader-iphone --keep-name "iPhone 17 Pro"
+ui_proof ios "$RUNNER_TEMP/DulcetiOSDerivedData" 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+    testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone \
+    "$RUNNER_TEMP/dulcet-ios-reader-junit/TEST-DulcetiOSUITests.xml"

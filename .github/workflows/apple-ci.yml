@@ -1050,6 +1050,9 @@ jobs:
           # Moved verbatim into tools/ci/, and invoked HERE so its position in this sequence is
           # unchanged. See the script header for why it is a file at all.
           tools/ci/run-app-host-library-sync-proof macos
+          # The Mac library on the reader (spec §16.14): live, then a device-only relaunch from what
+          # this device saw, then Reconnect in place. In a file for the same reason.
+          tools/ci/run-app-host-reader-proof macos
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
@@ -1512,6 +1515,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-np-heart-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # The iPad library on the reader (spec §16.14), while the iPad is still booted: a saved
+          # account reopens into what this device saw, then Reconnect in place.
+          tools/ci/run-app-host-reader-proof ipados "$IPAD_PLAYBACK_DESTINATION"
           python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -1657,6 +1663,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-np-heart.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-np-heart-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # The same reader proof on iPhone, before the skip probe changes the corpus.
+          tools/ci/run-app-host-reader-proof iphone
           # The automatic-skip proofs on iPhone (spec §12.12): an undecodable track is skipped with a
           # notice and the next one plays, and the server counts a play for the next track and never
           # for the skipped one; at the largest text size the notice clears navigation, and for a
@@ -1937,6 +1945,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-app-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-test-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
             "$RUNNER_TEMP/dulcet-ipados-library-sync-junit" \
             "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
