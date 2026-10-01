@@ -723,12 +723,11 @@ private object SecurePlaybackAttemptIdSource : PlaybackAttemptIdSource {
     )
 }
 
-internal class KtorPlaybackEndpointTransport(
+private class KtorPlaybackEndpointTransport(
     account: PlaybackEndpointAccount,
     saltSource: SaltSource?,
     logSink: LogSink?,
     hostResolver: HostResolver,
-    clientTransport: AccountClientTransport = AccountClientTransport.Default(),
 ) : PlaybackEndpointTransport {
     private val client = AuthenticatedEndpointClient(
         credentials = AuthenticatedEndpointCredentials(
@@ -741,7 +740,6 @@ internal class KtorPlaybackEndpointTransport(
         saltSource = saltSource,
         logSink = logSink,
         hostResolver = hostResolver,
-        clientTransport = clientTransport,
     )
 
     override suspend fun get(
