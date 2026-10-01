@@ -262,6 +262,21 @@ extension View {
     }
 #endif
 
+    /// A surface's navigation title. On Apple TV the section bar across the top already names
+    /// the section, and the navigation stack's large title floats over the content's top edge,
+    /// dimmed (observed: "Connection" across the server address and Sign Out, a second "Now
+    /// Playing" above the player's own). The title stays set -- the navigation bar keeps it, for
+    /// focus and for tests -- but drawn inline, off the content.
+    @ViewBuilder
+    func dulcetNavigationTitle(_ title: String) -> some View {
+#if os(tvOS)
+        navigationTitle(title)
+            .toolbarTitleDisplayMode(.inline)
+#else
+        navigationTitle(title)
+#endif
+    }
+
     @ViewBuilder
     func dulcetLinkButtonStyle() -> some View {
 #if os(macOS)

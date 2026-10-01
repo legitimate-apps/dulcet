@@ -133,7 +133,7 @@ struct DulcetSearchView: View {
         .padding(DulcetSpacing.lg)
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.search)
+        .dulcetNavigationTitle(DulcetStrings.search)
     }
 
 #if os(iOS)

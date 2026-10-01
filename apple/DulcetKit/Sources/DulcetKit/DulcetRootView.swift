@@ -1077,14 +1077,14 @@ private struct DulcetStateSurface: View {
                     failure: snapshot.playbackFailure,
                     onControl: store.sendPlaybackControl
                 )
-                .navigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             } else {
                 DulcetUnavailableDestinationView(
                     symbol: "waveform",
                     title: DulcetStrings.nowPlayingUnavailableTitle,
                     message: DulcetStrings.nowPlayingUnavailableBody
                 )
-                .navigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             }
         }
     }
@@ -1097,25 +1097,25 @@ private struct DulcetStateSurface: View {
                 DulcetSavedAccountLibraryView(serverName: serverName) {
                     store.submitAccountConnection()
                 }
-                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
             } else {
                 DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
-                    .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
             }
         case .emptyLibraryNoAccount:
             DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
-                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .emptyLibraryConnected:
             DulcetEmptyLibraryView(connected: true)
-                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryLoading:
             DulcetLibraryLoadingView()
-                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
         case .libraryError:
             DulcetLibraryErrorView(failure: snapshot.libraryFailure) {
                 store.selectDestination(.library)
             }
-            .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+            .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
         // One case, so the grid under a pushed page is the same view as the grid itself: split
         // across two cases it was rebuilt on every push, and back returned to its top.
         case .libraryBrowse,
@@ -1139,7 +1139,7 @@ private struct DulcetStateSurface: View {
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)
-                    .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
             }
         case .artistDetail:
             if let artist = snapshot.selectedArtist {
@@ -1150,7 +1150,7 @@ private struct DulcetStateSurface: View {
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)
-                    .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
             }
         case .offlineMetadataOnly:
             DulcetOfflineLibraryView(
@@ -1162,10 +1162,10 @@ private struct DulcetStateSurface: View {
                     store.activateTrack(albumID: album.id, trackID: track.id)
                 }
             )
-                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
         default:
             DulcetEmptyLibraryView(connected: snapshot.accountConnected)
-                .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
         }
     }
 }
@@ -1179,7 +1179,7 @@ private extension DulcetStateSurface {
             onPlayAll: { store.playLibrary(shuffle: false) },
             onShuffle: { store.playLibrary(shuffle: true) }
         )
-        .navigationTitle(DulcetSidebarDestination.library.windowTitle)
+        .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
     }
 }
 

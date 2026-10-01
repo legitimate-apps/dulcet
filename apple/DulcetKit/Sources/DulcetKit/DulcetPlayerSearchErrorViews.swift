@@ -18,7 +18,7 @@ struct DulcetPlaybackPreparingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.nowPlaying)
+        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
     }
 }
 
@@ -50,14 +50,14 @@ struct DulcetPlaybackFailedView: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.nowPlaying)
+        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
 #else
         content(failure)
             .padding(DulcetSpacing.xxl)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.dulcetWindow)
             .dulcetForeground(.primaryTextOnWindow)
-            .navigationTitle(DulcetStrings.nowPlaying)
+            .dulcetNavigationTitle(DulcetStrings.nowPlaying)
 #endif
     }
 
@@ -265,7 +265,7 @@ struct DulcetNowPlayingView: View {
         }
         .background(Color.dulcetWindow.ignoresSafeArea())
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.nowPlaying)
+        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
 #if os(tvOS)
         .onAppear(perform: claimArrivalFocus)
         // The focus engine can fall back to the section bar after this appeared.
@@ -1132,7 +1132,7 @@ struct DulcetTLSUntrustedView: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.settings)
+        .dulcetNavigationTitle(DulcetStrings.settings)
     }
 
     /// The prominent help link's label pair, as ``DulcetProminentAction`` picks it: the

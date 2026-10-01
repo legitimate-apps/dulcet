@@ -84,7 +84,7 @@ struct DulcetAccountConnectionView: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(DulcetStrings.settings)
+        .dulcetNavigationTitle(DulcetStrings.settings)
 #if os(iOS)
         // Dragging the form puts the keyboard away, uncovering the tab bar.
         .scrollDismissesKeyboard(.interactively)

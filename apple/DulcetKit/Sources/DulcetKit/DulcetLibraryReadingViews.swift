@@ -856,7 +856,7 @@ struct DulcetReaderPage<Content: View>: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .navigationTitle(title)
+        .dulcetNavigationTitle(title)
     }
 }
 
