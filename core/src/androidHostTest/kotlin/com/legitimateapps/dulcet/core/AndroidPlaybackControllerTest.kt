@@ -329,6 +329,43 @@ class AndroidPlaybackControllerTest {
     }
 
     /**
+     * Next, Previous or a Jump while a new queue loads moves within the queue the core still holds,
+     * abandoning the new one: what was held for it is dropped and said at that moment -- never left
+     * held, to be said at some later, unrelated play or stop.
+     */
+    @Test fun nextPreviousOrJumpWhileANewQueueLoadsDropsItsHeldAdditionsAtOnce() {
+        for (how in listOf("next", "previous", "jump")) {
+            var pending: Continuation<AuthenticatedEndpointResponse>? = null
+            Fixture(loadSong = { id ->
+                if (id == "n1") suspendCoroutine<AuthenticatedEndpointResponse> { pending = it } else song(id)
+            }).use { f ->
+                f.controller.playQueue(album("t1", "t2", "t3"), 1, AndroidQueueSource.Album, "Album", "album-id")
+                val ids = f.controller.state.value.queue.associate { it.track.rawId to it.queueEntryId }
+                f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "New", "new-album")
+                assertNotNull(pending, "$how: setup: the new queue must be resolving")
+                assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+                assertNull(f.controller.state.value.droppedAdditions, "$how: setup: held, not yet dropped")
+                when (how) {
+                    "next" -> f.controller.next()
+                    "previous" -> f.controller.previous()
+                    else -> f.controller.jumpTo(ids.getValue("t3"))
+                }
+                val dropped = assertNotNull(f.controller.state.value.droppedAdditions, "$how: the drop is said at once")
+                assertEquals(1, dropped.trackCount, how)
+                val expected = when (how) { "next" -> "t3"; "previous" -> "t1"; else -> "t3" }
+                assertEquals(expected, f.controller.state.value.queue.getOrNull(f.controller.state.value.currentIndex ?: -1)?.track?.rawId,
+                    "$how: moved within the old queue")
+                assertEquals(listOf("t1", "t2", "t3"), f.controller.state.value.queue.map { it.track.rawId }, "$how: x not applied")
+                f.controller.dismissDroppedAdditions(dropped.sequence)
+                // The next, unrelated play says nothing: nothing was left held.
+                f.controller.playQueue(album("k1"), 0, AndroidQueueSource.Album, "K", "k-album")
+                f.controller.stop()
+                assertNull(f.controller.state.value.droppedAdditions, "$how: no late notice")
+            }
+        }
+    }
+
+    /**
      * A drop counts every track of every addition held, and a queue abandoned with nothing held says
      * nothing. Dismissing an earlier drop never hides a later one.
      */

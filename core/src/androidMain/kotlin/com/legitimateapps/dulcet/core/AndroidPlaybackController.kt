@@ -152,9 +152,11 @@ public class AndroidPlaybackController internal constructor(
     private var requestGeneration = 0L
     // Play Next and Add to Queue accepted while a new queue was still resolving; applied, in the order
     // given, the moment that queue is in place. They belong to the resolution in flight and to no
-    // other: every way that resolution ends without starting -- replaced, stopped, failed -- drops
-    // them (dropHeldAdditions), so whatever is held is always the current resolution's. Close cancels
-    // the resolution, and a closed controller applies nothing.
+    // other. Every path that cancels or ends that resolution without starting it drops them
+    // (dropHeldAdditions) at that moment: another play (playQueue), Stop, a move within the old
+    // queue -- Next, Previous, a Jump, a retry or restart, all through transition -- and a failed
+    // read. So whatever is held is always the current resolution's. Close cancels the resolution,
+    // and a closed controller applies nothing.
     private val heldAdditions = mutableListOf<HeldAddition>()
     private var droppedAdditions: AndroidDroppedAdditions? = null
     private var droppedAdditionsSequence = 0L
@@ -718,6 +720,9 @@ public class AndroidPlaybackController internal constructor(
 
     private fun transition(transition: PlaybackQueueTransition) {
         requestGeneration++; resolution?.cancel(); startJob?.cancel()
+        // A move within the queue the core holds abandons a new queue still loading, and with it
+        // what was held for that queue.
+        dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
         capture(transition.effects)
         transition.startDirective?.let { start(it) }

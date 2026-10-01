@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -84,7 +85,11 @@ class TvPlayBeforeBindTest {
         assertTrue(server.requests("getSong").isEmpty(), "setup: nothing can play before the service binds")
         assertNull(shadowOf(context).nextStartedActivity, "Now Playing does not open for a Play not yet made")
 
-        compose.runOnIdle { bound = controller }
+        // The service binding: a state write applied in its own snapshot, so the recomposer hears it
+        // directly. A bare global write waits on Compose's process-wide apply notifier, which an
+        // earlier test class in this JVM can leave stalled (measured: no recomposition in 30 s in
+        // the full suite, immediate in isolation).
+        compose.runOnIdle { Snapshot.withMutableSnapshot { bound = controller } }
         await("the held Play made once the service binds") { server.requests("getSong").isNotEmpty() }
         assertAlbumSongAsked()
         assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action,

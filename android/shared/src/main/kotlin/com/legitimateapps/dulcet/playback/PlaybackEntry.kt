@@ -93,8 +93,14 @@ public fun rememberPlaybackController(): AndroidPlaybackController? {
 /**
  * A Play pressed before the playback service has bound. Binding is asynchronous, so for a moment
  * after a screen starts there is no controller; a Play pressed then is held -- only the latest, as a
- * later Play would replace its queue anyway -- and applied the moment the controller arrives, as a
- * play delivered by intent is held. Nothing is lost to binding, and nothing is played twice.
+ * later Play would replace its queue anyway -- and applied once, the moment a controller arrives, as
+ * a play delivered by intent is held.
+ *
+ * What it does not do: the held Play lives in composition memory ([rememberPlaybackBinding] uses
+ * `remember`, not saved state), so it is lost when the activity is recreated and when the
+ * composition holding it leaves -- on the TV each screen holds its own, so leaving the screen drops
+ * it. And if the service never yields a controller (`ensurePlayback()` answers null, as without an
+ * account), it waits indefinitely and nothing says so.
  *
  * Remembered for the composition ([rememberPlaybackBinding]), it is also the one object a click
  * handler kept from an earlier composition reaches: the handler asks it for the controller bound
