@@ -92,3 +92,19 @@ licensee {
     allow("Apache-2.0")
     allowUrl("https://opensource.org/license/mit")
 }
+
+// A failing test must say WHY in the console. Gradle's default console format is SHORT, which
+// prints only "java.lang.AssertionError at File.kt:109": the assertion message survives only in
+// the JUnit XML, so reading a red CI run meant downloading an artifact. FULL prints the message,
+// the causes and the stack (truncated at the test entry point). Failures only, and no standard
+// streams, so a green run's log is unchanged. AbstractTestTask, not Test, where Kotlin/Native
+// test tasks exist too (see core-conformance/build.gradle.kts for that trap).
+tasks.withType<AbstractTestTask>().configureEach {
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
+}

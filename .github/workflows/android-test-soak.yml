@@ -1,0 +1,174 @@
+name: Android host-test soak
+
+# Runs one filtered set of Android host (Robolectric/JVM) tests many times on the runner that
+# core-ci uses, and counts every repetition from its JUnit XML. New host tests have repeatedly
+# passed in local loops on Apple Silicon and then raced on ubuntu-latest after merge; a local loop
+# does not sample this environment, and this workflow does. Dispatch it for the changed classes
+# before opening a pull request that adds or changes Android host tests (CLAUDE.md).
+#
+# workflow_dispatch only: it never runs automatically, and it is an instrument, never a gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Gradle test task to repeat
+        required: true
+        default: ':android:app:testProdDebugUnitTest'
+        type: string
+      tests:
+        description: Gradle --tests filter, e.g. *DownloadExecutorTest (required; must match at least one test)
+        required: true
+        type: string
+      repeat:
+        # A string, not a number: workflow_dispatch inputs reach the API as strings, and a JSON
+        # number in a dispatch request is rejected. Validated as an integer below.
+        description: Repetitions (1 to 100)
+        required: true
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-test-soak:
+    name: android-test-soak
+    runs-on: ubuntu-latest
+    # The loop stops starting repetitions after SOAK_BUDGET_SECONDS and reports what it drew, so a
+    # slow class yields a partial (failing) result instead of a timed-out job that uploads nothing.
+    timeout-minutes: 120
+    env:
+      SOAK_TASK: ${{ inputs.task }}
+      SOAK_TESTS: ${{ inputs.tests }}
+      SOAK_REPEAT: ${{ inputs.repeat }}
+      SOAK_BUDGET_SECONDS: "6000"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate the requested soak
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$SOAK_TASK" =~ ^(:[A-Za-z0-9_-]+)+$ ]]; then
+            echo "SOAK ERROR task must be a Gradle task path such as :android:app:testProdDebugUnitTest: $SOAK_TASK"
+            exit 2
+          fi
+          if [[ -z "${SOAK_TESTS//[[:space:]]/}" ]]; then
+            echo "SOAK ERROR tests filter is required"
+            exit 2
+          fi
+          if ! [[ "$SOAK_REPEAT" =~ ^[0-9]+$ ]] || (( SOAK_REPEAT < 1 || SOAK_REPEAT > 100 )); then
+            echo "SOAK ERROR repeat must be an integer from 1 to 100: $SOAK_REPEAT"
+            exit 2
+          fi
+          echo "SOAK PLAN task=$SOAK_TASK tests=$SOAK_TESTS repeat=$SOAK_REPEAT"
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Repeat the filtered tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          # :android:app:testProdDebugUnitTest -> android/app/build/test-results/testProdDebugUnitTest
+          project_path="${SOAK_TASK%:*}"
+          task_name="${SOAK_TASK##*:}"
+          project_dir="${project_path#:}"
+          project_dir="${project_dir//://}"
+          results_dir="$project_dir/build/test-results/$task_name"
+          failures_dir="$RUNNER_TEMP/android-test-soak-failures"
+          mkdir -p "$failures_dir"
+
+          passed=0
+          failed=0
+          started=$SECONDS
+          for ((iteration = 1; iteration <= SOAK_REPEAT; iteration++)); do
+            if (( SECONDS - started > SOAK_BUDGET_SECONDS )); then
+              echo "SOAK BUDGET EXHAUSTED after $((iteration - 1)) of $SOAK_REPEAT repetitions"
+              break
+            fi
+            label="$(printf '%03d' "$iteration")"
+            # Deleting the results first is what makes every count below this repetition's own:
+            # any XML present afterwards was written by this execution. --rerun forces the task to
+            # execute, and --no-build-cache stops its outputs being restored from an earlier one.
+            rm -rf "$results_dir"
+            ./gradlew --max-workers=2 --no-build-cache "$SOAK_TASK" --tests "$SOAK_TESTS" --rerun \
+              > "$RUNNER_TEMP/soak-$label.log" 2>&1
+            gradle_exit=$?
+            counts="$(python3 - "$results_dir" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          tests = failures = skipped = 0
+          names = []
+          for report in sorted(root.glob("TEST-*.xml")) if root.is_dir() else []:
+              suite = ET.parse(report).getroot()
+              for case in suite.iter("testcase"):
+                  tests += 1
+                  if case.find("failure") is not None or case.find("error") is not None:
+                      failures += 1
+                      names.append(f"{case.get('classname')}.{case.get('name')}")
+                  elif case.find("skipped") is not None:
+                      skipped += 1
+          print(tests, failures, skipped, ",".join(names) or "-")
+          PY
+            )" || counts="0 0 0 -"
+            read -r tests failures skipped names <<< "$counts"
+            executed=$((tests - skipped))
+            echo "SOAK ITERATION $label gradle_exit=$gradle_exit tests=$tests failed=$failures skipped=$skipped failing=$names"
+            if (( executed == 0 )); then
+              # A filter matching nothing, or a build that never reached the tests, is not a pass.
+              tail -n 60 "$RUNNER_TEMP/soak-$label.log"
+              echo "SOAK ERROR repetition $label executed zero tests; the filter matched nothing or the build failed first"
+              echo "SOAK RESULT passed=$passed failed=$failed"
+              exit 2
+            fi
+            if (( failures > 0 )); then
+              failed=$((failed + 1))
+              mkdir -p "$failures_dir/repetition-$label"
+              cp "$results_dir"/TEST-*.xml "$failures_dir/repetition-$label/"
+              cp "$RUNNER_TEMP/soak-$label.log" "$failures_dir/repetition-$label/gradle.log"
+            elif (( gradle_exit != 0 )); then
+              # Every test passed and Gradle still failed: the instrument broke, not a test.
+              tail -n 60 "$RUNNER_TEMP/soak-$label.log"
+              echo "SOAK ERROR repetition $label: Gradle exited $gradle_exit with no failing testcase"
+              echo "SOAK RESULT passed=$passed failed=$failed"
+              exit 2
+            else
+              passed=$((passed + 1))
+            fi
+          done
+
+          echo "SOAK RESULT passed=$passed failed=$failed"
+          {
+            echo "### Android host-test soak"
+            echo "\`$SOAK_TASK --tests $SOAK_TESTS\`: passed=$passed failed=$failed of $SOAK_REPEAT requested"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( failed > 0 )); then
+            exit 1
+          fi
+          if (( passed < SOAK_REPEAT )); then
+            echo "SOAK ERROR only $passed of $SOAK_REPEAT repetitions ran inside the budget"
+            exit 1
+          fi
+      - name: Upload failing repetitions
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-test-soak-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-test-soak-failures
+          if-no-files-found: ignore
+          retention-days: 14

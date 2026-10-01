@@ -114,7 +114,9 @@ jobs:
       # The frameworks this job reads: macOS for the restoration check and the captures, and the
       # macOS, iOS-simulator and tvOS-simulator ones for the OS-floor assertion. Jobs share no files,
       # so this job links its own. `Build all Apple frameworks` -- the two device links and
-      # `:core:macosArm64Test` -- runs once, in apple-conformance. 10, the cap that step carries.
+      # `:core:macosArm64Test` -- runs once, in apple-conformance. 10, the cap that step carried
+      # before its measured tail reached it; this step links three of its five frameworks and runs
+      # no tests, and has not been re-measured since.
       - name: Build the Apple frameworks the platform legs read
         timeout-minutes: 10
         run: >-
@@ -756,7 +758,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         timeout-minutes: 5
       - name: Build all Apple frameworks
-        timeout-minutes: 10
+        # 15 = ceil(1.5 x 9 / 5) x 5, rule 5's leg formula applied to this step. Over 25 apple-ci
+        # runs' conformance legs (census 2026-09-30) green runs took 3 to 9 minutes here, and two
+        # failures were the old 10-minute cap expiring (one is run 36786537996): 10 sat on the
+        # tail of healthy builds, not above it. The leg cap still holds: 85 for the composite plus
+        # the rest of the leg (18.5 measured, at most 5 more from this raise) stays under 115.
+        timeout-minutes: 15
         run: >-
           ./gradlew --no-daemon
           :core:linkDebugFrameworkMacosArm64

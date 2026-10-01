@@ -96,6 +96,12 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   (`tools/ci/plan-apple-legs`); `apple-conformance` runs on push to `main` and on dispatch. A release
   build requires both legs and every required check green on its commit (spec §21.6).
 - When several unrelated PRs go red together, check Homebrew pin drift first (`docs/TRAPS.md` 36).
+- **Soak Android host tests on Linux before the PR.** A pull request that adds or changes Android
+  host (Robolectric/JVM) tests first dispatches `android-test-soak` with the changed classes as the
+  `--tests` filter and 20 repetitions, and cites its `SOAK RESULT passed=N failed=M` line. Local
+  Apple Silicon loops have passed 18 of 18 for tests that then raced on `ubuntu-latest`.
+- A test asserting on intermediate request logs must accept every request the design makes — e.g. a
+  short page's end-confirming read — not only the ones one host's timing happened to produce.
 
 ## Commands
 
