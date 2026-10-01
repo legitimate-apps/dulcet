@@ -86,6 +86,7 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackIntents
+import com.legitimateapps.dulcet.ui.DroppedAdditionsNotice
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchAccount
@@ -120,6 +121,7 @@ class TvPlaybackActivity : ComponentActivity() {
                 val state by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
                     .collectAsStateWithLifecycle()
                 TvNowPlaying(account, state, playback)
+                DroppedAdditionsNotice(playback, state.droppedAdditions)
             }
         }
     }

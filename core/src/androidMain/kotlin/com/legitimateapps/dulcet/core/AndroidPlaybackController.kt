@@ -58,6 +58,12 @@ public data class AndroidPlaybackState(
     val skipNotice: AndroidSkipNotice? = null,
     /** The current attempt reads a downloaded file on this device, not the server (spec §14.5). */
     val playingDownload: Boolean = false,
+    /**
+     * Play Next and Add to Queue made while a new queue was loading, dropped because that queue never
+     * started (spec §14.1). Kept until the surface has said so and calls
+     * [AndroidPlaybackController.dismissDroppedAdditions], another drop replaces it, or the controller closes.
+     */
+    val droppedAdditions: AndroidDroppedAdditions? = null,
 ) {
     val hasSession: Boolean get() = playbackSessionId != null
 }
@@ -77,6 +83,13 @@ public fun interface AndroidLocalPlaybackSource {
  * says "a track". [postedAtElapsedMillis] is on the monotonic clock and is never persisted.
  */
 public data class AndroidSkipNotice(val sequence: Long, val title: String?, val postedAtElapsedMillis: Long)
+
+/**
+ * Additions held for a queue that never started -- it failed, was replaced by another play, or was
+ * stopped while loading -- and so were never applied. [trackCount] counts the tracks of every such
+ * addition; [sequence] tells two drops apart.
+ */
+public data class AndroidDroppedAdditions(val sequence: Long, val trackCount: Int)
 
 /** Display metadata for one selectable song. Identity is the opaque pair; the rest is presentation. */
 public data class AndroidTrack(
@@ -137,9 +150,16 @@ public class AndroidPlaybackController internal constructor(
     private var wantsPlay = false
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
-    // Play Next and Add to Queue accepted while a new queue was still resolving, by the generation of
-    // that resolution; applied, in the order given, the moment that queue is in place.
+    // Play Next and Add to Queue accepted while a new queue was still resolving; applied, in the order
+    // given, the moment that queue is in place. They belong to the resolution in flight and to no
+    // other. Every path that cancels or ends that resolution without starting it drops them
+    // (dropHeldAdditions) at that moment: another play (playQueue), Stop, a move within the old
+    // queue -- Next, Previous, a Jump, a retry or restart, all through transition -- and a failed
+    // read. So whatever is held is always the current resolution's. Close cancels the resolution,
+    // and a closed controller applies nothing.
     private val heldAdditions = mutableListOf<HeldAddition>()
+    private var droppedAdditions: AndroidDroppedAdditions? = null
+    private var droppedAdditionsSequence = 0L
     private var closed = false
     // Presentation metadata by opaque identity. It never decides what plays: the core queue does.
     private val metadata = mutableMapOf<ProviderItemId, AndroidTrack>()
@@ -348,7 +368,7 @@ public class AndroidPlaybackController internal constructor(
         wantsPlay = true
         val generation = requestGeneration
         // Additions held for a queue this one supersedes would have been replaced by it.
-        heldAdditions.clear()
+        dropHeldAdditions()
         resolution?.cancel()
         startJob?.cancel()
         tracks.forEach { remember(it) }
@@ -382,13 +402,24 @@ public class AndroidPlaybackController internal constructor(
                         sourceName.ifBlank { source.name }),
                     if (shuffle) null else startIndex, shuffle))
                 capture(transition.effects)
-                applyHeldAdditions(generation)
+                applyHeldAdditions()
                 val directive = transition.startDirective!!
-                start(directive, song?.takeIf { directive.itemId.rawId == chosen.rawId })
+                // Guard: a held addition never starts anything (see applyHeldAdditions). Were one ever
+                // to, the core's choice is already starting, and starting this entry too would cancel it.
+                if (queue.snapshot().currentSession?.playbackSessionId == directive.playbackSessionId) {
+                    start(directive, song?.takeIf { directive.itemId.rawId == chosen.rawId })
+                }
             } catch (_: CancellationException) { throw CancellationException() }
-            // A queue that never came to be takes what was added to it along with it.
-            catch (error: AndroidPlaybackIOException) { heldAdditions.clear(); failure = error.error; publish() }
-            catch (_: Exception) { heldAdditions.clear(); failure = DomainError.Transport.Unreachable; publish() }
+            // A queue that never came to be takes what was added to it along with it. Cancellation
+            // drops nothing here: whoever cancelled -- a new play or Stop -- has dropped them already.
+            // Nor does a read that fails after this resolution was superseded -- a read that ignores
+            // cancellation does exactly that: what is held then is the newer queue's, and the failure
+            // is of a queue nobody is waiting for.
+            catch (error: AndroidPlaybackIOException) {
+                if (generation == requestGeneration) { dropHeldAdditions(); failure = error.error; publish() }
+            } catch (_: Exception) {
+                if (generation == requestGeneration) { dropHeldAdditions(); failure = DomainError.Transport.Unreachable; publish() }
+            }
         }
     }
 
@@ -452,6 +483,7 @@ public class AndroidPlaybackController internal constructor(
     public fun stop() {
         if (!live()) return
         requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
+        dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
     }
 
@@ -506,7 +538,8 @@ public class AndroidPlaybackController internal constructor(
      * While a new queue is still resolving the addition is accepted and held, then applied to that
      * queue the moment it is in place, in the order the additions were made -- exactly where it would
      * have landed had the queue already started, as the Apple shells accept it. Held additions share
-     * that queue's fate: one that is superseded, stopped or fails before it starts takes them with it.
+     * that queue's fate: one that is superseded, stopped or fails before it starts takes them with it,
+     * and [AndroidPlaybackState.droppedAdditions] says so.
      *
      * False, and nothing changed, when refused: a closed controller, no tracks, or a track of another
      * account.
@@ -522,8 +555,8 @@ public class AndroidPlaybackController internal constructor(
         val named = source == AndroidQueueSource.Album || source == AndroidQueueSource.Artist
         require(named == !sourceRawId.isNullOrBlank()) { "Album and artist queues, and only they, name a source" }
         if (tracks.isEmpty() || tracks.any { it.providerInstanceId != account.providerInstanceId }) return false
-        if (resolution?.isActive == true) {
-            heldAdditions += HeldAddition(requestGeneration, tracks.toList(), insertion, source, sourceName, sourceRawId)
+        if (queueLoading()) {
+            heldAdditions += HeldAddition(tracks.toList(), insertion, source, sourceName, sourceRawId)
             return true
         }
         // The core's queue decides emptiness, not what a surface shows: an entry still resolving
@@ -536,7 +569,6 @@ public class AndroidPlaybackController internal constructor(
     }
 
     private class HeldAddition(
-        val generation: Long,
         val tracks: List<AndroidTrack>,
         val insertion: AndroidQueueInsertion,
         val source: AndroidQueueSource,
@@ -544,13 +576,40 @@ public class AndroidPlaybackController internal constructor(
         val sourceRawId: String?,
     )
 
-    /** The additions held for the resolution of [generation], applied in the order they were made. */
-    private fun applyHeldAdditions(generation: Long) {
-        val held = heldAdditions.filter { it.generation == generation }
+    /** True while a new queue is resolving: the core still holds the queue it will replace. */
+    private fun queueLoading(): Boolean = resolution?.isActive == true
+
+    /**
+     * The held additions, applied to the queue just put in place in the order they were made. They are
+     * all this resolution's: nothing else is ever held (see [heldAdditions]).
+     *
+     * None of them starts anything. The core starts an entry from an enqueue only when it discards a
+     * preload it held a natural end for; this queue was replaced a moment ago, so it holds no preload,
+     * and Android registers none at all (the engine refuses one, spec §8). [playQueue] guards the start
+     * that follows regardless.
+     */
+    private fun applyHeldAdditions() {
+        val held = heldAdditions.toList()
         heldAdditions.clear()
         for (addition in held) {
             enqueue(addition.tracks, addition.insertion, addition.source, addition.sourceName, addition.sourceRawId)
         }
+    }
+
+    /** Drops the held additions with the resolution they were for, and says so when there were any. */
+    private fun dropHeldAdditions() {
+        if (heldAdditions.isEmpty()) return
+        val tracks = heldAdditions.sumOf { it.tracks.size }
+        heldAdditions.clear()
+        droppedAdditions = AndroidDroppedAdditions(++droppedAdditionsSequence, tracks)
+        publish()
+    }
+
+    /** The surface has told the person about drop [sequence]; a later drop is kept. */
+    public fun dismissDroppedAdditions(sequence: Long) {
+        if (!live() || droppedAdditions?.sequence != sequence) return
+        droppedAdditions = null
+        publish()
     }
 
     private fun enqueue(
@@ -582,9 +641,11 @@ public class AndroidPlaybackController internal constructor(
      * playing one: the current entry, an entry already played, and a position at or before the
      * current entry are refused. Moving onto the current entry's position would put the entry
      * before it, where Next never reaches it. With no current entry the whole queue is Up Next.
+     *
+     * Refused while a new queue is loading: the edit would change the queue about to be replaced.
      */
     public fun moveEntry(queueEntryId: String, toIndex: Int): Boolean {
-        if (!live() || refuseForeignQueue()) return false
+        if (!live() || queueLoading() || refuseForeignQueue()) return false
         val snapshot = queue.snapshot()
         snapshot.currentIndex?.let { current ->
             val from = snapshot.entries.indexOfFirst { it.queueEntryId.value == queueEntryId }
@@ -596,16 +657,20 @@ public class AndroidPlaybackController internal constructor(
     /**
      * Removes an entry that is not playing. The current entry is refused rather than interpreted
      * (spec §14.1): removing it would either stop the music or start something, and Next and Pause
-     * already say which. False, and nothing changed, for the current entry or one no longer queued.
+     * already say which. False, and nothing changed, for the current entry or one no longer queued,
+     * or while a new queue is loading (the queue shown is about to be replaced).
      */
     public fun removeEntry(queueEntryId: String): Boolean {
-        if (!live() || refuseForeignQueue()) return false
+        if (!live() || queueLoading() || refuseForeignQueue()) return false
         return edit { queue.remove(QueueEntryId(queueEntryId)) }
     }
 
-    /** Removes every entry after the current one (spec §14.1). The current session plays on. */
+    /**
+     * Removes every entry after the current one (spec §14.1). The current session plays on. False,
+     * and nothing changed, while a new queue is loading (the queue shown is about to be replaced).
+     */
     public fun clearUpcoming(): Boolean {
-        if (!live() || refuseForeignQueue()) return false
+        if (!live() || queueLoading() || refuseForeignQueue()) return false
         return edit { queue.clearUpcoming() }
     }
 
@@ -655,6 +720,9 @@ public class AndroidPlaybackController internal constructor(
 
     private fun transition(transition: PlaybackQueueTransition) {
         requestGeneration++; resolution?.cancel(); startJob?.cancel()
+        // A move within the queue the core holds abandons a new queue still loading, and with it
+        // what was held for that queue.
+        dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
         capture(transition.effects)
         transition.startDirective?.let { start(it) }
@@ -929,7 +997,8 @@ public class AndroidPlaybackController internal constructor(
                 engine.seekability == PlaybackSeekability.Seekable &&
                 exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS,
             skipNotice = skipNotice,
-            playingDownload = session != null && activePlan is AndroidLocalPlaybackPlan)
+            playingDownload = session != null && activePlan is AndroidLocalPlaybackPlan,
+            droppedAdditions = droppedAdditions)
     }
 
     override fun close() {
@@ -940,7 +1009,8 @@ public class AndroidPlaybackController internal constructor(
         // The notice names a track of this account's queue, which goes with the controller: a
         // surface still holding this state must not show it for whatever comes next.
         skipNotice = null
-        mutableState.value = mutableState.value.copy(skipNotice = null)
+        droppedAdditions = null
+        mutableState.value = mutableState.value.copy(skipNotice = null, droppedAdditions = null)
         resolution?.cancel(); startJob?.cancel(); retryDelivery?.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
         deliveries.close(); scope.cancel()
         sender.close(); requests.close(); wire.close(); store.close()

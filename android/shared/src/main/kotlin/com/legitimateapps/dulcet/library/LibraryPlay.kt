@@ -11,6 +11,7 @@ import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.core.CreditRole
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.playback.PlaybackBinding
 
 /*
  * Playing from the library (spec §14.1), one implementation for the phone and the TV: an album from a
@@ -20,32 +21,38 @@ import com.legitimateapps.dulcet.core.SearchResultType
 
 /**
  * The album in [publication] queued from the track with [trackRawId], or from its first playable
- * track when that one cannot play or is null. False, and nothing played, before the playback service
- * is bound, when [publication] is not an album, or when nothing in it can play.
+ * track when that one cannot play or is null. False, and nothing played, when [publication] is not
+ * an album or when nothing in it can play. Pressed before the playback service is bound, the play is
+ * held by [playback] and made once it binds; [started] runs when the queue is handed to the controller.
  */
 public fun playAlbum(
-    playback: AndroidPlaybackController?,
+    playback: PlaybackBinding,
     providerInstanceId: String,
     publication: AndroidLibraryPublication,
     trackRawId: String?,
     shuffle: Boolean = false,
+    started: () -> Unit = {},
 ): Boolean {
     val album = publication.header as? AndroidLibraryItem.Album ?: return false
     val tracks = publication.playableTracks(providerInstanceId)
-    if (playback == null || tracks.isEmpty()) return false
+    if (tracks.isEmpty()) return false
     val start = tracks.indexOfFirst { it.rawId == trackRawId }.takeIf { it >= 0 } ?: 0
-    playback.playQueue(tracks, start, AndroidQueueSource.Album, album.title, album.rawId, shuffle)
+    playback.play { controller ->
+        controller.playQueue(tracks, start, AndroidQueueSource.Album, album.title, album.rawId, shuffle)
+        started()
+    }
     return true
 }
 
 /**
  * Every album of the artist in [publication], each opened for its playable tracks, queued in the
- * artist's album order. [done] hears how it ended; the returned handle abandons the albums still
- * opening, so leaving the screen starts nothing afterwards. Null, and nothing started, before the
- * playback service is bound or when the artist lists no album.
+ * artist's album order. [done] hears how it ended -- [ArtistPlayResult.Played] once the queue is
+ * handed to the controller, which, before the playback service is bound, waits for it to bind. The
+ * returned handle abandons the albums still opening and a play still waiting, so leaving the screen
+ * starts nothing afterwards. Null, and nothing started, when the artist lists no album.
  */
 public fun playArtist(
-    playback: AndroidPlaybackController?,
+    playback: PlaybackBinding,
     library: LibrarySession,
     providerInstanceId: String,
     publication: AndroidLibraryPublication,
@@ -54,20 +61,19 @@ public fun playArtist(
 ): AutoCloseable? {
     val artist = publication.header as? AndroidLibraryItem.Artist ?: return null
     val albums = publication.items.filterIsInstance<AndroidLibraryItem.Album>()
-    if (playback == null || albums.isEmpty()) return null
-    return library.collectAlbums(albums.map { it.rawId }) { details ->
+    if (albums.isEmpty()) return null
+    var abandoned = false
+    val collecting = library.collectAlbums(albums.map { it.rawId }) { details ->
         val tracks = details.flatMap { it.playableTracks(providerInstanceId) }
-        if (tracks.isNotEmpty()) {
-            playback.playQueue(tracks, 0, AndroidQueueSource.Artist, artist.name, artist.rawId, shuffle)
+        if (tracks.isEmpty()) {
+            done(if (details.any { it.heldBackOffline() }) ArtistPlayResult.NeedsConnection else ArtistPlayResult.NothingPlayable)
+        } else playback.play { controller ->
+            if (abandoned) return@play
+            controller.playQueue(tracks, 0, AndroidQueueSource.Artist, artist.name, artist.rawId, shuffle)
+            done(ArtistPlayResult.Played)
         }
-        done(
-            when {
-                tracks.isNotEmpty() -> ArtistPlayResult.Played
-                details.any { it.heldBackOffline() } -> ArtistPlayResult.NeedsConnection
-                else -> ArtistPlayResult.NothingPlayable
-            },
-        )
     }
+    return AutoCloseable { abandoned = true; collecting.close() }
 }
 
 /** How playing an artist ended, for the line an artist screen shows when nothing played. */
@@ -76,23 +82,27 @@ public enum class ArtistPlayResult { Played, NeedsConnection, NothingPlayable }
 /**
  * The playable tracks among a list's [items] — a home row holding tracks, the favourites, a genre's
  * songs — queued from the one with [trackRawId], or from the first when it is null (Play and Shuffle),
- * as a library queue named [sourceName]. False, and nothing played, when the service is not bound,
- * that track cannot play now, or nothing can.
+ * as a library queue named [sourceName]. False, and nothing played, when that track cannot play now,
+ * or nothing can. Held until the service binds, as for [playAlbum]; [started] runs when it is played.
  */
 public fun playTracks(
-    playback: AndroidPlaybackController?,
+    playback: PlaybackBinding,
     providerInstanceId: String,
     items: List<AndroidLibraryItem>,
     trackRawId: String?,
     sourceName: String,
     shuffle: Boolean = false,
+    started: () -> Unit = {},
 ): Boolean {
     val tracks = items.filterIsInstance<AndroidLibraryItem.Track>()
         .filter { it.playability != AndroidLibraryPlayability.UnavailableOffline }
         .mapNotNull { it.toTrack(providerInstanceId) }
     val start = if (trackRawId == null) 0.takeIf { tracks.isNotEmpty() } ?: -1 else tracks.indexOfFirst { it.rawId == trackRawId }
-    if (playback == null || start < 0) return false
-    playback.playQueue(tracks, start, AndroidQueueSource.Library, sourceName, null, shuffle)
+    if (start < 0) return false
+    playback.play { controller ->
+        controller.playQueue(tracks, start, AndroidQueueSource.Library, sourceName, null, shuffle)
+        started()
+    }
     return true
 }
 

@@ -6,13 +6,13 @@ import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidOperationFailure
-import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditRecord
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditResult
 import com.legitimateapps.dulcet.core.AndroidPlaylistOutcome
 import com.legitimateapps.dulcet.core.AndroidQueueSource
 import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.playback.PlaybackBinding
 import com.legitimateapps.dulcet.shared.R
 
 /*
@@ -130,18 +130,21 @@ public fun AndroidLibraryPublication.playlistQueue(providerInstanceId: String, p
 
 /**
  * The playlist in [publication] played from the entry at [position] ([playlistQueue]), as a library
- * queue named for the playlist. False, and nothing played, when the service is not bound or nothing
- * can play.
+ * queue named for the playlist. False, and nothing played, when nothing can play. Held until the
+ * service binds, as for [playAlbum]; [started] runs when it is played.
  */
 public fun playPlaylist(
-    playback: AndroidPlaybackController?,
+    playback: PlaybackBinding,
     providerInstanceId: String,
     publication: AndroidLibraryPublication,
     position: Int,
     shuffle: Boolean = false,
+    started: () -> Unit = {},
 ): Boolean {
     val queue = publication.playlistQueue(providerInstanceId, position) ?: return false
-    if (playback == null) return false
-    playback.playQueue(queue.tracks, queue.start, AndroidQueueSource.Library, queue.name, shuffle = shuffle)
+    playback.play { controller ->
+        controller.playQueue(queue.tracks, queue.start, AndroidQueueSource.Library, queue.name, shuffle = shuffle)
+        started()
+    }
     return true
 }

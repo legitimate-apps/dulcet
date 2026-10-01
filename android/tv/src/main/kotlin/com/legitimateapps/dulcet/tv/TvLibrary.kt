@@ -139,6 +139,7 @@ import com.legitimateapps.dulcet.library.queueAlbum
 import com.legitimateapps.dulcet.library.queueSearchResult
 import com.legitimateapps.dulcet.library.queueTrack
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
+import com.legitimateapps.dulcet.ui.DroppedAdditionsNotice
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.rememberHomeRows
 import com.legitimateapps.dulcet.library.rememberSurface
@@ -146,6 +147,7 @@ import com.legitimateapps.dulcet.library.subtitle
 import com.legitimateapps.dulcet.library.titleResource
 import com.legitimateapps.dulcet.library.unavailableLine
 import com.legitimateapps.dulcet.playback.PlaybackIntents
+import com.legitimateapps.dulcet.playback.rememberPlaybackBinding
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.core.StreamingQuality
@@ -201,6 +203,8 @@ internal class TvNavigator(val open: (String) -> Unit, val back: () -> Unit) {
 @Composable
 internal fun TvLibraryEntry(
     account: SearchAccount,
+    /** The playback service's controller, null until it binds. */
+    playback: AndroidPlaybackController? = rememberPlaybackController(),
     search: @Composable (TvNavigator, AndroidPlaybackController?) -> Unit,
 ) {
     val context = LocalContext.current
@@ -209,7 +213,6 @@ internal fun TvLibraryEntry(
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
-    val playback = rememberPlaybackController()
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
         .collectAsStateWithLifecycle()
 
@@ -274,6 +277,7 @@ internal fun TvLibraryEntry(
     // On a return to the foreground the screens above are already open when start() reconnects. At
     // launch the TV shows the library, whose home rows open as it composes; each publishes its cache
     // before its own read, as the phone's do.
+    DroppedAdditionsNotice(playback, playbackState.droppedAdditions)
     LibraryLifecycle(session)
 }
 
@@ -621,8 +625,10 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
     val resources = libraryResources()
     val context = LocalContext.current
     val title = resources.getString(row.row.titleResource())
-    // A card's onClick may be one from an earlier composition: it queues the row as shown now.
+    // A card's onClick may be one from an earlier composition: it queues the row as shown now, on the
+    // controller bound now -- or, before the service binds, once it does.
     val shown by rememberUpdatedState(publication)
+    val plays = rememberPlaybackBinding(playback)
     Column(Modifier.fillMaxWidth().testTag("library.home.$index"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.headlineSmall)
         val current = publication ?: return@Column
@@ -653,8 +659,8 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                             when (item) {
                                 is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                 is AndroidLibraryItem.Artist -> navigator.openArtist(item.rawId)
-                                is AndroidLibraryItem.Track -> if (playTracks(playback, account.providerInstanceId,
-                                        shown?.items.orEmpty(), item.rawId, title)) showNowPlaying(context)
+                                is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId,
+                                        shown?.items.orEmpty(), item.rawId, title) { showNowPlaying(context) }
                                 else -> Unit
                             }
                         }
@@ -901,10 +907,15 @@ private fun TvAlbumScreen(
     TvAddToUpNext(adding) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
+    // tv-material buttons can keep an onClick from an earlier composition, and with it this screen's
+    // `playback` as it was then -- null, if that was before the service bound. The binding is the
+    // same object in every composition and plays on the controller bound when the press lands, or
+    // holds the play until one binds; Now Playing opens once it has been made.
+    val plays = rememberPlaybackBinding(playback)
     fun play(current: AndroidLibraryPublication, trackRawId: String?, shuffle: Boolean) {
         // A note that a track plays only on reconnect no longer applies.
         note = null
-        if (playAlbum(playback, provider, current, trackRawId, shuffle)) showNowPlaying(context)
+        playAlbum(plays, provider, current, trackRawId, shuffle) { showNowPlaying(context) }
     }
     // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.
     val shown by rememberUpdatedState(publication)
@@ -1065,6 +1076,7 @@ private fun TvFavouritesScreen(
     var adding by remember { mutableStateOf<TvQueueAddition?>(null) }
     TvAddToUpNext(adding) { adding = null }
     val shown by rememberUpdatedState(publication)
+    val plays = rememberPlaybackBinding(playback)
     val title = resources.getString(SharedR.string.library_home_favourites)
     LazyColumn(
         Modifier.fillMaxSize().testTag("library.favourites").semantics { this[LibraryObservation] = observation },
@@ -1102,7 +1114,7 @@ private fun TvFavouritesScreen(
                     onPlay = {
                         note = null
                         val list = shown?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
-                        if (playTracks(playback, account.providerInstanceId, list, track.rawId, title)) showNowPlaying(context)
+                        playTracks(plays, account.providerInstanceId, list, track.rawId, title) { showNowPlaying(context) }
                     },
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
@@ -1340,9 +1352,10 @@ private fun TvPlaylistScreen(
     TvAddToUpNext(adding) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
+    val plays = rememberPlaybackBinding(playback)
     fun play(current: AndroidLibraryPublication, position: Int, shuffle: Boolean) {
         note = null
-        if (playPlaylist(playback, provider, current, position, shuffle)) showNowPlaying(context)
+        playPlaylist(plays, provider, current, position, shuffle) { showNowPlaying(context) }
     }
     // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.
     val shown by rememberUpdatedState(publication)
@@ -1459,10 +1472,11 @@ private fun TvGenreScreen(
     val provider = account.providerInstanceId
     // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.
     val shown by rememberUpdatedState(publication)
+    val plays = rememberPlaybackBinding(playback)
     fun play(trackRawId: String?, shuffle: Boolean) {
         note = null
         val items = shown?.items.orEmpty()
-        if (playTracks(playback, provider, items, trackRawId, name, shuffle)) showNowPlaying(context)
+        playTracks(plays, provider, items, trackRawId, name, shuffle) { showNowPlaying(context) }
     }
     val tracks = publication?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
     val outcomeLines = rememberOutcomeLines(session, tracks.mapNotNull { it.favouriteTarget() })
@@ -1548,11 +1562,12 @@ private fun TvArtistScreen(
     var collecting by remember(rawId) { mutableStateOf<AutoCloseable?>(null) }
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     DisposableEffect(rawId) { onDispose { collecting?.close() } }
+    val plays = rememberPlaybackBinding(playback)
     fun play(publication: AndroidLibraryPublication, shuffle: Boolean) {
         if (collecting != null) return
         note = null
         var finished = false
-        val handle = playArtist(playback, session, account.providerInstanceId, publication, shuffle) { result ->
+        val handle = playArtist(plays, session, account.providerInstanceId, publication, shuffle) { result ->
             finished = true
             collecting = null
             note = when (result) {
