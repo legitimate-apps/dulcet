@@ -11,6 +11,7 @@ import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
 import com.legitimateapps.dulcet.emulator.RATED_TITLE
+import com.legitimateapps.dulcet.emulator.awaitCurrent
 import com.legitimateapps.dulcet.emulator.await
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.clearRating
@@ -49,7 +50,7 @@ class AndroidTvEmulatorRatingProofTest {
                 .setClassName(context, TvPlaybackActivity::class.java.name)
             ActivityScenario.launch<TvPlaybackActivity>(intent).use {
                 observer.bind()
-                await("the song playing") { observer.state().queue.getOrNull(observer.state().currentIndex ?: -1)?.track?.rawId == rawId }
+                observer.awaitCurrent(rawId)
                 awaitNode("the player's own first focus on Play/Pause") { focused("tv.player.playpause") }
                 check((1..5).none { selected(it) }) { "A song this device has never seen must show no stars" }
                 remote(KeyEvent.KEYCODE_DPAD_UP)

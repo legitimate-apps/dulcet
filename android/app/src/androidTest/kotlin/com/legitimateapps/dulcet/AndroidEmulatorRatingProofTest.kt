@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
 import com.legitimateapps.dulcet.emulator.RATED_TITLE
+import com.legitimateapps.dulcet.emulator.awaitCurrent
 import com.legitimateapps.dulcet.emulator.await
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.clearRating
@@ -48,7 +49,7 @@ class AndroidEmulatorRatingProofTest {
                 .setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(intent).use {
                 observer.bind()
-                await("the song playing") { observer.state().queue.getOrNull(observer.state().currentIndex ?: -1)?.track?.rawId == rawId }
+                observer.awaitCurrent(rawId)
                 awaitNode("the full player or the now-playing bar") { exists("player.rating") || exists("player.mini") }
                 if (!exists("player.rating")) compose.onNodeWithTag("player.mini").performClick()
                 awaitNode("the player's stars") { exists("player.rating") }
