@@ -104,9 +104,14 @@ class PhoneGenresAndAlbumSortTest {
         assertEquals("Jazz", text("genre.title"))
         assertEquals("2 songs", text("genre.count"))
         // The page may be read twice: a window opened while the session's first reconnect runs is also
-        // revalidated by it (§16.14 step 3). Every read is of the genre opened, from its start.
+        // revalidated by it (§16.14 step 3). A short page is only a candidate end, so the window may also
+        // confirm it with one read just past it (LibraryWindow's confirming append), here at offset 2;
+        // whether that read has landed yet is timing. Every read is of the genre opened, from its start
+        // or that confirmation -- never a read that skips rows.
         assertEquals(setOf("Jazz"), server.requests("getSongsByGenre").map { it["genre"] }.toSet(), "reads only of the genre opened")
-        assertEquals(setOf("0"), server.requests("getSongsByGenre").map { it["offset"] }.toSet(), "every read from the start: ${server.requests("getSongsByGenre")}")
+        val offsets = server.requests("getSongsByGenre").map { it["offset"] }
+        assertEquals("0", offsets.first(), "the first read is from the start: ${server.requests("getSongsByGenre")}")
+        assertTrue(offsets.toSet() - setOf("0", "2") == emptySet<String?>(), "only the start and its end confirmation are read: ${server.requests("getSongsByGenre")}")
         assertTrue("genre:Jazz" in observed("genre.surface").surfaces, "the page is the session's genre window")
 
         click("genre.track.1")
