@@ -29,8 +29,10 @@ public fun DroppedAdditionsNotice(playback: AndroidPlaybackController?, dropped:
     LaunchedEffect(playback, dropped?.sequence) {
         val notice = dropped ?: return@LaunchedEffect
         val controller = playback ?: return@LaunchedEffect
+        // Claim the notice first: two started surfaces (the TV library under its Now Playing) each
+        // run this effect for the same publication, and only the one that clears it speaks.
+        if (!controller.dismissDroppedAdditions(notice.sequence)) return@LaunchedEffect
         Toast.makeText(context, context.resources.getQuantityString(R.plurals.queue_additions_dropped,
             notice.trackCount, notice.trackCount), Toast.LENGTH_LONG).show()
-        controller.dismissDroppedAdditions(notice.sequence)
     }
 }
