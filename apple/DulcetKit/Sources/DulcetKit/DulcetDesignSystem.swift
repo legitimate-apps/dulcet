@@ -269,6 +269,18 @@ extension View {
     /// own content carries its name hides the bar; the title stays set on it. A launch surface
     /// keeps its bar -- tests read the launch section from the bar's identifier. Hiding needs
     /// tvOS 18; before it, the inline title is the smaller of the two.
+    ///
+    /// A kept bar's band is transparent, and giving it a background does nothing (measured on a
+    /// tvOS 26.5 simulator: `.toolbarBackground(.visible, for: .navigationBar)` in a signal
+    /// colour left the band pixel-identical). So a scrolled surface's content slid under the
+    /// band and met the floating title (observed: Connection, focus on the quality choices,
+    /// "Connection" across "Connected to navidrome", and a half-line in the seam under the
+    /// section bar). `dulcetTVNavigationBarBand` draws an opaque window-coloured band over the
+    /// region the bar floats over instead: the stack lays the surface out below that region, so
+    /// the band is shifted up by exactly the surface's top safe-area inset. It sits below the
+    /// bar itself, so the title still draws on top, and above the content, so whatever scrolls
+    /// under is occluded and never meets the title. Resting content begins below the band, so
+    /// it is untouched.
     @ViewBuilder
     func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false) -> some View {
 #if os(tvOS)
@@ -276,14 +288,35 @@ extension View {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
                 .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
+                .dulcetTVNavigationBarBand(kept: keepsTVNavigationBar)
         } else {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
+                .dulcetTVNavigationBarBand(kept: true)
         }
 #else
         navigationTitle(title)
 #endif
     }
+
+#if os(tvOS)
+    /// The opaque band under a kept Apple TV navigation bar; see ``dulcetNavigationTitle``.
+    @ViewBuilder
+    private func dulcetTVNavigationBarBand(kept: Bool) -> some View {
+        if kept {
+            overlay(alignment: .top) {
+                GeometryReader { proxy in
+                    Color.dulcetWindow
+                        .frame(width: proxy.size.width, height: proxy.safeAreaInsets.top)
+                        .offset(y: -proxy.safeAreaInsets.top)
+                        .accessibilityHidden(true)
+                }
+            }
+        } else {
+            self
+        }
+    }
+#endif
 
     @ViewBuilder
     func dulcetLinkButtonStyle() -> some View {
