@@ -605,11 +605,16 @@ public class AndroidPlaybackController internal constructor(
         publish()
     }
 
-    /** The surface has told the person about drop [sequence]; a later drop is kept. */
-    public fun dismissDroppedAdditions(sequence: Long) {
-        if (!live() || droppedAdditions?.sequence != sequence) return
+    /**
+     * Claims drop [sequence] for a surface about to tell the person: true for the one call that
+     * clears it, false once it is cleared or replaced, so two surfaces never both say it. A later drop
+     * is kept.
+     */
+    public fun dismissDroppedAdditions(sequence: Long): Boolean {
+        if (!live() || droppedAdditions?.sequence != sequence) return false
         droppedAdditions = null
         publish()
+        return true
     }
 
     private fun enqueue(

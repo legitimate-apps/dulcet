@@ -299,8 +299,10 @@ class AndroidPlaybackControllerTest {
                 f.controller.playQueue(album("k1", "k2"), 0, AndroidQueueSource.Album, "K", "k-album")
                 assertEquals(listOf("k1", "k2"), f.controller.state.value.queue.map { it.track.rawId }, "$how")
                 assertEquals(dropped, f.controller.state.value.droppedAdditions, "$how: no second drop")
-                f.controller.dismissDroppedAdditions(dropped.sequence)
+                assertTrue(f.controller.dismissDroppedAdditions(dropped.sequence), "$how: the first claim speaks")
                 assertNull(f.controller.state.value.droppedAdditions, "$how: dismissed once said")
+                // A second surface running the same effect for the same drop must stay silent.
+                assertFalse(f.controller.dismissDroppedAdditions(dropped.sequence), "$how: a second claim is refused")
             }
         }
     }
