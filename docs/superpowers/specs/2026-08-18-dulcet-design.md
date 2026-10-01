@@ -4650,8 +4650,10 @@ about publication, not about the cache:
   the rows' heart: it names the track, goes through the same session and outbox, and so a pending,
   held or saved change reads the same on the player as on the track's row, the lock screen and the
   menu. It is offered only while the reader holds the account the track came from. The Mac draws it
-  in the Now Playing window's toolbar; iPhone and iPad in the player's footer beside AirPlay and
-  Lyrics; Apple TV under the transport, reached by focus and pressed with the remote.
+  in the Now Playing window's toolbar; iPhone and iPad in the player's footer, on its own row with
+  the track's stars above AirPlay and Lyrics (five 44-point stars, the heart and three 44-point
+  controls do not fit one row of a phone's width); Apple TV under the transport, reached by focus
+  and pressed with the remote, with the stars and then Lyrics to its right.
 - **The rating control (2026-09-30).** A rating is five stars on every platform, set through the
   same session and outbox as the heart and presented the same way: the value set shows at once, a
   pending or held change is marked as the heart marks it, and a change that is not saved or is
@@ -4664,7 +4666,9 @@ about publication, not about the cache:
   drawn with no star filled and said as unknown, and a relative step (a screen reader's adjust)
   from it sends nothing, because a step from a guessed 0 would overwrite the server's rating; a
   press on a star, or a menu choice, is absolute and allowed. Now Playing shows the playing track's
-  stars beside its heart, only while the reader holds the track's account; a queued track carries
+  stars beside its heart, heart first, offered by the heart's own rule so the two never part (on
+  Apple one `footerControls` list in which `.rating` always follows `.favourite`; the Mac draws
+  both in the window's toolbar), only while the reader holds the track's account; a queued track carries
   no rating of its own, so Now Playing shows what the server is last known to hold — on Apple, what
   a screen published that this session did not set while a change was pending (every value set
   since the ratings last settled counts, since an earlier tap's overlay can be published late), a
@@ -7372,7 +7376,10 @@ the new one stopped).
 **2026-09-30 — Ratings: five stars on every platform (§16.20).** The outbox, the overlay and the
 facades already carried `setRating`; no shell offered it, so CONF-84's rating half was exercised by
 core tests alone. Every platform now has a 0-5 star control on Now Playing, beside the heart, and in
-the track menu where the platform has one; §16.20 gains the control's rules. Three are new. (1)
+the track menu where the platform has one; §16.20 gains the control's rules. On iPhone and iPad this
+moves the Now Playing heart (added the same day) off the AirPlay and Lyrics row onto a row of its
+own with the stars, because the five stars do not fit beside it on a phone; on Apple TV the stars
+sit in the heart's row, between it and Lyrics. Three are new. (1)
 Pressing the star already shown removes the rating (`setRating` 0), so no separate clear control is
 needed. (2) Accessibility: one adjustable element where the screen reader adjusts, one focus stop
 per star on a television. (3) Now Playing's value: a queued track carries no rating, so Apple reads

@@ -423,7 +423,8 @@ final class DulcetTVUITests: XCTestCase {
     /// is reached through the section bar and Search, typed and activated by remote. Down from
     /// the transport reaches the heart; Select fills it at once and the star reaches the server
     /// for that track, and Select again takes it off, so the server is left as it was found.
-    /// Right reaches Lyrics; Select shows the track's synced English layer and a line lights as
+    /// Right moves across the five stars beside it; Select on one rates the track that many stars
+    /// on the server and Select again on it removes the rating. Right past the fifth reaches Lyrics; Select shows the track's synced English layer and a line lights as
     /// media time moves, with focus kept on the toggle so the same press hides them again.
     @MainActor
     func testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote() throws {
@@ -502,14 +503,18 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(title.label, track, "Now Playing must show the track this proof stars")
 
         // The heart: Down from the transport to the row under it, then Left if Down landed on
-        // Lyrics beside it. Bounded and re-checked after every press, so a heart the remote
-        // cannot reach fails here, with the presses it took in the pass line when it does not.
+        // the stars or Lyrics to its right. Bounded and re-checked after every press, so a heart
+        // the remote cannot reach fails here, with the presses it took in the pass line when it
+        // does not.
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
         XCTAssertTrue(heart.waitForExistence(timeout: 10), "Now Playing must offer the heart: " + app.debugDescription)
+        XCTAssertTrue(stars.allSatisfy(\.exists), "Now Playing must offer five stars beside the heart: " + app.debugDescription)
         var heartPresses: [String] = []
-        while !heart.hasFocus, heartPresses.count < 8 {
-            let direction: XCUIRemote.Button = lyrics.exists && lyrics.hasFocus ? .left : .down
+        while !heart.hasFocus, heartPresses.count < 12 {
+            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
+            let direction: XCUIRemote.Button = besideHeart ? .left : .down
             XCUIRemote.shared.press(direction)
             heartPresses.append(direction == .left ? "left" : "down")
         }
@@ -534,12 +539,40 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: false, timeout: 30), false,
             "Removing the favourite must reach the server")
 
-        // Lyrics: beside the heart.
+        // The stars: Right from the heart reaches them in order, and Select on one rates the
+        // playing track that many stars on the server; Select on the star already shown removes
+        // the rating. The value is chosen against what the server holds before the press, so an
+        // earlier run's rating never makes the write unobservable.
+        let ratingBefore = try XCTUnwrap(readServerSongRating(track, album: album, server: server),
+            "The control: the server's rating must be readable before the press")
+        let rating = ratingBefore == 3 ? 2 : 3
+        var starPresses = 0
+        for star in stars.prefix(rating) {
+            XCUIRemote.shared.press(.right)
+            starPresses += 1
+            XCTAssertTrue(star.hasFocus, "The remote must move across the stars in order: " + app.debugDescription)
+        }
+        XCUIRemote.shared.press(.select)
+        XCTAssertEqual(awaitServerSongRating(track, album: album, server: server, expected: rating, timeout: 30), rating,
+            "Select on star \(rating) must rate the playing track \(rating) on the server (was \(ratingBefore))")
+        XCTAssertTrue(stars[rating - 1].hasFocus, "The press must leave focus on the star: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertEqual(awaitServerSongRating(track, album: album, server: server, expected: 0, timeout: 30), 0,
+            "Select on the star already shown must remove the rating on the server")
+        XCTAssertEqual(title.label, track, "Rating must not change what is playing")
+        for star in stars.dropFirst(rating) {
+            XCUIRemote.shared.press(.right)
+            starPresses += 1
+            XCTAssertTrue(star.hasFocus, "The remote must move across the stars in order: " + app.debugDescription)
+        }
+        print("DULCET TV rating presses=\(starPresses) rated=\(rating) before=\(ratingBefore)")
+
+        // Lyrics: after the stars, beside the heart's group.
         XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
         for _ in 0..<3 where !lyrics.hasFocus {
             XCUIRemote.shared.press(.right)
         }
-        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus beside the heart: " + app.debugDescription)
+        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus after the stars: " + app.debugDescription)
         XCTAssertEqual(lyrics.label, "Show Lyrics")
         XCUIRemote.shared.press(.select)
         let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
@@ -581,6 +614,44 @@ final class DulcetTVUITests: XCTestCase {
         album: String,
         server: (url: String, username: String, password: String)
     ) -> Bool? {
+        // Subsonic carries `starred` only on a favourite.
+        readServerSong(track, album: album, server: server).map { $0["starred"] != nil }
+    }
+
+    /// The server's rating of the named track of `album`, 0 when it carries none; nil as
+    /// `readServerSongStarred`.
+    private func readServerSongRating(
+        _ track: String,
+        album: String,
+        server: (url: String, username: String, password: String)
+    ) -> Int? {
+        // Subsonic omits `userRating` on an unrated song.
+        readServerSong(track, album: album, server: server).map { ($0["userRating"] as? Int) ?? 0 }
+    }
+
+    /// Polls until the server's rating for the track is `expected` or the timeout passes.
+    private func awaitServerSongRating(
+        _ track: String,
+        album: String,
+        server: (url: String, username: String, password: String),
+        expected: Int,
+        timeout: TimeInterval
+    ) -> Int? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = readServerSongRating(track, album: album, server: server)
+        while observed != nil, observed != expected, Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+            observed = readServerSongRating(track, album: album, server: server)
+        }
+        return observed
+    }
+
+    /// The one song of `album` named `track`, as `/rest/search3` returns it.
+    private func readServerSong(
+        _ track: String,
+        album: String,
+        server: (url: String, username: String, password: String)
+    ) -> [String: Any]? {
         let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
         let token = Insecure.MD5.hash(data: Data((server.password + salt).utf8))
             .map { String(format: "%02x", $0) }.joined()
@@ -626,8 +697,7 @@ final class DulcetTVUITests: XCTestCase {
             print("DULCET REST search3 matched \(matches.count) songs named \(track) on \(album); exactly one is required")
             return nil
         }
-        // Subsonic carries `starred` only on a favourite.
-        return match["starred"] != nil
+        return match
     }
 
     /// Polls until the server's favourite state for the track is `expected` or the timeout passes.
