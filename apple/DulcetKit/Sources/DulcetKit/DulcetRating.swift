@@ -122,11 +122,13 @@ struct DulcetRatingControl: View {
 #endif
     }
 
-    /// Between stars: touching where a pointer or a finger aims, a gap on a television so the
-    /// focused star's highlight stays clear of the next.
+    /// Between stars: touching where a pointer or a finger aims. On a television a focused
+    /// star's platter is drawn at several times the glyph (measured ≈3x on tvOS 26), so the gap
+    /// keeps adjacent platters clear of each other; at a small gap the focused star covered its
+    /// neighbours (observed on Now Playing).
     static var starSpacing: CGFloat {
 #if os(tvOS)
-        DulcetSpacing.xxs
+        DulcetSpacing.lg
 #else
         0
 #endif

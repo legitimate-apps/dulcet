@@ -741,6 +741,6 @@ func arrivalFocusReopensWhenTheAppChangesSectionItself() {
 @Test
 func televisionArtworkIsSizedFromTheHeight() {
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 791) < 791 - 2 * DulcetSpacing.xl)
-    #expect(DulcetNowPlayingView.televisionArtworkSize(height: 2_000) == 560)
+    #expect(DulcetNowPlayingView.televisionArtworkSize(height: 2_000) == 640)
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 300) == 280)
 }

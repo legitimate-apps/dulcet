@@ -205,6 +205,26 @@ struct DulcetNowPlayingView: View {
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
             } else if showingLyrics {
+#if os(tvOS)
+                // A lyrics screen, not a list adrift on an empty screen: the cover, the track's
+                // name and the transport stay on the leading side -- the way back to the
+                // transport the lyrics button left -- and the lines take the rest of the screen
+                // at a size that reads from a sofa.
+                HStack(alignment: .center, spacing: DulcetSpacing.xxl) {
+                    VStack(alignment: .leading, spacing: Self.coverToTitleSpacing) {
+                        playerCover(size: Self.televisionLyricsArtworkSize)
+                        trackIdentity(alignment: .leading)
+                        transportControls
+                        footer(alignment: .leading, showsQueueToggle: true)
+                    }
+                    .frame(width: Self.televisionLyricsColumnWidth)
+                    lyricsPanel
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(.horizontal, padding)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geometry.size.height, alignment: .center)
+#else
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     lyricsPanel
                         .padding(.horizontal, padding)
@@ -214,6 +234,7 @@ struct DulcetNowPlayingView: View {
                 }
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
+#endif
             } else if showingQueue {
                 // The queue replaces the artwork; the footer stays, so the control that opened it
                 // closes it. (That the system player lays it out this way is ASSUMED, not compared.)
@@ -230,17 +251,20 @@ struct DulcetNowPlayingView: View {
                 // A television is wide and short: the cover beside everything else, sized from
                 // the height, so the transport and the heart under it sit on screen, where the
                 // remote reaches them. Stacked, they fell below the bottom edge of a 1080-point
-                // screen, and Down from the section bar found nothing to land on.
+                // screen, and Down from the section bar found nothing to land on. The pair leads
+                // from the edge and the controls take the width the cover leaves, as the system's
+                // TV player lays it out; centred in a narrow column, the screen's trailing half
+                // sat empty (observed).
                 ScrollView {
                     HStack(alignment: .center, spacing: DulcetSpacing.xxl) {
                         playerCover(size: Self.televisionArtworkSize(height: geometry.size.height))
-                        VStack(alignment: .center, spacing: Self.coverToTitleSpacing) {
-                            trackIdentity(alignment: .center)
+                        VStack(alignment: .leading, spacing: Self.coverToTitleSpacing) {
+                            trackIdentity(alignment: .leading)
                             playbackProgress
                             transportControls
-                            footer(alignment: .center, showsQueueToggle: true)
+                            footer(alignment: .leading, showsQueueToggle: true)
                         }
-                        .frame(maxWidth: Self.televisionControlsWidth)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal, padding)
                     .frame(maxWidth: .infinity)
@@ -292,12 +316,23 @@ struct DulcetNowPlayingView: View {
     static let coverToTitleSpacing = DulcetSpacing.lg
     static let playerToQueueSpacing = DulcetSpacing.xl
     static let sheetVerticalPadding = DulcetSpacing.md
-    /// Each of the player's rating stars: a touch target, and on a television a focus target.
-    static var ratingStarSide: CGFloat {
+    /// One target size for the player footer's marks -- heart, each star, lyrics, Up Next: a
+    /// touch target, and on a television a focus target. One size for all of them, so their
+    /// focus platters match and the row's spacing keeps every platter clear of the next.
+    static var footerControlSide: CGFloat {
 #if os(tvOS)
         64
 #else
         44
+#endif
+    }
+    /// Between the footer's rows. On a television a focused mark's platter reaches past its
+    /// target, and the format badge under the stars sat inside that reach (observed).
+    static var footerStackSpacing: CGFloat {
+#if os(tvOS)
+        DulcetSpacing.md
+#else
+        DulcetSpacing.sm
 #endif
     }
     static let minimumHorizontalPadding = DulcetSpacing.lg
@@ -370,11 +405,24 @@ struct DulcetNowPlayingView: View {
     /// margins, and never so large that the controls' column is squeezed, or so small it stops
     /// reading as the cover from across a room.
     static func televisionArtworkSize(height: CGFloat) -> CGFloat {
-        min(560, max(280, height - 2 * DulcetSpacing.xl - 120))
+        min(640, max(280, height - 2 * DulcetSpacing.xl - 120))
     }
 
-    /// Apple TV's controls column: wide enough that a long title is not broken after two words.
-    static let televisionControlsWidth: CGFloat = 760
+    /// The lyrics screen's player column on Apple TV: the small cover, the track's name and the
+    /// transport, wide enough for the transport's slots and the footer's row of marks.
+    static let televisionLyricsColumnWidth: CGFloat = 700
+
+    /// The small cover on Apple TV's lyrics screen; the lines, not the cover, are the screen.
+    static let televisionLyricsArtworkSize: CGFloat = 320
+
+    /// A transport control's slot on a television. A focused glyph's platter is drawn at several
+    /// times the glyph (measured ≈3x on tvOS 26), so adjacent slots' centers sit further apart
+    /// than the platters reach; jammed together, the focused Play/Pause pill overlapped Previous
+    /// and Next (observed).
+    static let televisionTransportPlayPauseSlot: CGFloat = 144
+    static let televisionTransportSkipSlot: CGFloat = 120
+    static let televisionTransportEdgeSlot: CGFloat = 108
+    static let televisionTransportSlotHeight: CGFloat = 96
 
     /// The queue column spans the player beside it -- cover, title, scrubber, transport and
     /// footer, as measured -- rather than the whole window, so the two read as one row; a window
@@ -426,7 +474,7 @@ struct DulcetNowPlayingView: View {
         } label: {
             Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
                 .font(.title3)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
                 .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle()
@@ -438,7 +486,7 @@ struct DulcetNowPlayingView: View {
     }
 
     private var favouriteButton: some View {
-        DulcetNowPlayingFavouriteButton(track: player.current, size: .title3, minimumSide: 44)
+        DulcetNowPlayingFavouriteButton(track: player.current, size: .title3, minimumSide: Self.footerControlSide)
 #if os(tvOS)
             .focused($focusedFooterControl, equals: .favourite)
 #endif
@@ -446,7 +494,7 @@ struct DulcetNowPlayingView: View {
 
     /// The playing track's stars (§16.20), beside the heart.
     private var ratingControl: some View {
-        DulcetNowPlayingRatingControl(track: player.current, size: .title3, minimumSide: Self.ratingStarSide)
+        DulcetNowPlayingRatingControl(track: player.current, size: .title3, minimumSide: Self.footerControlSide)
     }
 
     private var upNextToggle: some View {
@@ -458,7 +506,7 @@ struct DulcetNowPlayingView: View {
         } label: {
             Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
                 .font(.title3)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
                 .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle()
@@ -565,6 +613,63 @@ struct DulcetNowPlayingView: View {
     }
 
     private var transportControls: some View {
+#if os(tvOS)
+        // A remote's transport: each control in a slot whose center sits further from its
+        // neighbours than a focused glyph's platter reaches (observed: jammed together, the
+        // focused Play/Pause pill overlapped Previous and Next), at glyph sizes that read from
+        // across a room.
+        HStack(spacing: 0) {
+            controlButton(
+                symbol: "shuffle",
+                font: .title3,
+                label: DulcetStrings.shuffle,
+                value: player.shuffleEnabled ? DulcetStrings.controlOn : DulcetStrings.controlOff
+            ) {
+                onControl(.setShuffle(!player.shuffleEnabled))
+            }
+            .dulcetForeground(player.shuffleEnabled ? .accentIconOnWindow : .primaryTextOnWindow)
+            .frame(width: Self.televisionTransportEdgeSlot, height: Self.televisionTransportSlotHeight)
+            controlButton(
+                symbol: "backward.fill",
+                font: .system(size: 34, weight: .medium),
+                label: DulcetStrings.previous,
+                enabled: player.canGoPrevious
+            ) {
+                onControl(.previous)
+            }
+            .frame(width: Self.televisionTransportSkipSlot, height: Self.televisionTransportSlotHeight)
+            // The glyph itself, as the system player draws it: no disc behind play/pause.
+            controlButton(
+                symbol: player.isPlaying ? "pause.fill" : "play.fill",
+                font: .system(size: 44, weight: .medium),
+                label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
+            ) {
+                onControl(player.isPlaying ? .pause : .play)
+            }
+            .focused($playPauseFocused)
+            .frame(width: Self.televisionTransportPlayPauseSlot, height: Self.televisionTransportSlotHeight)
+            controlButton(
+                symbol: "forward.fill",
+                font: .system(size: 34, weight: .medium),
+                label: DulcetStrings.next,
+                enabled: player.canGoNext
+            ) {
+                onControl(.next)
+            }
+            .frame(width: Self.televisionTransportSkipSlot, height: Self.televisionTransportSlotHeight)
+            controlButton(
+                symbol: repeatSymbol,
+                font: .title3,
+                label: DulcetStrings.repeatMode,
+                value: repeatAccessibilityValue
+            ) {
+                onControl(.cycleRepeat)
+            }
+            .dulcetForeground(player.repeatMode != .off ? .accentIconOnWindow : .primaryTextOnWindow)
+            .frame(width: Self.televisionTransportEdgeSlot, height: Self.televisionTransportSlotHeight)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+#else
         HStack(spacing: 0) {
             controlButton(
                 symbol: "shuffle",
@@ -593,9 +698,6 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
-#if os(tvOS)
-            .focused($playPauseFocused)
-#endif
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(
                 symbol: "forward.fill",
@@ -623,6 +725,7 @@ struct DulcetNowPlayingView: View {
         // largest standard size; the title above still grows. ASSUMED, not compared: that the
         // system player caps its transport row the same way.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+#endif
     }
 
     @ViewBuilder
@@ -657,9 +760,10 @@ struct DulcetNowPlayingView: View {
 
     @ViewBuilder
     private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
-        VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
+        VStack(alignment: alignment, spacing: Self.footerStackSpacing) {
 #if os(tvOS)
             // The heart, its stars and lyrics sit under the transport, where Down from it lands.
+            // One row of equal targets, so every focus platter matches and none touches the next.
             HStack(spacing: DulcetSpacing.lg) {
                 ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
                     footerControl(control)
