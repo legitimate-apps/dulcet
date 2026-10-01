@@ -22,11 +22,13 @@ fun DisposableServerProbe.clearRating(rawId: String) {
 const val RATED_TITLE = "Thirty One Seconds"
 
 /**
- * Waits until [rawId] is the current queue entry. A timeout names what the controller held instead
- * — its phase, error, title and queue — because "timed out" alone cannot tell a play that never
- * arrived from one the controller refused or failed.
+ * Waits until [rawId] is the current queue entry, calling [tick] on each poll. A test holding a
+ * Compose rule must pass one that advances the rule's frame clock: compositions then run on that
+ * clock, so the play request's effect -- which recomposes once the service binds -- never runs while
+ * the test only polls the service. A timeout names what the controller held instead, because "timed
+ * out" alone cannot tell a play that never arrived from one the controller refused or failed.
  */
-fun PlaybackObserver.awaitCurrent(rawId: String, timeoutMillis: Long = 60_000) {
+fun PlaybackObserver.awaitCurrent(rawId: String, timeoutMillis: Long = 60_000, tick: () -> Unit) {
     val deadline = SystemClock.elapsedRealtime() + timeoutMillis
     while (true) {
         val state = state()
@@ -35,6 +37,7 @@ fun PlaybackObserver.awaitCurrent(rawId: String, timeoutMillis: Long = 60_000) {
             "Timed out waiting for $rawId to be current: phase=${state.phase} error=${state.error} " +
                 "title=${state.title} currentIndex=${state.currentIndex} queue=${state.queue.map { it.track.rawId }}"
         }
+        tick()
         Thread.sleep(100)
     }
 }

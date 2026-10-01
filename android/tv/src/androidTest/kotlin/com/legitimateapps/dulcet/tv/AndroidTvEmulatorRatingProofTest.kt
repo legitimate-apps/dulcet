@@ -50,7 +50,7 @@ class AndroidTvEmulatorRatingProofTest {
                 .setClassName(context, TvPlaybackActivity::class.java.name)
             ActivityScenario.launch<TvPlaybackActivity>(intent).use {
                 observer.bind()
-                observer.awaitCurrent(rawId)
+                observer.awaitCurrent(rawId) { compose.mainClock.advanceTimeByFrame() }
                 awaitNode("the player's own first focus on Play/Pause") { focused("tv.player.playpause") }
                 check((1..5).none { selected(it) }) { "A song this device has never seen must show no stars" }
                 remote(KeyEvent.KEYCODE_DPAD_UP)

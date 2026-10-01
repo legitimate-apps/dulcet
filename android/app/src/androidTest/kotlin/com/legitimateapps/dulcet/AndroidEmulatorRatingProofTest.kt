@@ -49,7 +49,7 @@ class AndroidEmulatorRatingProofTest {
                 .setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(intent).use {
                 observer.bind()
-                observer.awaitCurrent(rawId)
+                observer.awaitCurrent(rawId) { compose.mainClock.advanceTimeByFrame() }
                 awaitNode("the full player or the now-playing bar") { exists("player.rating") || exists("player.mini") }
                 if (!exists("player.rating")) compose.onNodeWithTag("player.mini").performClick()
                 awaitNode("the player's stars") { exists("player.rating") }
