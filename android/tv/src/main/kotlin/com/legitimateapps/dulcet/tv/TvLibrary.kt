@@ -1179,7 +1179,8 @@ internal fun tvTrackAddition(
     track: AndroidLibraryItem.Track,
     album: AndroidLibraryItem.Album?,
 ): TvQueueAddition? {
-    if (!track.canBeQueued()) return null
+    // Hidden while no playback service is bound, rather than offered and then refused (spec §14.1).
+    if (playback == null || !track.canBeQueued()) return null
     val library = context.getString(R.string.tv_library_title)
     fun add(insertion: AndroidQueueInsertion) {
         if (!queueTrack(playback, provider, track, insertion, library, album)) queueEditRefused(context)
