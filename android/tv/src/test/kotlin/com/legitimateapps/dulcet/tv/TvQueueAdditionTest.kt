@@ -19,7 +19,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AudioContainer
+import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -84,8 +86,13 @@ class TvQueueAdditionTest {
     /** What is added is what a play would queue: a track that cannot play now offers no button. */
     @Test fun aTrackThatCannotPlayNowOffersNoQueueButton() {
         val context = RuntimeEnvironment.getApplication()
-        assertNull(tvTrackAddition(context, null, "p", track(AndroidLibraryPlayability.UnavailableOffline), null))
-        assertNotNull(tvTrackAddition(context, null, "p", track(), null))
+        val controller = AndroidPlaybackController(context, PlaybackEndpointAccount("p", "http://127.0.0.1:9", "u", "p", true))
+        try {
+            assertNull(tvTrackAddition(context, controller, "p", track(AndroidLibraryPlayability.UnavailableOffline), null))
+            assertNotNull(tvTrackAddition(context, controller, "p", track(), null))
+            // While no playback service is bound the row offers nothing, rather than a choice then refused.
+            assertNull(tvTrackAddition(context, null, "p", track(), null), "no playback service bound")
+        } finally { controller.close() }
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 TvTrackRow(track(), 0, false, onPlay = {}, onUnavailable = {}, onFavourite = {}, onQueue = null)

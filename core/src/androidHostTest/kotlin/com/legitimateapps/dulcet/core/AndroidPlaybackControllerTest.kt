@@ -232,24 +232,69 @@ class AndroidPlaybackControllerTest {
     }
 
     /**
-     * A new queue that is still resolving replaces whatever is queued when it starts, so a track
-     * added in that window would vanish. The addition is refused, and said, rather than lost.
+     * Play Next and Add to Queue while a new queue is still resolving are accepted, as the Apple
+     * shells accept them, held, and applied to that queue the moment it is in place -- in the order
+     * they were made, landing exactly where they would have had the queue already started, each with
+     * its own source. Applying them starts nothing and leaves the new entry's session alone.
      */
-    @Test fun addingWhileANewQueueResolvesIsRefusedRatherThanLost() {
+    @Test fun additionsWhileANewQueueResolvesAreHeldAndAppliedInOrderOnceItStarts() {
         var pending: Continuation<AuthenticatedEndpointResponse>? = null
         Fixture(loadSong = { id ->
             if (id == "n1") suspendCoroutine<AuthenticatedEndpointResponse> { pending = it } else song(id)
         }).use { f ->
             f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
-            f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "New", "new-album")
+            f.controller.playQueue(album("n1", "n2", "n3"), 0, AndroidQueueSource.Album, "New", "new-album")
             val held = assertNotNull(pending, "setup: the new queue must be resolving")
-            assertFalse(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
-            assertEquals(listOf("t1", "t2"), f.controller.state.value.queue.map { it.track.rawId }, "nothing was added")
+            assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            assertTrue(f.controller.addToQueue(album("y"), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Album, "Other", "other-album"))
+            assertTrue(f.controller.addToQueue(album("z"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Search, "Search"))
+            assertEquals(listOf("t1", "t2"), f.controller.state.value.queue.map { it.track.rawId },
+                "held, not applied to the queue the new one is about to replace")
             held.resume(song("n1"))
-            assertEquals(listOf("n1", "n2"), f.controller.state.value.queue.map { it.track.rawId })
-            assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"),
-                "once the queue has started, adding works again")
-            assertEquals(listOf("n1", "x", "n2"), f.controller.state.value.queue.map { it.track.rawId })
+            val state = f.controller.state.value
+            // The second Play Next lands straight after the playing entry, ahead of the first, as live.
+            assertEquals(listOf("n1", "z", "x", "n2", "n3", "y"), state.queue.map { it.track.rawId })
+            assertEquals(0, state.currentIndex)
+            assertEquals(listOf("t1", "n1"), f.prepared.map { it.itemId.rawId }, "applying the additions starts nothing")
+            assertEquals(f.prepared.last().playbackSessionId.value, state.playbackSessionId,
+                "the new entry's session is the one that was started")
+            val stored = PersistentQueueStore(f.store.database).load(ServerId(OWNER)).entries
+            assertEquals(listOf(QueueAddedBy.PlayNow, QueueAddedBy.PlayNext, QueueAddedBy.PlayNext, QueueAddedBy.PlayNow,
+                QueueAddedBy.PlayNow, QueueAddedBy.AddToQueue), stored.map { it.addedBy })
+            assertEquals(QueueSourceContext(QueueSourceKind.Search, null, "Search"), stored[1].sourceContext)
+            assertEquals(QueueSourceContext(QueueSourceKind.Album, ProviderItemId(OWNER, "other-album"), "Other"),
+                stored.last().sourceContext, "a held addition keeps its own source")
+            assertTrue(f.controller.addToQueue(album("w"), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Library, "Library"),
+                "once the queue has started, adding goes straight in")
+            assertEquals(listOf("n1", "z", "x", "n2", "n3", "y", "w"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    /**
+     * Held additions share the fate of the queue they were made to: one stopped, superseded or failed
+     * before it starts takes them with it. They never land on a queue they were not added to.
+     */
+    @Test fun heldAdditionsGoWithAQueueThatNeverStarts() {
+        for (how in listOf("stop", "superseded", "failed")) {
+            var pending: Continuation<AuthenticatedEndpointResponse>? = null
+            Fixture(loadSong = { id ->
+                if (id == "n1") suspendCoroutine<AuthenticatedEndpointResponse> { pending = it } else song(id)
+            }).use { f ->
+                f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "New", "new-album")
+                val held = assertNotNull(pending, "$how: setup: the new queue must be resolving")
+                assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+                when (how) {
+                    "stop" -> { f.controller.stop(); held.resume(song("n1")) }
+                    "superseded" -> { f.controller.playQueue(album("m1", "m2"), 0, AndroidQueueSource.Album, "M", "m-album"); held.resume(song("n1")) }
+                    "failed" -> held.resume(missingSong())
+                }
+                val expected = if (how == "superseded") listOf("m1", "m2") else listOf("t1", "t2")
+                assertEquals(expected, f.controller.state.value.queue.map { it.track.rawId }, "$how: x is not applied")
+                // A later queue does not pick up what was held for the abandoned one.
+                f.controller.playQueue(album("k1", "k2"), 0, AndroidQueueSource.Album, "K", "k-album")
+                assertEquals(listOf("k1", "k2"), f.controller.state.value.queue.map { it.track.rawId }, "$how")
+            }
         }
     }
 
@@ -285,6 +330,65 @@ class AndroidPlaybackControllerTest {
             assertNull(after.error, "a refused edit is not a playback failure")
             assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId }, "no edit starts anything")
             assertTrue(f.probe.requested)
+        }
+    }
+
+    /**
+     * Only Up Next is reordered (spec §14.1), as on the Apple shells, whose list moves only the rows
+     * after the playing one: moving the playing entry, an entry already played, or any entry onto or
+     * before the playing entry's position is refused and changes nothing. A move within Up Next is
+     * accepted and the session plays on.
+     */
+    @Test fun movingThePlayingEntryOrAnEntryBeforeItIsRefused() {
+        Fixture().use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3", "t4"), 1, AndroidQueueSource.Album, "Album", "album-id")
+            val before = f.controller.state.value
+            val ids = before.queue.associate { it.track.rawId to it.queueEntryId }
+            assertFalse(f.controller.moveEntry(ids.getValue("t2"), 3), "the playing entry is not moved")
+            assertFalse(f.controller.moveEntry(ids.getValue("t1"), 3), "an entry already played is not moved")
+            assertFalse(f.controller.moveEntry(ids.getValue("t4"), 1), "onto the playing entry's position puts it before it")
+            assertFalse(f.controller.moveEntry(ids.getValue("t4"), 0), "before the playing entry")
+            assertEquals(listOf("t1", "t2", "t3", "t4"), f.controller.state.value.queue.map { it.track.rawId })
+            assertEquals(1, f.controller.state.value.currentIndex)
+
+            assertTrue(f.controller.moveEntry(ids.getValue("t4"), 2), "to the top of Up Next")
+            val after = f.controller.state.value
+            assertEquals(listOf("t1", "t2", "t4", "t3"), after.queue.map { it.track.rawId })
+            assertEquals(1, after.currentIndex)
+            assertEquals(before.playbackSessionId, after.playbackSessionId)
+            assertEquals(listOf("t2"), f.prepared.map { it.itemId.rawId })
+        }
+    }
+
+    /**
+     * An edit made while the new entry's start is still in flight -- its stream resolving -- is
+     * applied and does not cost that start: the entry still reaches the engine, in the session that
+     * began it, and the edits all stand. An edit is not a new request (spec §14.1), so it must never
+     * invalidate the start in progress the way a new play, a skip or a stop does.
+     */
+    @Test fun anEditWhileTheStartIsInFlightNeitherLosesTheEditNorTheStart() {
+        var pending: Continuation<PlaybackResolutionResult>? = null
+        var request: PlaybackResolveRequest? = null
+        Fixture(resolve = { r ->
+            if (r.itemId.rawId == "t1" && request == null) { request = r; suspendCoroutine { pending = it } } else resolved(r)
+        }).use { f ->
+            f.controller.playQueue(album("t1", "t2", "t3"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            val held = assertNotNull(pending, "setup: t1's start must be in flight")
+            assertTrue(f.prepared.isEmpty(), "setup: nothing has reached the engine yet")
+            assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            val session = assertNotNull(f.controller.state.value.playbackSessionId, "setup: t1's session has begun")
+            val ids = f.controller.state.value.queue.associate { it.track.rawId to it.queueEntryId }
+            assertEquals(listOf("t1", "x", "t2", "t3"), ids.keys.toList())
+            assertTrue(f.controller.moveEntry(ids.getValue("t3"), 1))
+            assertTrue(f.controller.removeEntry(ids.getValue("t2")))
+            assertEquals(listOf("t1", "t3", "x"), f.controller.state.value.queue.map { it.track.rawId })
+            held.resume(resolved(assertNotNull(request)))
+            assertEquals(listOf("t1"), f.prepared.map { it.itemId.rawId }, "the start in flight still reaches the engine")
+            val state = f.controller.state.value
+            assertEquals(session, state.playbackSessionId, "in the session that began it")
+            assertEquals(f.prepared.single().playbackSessionId.value, state.playbackSessionId)
+            assertEquals(listOf("t1", "t3", "x"), state.queue.map { it.track.rawId }, "every edit stands")
+            assertTrue(f.probe.requested, "and it is asked to play")
         }
     }
 

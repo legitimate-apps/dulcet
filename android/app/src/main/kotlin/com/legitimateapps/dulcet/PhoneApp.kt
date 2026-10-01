@@ -42,6 +42,7 @@ import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.library.queueAlbum
 import com.legitimateapps.dulcet.library.queueTrack
+import com.legitimateapps.dulcet.library.queueSearchResult
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
@@ -148,6 +149,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         playTracksFrom = { items, rawId, source, shuffle ->
             if (playTracks(playback, provider, items, rawId, source, shuffle)) playerOpen = true
         },
+        queueEditing = playback != null,
     )
     // A restored Up Next row with no title takes it from what this device has seen, as it did from the
     // whole-library mirror: a seen-cache read, never a request.
@@ -200,9 +202,11 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
             route?.startsWith("playlist:") == true ->
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
             tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
-            else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account) { result ->
+            else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
                 playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
-            }
+            }, (if (playback != null) { result, insertion ->
+                if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
+            } else null))
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's
@@ -311,10 +315,15 @@ internal class PhoneActions(
      * library queue with the name, shuffled or not: a genre's Play, Shuffle and rows.
      */
     val playTracksFrom: (List<AndroidLibraryItem>, String?, String, Boolean) -> Unit = { _, _, _, _ -> },
+    /**
+     * Whether queue editing is available: the playback service is bound. Play Next and Add to Queue
+     * are hidden rather than shown and refused while it is not (spec §14.1).
+     */
+    val queueEditing: Boolean = true,
 ) {
     /** A row's Play Next and Add to Queue, or null for a track that cannot be queued now. */
     fun trackQueue(track: AndroidLibraryItem.Track, album: AndroidLibraryItem.Album?): TrackQueue? =
-        if (!track.canBeQueued()) null
+        if (!queueEditing || !track.canBeQueued()) null
         else TrackQueue({ queueTrack(track, AndroidQueueInsertion.PlayNext, album) },
             { queueTrack(track, AndroidQueueInsertion.AddToQueue, album) })
 }

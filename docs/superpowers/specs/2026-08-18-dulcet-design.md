@@ -2759,7 +2759,11 @@ starts or stops anything except Jump.
 **Android (2026-09-30)** edits through the same core calls. Its shell differs in one respect: a
 new queue starts only once its first entry has been read from the server, so for that moment the
 core still holds the old queue, and an addition made then would be replaced when the new one
-starts. Android refuses it, and says so, rather than losing the tracks.
+starts. Android holds it and applies it, in order and with its own source, once that queue is in
+place, so it lands where it would have had the queue already started; if that queue never starts
+(stopped, replaced by another play, or failed), the held additions go with it and are never applied
+to a different queue. Android also refuses moving the playing entry, an entry already played, or
+any entry onto or before the playing one, as Apple's Up Next offers moves only after it.
 
 **Restoration recovery:** before creating a playback session from a persisted queue, check whether
 its selection can resolve in the supplied playback catalog for the active account. If it cannot,
@@ -7325,6 +7329,18 @@ was handed. An exact length, a ranged request, and an estimated response with no
 fail; the estimate, `Range` and byte clauses were each mutated and their controls went red (the 2xx
 clause has no control). The Apple apps' own playback path uses its
 own URLSession and is not changed; whether AVFoundation meets the same short prefix is not measured.
+
+**2026-09-30 — Android holds additions made while a queue loads, and offers queue edits from search (§14.1, §8).**
+The entry below records that Android refused an addition made while a new queue was still being read
+from the server. It now holds the addition and applies it once that queue starts, as Apple accepts it
+(§14.1); held additions are dropped with a queue that never starts. A move of the playing entry, or
+onto or before it, is refused in the Android controller, matching Apple's Up Next. Search results on
+the phone and the TV now offer Play Next and Add to Queue, and the items are hidden while no playback
+service is bound instead of refusing with a notice. OBSERVED in host tests only
+(`AndroidPlaybackControllerTest`, `MobileSearchPlayTest`, `TvSearchQueueAdditionTest`,
+`TvQueueAdditionTest`); not yet driven on an emulator or device. One known difference from Apple: a
+stop while the new queue is still loading keeps the old queue on Android (ASSUMED that Apple installs
+the new one stopped).
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.

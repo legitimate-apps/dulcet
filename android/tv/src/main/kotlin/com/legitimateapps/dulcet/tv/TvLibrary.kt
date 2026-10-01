@@ -109,6 +109,8 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
+import com.legitimateapps.dulcet.core.SearchResultItem
+import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryHomeRowSurface
 import com.legitimateapps.dulcet.library.LibraryLifecycle
@@ -134,6 +136,7 @@ import com.legitimateapps.dulcet.library.playTracks
 import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.library.playableTracks
 import com.legitimateapps.dulcet.library.queueAlbum
+import com.legitimateapps.dulcet.library.queueSearchResult
 import com.legitimateapps.dulcet.library.queueTrack
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.ui.queueEditRefused
@@ -196,7 +199,10 @@ internal class TvNavigator(val open: (String) -> Unit, val back: () -> Unit) {
  * screen is showing, and a search offline says so (§16.15).
  */
 @Composable
-internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavigator) -> Unit) {
+internal fun TvLibraryEntry(
+    account: SearchAccount,
+    search: @Composable (TvNavigator, AndroidPlaybackController?) -> Unit,
+) {
     val context = LocalContext.current
     val foreground = hostInForeground()
     val session = remember(account) { LibrarySession(context, account, foreground) }
@@ -243,7 +249,7 @@ internal fun TvLibraryEntry(account: SearchAccount, search: @Composable (TvNavig
                 ) {
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
-                        top == ROUTE_SEARCH -> search(navigator)
+                        top == ROUTE_SEARCH -> search(navigator, playback)
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
@@ -970,7 +976,7 @@ private fun TvAlbumScreen(
                                         "album.download", icon = DulcetIcons.Download) { requests.download(tracks) }
                                 }
                                 // Play Next and Add to Queue for the album, beside its download (spec §14.1).
-                                if (playable) TvAction(resources.getString(SharedR.string.queue_add_options), "album.queue",
+                                if (playback != null && playable) TvAction(resources.getString(SharedR.string.queue_add_options), "album.queue",
                                     icon = DulcetIcons.QueueMusic) {
                                     val shownNow = shown ?: return@TvAction
                                     fun add(insertion: AndroidQueueInsertion) {
@@ -1173,12 +1179,33 @@ internal fun tvTrackAddition(
     track: AndroidLibraryItem.Track,
     album: AndroidLibraryItem.Album?,
 ): TvQueueAddition? {
-    if (!track.canBeQueued()) return null
+    // Hidden while no playback service is bound, rather than offered and then refused (spec §14.1).
+    if (playback == null || !track.canBeQueued()) return null
     val library = context.getString(R.string.tv_library_title)
     fun add(insertion: AndroidQueueInsertion) {
         if (!queueTrack(playback, provider, track, insertion, library, album)) queueEditRefused(context)
     }
     return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
+}
+
+/**
+ * Play Next and Add to Queue for a search track (spec §14.1), or null for anything else, for a track
+ * that cannot play now, or while no playback service is bound. A refusal is said.
+ */
+internal fun tvSearchAddition(
+    context: android.content.Context,
+    playback: AndroidPlaybackController?,
+    provider: String?,
+    result: SearchResultItem,
+    playability: AndroidLibraryPlayability?,
+): TvQueueAddition? {
+    if (playback == null || provider == null || result.type != SearchResultType.Track) return null
+    if (playability == AndroidLibraryPlayability.UnavailableOffline || result.title.isBlank()) return null
+    val search = context.getString(R.string.tv_nav_search)
+    fun add(insertion: AndroidQueueInsertion) {
+        if (!queueSearchResult(playback, provider, result, insertion, search)) queueEditRefused(context)
+    }
+    return TvQueueAddition(result.title, { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
 }
 
 @Composable

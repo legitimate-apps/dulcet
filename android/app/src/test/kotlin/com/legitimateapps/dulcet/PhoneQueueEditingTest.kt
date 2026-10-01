@@ -29,6 +29,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowToast
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -68,6 +69,12 @@ class PhoneQueueEditingTest {
         compose.onNodeWithTag("album.track.0.menu").performClick()
         compose.onAllNodesWithTag("album.track.0.menu.playNext").assertCountEquals(0)
         compose.onAllNodesWithTag("album.track.0.menu.addToQueue").assertCountEquals(0)
+    }
+
+    /** While queue editing is unavailable the track row offers no Play Next or Add to Queue (spec §14.1). */
+    @Test fun whileQueueEditingIsUnavailableTheTrackRowOffersNoQueueItems() {
+        assertNull(trackActions(queueEditing = false).trackQueue(track("t1"), null), "no items while editing is unavailable")
+        assertNotNull(trackActions(queueEditing = true).trackQueue(track("t1"), null), "items once editing is available")
     }
 
     /** A track added on its own says it came from its album, as the Apple shells attribute it, or else the library. */
@@ -135,6 +142,11 @@ class PhoneQueueEditingTest {
         compose.onAllNodesWithTag("player.upnext.clear").assertCountEquals(0)
         assertNull(ShadowToast.getTextOfLatestToast())
     }
+
+    private fun trackActions(queueEditing: Boolean) = PhoneActions(
+        openAlbum = {}, openArtist = {}, back = {}, playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null },
+        queueEditing = queueEditing,
+    )
 
     private fun string(id: Int) = resources.getString(id)
 
