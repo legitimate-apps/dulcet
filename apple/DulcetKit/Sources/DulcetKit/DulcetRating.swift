@@ -87,7 +87,7 @@ struct DulcetRatingControl: View {
 
     @ViewBuilder
     private func stars(rating: Int?, state: DulcetFavouriteChangeState, session: DulcetLibrarySession) -> some View {
-        let row = HStack(spacing: 0) {
+        let row = HStack(spacing: Self.starSpacing) {
             ForEach(Array(DulcetRating.stars), id: \.self) { star in
                 starButton(star, rating: rating, session: session)
             }
@@ -100,9 +100,10 @@ struct DulcetRatingControl: View {
             }
         }
 #if os(tvOS)
+        // No identifier on the row here: on tvOS a container's identifier replaces each star's
+        // own, so all five read as one id and a remote proof cannot tell them apart (observed).
         row
             .focusSection()
-            .accessibilityIdentifier(identifier)
 #else
         row
             .accessibilityElement(children: .ignore)
@@ -121,6 +122,16 @@ struct DulcetRatingControl: View {
 #endif
     }
 
+    /// Between stars: touching where a pointer or a finger aims, a gap on a television so the
+    /// focused star's highlight stays clear of the next.
+    static var starSpacing: CGFloat {
+#if os(tvOS)
+        DulcetSpacing.xxs
+#else
+        0
+#endif
+    }
+
     private func starButton(_ star: Int, rating: Int?, session: DulcetLibrarySession) -> some View {
         Button {
             session.setRating(target, rating: DulcetRating.value(pressing: star, current: rating))
@@ -134,7 +145,10 @@ struct DulcetRatingControl: View {
                 .contentShape(Rectangle())
         }
 #if os(tvOS)
-        .buttonStyle(.plain)
+        // The heart's style: a plain button's focus platter is wider than the star and covered
+        // both neighbours (observed on Now Playing); this one hugs the focused star, as the
+        // heart's and Lyrics' do beside it.
+        .buttonStyle(.borderless)
         .accessibilityLabel(DulcetRating.starLabel(star: star, current: rating))
         .accessibilityAddTraits(DulcetRating.isFilled(star: star, rating: rating) ? .isSelected : [])
         .accessibilityIdentifier("\(identifier).star.\(star)")
