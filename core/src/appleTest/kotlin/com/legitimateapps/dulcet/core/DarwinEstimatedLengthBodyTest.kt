@@ -26,6 +26,7 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
+import platform.Foundation.NSLock
 import platform.posix.AF_INET
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
@@ -46,6 +47,8 @@ import platform.posix.socket
 import platform.posix.socklen_tVar
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -72,6 +75,8 @@ class DarwinEstimatedLengthBodyTest {
         // the representation; what must not happen is losing what it delivered.
         assertTrue(body.isNotEmpty(), "every delivered byte was discarded")
         assertContentEquals(BODY.copyOf(body.size), body, "the body is not a prefix of what was sent")
+        // The delegate itself ended this body, and the reader kept every byte it forwarded.
+        assertEquals(listOf(body.size.toLong()), outcome.estimatedBodyEnds, "the reader did not get every forwarded byte")
     }
 
     @Test
@@ -87,6 +92,7 @@ class DarwinEstimatedLengthBodyTest {
             isPlatformEstimatedLengthCompletion(outcome.body.exceptionOrNull()!!),
             "the control failed for a reason other than the connection-lost completion",
         )
+        assertEquals(emptyList(), outcome.estimatedBodyEnds, "the delegate ended a body it must not end")
     }
 
     @Test
@@ -100,6 +106,7 @@ class DarwinEstimatedLengthBodyTest {
             isPlatformEstimatedLengthCompletion(outcome.body.exceptionOrNull()!!),
             "the control failed for a reason other than the connection-lost completion",
         )
+        assertEquals(emptyList(), outcome.estimatedBodyEnds, "the delegate ended a body it must not end")
     }
 
     @Test
@@ -113,19 +120,157 @@ class DarwinEstimatedLengthBodyTest {
             isPlatformEstimatedLengthCompletion(outcome.body.exceptionOrNull()!!),
             "the control failed for a reason other than the connection-lost completion",
         )
+        assertEquals(emptyList(), outcome.estimatedBodyEnds, "the delegate ended a body it must not end")
     }
 
-    private class Outcome(val requestHead: String, val body: Result<ByteArray>)
+    /**
+     * NSURLSession does not report a short body as connection-lost for every status. OBSERVED on
+     * macOS with this fixture: 200 and 206 end in -1005; 201, 202, 203, 299, 300, 302, 399, 400,
+     * 401, 404, 410, 416, 429, 500, 503 and 599 complete without an error after handing over every
+     * byte. So the delegate's 2xx clause cannot be reached over the wire here, and its control is
+     * [theDecisionEndsOnlyA2xxEstimatedUnrangedBodyWithForwardedBytes]. This pins the platform fact
+     * that makes that so for one representative status, 500 (the others above were observed once,
+     * not pinned): if a short 500 body ever does end in -1005, this fails, and the wire control
+     * becomes possible and should replace it.
+     */
+    @Test
+    fun aShortNon2xxEstimatedBodyIsNotReportedAsConnectionLostAndIsNeverEndedByTheDelegate() = runBlocking {
+        val outcome = readAfterTheServerCloses(query = ESTIMATED_QUERY, head = ERROR_RESPONSE_HEAD)
+
+        assertTrue(outcome.requestHead.startsWith("GET /rest/stream.view?"), "the fixture never served the request")
+        assertTrue(outcome.requestHead.contains("estimateContentLength=true"), "the control did not ask for an estimate")
+        assertEquals(emptyList(), outcome.estimatedBodyEnds, "the delegate ended a non-2xx body")
+        assertContentEquals(BODY, outcome.body.getOrThrow(), "the session now treats a short non-2xx body differently")
+    }
+
+    /** The delegate's decision, one clause at a time: each case differs from the end in one input. */
+    @Test
+    fun theDecisionEndsOnlyA2xxEstimatedUnrangedBodyWithForwardedBytes() {
+        fun decide(status: Int = 200, ranged: Boolean = false, estimate: Boolean = true, forwarded: Long = 1) =
+            isEstimatedBodyEnd(status, hasRangeHeader = ranged, asksForEstimate = estimate, bodyBytesForwarded = forwarded)
+
+        assertTrue(decide(), "a 2xx estimated unranged body with a forwarded byte was not ended")
+        assertTrue(decide(status = 299), "the top of 2xx was not ended")
+        assertFalse(decide(status = 500), "a non-2xx body was ended")
+        assertFalse(decide(status = 300), "a 3xx body was ended")
+        assertFalse(decide(status = 199), "a 1xx status was ended")
+        assertFalse(decide(ranged = true), "a ranged body was ended")
+        assertFalse(decide(estimate = false), "an exact body was ended")
+        // The session may have received bytes it never handed over; only forwarded bytes count.
+        assertFalse(decide(forwarded = 0), "a body with nothing forwarded was ended")
+    }
+
+    /**
+     * The production route into the rewrite: a capped legacy load through [PlaybackWireClient] and
+     * the [AuthenticatedEndpointClient] behind it, reading as soon as the response arrives, as
+     * playback does, rather than after the server has closed.
+     */
+    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    @Test
+    fun aCappedLegacyLoadOfAShortEstimatedBodySucceedsWithEveryForwardedByte() = runBlocking {
+        val server = OneShotLoopbackServer(RESPONSE_HEAD + MP3_BODY)
+        val serverThread = newSingleThreadContext("short-body-fixture")
+        val ends = EstimatedBodyEnds()
+        val account = PlaybackEndpointAccount(
+            providerInstanceId = PROVIDER_ID,
+            normalizedBaseUrl = "http://127.0.0.1:${server.port}",
+            username = "wire-user-canary",
+            password = "wire-password-canary",
+            allowLocalHttp = true,
+        )
+        val wire = PlaybackWireClient(
+            account = account,
+            transport = KtorPlaybackEndpointTransport(
+                account = account,
+                saltSource = null,
+                logSink = null,
+                hostResolver = systemHostResolver(),
+                clientTransport = AccountClientTransport.Default(estimatedBodyEndObserver = ends::record),
+            ),
+        )
+        try {
+            val served = CoroutineScope(serverThread).async { server.serveOnce() }
+            val result = withTimeout(TIMEOUT_MILLIS) {
+                val plan = assertIs<PlaybackResolutionResult.Resolved>(wire.resolve(cappedLegacyRequest())).plan
+                assertTrue(plan.usesEstimatedLegacyContentLength(), "the plan does not ask for an estimate")
+                wire.load(plan)
+            }
+            val head = served.await()
+
+            assertTrue(head.startsWith("GET /rest/stream.view?"), "the fixture never served the request")
+            assertTrue(head.contains("estimateContentLength=true"), "the load did not ask for an estimate")
+            val audio = assertIs<PlaybackLoadResult.Audio>(result, "the short estimated body failed to load")
+            assertTrue(audio.bytes.isNotEmpty(), "every delivered byte was discarded")
+            assertContentEquals(MP3_BODY.copyOf(audio.bytes.size), audio.bytes, "the body is not a prefix of what was sent")
+            // The marker the delegate emits: this load did reach the -1005 end, and kept all of it.
+            assertEquals(listOf(audio.bytes.size.toLong()), ends.snapshot(), "the load did not get every forwarded byte")
+            assertEquals(
+                PlaybackContentLength.Estimated(DECLARED_LENGTH.toLong()),
+                audio.validation.contentLength,
+                "the response was not read as an estimate",
+            )
+        } finally {
+            wire.close()
+            server.closeListener()
+            serverThread.close()
+        }
+    }
+
+    private fun cappedLegacyRequest() = PlaybackResolveRequest(
+        playbackSessionId = PlaybackSessionId("session:estimated-body"),
+        attemptId = AttemptId("attempt:estimated-body"),
+        itemId = ProviderItemId(PROVIDER_ID, "song"),
+        sourceContainer = AudioContainer.Flac,
+        supportsTranscodingExtension = false,
+        deviceProfile = PlaybackDeviceProfile(
+            name = "Dulcet Test",
+            platform = "Darwin",
+            maxAudioBitrate = 96_000,
+            maxTranscodingAudioBitrate = 96_000,
+            directPlayProfiles = listOf(DirectPlayAudioProfile(listOf(AudioContainer.Flac), listOf("flac"), maxAudioChannels = 2)),
+            transcodingProfiles = listOf(TranscodingAudioProfile(AudioContainer.Mp3, "mp3", maxAudioChannels = 2)),
+        ),
+        // An explicit hint, so the resolve asks for the transcode without reading the source first.
+        legacyPreference = LegacyPlaybackPreference(format = AudioContainer.Mp3, maxBitRateKbps = 96),
+    )
+
+    private class Outcome(val requestHead: String, val body: Result<ByteArray>, val estimatedBodyEnds: List<Long>)
+
+    /** What the session delegate reported through the transport's observer, from its own queue. */
+    private class EstimatedBodyEnds {
+        private val lock = NSLock()
+        private val ends = mutableListOf<Long>()
+
+        fun record(forwardedBytes: Long) {
+            lock.lock()
+            try {
+                ends += forwardedBytes
+            } finally {
+                lock.unlock()
+            }
+        }
+
+        fun snapshot(): List<Long> {
+            lock.lock()
+            try {
+                return ends.toList()
+            } finally {
+                lock.unlock()
+            }
+        }
+    }
 
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
     private suspend fun readAfterTheServerCloses(
         query: String,
         range: String? = null,
         body: ByteArray = BODY,
+        head: ByteArray = RESPONSE_HEAD,
     ): Outcome {
-        val server = OneShotLoopbackServer(RESPONSE_HEAD + body)
+        val server = OneShotLoopbackServer(head + body)
         val serverThread = newSingleThreadContext("short-body-fixture")
-        val client = createAccountHttpClient(AccountClientTransport.Default()) {}
+        val ends = EstimatedBodyEnds()
+        val client = createAccountHttpClient(AccountClientTransport.Default(estimatedBodyEndObserver = ends::record)) {}
         try {
             val served = CoroutineScope(serverThread).async { server.serveOnce() }
             // A failure anywhere in the exchange is an outcome; running out of time is not one.
@@ -141,7 +286,7 @@ class DarwinEstimatedLengthBodyTest {
                     }
                 }.onFailure { if (it is CancellationException) throw it }
             }
-            return Outcome(served.await(), body)
+            return Outcome(served.await(), body, ends.snapshot())
         } finally {
             client.close()
             server.closeListener()
@@ -155,9 +300,19 @@ class DarwinEstimatedLengthBodyTest {
         const val DECLARED_LENGTH = 24_576
         const val SETTLE_MILLIS = 500L
         const val TIMEOUT_MILLIS = 10_000L
+        const val PROVIDER_ID = "provider:estimated-body"
         val BODY = ByteArray(23_385) { (it % 251).toByte() }
-        val RESPONSE_HEAD = (
-            "HTTP/1.1 200 OK\r\n" +
+
+        // The same length, opening with an MPEG-1 Layer III frame header so the playback validator
+        // accepts it as the MP3 the plan asked for.
+        val MP3_BODY = BODY.copyOf().also { body ->
+            byteArrayOf(0xFF.toByte(), 0xFB.toByte(), 0x50, 0xC4.toByte()).copyInto(body)
+        }
+        val RESPONSE_HEAD = responseHead("200 OK")
+        val ERROR_RESPONSE_HEAD = responseHead("500 Internal Server Error")
+
+        fun responseHead(status: String) = (
+            "HTTP/1.1 $status\r\n" +
                 "Content-Type: audio/mpeg\r\n" +
                 "Content-Length: $DECLARED_LENGTH\r\n" +
                 "Connection: close\r\n\r\n"
