@@ -1481,6 +1481,30 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # Now Playing's heart on iPad (spec §16.20), while the iPad is still booted: the heart
+          # fills with the tap and the star reaches the server for the playing track, then is taken
+          # off again. Favourites are not media, so the counted corpus later phases read is unchanged.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_PLAYBACK_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-np-heart.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -1531,6 +1555,30 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # Now Playing on Apple TV by remote (spec §16.20, §18.4): Down reaches the heart, Select
+          # stars the playing track on the server and Select again unstars it; Right reaches Lyrics,
+          # whose synced English layer lights a line. It reuses the search phase's build and device.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-now-playing.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-now-playing-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
           # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
           # renames it from its page and reads the new name back from the server, then deletes it:
@@ -1579,6 +1627,28 @@ jobs:
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-lyrics-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-np-heart.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPhone 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-np-heart.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-np-heart.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPhone
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-np-heart.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-np-heart-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
           # The automatic-skip proofs on iPhone (spec §12.12): an undecodable track is skipped with a
           # notice and the next one plays, and the server counts a play for the next track and never
@@ -1849,6 +1919,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-junit" \
             "$RUNNER_TEMP/dulcet-ios-lyrics-junit" \
+            "$RUNNER_TEMP/dulcet-ios-np-heart-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \

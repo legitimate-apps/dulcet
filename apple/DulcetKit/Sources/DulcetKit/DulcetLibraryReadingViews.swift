@@ -251,6 +251,8 @@ struct DulcetFavouriteButton: View {
     var title: String = ""
     var size: Font = .body
     var identifier = "dulcet.reader.favorite"
+    /// The smallest side of the control's hit area.
+    var minimumSide: CGFloat = 32
 
     var body: some View {
         if let session = store.librarySession {
@@ -263,15 +265,18 @@ struct DulcetFavouriteButton: View {
                     Image(systemName: on ? "heart.fill" : "heart")
                         .font(size)
                         .dulcetForeground(.accentIconOnWindow)
-                    if state != .settled {
-                        Image(systemName: state == .pending ? "clock" : "exclamationmark.circle.fill")
-                            .font(.caption2.weight(.bold))
-                            .dulcetForeground(.secondaryTextOnWindow)
-                            .offset(x: 6, y: 4)
-                            .accessibilityHidden(true)
-                    }
+                    // Always present, hidden while settled: inserting it into the label on a
+                    // press took accessibility focus off the focused heart on Apple TV while the
+                    // focus effect stayed drawn on it (OBSERVED on a tvOS 26.5 simulator), so an
+                    // assistive reader lost the control the person had just pressed.
+                    Image(systemName: state == .settled || state == .pending ? "clock" : "exclamationmark.circle.fill")
+                        .font(.caption2.weight(.bold))
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .offset(x: 6, y: 4)
+                        .opacity(state == .settled ? 0 : 1)
+                        .accessibilityHidden(true)
                 }
-                .frame(minWidth: 32, minHeight: 32)
+                .frame(minWidth: minimumSide, minHeight: minimumSide)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
@@ -289,6 +294,32 @@ struct DulcetFavouriteButton: View {
         case .settled: on && !title.isEmpty ? DulcetStrings.readerFavoriteAccessibility(title) : ""
         case .pending: DulcetStrings.readerFavoritePending
         case .held: DulcetStrings.readerFavoriteHeld
+        }
+    }
+}
+
+/// The playing track's heart (§16.20): the macOS toolbar's, and the one in the player's own
+/// controls on iPhone, iPad and Apple TV. It is the rows' heart, through the same session, so a
+/// pending, held or saved change reads the same here as on the track's row. Nothing is drawn while
+/// the reader does not hold the account the track came from.
+struct DulcetNowPlayingFavouriteButton: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let track: DulcetTrack
+    var size: Font = .body
+    var minimumSide: CGFloat = 32
+
+    static let identifier = "dulcet.now-playing.favorite"
+
+    var body: some View {
+        if let favourite = store.nowPlayingFavourite(for: track) {
+            DulcetFavouriteButton(
+                target: favourite.target,
+                published: favourite.published,
+                title: track.title,
+                size: size,
+                identifier: Self.identifier,
+                minimumSide: minimumSide
+            )
         }
     }
 }
@@ -1480,8 +1511,14 @@ struct DulcetReaderLibraryRoot: View {
 
 #if os(tvOS)
 /// The library's sections across the top of Library, under the app's own section bar.
+///
+/// A launch that opens into Library, or the app bringing Library forward itself, puts remote focus
+/// here, on the section showing (``DulcetArrivalFocus``): it is always drawn, whatever the reader
+/// has painted yet, and one Up press from it reaches the app's bar.
 private struct DulcetReaderTVSectionBar: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
+    @FocusState private var focusedSection: DulcetLibrarySection?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1495,6 +1532,7 @@ private struct DulcetReaderTVSectionBar: View {
                             .font(.callout.weight(selected ? .semibold : .regular))
                     }
                     .buttonStyle(.bordered)
+                    .focused($focusedSection, equals: section)
                     .accessibilityIdentifier("dulcet.reader.section.\(section.rawValue)")
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
@@ -1503,6 +1541,20 @@ private struct DulcetReaderTVSectionBar: View {
             .padding(.vertical, DulcetSpacing.xs)
         }
         .focusSection()
+        .onAppear(perform: claimArrivalFocus)
+        // The focus engine can place launch focus on the app's bar after this appeared.
+        .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
+            if wants { claimArrivalFocus() }
+        }
+        .onChange(of: focusedSection) { _, current in
+            if current != nil { arrivalFocus?.sectionControlFocused() }
+        }
+    }
+
+    private func claimArrivalFocus() {
+        // Under a pushed page this row is not on screen; the page is the arrival, not the row.
+        guard let arrivalFocus, arrivalFocus.pending, store.readerPath.isEmpty else { return }
+        focusedSection = store.librarySection
     }
 }
 #endif

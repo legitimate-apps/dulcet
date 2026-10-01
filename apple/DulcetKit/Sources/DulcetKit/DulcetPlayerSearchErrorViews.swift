@@ -141,6 +141,16 @@ struct DulcetNowPlayingView: View {
     @State private var showingQueue = false
     /// The lyrics panel in place of the queue beside the player, or of the cover in one column.
     @State private var showingLyrics = false
+#if os(tvOS)
+    /// Remote focus on the footer's controls. Showing or hiding lyrics swaps the layout under the
+    /// control that did it, so focus is put back on that control rather than wherever the focus
+    /// engine lands in the new layout.
+    @FocusState private var focusedFooterControl: FooterControl?
+    /// Remote focus on play/pause, where Now Playing puts it when it arrives without the person
+    /// choosing it -- a search result activated, the control that held focus gone with Search.
+    @FocusState private var playPauseFocused: Bool
+    @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
+#endif
     /// The side-by-side player's own height, cover to footer, once laid out.
     @State private var sideBySidePlayerHeight: CGFloat?
     let player: DulcetNowPlaying
@@ -202,7 +212,7 @@ struct DulcetNowPlayingView: View {
                         .padding(.horizontal, padding)
                         .padding(.bottom, DulcetSpacing.md)
                 }
-                .frame(maxWidth: 600)
+                .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
             } else if showingQueue {
                 // The queue replaces the artwork; the footer stays, so the control that opened it
@@ -216,6 +226,28 @@ struct DulcetNowPlayingView: View {
                 .frame(maxWidth: 600)
                 .frame(maxWidth: .infinity)
             } else {
+#if os(tvOS)
+                // A television is wide and short: the cover beside everything else, sized from
+                // the height, so the transport and the heart under it sit on screen, where the
+                // remote reaches them. Stacked, they fell below the bottom edge of a 1080-point
+                // screen, and Down from the section bar found nothing to land on.
+                ScrollView {
+                    HStack(alignment: .center, spacing: DulcetSpacing.xxl) {
+                        playerCover(size: Self.televisionArtworkSize(height: geometry.size.height))
+                        VStack(alignment: .center, spacing: Self.coverToTitleSpacing) {
+                            trackIdentity(alignment: .center)
+                            playbackProgress
+                            transportControls
+                            footer(alignment: .center, showsQueueToggle: true)
+                        }
+                        .frame(maxWidth: Self.televisionControlsWidth)
+                    }
+                    .padding(.horizontal, padding)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: geometry.size.height, alignment: .center)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+#else
                 ScrollView {
                     playerPanel(
                         artworkSize: stackedArtworkSize(innerWidth: max(0, width - 2 * padding)),
@@ -228,12 +260,30 @@ struct DulcetNowPlayingView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
+#endif
             }
         }
         .background(Color.dulcetWindow.ignoresSafeArea())
         .dulcetForeground(.primaryTextOnWindow)
         .navigationTitle(DulcetStrings.nowPlaying)
+#if os(tvOS)
+        .onAppear(perform: claimArrivalFocus)
+        // The focus engine can fall back to the section bar after this appeared.
+        .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
+            if wants { claimArrivalFocus() }
+        }
+        .onChange(of: playPauseFocused) { _, focused in
+            if focused { arrivalFocus?.sectionControlFocused() }
+        }
+#endif
     }
+
+#if os(tvOS)
+    private func claimArrivalFocus() {
+        guard let arrivalFocus, arrivalFocus.pending, !showingLyrics, !showingQueue else { return }
+        playPauseFocused = true
+    }
+#endif
 
     /// The gaps between the cover and the nearest text on every side. The cover's glow reaches
     /// less far than the smallest of them (``DulcetArtworkGlow/reach``), so no text on the player
@@ -243,6 +293,39 @@ struct DulcetNowPlayingView: View {
     static let playerToQueueSpacing = DulcetSpacing.xl
     static let sheetVerticalPadding = DulcetSpacing.md
     static let minimumHorizontalPadding = DulcetSpacing.lg
+
+    /// Lyrics in one column: a phone's or a narrow window's width, and on a television wide enough
+    /// that a line set large enough to read across a room is not broken after two words.
+    static var oneColumnLyricsMaxWidth: CGFloat {
+#if os(tvOS)
+        1_200
+#else
+        600
+#endif
+    }
+
+    /// The controls in the player's footer row, in order.
+    enum FooterControl: Hashable {
+        /// The playing track's heart (§16.20).
+        case favourite
+        case airPlay
+        case lyrics
+        case upNext
+    }
+
+    /// Which footer controls the player offers. The heart is offered only while the reader holds
+    /// the playing track's account; on macOS it is in the window's toolbar instead. Apple TV routes
+    /// audio with the remote and the TV and has no Up Next toggle, but it has lyrics and the heart,
+    /// both reached by focus.
+    static func footerControls(offersFavourite: Bool, showsQueueToggle: Bool) -> [FooterControl] {
+#if os(tvOS)
+        (offersFavourite ? [.favourite] : []) + [.lyrics]
+#elseif os(macOS)
+        [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+#else
+        (offersFavourite ? [.favourite] : []) + [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+#endif
+    }
 
     /// Side by side only when both panels fit at their natural widths; otherwise one column.
     /// Dynamic Type at accessibility sizes always gets one column, whatever the width.
@@ -256,6 +339,16 @@ struct DulcetNowPlayingView: View {
     static func sideBySideArtworkSize(height: CGFloat) -> CGFloat {
         min(520, max(280, height - 380))
     }
+
+    /// Apple TV's cover, beside the controls: as large as the height allows after the vertical
+    /// margins, and never so large that the controls' column is squeezed, or so small it stops
+    /// reading as the cover from across a room.
+    static func televisionArtworkSize(height: CGFloat) -> CGFloat {
+        min(560, max(280, height - 2 * DulcetSpacing.xl - 120))
+    }
+
+    /// Apple TV's controls column: wide enough that a long title is not broken after two words.
+    static let televisionControlsWidth: CGFloat = 760
 
     /// The queue column spans the player beside it -- cover, title, scrubber, transport and
     /// footer, as measured -- rather than the whole window, so the two read as one row; a window
@@ -299,6 +392,11 @@ struct DulcetNowPlayingView: View {
                 showingLyrics.toggle()
                 if showingLyrics { showingQueue = false }
             }
+#if os(tvOS)
+            // The layout under the button changes; keep the remote on it, so the same press
+            // closes what it opened.
+            DispatchQueue.main.async { focusedFooterControl = .lyrics }
+#endif
         } label: {
             Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
                 .font(.title3)
@@ -306,8 +404,57 @@ struct DulcetNowPlayingView: View {
                 .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle()
+#if os(tvOS)
+        .focused($focusedFooterControl, equals: .lyrics)
+#endif
         .accessibilityLabel(showingLyrics ? DulcetStrings.lyricsHide : DulcetStrings.lyricsShow)
         .accessibilityIdentifier("dulcet.now-playing.lyrics")
+    }
+
+    private var favouriteButton: some View {
+        DulcetNowPlayingFavouriteButton(track: player.current, size: .title3, minimumSide: 44)
+#if os(tvOS)
+            .focused($focusedFooterControl, equals: .favourite)
+#endif
+    }
+
+    private var upNextToggle: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : .snappy) {
+                showingQueue.toggle()
+                if showingQueue { showingLyrics = false }
+            }
+        } label: {
+            Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
+                .font(.title3)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .dulcetMediaButtonStyle()
+        .accessibilityLabel(showingQueue ? DulcetStrings.hideUpNext : DulcetStrings.showUpNext)
+        .accessibilityIdentifier("dulcet.now-playing.up-next")
+    }
+
+    @ViewBuilder
+    private func footerControl(_ control: FooterControl) -> some View {
+        switch control {
+        case .favourite: favouriteButton
+        case .lyrics: lyricsToggle
+        case .upNext: upNextToggle
+        case .airPlay:
+#if os(tvOS)
+            EmptyView()
+#else
+            DulcetAirPlayRoutePicker(tint: .primary)
+#endif
+        }
+    }
+
+    private func footerControls(showsQueueToggle: Bool) -> [FooterControl] {
+        Self.footerControls(
+            offersFavourite: store.nowPlayingFavourite(for: player.current) != nil,
+            showsQueueToggle: showsQueueToggle
+        )
     }
 
     /// Up Next, editable, when the queue carries entry identities -- a track can be queued twice,
@@ -338,15 +485,7 @@ struct DulcetNowPlayingView: View {
         showsQueueToggle: Bool
     ) -> some View {
         VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
-            DulcetPlayerCover(
-                artwork: player.current.artwork,
-                size: artworkSize,
-                isPlaying: player.isPlaying,
-                // Reduce Motion keeps the cover still: the play state is carried by the control.
-                scale: player.isPlaying || presentation == .destination || reduceMotion
-                    ? 1 : DulcetPlayerCover.pausedScale
-            )
-                .modifier(DulcetArtworkSwipes(player: player, onControl: onControl, onDismiss: onDismiss))
+            playerCover(size: artworkSize)
                 .frame(maxWidth: .infinity)
 
             trackIdentity(alignment: alignment)
@@ -357,6 +496,18 @@ struct DulcetNowPlayingView: View {
 
             footer(alignment: alignment, showsQueueToggle: showsQueueToggle)
         }
+    }
+
+    private func playerCover(size: CGFloat) -> some View {
+        DulcetPlayerCover(
+            artwork: player.current.artwork,
+            size: size,
+            isPlaying: player.isPlaying,
+            // Reduce Motion keeps the cover still: the play state is carried by the control.
+            scale: player.isPlaying || presentation == .destination || reduceMotion
+                ? 1 : DulcetPlayerCover.pausedScale
+        )
+        .modifier(DulcetArtworkSwipes(player: player, onControl: onControl, onDismiss: onDismiss))
     }
 
     private func trackIdentity(alignment: HorizontalAlignment) -> some View {
@@ -410,6 +561,9 @@ struct DulcetNowPlayingView: View {
             ) {
                 onControl(player.isPlaying ? .pause : .play)
             }
+#if os(tvOS)
+            .focused($playPauseFocused)
+#endif
             Spacer(minLength: DulcetSpacing.xs)
             controlButton(
                 symbol: "forward.fill",
@@ -473,6 +627,13 @@ struct DulcetNowPlayingView: View {
     private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
         VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
 #if os(tvOS)
+            // The heart and lyrics sit under the transport, where Down from it lands.
+            HStack(spacing: DulcetSpacing.lg) {
+                ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
+                    footerControl(control)
+                }
+            }
+            .focusSection()
             // tvOS routes and sets volume with the remote and the TV, so it names the output.
             formatBadge
             Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
@@ -485,23 +646,8 @@ struct DulcetNowPlayingView: View {
             HStack(spacing: DulcetSpacing.sm) {
                 formatBadge
                 Spacer(minLength: 0)
-                DulcetAirPlayRoutePicker(tint: .primary)
-                lyricsToggle
-                if showsQueueToggle {
-                    Button {
-                        withAnimation(reduceMotion ? nil : .snappy) {
-                            showingQueue.toggle()
-                            if showingQueue { showingLyrics = false }
-                        }
-                    } label: {
-                        Image(systemName: showingQueue ? "list.bullet.circle.fill" : "list.bullet")
-                            .font(.title3)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .dulcetMediaButtonStyle()
-                    .accessibilityLabel(showingQueue ? DulcetStrings.hideUpNext : DulcetStrings.showUpNext)
-                    .accessibilityIdentifier("dulcet.now-playing.up-next")
+                ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
+                    footerControl(control)
                 }
             }
 #endif

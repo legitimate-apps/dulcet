@@ -67,6 +67,12 @@ struct DulcetLyricsPanel: View {
                             .font(.title3.weight(.semibold))
                             .dulcetForeground(.primaryTextOnWindow)
                             .frame(maxWidth: .infinity, alignment: .leading)
+#if os(tvOS)
+                            // A television scrolls only by moving focus, and plain lyrics have
+                            // no current line to follow: each line takes focus, so Up and Down
+                            // read through them.
+                            .focusable()
+#endif
                             .accessibilityIdentifier("dulcet.lyrics.line")
                     }
                 }

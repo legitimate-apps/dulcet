@@ -164,6 +164,66 @@ public struct DulcetCaptureView: View {
 }
 #endif
 
+/// Where remote focus goes on Apple TV when a section arrives without the person choosing it,
+/// until the person moves focus themselves.
+///
+/// Two arrivals leave focus with nowhere to be but the section bar. At launch the bar is the
+/// first focusable row on screen, so the focus engine's own first pass puts focus on the control
+/// for the section already showing, where Select does nothing. And when the app changes section
+/// for itself -- activating a search result opens Now Playing -- the control that held focus goes
+/// away, and the engine again falls back to the bar. In both, the arriving section's own control
+/// claims focus instead. The content can arrive after the engine's pass, so the claim stays open
+/// while focus is only where the engine put it, and closes as soon as the person moves focus:
+/// along the bar, down out of it, with the exit button, or by choosing a section on the bar,
+/// which keeps focus on the bar where they put it.
+///
+/// Platform-neutral so its decisions are testable off the device; only Apple TV installs one.
+@MainActor
+@Observable
+final class DulcetArrivalFocus {
+    /// True while an arriving section's control should take focus: from launch, and again after
+    /// the app changed section for itself, until a claim lands or the person moves focus.
+    private(set) var pending = true
+    /// Whether the section bar holds focus, as the shell last reported it.
+    private(set) var barHoldsFocus = false
+    /// The section the person last chose on the bar, until the change it asks for arrives.
+    private var chosenOnBar: DulcetSidebarDestination?
+
+    /// True while a section's own control should take focus from the bar.
+    var wantsSectionFocus: Bool { pending && barHoldsFocus }
+
+    /// The section bar's focused control changed. Focus arriving on the bar from nowhere is the
+    /// focus engine placing it; focus leaving a bar control -- to another bar control or into a
+    /// section -- is a move, by the person or by a claim that already landed.
+    func sectionBarFocusChanged(wasOnBar: Bool, isOnBar: Bool) {
+        if wasOnBar { pending = false }
+        barHoldsFocus = isOnBar
+    }
+
+    /// A section's own control reports that it now holds focus.
+    func sectionControlFocused() {
+        pending = false
+    }
+
+    /// The person chose a section on the bar; its arrival leaves focus on the bar.
+    func sectionChosenOnBar(_ destination: DulcetSidebarDestination) {
+        pending = false
+        chosenOnBar = destination
+    }
+
+    /// The section showing changed. One the person chose on the bar settles focus there; any
+    /// other change is the app's own, and the arriving section is asked to take focus.
+    func sectionChanged(to destination: DulcetSidebarDestination) {
+        pending = destination != chosenOnBar
+        chosenOnBar = nil
+    }
+
+    /// The person pressed the exit button.
+    func settle() {
+        pending = false
+    }
+}
+
 #if os(tvOS)
 /// Top-level section navigation for the remote.
 ///
@@ -195,6 +255,7 @@ public struct DulcetCaptureView: View {
 private struct DulcetTVSectionNavigation: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedSection: DulcetSidebarDestination?
+    @State private var arrivalFocus = DulcetArrivalFocus()
 
     var body: some View {
         let selected = store.selectedDestination
@@ -207,12 +268,22 @@ private struct DulcetTVSectionNavigation: View {
                     }
             }
         }
+        .environment(arrivalFocus)
+        .onChange(of: focusedSection) { previous, current in
+            arrivalFocus.sectionBarFocusChanged(wasOnBar: previous != nil, isOnBar: current != nil)
+        }
+        .onChange(of: store.selectedDestination) { _, destination in
+            arrivalFocus.sectionChanged(to: destination)
+        }
         // The exit button is how a person leaves a surface on this platform, so it returns focus
         // to the bar -- deterministically, rather than relying on the focus engine to find a
         // control several scroll views away. From the bar itself it stays unhandled, because
         // there the platform's own meaning is to leave the app, and consuming it would strand
         // the person inside.
-        .dulcetOnExitCommand(perform: focusedSection == nil ? { focusedSection = selected } : nil)
+        .dulcetOnExitCommand(perform: focusedSection == nil ? {
+            arrivalFocus.settle()
+            focusedSection = selected
+        } : nil)
     }
 
     /// The reader's Library pages; empty anywhere else, so another section is never pushed on.
@@ -232,6 +303,7 @@ private struct DulcetTVSectionNavigation: View {
         HStack(spacing: DulcetSpacing.xs) {
             ForEach(DulcetSidebarDestination.allCases) { destination in
                 Button {
+                    arrivalFocus.sectionChosenOnBar(destination)
                     store.selectDestination(destination)
                 } label: {
                     Label(destination.windowTitle, systemImage: Self.symbolName(for: destination))
@@ -985,16 +1057,12 @@ private struct DulcetStateSurface: View {
                     onEdit: store.editQueue
                 )
 #if os(macOS)
-                // The heart for what is playing, in the window's toolbar (§16.20).
+                // The heart for what is playing, in the window's toolbar (§16.20). The other Apple
+                // platforms draw the same heart in the player's own controls.
                 .toolbar {
-                    if let session = store.librarySession, session.reader != nil,
-                       player.current.id.providerInstanceID == session.account?.providerInstanceID {
+                    if store.nowPlayingFavourite(for: player.current) != nil {
                         ToolbarItem(placement: .primaryAction) {
-                            DulcetFavouriteButton(
-                                target: DulcetFavouriteTarget(kind: .track, id: player.current.id),
-                                published: session.knownFavourites[player.current.id] ?? player.current.isFavorite,
-                                title: player.current.title
-                            )
+                            DulcetNowPlayingFavouriteButton(track: player.current)
                         }
                     }
                 }

@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 
 final class DulcetTVUITests: XCTestCase {
@@ -415,6 +416,235 @@ final class DulcetTVUITests: XCTestCase {
             "A nil inner onExitCommand on the idle Connection surface must fall through to "
                 + "DulcetTVSectionNavigation's outer handler and return focus to the bar: " + app.debugDescription
         )
+    }
+
+    /// Now Playing on Apple TV offers the playing track's heart and its lyrics, both reached and
+    /// pressed with the remote alone (spec §16.20, §18.4). The account is DEBUG setup; the track
+    /// is reached through the section bar and Search, typed and activated by remote. Down from
+    /// the transport reaches the heart; Select fills it at once and the star reaches the server
+    /// for that track, and Select again takes it off, so the server is left as it was found.
+    /// Right reaches Lyrics; Select shows the track's synced English layer and a line lights as
+    /// media time moves, with focus kept on the toggle so the same press hides them again.
+    @MainActor
+    func testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(
+            ProcessInfo.processInfo.environment["SIMULATOR_UDID"],
+            "This control requires a tvOS simulator"
+        )
+        let environment = ProcessInfo.processInfo.environment
+        let serverURL = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"], "Missing disposable server URL")
+        let username = try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"], "Missing disposable username")
+        let password = try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"], "Missing disposable password")
+        XCTAssertEqual(serverURL, "http://127.0.0.1:4533", "Only the disposable loopback fixture is allowed")
+        XCTAssertFalse(username.isEmpty)
+        XCTAssertFalse(password.isEmpty)
+        let server = (url: serverURL, username: username, password: password)
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        let query = "Twenty Nine"
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", username,
+            "-dulcet-debug-account-password", password,
+        ]
+        app.launch()
+        _ = try awaitLaunchAndLiveConnection(app)
+
+        // Reach the track by remote: Search through the section bar, the query typed, Done.
+        XCTAssertTrue(selectSection(app, "search"), "The section bar must reach Search: " + app.debugDescription)
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 40), "Search must present its field: " + app.debugDescription)
+        for _ in 0..<4 where !field.hasFocus {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(field.hasFocus, "Search field must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        field.typeText(query)
+        let done = app.buttons["done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !done.hasFocus {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(done.hasFocus, "Keyboard Done must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        // The app's own field, once the keyboard has handed the text over (see the search control
+        // above for why the in-keyboard value certifies nothing).
+        let settle = ContinuousClock.now.advanced(by: .seconds(10))
+        while field.value as? String != query, ContinuousClock.now < settle {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(field.value as? String, query, "The typed query must reach the app's field")
+
+        let rowPrefix = "\(track), "
+        var trackRow: XCUIElement?
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        repeat {
+            trackRow = (0..<8).lazy
+                .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
+                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Track") }
+            if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
+        } while trackRow == nil && ContinuousClock.now < rowsDeadline
+        let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
+        for _ in 0..<10 where !(row.exists && row.hasFocus) {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
+        XCTAssertEqual(title.label, track, "Now Playing must show the track this proof stars")
+
+        // The heart: Down from the transport to the row under it, then Left if Down landed on
+        // Lyrics beside it. Bounded and re-checked after every press, so a heart the remote
+        // cannot reach fails here, with the presses it took in the pass line when it does not.
+        let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
+        let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        XCTAssertTrue(heart.waitForExistence(timeout: 10), "Now Playing must offer the heart: " + app.debugDescription)
+        var heartPresses: [String] = []
+        while !heart.hasFocus, heartPresses.count < 8 {
+            let direction: XCUIRemote.Button = lyrics.exists && lyrics.hasFocus ? .left : .down
+            XCUIRemote.shared.press(direction)
+            heartPresses.append(direction == .left ? "left" : "down")
+        }
+        XCTAssertTrue(heart.hasFocus, "The heart must take remote focus: " + app.debugDescription)
+        if heart.label == "Remove Favorite" {
+            // An earlier run's favourite, cleared first so the change below is observable.
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5))
+            XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: false, timeout: 30), false)
+        }
+        XCTAssertEqual(readServerSongStarred(track, album: album, server: server), false,
+            "The control: the server must not already hold the favourite this proof makes")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "The heart must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: true, timeout: 30), true,
+            "The star must reach the server for the playing track")
+        XCTAssertEqual(title.label, track, "Starring must not change what is playing")
+        XCTAssertTrue(heart.hasFocus, "The press must leave focus on the heart: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: false, timeout: 30), false,
+            "Removing the favourite must reach the server")
+
+        // Lyrics: beside the heart.
+        XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
+        for _ in 0..<3 where !lyrics.hasFocus {
+            XCUIRemote.shared.press(.right)
+        }
+        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus beside the heart: " + app.debugDescription)
+        XCTAssertEqual(lyrics.label, "Show Lyrics")
+        XCUIRemote.shared.press(.select)
+        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "The lyrics panel must open: " + app.debugDescription)
+        let shown = app.staticTexts.matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
+        XCTAssertTrue(shown.waitForExistence(timeout: 20), "The panel must show the English layer: " + app.debugDescription)
+        // The control: a lit line proves the cursor follows media time, not only that text was drawn.
+        let current = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
+        let lit = current.exists ? current.label : "<none>"
+        XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
+        let toggleKeptFocus = ContinuousClock.now.advanced(by: .seconds(3))
+        while !(lyrics.exists && lyrics.hasFocus), ContinuousClock.now < toggleKeptFocus {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertTrue(lyrics.hasFocus, "Showing lyrics must leave focus on the toggle: " + app.debugDescription)
+        XCTAssertEqual(lyrics.label, "Hide Lyrics")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "The same press must hide the lyrics")
+        print("DULCET TV NOW PLAYING PASS track=\(track.debugDescription) heart-presses=\(heartPresses.joined(separator: ","))"
+            + " heart=remote-select starred=true->false lyrics=remote-select lit=\(lit.debugDescription)"
+            + " setup=debug-account-only")
+    }
+
+    @MainActor
+    private func waitForLabel(_ label: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while element.label != label, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return element.label == label
+    }
+
+    /// Whether the server holds the named track of `album` as a favourite, read over
+    /// `/rest/search3` with the disposable account. Nil, with the reason printed -- never the
+    /// URL, which carries a token -- unless exactly one song matches.
+    private func readServerSongStarred(
+        _ track: String,
+        album: String,
+        server: (url: String, username: String, password: String)
+    ) -> Bool? {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((server.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: server.url) else { return nil }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/search3"
+        components.queryItems = [
+            URLQueryItem(name: "u", value: server.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+            URLQueryItem(name: "f", value: "json"),
+            URLQueryItem(name: "query", value: track),
+            URLQueryItem(name: "songCount", value: "20"),
+            URLQueryItem(name: "albumCount", value: "0"),
+            URLQueryItem(name: "artistCount", value: "0"),
+        ]
+        guard let url = components.url else { return nil }
+        final class Outcome: @unchecked Sendable { var data: Data? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 { outcome.data = data }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            print("DULCET REST search3 timed out")
+            return nil
+        }
+        guard let data = outcome.data,
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let envelope = document["subsonic-response"] as? [String: Any],
+              envelope["status"] as? String == "ok" else {
+            print("DULCET REST search3 did not return an ok envelope")
+            return nil
+        }
+        let songs = (envelope["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let matches = songs.filter { $0["title"] as? String == track && $0["album"] as? String == album }
+        guard matches.count == 1, let match = matches.first else {
+            print("DULCET REST search3 matched \(matches.count) songs named \(track) on \(album); exactly one is required")
+            return nil
+        }
+        // Subsonic carries `starred` only on a favourite.
+        return match["starred"] != nil
+    }
+
+    /// Polls until the server's favourite state for the track is `expected` or the timeout passes.
+    private func awaitServerSongStarred(
+        _ track: String,
+        album: String,
+        server: (url: String, username: String, password: String),
+        expected: Bool,
+        timeout: TimeInterval
+    ) -> Bool? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = readServerSongStarred(track, album: album, server: server)
+        while observed != nil, observed != expected, Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+            observed = readServerSongStarred(track, album: album, server: server)
+        }
+        return observed
     }
 
     /// The launch, then the injected account's live connection, confirmed where a person confirms

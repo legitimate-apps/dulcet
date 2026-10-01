@@ -775,7 +775,46 @@
       "gates": ["account:authenticated"],
       "conformance": ["CONF-84"],
       "platforms": {
-        "macos": {"status": "planned"}, "ios": {"status": "planned"}, "ipados": {"status": "planned"}, "tvos": {"status": "planned"},
+        "macos": {
+          "status": "partial",
+          "evidence": [
+            {"observes": "the playing track's heart, which the Mac draws in the window's toolbar, goes through the rows' session: it changes with the press before any request, a row of the same track shows the change, the send names that track, and a held then saved outcome reads the same as on the row", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetKitTests/theNowPlayingHeartIsTheRowsHeartPendingHeldAndSaved"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "apple-rating-ui", "reason": "The Mac app offers a favourite and no rating at all, so CONF-84's rating overlay cannot be driven through the app until a rating control exists; CONF-84 is exercised by core tests alone on Apple."},
+          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. No test drives the Mac app's heart against the server, and there is no rating control, so the cell is partial."
+        },
+        "ios": {
+          "status": "partial",
+          "evidence": [
+            {"observes": "on iPhone, against the disposable server, Now Playing's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPhone"},
+            {"observes": "the heart is offered in the iPhone and iPad player's footer only while the reader holds the playing track's account, beside AirPlay, Lyrics and Up Next", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetKitIOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "apple-rating-ui", "reason": "The iPhone app offers a favourite and no rating at all, so CONF-84's rating overlay cannot be driven through the app until a rating control exists; CONF-84 is exercised by core tests alone on Apple."},
+          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. Album, artist and row hearts are not driven by a wired UI proof, and there is no rating control, so the cell is partial. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main."
+        },
+        "ipados": {
+          "status": "partial",
+          "evidence": [
+            {"observes": "on iPad, against the disposable server, the full-screen player's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "apple-rating-ui", "reason": "The iPad app offers a favourite and no rating at all, so CONF-84's rating overlay cannot be driven through the app until a rating control exists; CONF-84 is exercised by core tests alone on Apple."},
+          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. Album, artist and row hearts are not driven by a wired UI proof, and there is no rating control, so the cell is partial. Resolved on main, as the iPhone proof is."
+        },
+        "tvos": {
+          "status": "partial",
+          "evidence": [
+            {"observes": "on Apple TV, driven by the remote against the disposable server, Down from the transport reaches the playing track's heart, Select fills it at once and the star reaches the server for that track, and Select again empties it and unstars the track, with focus kept on the heart", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote"},
+            {"observes": "the Apple TV player's footer offers the heart then Lyrics, and no heart while the reader does not hold the playing track's account", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetKitTVOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"}
+          ],
+          "promotion_condition": {"status": "blocked", "blocked_on": "apple-rating-ui", "reason": "The Apple TV app offers a favourite and no rating at all, so CONF-84's rating overlay cannot be driven through the app until a rating control exists; CONF-84 is exercised by core tests alone on Apple."},
+          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server. It is the rows' heart through the same session. Album, artist and row hearts are not driven by a wired UI proof, and there is no rating control, so the cell is partial. Resolved on main."
+        },
         "android": {
           "status": "partial",
           "evidence": [
@@ -1471,8 +1510,27 @@
           "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad Now Playing shows lyrics beside the player on a regular width; its model runs as DulcetKit tests on an iPad simulator. No test drives the iPad app's lyrics panel; an iPhone run does not evidence iPad layout, so the cell stays partial."
         },
         "tvos": {
-          "status": "planned",
-          "reason": "tvOS Now Playing has no lyrics control yet."
+          "status": "partial",
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-lyrics-states-ui-proof",
+            "reason": "The Apple TV proof observes synced lyrics lighting a line. Plain lyrics (each line focusable, so the remote reads through them), no lyrics and a failed read are not rendered through the app on Apple TV; promotion needs them driven by remote. No such test exists yet, so none can be named."
+          },
+          "evidence": [
+            {
+              "conformance": "CONF-42",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"
+            },
+            {
+              "observes": "on Apple TV, driven by the remote, Lyrics is reached beside the heart under the transport, Select shows the server's English layer of a track's embedded synced lyrics and a line lights as the track plays, and focus stays on the toggle so the same press hides them",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote"
+            }
+          ],
+          "reason": "apple-ci executes CONF-42 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: Lyrics opens the same lyrics panel and model the other Apple players use, one column up to 1,200 points wide with the lit line following media time, and a line lights. Plain lyrics, no lyrics and a failed read are not rendered through the app on Apple TV, so the cell stays partial. Readability at television distance is a layout choice, not a measurement. Resolved on main."
         },
         "android": {
           "status": "partial",
