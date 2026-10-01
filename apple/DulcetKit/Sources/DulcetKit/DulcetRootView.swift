@@ -1097,25 +1097,25 @@ private struct DulcetStateSurface: View {
                 DulcetSavedAccountLibraryView(serverName: serverName) {
                     store.submitAccountConnection()
                 }
-                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             } else {
                 DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
-                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             }
         case .emptyLibraryNoAccount:
             DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
-                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         case .emptyLibraryConnected:
             DulcetEmptyLibraryView(connected: true)
-                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         case .libraryLoading:
             DulcetLibraryLoadingView()
-                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         case .libraryError:
             DulcetLibraryErrorView(failure: snapshot.libraryFailure) {
                 store.selectDestination(.library)
             }
-            .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+            .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         // One case, so the grid under a pushed page is the same view as the grid itself: split
         // across two cases it was rebuilt on every push, and back returned to its top.
         case .libraryBrowse,
@@ -1139,7 +1139,7 @@ private struct DulcetStateSurface: View {
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)
-                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             }
         case .artistDetail:
             if let artist = snapshot.selectedArtist {
@@ -1150,7 +1150,7 @@ private struct DulcetStateSurface: View {
                 )
             } else {
                 DulcetEmptyLibraryView(connected: true)
-                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                    .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             }
         case .offlineMetadataOnly:
             DulcetOfflineLibraryView(
@@ -1162,10 +1162,10 @@ private struct DulcetStateSurface: View {
                     store.activateTrack(albumID: album.id, trackID: track.id)
                 }
             )
-                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         default:
             DulcetEmptyLibraryView(connected: snapshot.accountConnected)
-                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+                .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         }
     }
 }
@@ -1179,7 +1179,7 @@ private extension DulcetStateSurface {
             onPlayAll: { store.playLibrary(shuffle: false) },
             onShuffle: { store.playLibrary(shuffle: true) }
         )
-        .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle)
+        .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
     }
 }
 

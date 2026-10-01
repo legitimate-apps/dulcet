@@ -252,7 +252,7 @@ struct DulcetSearchView: View {
                             .padding(DulcetSpacing.sm)
                             .contentShape(Rectangle())
                         }
-                        .dulcetMediaButtonStyle()
+                        .dulcetRowButtonStyle()
                         // A button flattens its children into one accessibility element, so the
                         // stable rank identifier lives on the button here; on macOS it stays on
                         // the row's title text inside the Table.

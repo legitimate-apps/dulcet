@@ -690,7 +690,7 @@ struct DulcetTrackRow: View {
             Button(action: performActivation) {
                 rowContent
             }
-            .dulcetMediaButtonStyle()
+            .dulcetRowButtonStyle()
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityHint(DulcetStrings.play)

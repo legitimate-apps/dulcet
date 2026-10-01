@@ -579,7 +579,7 @@ struct DulcetReaderListRow: View {
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
-            .dulcetMediaButtonStyle()
+            .dulcetRowButtonStyle()
             .accessibilityElement(children: .combine)
             .accessibilityLabel(subtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, subtitle))
             .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
@@ -625,7 +625,7 @@ struct DulcetReaderTrackRow: View {
                     } label: {
                         row(track)
                     }
-                    .dulcetMediaButtonStyle()
+                    .dulcetRowButtonStyle()
                     .accessibilityIdentifier("dulcet.reader.track.unavailable")
                 } else {
                     row(track)
@@ -841,6 +841,11 @@ struct DulcetReaderListBody<Rows: View>: View {
 /// A scrolling page with the library's insets.
 struct DulcetReaderPage<Content: View>: View {
     let title: String
+    /// Apple TV's navigation bar floats its copy of the title over the content, dimmed, under
+    /// the app's own section bar. A section root keeps it (tests read the launch section from
+    /// it); a pushed page -- an album, a playlist -- already names itself in its own header, and
+    /// hides it.
+    var keepsTVNavigationBar = true
     @ViewBuilder let content: (CGFloat) -> Content
 
     var body: some View {
@@ -856,7 +861,7 @@ struct DulcetReaderPage<Content: View>: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
-        .dulcetNavigationTitle(title)
+        .dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar)
     }
 }
 
@@ -1147,10 +1152,12 @@ struct DulcetReaderAlbumGridView: View {
     let type: DulcetAlbumListType
     let title: String
     var sort: Binding<String>?
+    /// The Albums section's root keeps Apple TV's navigation bar; a pushed "See All" hides it.
+    var keepsTVNavigationBar = true
 
     var body: some View {
         DulcetReaderScreen(query: .albums(type)) { model in
-            DulcetReaderPage(title: title) { width in
+            DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar) { width in
                 if let sort {
                     Picker(DulcetStrings.readerSortBy, selection: sort) {
                         ForEach(DulcetAlbumListType.sortChoices) { choice in
@@ -1265,7 +1272,7 @@ struct DulcetReaderRouteView: View {
         case let .playlist(id): DulcetPlaylistPage(id: id)
         case let .artist(id): DulcetReaderArtistPage(id: id)
         case let .genre(name): DulcetReaderTrackListPage(query: .songsByGenre(name), kind: .genre, id: nil, genreName: name)
-        case let .albumList(type): DulcetReaderAlbumGridView(type: type, title: type.title)
+        case let .albumList(type): DulcetReaderAlbumGridView(type: type, title: type.title, keepsTVNavigationBar: false)
         }
     }
 }
@@ -1281,7 +1288,7 @@ struct DulcetReaderTrackListPage: View {
 
     var body: some View {
         DulcetReaderScreen(query: query) { model in
-            DulcetReaderPage(title: title(model.window)) { width in
+            DulcetReaderPage(title: title(model.window), keepsTVNavigationBar: false) { width in
                 if let window = model.window {
                     header(window, width: width)
                     let subject: DulcetReaderCopy.Subject = window.header == nil ? (kind == .album ? .album : .list) : .albumTracks
@@ -1450,7 +1457,7 @@ struct DulcetReaderArtistPage: View {
 
     var body: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID)) { model in
-            DulcetReaderPage(title: model.window?.header?.displayTitle ?? "") { width in
+            DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false) { width in
                 if let window = model.window {
                     if let header = window.header {
                         HStack(alignment: .center, spacing: DulcetSpacing.md) {

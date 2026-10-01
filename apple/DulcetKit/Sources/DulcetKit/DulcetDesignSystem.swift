@@ -263,15 +263,23 @@ extension View {
 #endif
 
     /// A surface's navigation title. On Apple TV the section bar across the top already names
-    /// the section, and the navigation stack's large title floats over the content's top edge,
-    /// dimmed (observed: "Connection" across the server address and Sign Out, a second "Now
-    /// Playing" above the player's own). The title stays set -- the navigation bar keeps it, for
-    /// focus and for tests -- but drawn inline, off the content.
+    /// the section, and the navigation bar floats its copy of the title over the content's top
+    /// edge, dimmed, while reserving a tall band under itself (observed: a second Now Playing
+    /// above the player, Connection across the server address and Sign Out). So a surface whose
+    /// own content carries its name hides the bar; the title stays set on it. A launch surface
+    /// keeps its bar -- tests read the launch section from the bar's identifier. Hiding needs
+    /// tvOS 18; before it, the inline title is the smaller of the two.
     @ViewBuilder
-    func dulcetNavigationTitle(_ title: String) -> some View {
+    func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false) -> some View {
 #if os(tvOS)
-        navigationTitle(title)
-            .toolbarTitleDisplayMode(.inline)
+        if #available(tvOS 18.0, *) {
+            navigationTitle(title)
+                .toolbarTitleDisplayMode(.inline)
+                .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
+        } else {
+            navigationTitle(title)
+                .toolbarTitleDisplayMode(.inline)
+        }
 #else
         navigationTitle(title)
 #endif
@@ -304,6 +312,18 @@ extension View {
 #else
         buttonStyle(.plain)
             .dulcetHoverEffect(hover)
+#endif
+    }
+
+    /// A list row's button style. On a television the borderless style draws nothing behind a
+    /// custom label, so a focused row read exactly like its neighbours (observed on Search);
+    /// the focused row lifts on the control fill, as a focused shelf tile does.
+    @ViewBuilder
+    func dulcetRowButtonStyle() -> some View {
+#if os(tvOS)
+        buttonStyle(DulcetTVFocusedRowButtonStyle())
+#else
+        dulcetMediaButtonStyle()
 #endif
     }
 
@@ -547,5 +567,25 @@ enum DulcetHoverEffect {
     /// Artwork rising toward the pointer, for a card that is mostly image.
     case lift
 }
+
+#if os(tvOS)
+/// How a remote-focused row reads: the system's borderless style draws no backdrop behind a
+/// custom label, so the focused row lifts on the control fill instead, as a focused shelf tile
+/// does, with the platform's own focus timing.
+struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                Color.dulcetControl.opacity(isFocused ? 1 : 0),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .scaleEffect(isFocused ? 1.02 : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+}
+#endif
 
 #endif
