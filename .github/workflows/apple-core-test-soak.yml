@@ -1,0 +1,193 @@
+name: Apple core-test soak
+
+# Runs one filtered set of Kotlin/Native core tests (default :core:macosArm64Test) many times on the
+# macOS image apple-ci uses, and counts every repetition from its JUnit XML. Timing-dependent core
+# tests (URLSession delegates, stream completion) have passed locally and on one apple-ci run and then
+# failed on the next; one run is one sample, and this workflow draws many. `cpu_load` starts that many
+# busy loops for the whole soak, because apple-ci runs these tests while it links every framework.
+#
+# workflow_dispatch only: it never runs automatically, and it is an instrument, never a gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Gradle test task to repeat
+        required: true
+        default: ':core:macosArm64Test'
+        type: string
+      tests:
+        description: Gradle --tests filter, e.g. *DarwinEstimatedLengthBodyTest (required; must match at least one test)
+        required: true
+        type: string
+      repeat:
+        # A string, not a number: workflow_dispatch inputs reach the API as strings, and a JSON
+        # number in a dispatch request is rejected. Validated as an integer below.
+        description: Repetitions (1 to 100)
+        required: true
+        default: '20'
+        type: string
+      cpu_load:
+        description: Busy loops to run alongside the tests for the whole soak (0 to 8)
+        required: true
+        default: '0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apple-core-test-soak:
+    name: apple-core-test-soak
+    # The image apple-ci's conformance job runs on, so a soak samples the host that failed.
+    runs-on: macos-26
+    # The loop stops starting repetitions after SOAK_BUDGET_SECONDS and reports what it drew, so a
+    # slow class yields a partial (failing) result instead of a timed-out job that uploads nothing.
+    timeout-minutes: 120
+    env:
+      SOAK_TASK: ${{ inputs.task }}
+      SOAK_TESTS: ${{ inputs.tests }}
+      SOAK_REPEAT: ${{ inputs.repeat }}
+      SOAK_CPU_LOAD: ${{ inputs.cpu_load }}
+      SOAK_BUDGET_SECONDS: "6000"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate the requested soak
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$SOAK_TASK" =~ ^(:[A-Za-z0-9_-]+)+$ ]]; then
+            echo "SOAK ERROR task must be a Gradle task path such as :core:macosArm64Test: $SOAK_TASK"
+            exit 2
+          fi
+          if [[ -z "${SOAK_TESTS//[[:space:]]/}" ]]; then
+            echo "SOAK ERROR tests filter is required"
+            exit 2
+          fi
+          if ! [[ "$SOAK_REPEAT" =~ ^[0-9]+$ ]] || (( SOAK_REPEAT < 1 || SOAK_REPEAT > 100 )); then
+            echo "SOAK ERROR repeat must be an integer from 1 to 100: $SOAK_REPEAT"
+            exit 2
+          fi
+          if ! [[ "$SOAK_CPU_LOAD" =~ ^[0-9]+$ ]] || (( SOAK_CPU_LOAD > 8 )); then
+            echo "SOAK ERROR cpu_load must be an integer from 0 to 8: $SOAK_CPU_LOAD"
+            exit 2
+          fi
+          echo "SOAK PLAN task=$SOAK_TASK tests=$SOAK_TESTS repeat=$SOAK_REPEAT cpu_load=$SOAK_CPU_LOAD"
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Repeat the filtered tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          # :core:macosArm64Test -> core/build/test-results/macosArm64Test
+          project_path="${SOAK_TASK%:*}"
+          task_name="${SOAK_TASK##*:}"
+          project_dir="${project_path#:}"
+          project_dir="${project_dir//://}"
+          results_dir="$project_dir/build/test-results/$task_name"
+          failures_dir="$RUNNER_TEMP/apple-core-test-soak-failures"
+          mkdir -p "$failures_dir"
+
+          # Build once outside the loop so every repetition measures the tests, not the link.
+          ./gradlew --no-build-cache "$SOAK_TASK" --tests "$SOAK_TESTS" > "$RUNNER_TEMP/soak-warmup.log" 2>&1 || true
+          load_pids=()
+          for ((n = 0; n < SOAK_CPU_LOAD; n++)); do
+            ( while :; do :; done ) &
+            load_pids+=("$!")
+          done
+          trap 'for p in "${load_pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done' EXIT
+
+          passed=0
+          failed=0
+          started=$SECONDS
+          for ((iteration = 1; iteration <= SOAK_REPEAT; iteration++)); do
+            if (( SECONDS - started > SOAK_BUDGET_SECONDS )); then
+              echo "SOAK BUDGET EXHAUSTED after $((iteration - 1)) of $SOAK_REPEAT repetitions"
+              break
+            fi
+            label="$(printf '%03d' "$iteration")"
+            # Deleting the results first is what makes every count below this repetition's own:
+            # any XML present afterwards was written by this execution. --rerun forces the task to
+            # execute, and --no-build-cache stops its outputs being restored from an earlier one.
+            rm -rf "$results_dir"
+            ./gradlew --max-workers=2 --no-build-cache "$SOAK_TASK" --tests "$SOAK_TESTS" --rerun \
+              > "$RUNNER_TEMP/soak-$label.log" 2>&1
+            gradle_exit=$?
+            counts="$(python3 - "$results_dir" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          tests = failures = skipped = 0
+          names = []
+          for report in sorted(root.glob("TEST-*.xml")) if root.is_dir() else []:
+              suite = ET.parse(report).getroot()
+              for case in suite.iter("testcase"):
+                  tests += 1
+                  if case.find("failure") is not None or case.find("error") is not None:
+                      failures += 1
+                      names.append(f"{case.get('classname')}.{case.get('name')}")
+                  elif case.find("skipped") is not None:
+                      skipped += 1
+          print(tests, failures, skipped, ",".join(names) or "-")
+          PY
+            )" || counts="0 0 0 -"
+            read -r tests failures skipped names <<< "$counts"
+            executed=$((tests - skipped))
+            echo "SOAK ITERATION $label gradle_exit=$gradle_exit tests=$tests failed=$failures skipped=$skipped failing=$names"
+            if (( executed == 0 )); then
+              # A filter matching nothing, or a build that never reached the tests, is not a pass.
+              tail -n 60 "$RUNNER_TEMP/soak-$label.log"
+              echo "SOAK ERROR repetition $label executed zero tests; the filter matched nothing or the build failed first"
+              echo "SOAK RESULT passed=$passed failed=$failed"
+              exit 2
+            fi
+            if (( failures > 0 )); then
+              failed=$((failed + 1))
+              mkdir -p "$failures_dir/repetition-$label"
+              cp "$results_dir"/TEST-*.xml "$failures_dir/repetition-$label/"
+              cp "$RUNNER_TEMP/soak-$label.log" "$failures_dir/repetition-$label/gradle.log"
+            elif (( gradle_exit != 0 )); then
+              # Every test passed and Gradle still failed: the instrument broke, not a test.
+              tail -n 60 "$RUNNER_TEMP/soak-$label.log"
+              echo "SOAK ERROR repetition $label: Gradle exited $gradle_exit with no failing testcase"
+              echo "SOAK RESULT passed=$passed failed=$failed"
+              exit 2
+            else
+              passed=$((passed + 1))
+            fi
+          done
+
+          echo "SOAK RESULT passed=$passed failed=$failed"
+          {
+            echo "### Apple core-test soak"
+            echo "\`$SOAK_TASK --tests $SOAK_TESTS\`: passed=$passed failed=$failed of $SOAK_REPEAT requested, cpu_load=$SOAK_CPU_LOAD"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( failed > 0 )); then
+            exit 1
+          fi
+          if (( passed < SOAK_REPEAT )); then
+            echo "SOAK ERROR only $passed of $SOAK_REPEAT repetitions ran inside the budget"
+            exit 1
+          fi
+      - name: Upload failing repetitions
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apple-core-test-soak-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/apple-core-test-soak-failures
+          if-no-files-found: ignore
+          retention-days: 14
