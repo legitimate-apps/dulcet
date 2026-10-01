@@ -13,6 +13,7 @@ import Testing
 @MainActor
 private final class HeartReader: DulcetLibraryReading {
     private(set) var favourites: [(DulcetFavouriteTarget, Bool)] = []
+    private(set) var ratings: [(DulcetFavouriteTarget, Int)] = []
     var outcomeHandler: (@MainActor (DulcetFavouriteOutcome) -> Void)?
 
     func subscribeWindow(
@@ -26,6 +27,11 @@ private final class HeartReader: DulcetLibraryReading {
 
     func setFavourite(_ target: DulcetFavouriteTarget, favourite: Bool) -> Bool {
         favourites.append((target, favourite))
+        return true
+    }
+
+    func setRating(_ target: DulcetFavouriteTarget, rating: Int) -> Bool {
+        ratings.append((target, rating))
         return true
     }
 
@@ -120,7 +126,7 @@ private func account(_ providerInstanceID: String) -> DulcetLibraryReaderAccount
 
 // MARK: - The footer
 
-@Test
+@Test @MainActor
 func theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform() {
     typealias Player = DulcetNowPlayingView
     let offered = Player.footerControls(offersFavourite: true, showsQueueToggle: true)
@@ -128,18 +134,39 @@ func theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform() {
     #expect(offered.contains(.lyrics), "every Apple player offers lyrics")
     #expect(withheld.contains(.lyrics), "lyrics do not depend on the reader")
     #expect(!withheld.contains(.favourite), "no heart while the reader does not hold the track's account")
+    #expect(!withheld.contains(.rating), "no stars while the reader does not hold the track's account")
 #if os(macOS)
-    // The Mac's heart is in the window's toolbar, so the footer never draws a second one.
+    // The Mac's heart and stars are in the window's toolbar, so the footer never draws a second set.
     #expect(offered == [.airPlay, .lyrics, .upNext])
     #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.airPlay, .lyrics])
 #elseif os(tvOS)
-    // Apple TV: the heart, then lyrics, both reached by focus under the transport.
-    #expect(offered == [.favourite, .lyrics])
+    // Apple TV: the heart, its stars beside it, then lyrics, all reached by focus under the transport.
+    #expect(offered == [.favourite, .rating, .lyrics])
     #expect(withheld == [.lyrics])
 #else
-    #expect(offered == [.favourite, .airPlay, .lyrics, .upNext])
-    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.favourite, .airPlay, .lyrics])
+    #expect(offered == [.favourite, .rating, .airPlay, .lyrics, .upNext])
+    #expect(Player.footerControls(offersFavourite: true, showsQueueToggle: false) == [.favourite, .rating, .airPlay, .lyrics])
     #expect(withheld == [.airPlay, .lyrics, .upNext])
+#endif
+}
+
+@Test @MainActor
+func theNowPlayingStarsSitBesideTheHeartOnTheirOwnRowWhereAPhoneCannotFitThemAll() {
+    typealias Player = DulcetNowPlayingView
+    let offered = Player.footerControls(offersFavourite: true, showsQueueToggle: true)
+    // The heart and the stars are adjacent in every footer that draws them, heart first.
+    if let heart = offered.firstIndex(of: .favourite) {
+        #expect(offered.indices.contains(heart + 1) && offered[heart + 1] == .rating)
+    }
+    let rows = Player.footerRows(offered)
+#if os(iOS)
+    // Five 44-point stars, the heart and three 44-point controls do not fit a phone's width in one
+    // row, so the track's own marks take the first row and the rest keep the second.
+    #expect(rows == [[.favourite, .rating], [.airPlay, .lyrics, .upNext]])
+    #expect(Player.footerRows(Player.footerControls(offersFavourite: false, showsQueueToggle: true))
+        == [[.airPlay, .lyrics, .upNext]], "no empty marks row without a reader")
+#else
+    #expect(rows == [offered], "one row where it fits")
 #endif
 }
 
@@ -188,6 +215,20 @@ func nowPlayingOffersTheHeartOnlyWhileTheReaderHoldsThePlayingTracksAccount() th
     let favourite = try #require(store.nowPlayingFavourite(for: track))
     #expect(favourite.target == DulcetFavouriteTarget(kind: .track, id: track.id))
     #expect(favourite.published == track.isFavorite, "before any tap, the queue's own copy")
+
+    // The stars beside the heart are offered by exactly the same rule, so the two never part.
+    #expect(noSession.nowPlayingRating(for: track) == nil)
+    #expect(unopenedStore.nowPlayingRating(for: track) == nil)
+    #expect(foreignStore.nowPlayingRating(for: track) == nil)
+    #expect(swappingStore.nowPlayingRating(for: track) == nil)
+    let rating = try #require(store.nowPlayingRating(for: track))
+    #expect(rating.target == favourite.target)
+    // What a star press does: through the same reader as the heart.
+    session.setRating(rating.target, rating: 4)
+    let reader = try #require(factory.made.last)
+    #expect(reader.ratings.count == 1)
+    #expect(reader.ratings.last?.0 == favourite.target)
+    #expect(reader.ratings.last?.1 == 4)
 }
 
 @Test @MainActor

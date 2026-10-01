@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -119,6 +120,7 @@ import com.legitimateapps.dulcet.library.unavailableLine
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.RatingStars
 import com.legitimateapps.dulcet.ui.rememberArtwork
 
 /*
@@ -412,7 +414,8 @@ private fun FavouritesList(account: SearchAccount, session: LibrarySession, acti
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                     favouriteTag = "library.favourites.track.$position.favourite",
                     onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) },
-                    queue = actions.trackQueue(track, null)) {
+                    queue = actions.trackQueue(track, null),
+                    onRate = { session.setRating(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId), it) }) {
                     note = null
                     actions.playTracks(tracks, track.rawId, title)
                 }
@@ -653,7 +656,8 @@ internal fun AlbumScreen(
                             download = TrackDownload(downloads[item.rawId],
                                 onDownload = { requests.download(listOf(item)) }.takeIf { item.downloadItem() != null },
                                 onRemove = { requests.remove(listOf(item.rawId)) }),
-                            queue = actions.trackQueue(item, album)) {
+                            queue = actions.trackQueue(item, album),
+                            onRate = { session.setRating(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId), it) }) {
                             note = null
                             actions.playAlbum(current, position, false)
                         }
@@ -917,6 +921,7 @@ internal fun TrackRow(
     onAddToPlaylist: (() -> Unit)? = null,
     download: TrackDownload? = null,
     queue: TrackQueue? = null,
+    onRate: ((Int) -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
@@ -954,7 +959,8 @@ internal fun TrackRow(
                     // A heart on a track that cannot play offline still works: a favourite is sent on reconnect.
                     if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
                     // The row's context menu. An append is not positional, so it needs no view (§18.6).
-                    if (onAddToPlaylist != null) TrackMenu(rowTag, onAddToPlaylist, download, queue.takeIf { !unavailable })
+                    if (onAddToPlaylist != null) TrackMenu(rowTag, onAddToPlaylist, download, queue.takeIf { !unavailable },
+                        onRate?.let { TrackRating(track.rating, it) })
                 }
             }
         },
@@ -1029,10 +1035,21 @@ internal class TrackDownload(
  */
 internal class TrackQueue(val onPlayNext: () -> Unit, val onAddToQueue: () -> Unit)
 
+/**
+ * A row's rating (§16.20): [value] is the publication's, with any change made here already in it —
+ * null when the row does not carry one, which is unknown, never 0 —
+ * and [onRate] sets one, 0 removing it. A rating is sent on reconnect, as a heart is, so a track that
+ * cannot play offline can still be rated.
+ */
+internal class TrackRating(val value: Int?, val onRate: (Int) -> Unit)
+
 /** The row's context menu: what can be done to one song besides playing it. */
 @Composable
-private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: TrackDownload? = null, queue: TrackQueue? = null) {
+private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: TrackDownload? = null, queue: TrackQueue? = null,
+                      rating: TrackRating? = null) {
     var open by remember { mutableStateOf(false) }
+    var rateOpen by remember { mutableStateOf(false) }
+    if (rateOpen && rating != null) RatingDialog(tag ?: "track", rating) { rateOpen = false }
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.testTag((tag ?: "track") + ".menu")) {
             Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
@@ -1044,6 +1061,12 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: Track
                 leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
                 onClick = { open = false; onAddToPlaylist() },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.addToPlaylist"),
+            )
+            if (rating != null) DropdownMenuItem(
+                text = { Text(stringResource(SharedR.string.library_rating_menu)) },
+                leadingIcon = { Icon(if ((rating.value ?: 0) > 0) DulcetIcons.Star else DulcetIcons.StarBorder, null) },
+                onClick = { open = false; rateOpen = true },
+                modifier = Modifier.testTag((tag ?: "track") + ".menu.rate"),
             )
             if (download?.status != null) DropdownMenuItem(
                 text = { Text(stringResource(SharedR.string.download_track_remove)) },
@@ -1058,6 +1081,27 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: () -> Unit, download: Track
             )
         }
     }
+}
+
+/**
+ * The song's stars, from its menu: each tap is a change of its own, shown in the stars and on the row
+ * at once and sent like a heart's; Done only closes. Tagged `<tag>.rating` and `<tag>.rating.done`.
+ */
+@Composable
+private fun RatingDialog(tag: String, rating: TrackRating, close: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text(stringResource(SharedR.string.library_rating)) },
+        text = {
+            RatingStars(rating.value, rating.onRate, "$tag.rating",
+                onColor = MaterialTheme.colorScheme.primary, offColor = MaterialTheme.colorScheme.onSurfaceVariant)
+        },
+        confirmButton = {
+            TextButton(onClick = close, modifier = Modifier.testTag("$tag.rating.done")) {
+                Text(stringResource(SharedR.string.library_rating_done))
+            }
+        },
+    )
 }
 
 /** Play Next and Add to Queue as menu items, tagged `<tag>.menu.playNext` and `<tag>.menu.addToQueue`. */

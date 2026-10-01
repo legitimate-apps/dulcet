@@ -1064,6 +1064,9 @@ private struct DulcetStateSurface: View {
                         ToolbarItem(placement: .primaryAction) {
                             DulcetNowPlayingFavouriteButton(track: player.current)
                         }
+                        ToolbarItem(placement: .primaryAction) {
+                            DulcetNowPlayingRatingControl(track: player.current)
+                        }
                     }
                 }
 #endif

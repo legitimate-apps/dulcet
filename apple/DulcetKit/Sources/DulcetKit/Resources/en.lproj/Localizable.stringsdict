@@ -146,6 +146,54 @@
             <string>%d favorites or ratings weren’t sent and have been discarded: this device is now signed in as someone else.</string>
         </dict>
     </dict>
+    <key>reader.rating.value</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@stars@</string>
+        <key>stars</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d star</string>
+            <key>other</key>
+            <string>%d stars</string>
+        </dict>
+    </dict>
+    <key>reader.rating.rate</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@stars@</string>
+        <key>stars</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>Rate %d star</string>
+            <key>other</key>
+            <string>Rate %d stars</string>
+        </dict>
+    </dict>
+    <key>reader.rating.menuStars</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@stars@</string>
+        <key>stars</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%d Star</string>
+            <key>other</key>
+            <string>%d Stars</string>
+        </dict>
+    </dict>
     <key>reader.signOut.pending</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>

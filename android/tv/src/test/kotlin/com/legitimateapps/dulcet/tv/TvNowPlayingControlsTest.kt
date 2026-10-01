@@ -4,11 +4,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
@@ -208,7 +210,103 @@ class TvNowPlayingControlsTest {
             .config.getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString())
     }
 
-    private fun sharedString(id: Int): String = resources.getString(id)
+    /**
+     * The stars are under the title, UP from the scrubber; each is a focus stop RIGHT of the last, the
+     * centre key on one rates the track that many stars, and on the star already shown removes the
+     * rating. For accessibility services the row is one adjustable control, 0 to 5 in whole stars.
+     */
+    @Test fun theStarsAreUpFromTheScrubberAndTheCentreKeyRates() {
+        var rating by mutableStateOf(0)
+        val rated = mutableListOf<Int>()
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvNowPlayingScreen(null, playing(), actions, rating = TvPlayerRating(rating) { rated += it; rating = it })
+            }
+        }
+        compose.waitForIdle()
+        key("tv.player.playpause", Key.DirectionUp)
+        assertTrue(focused("tv.player.scrubber"), "setup: UP from Play/Pause reaches the scrubber")
+        key("tv.player.scrubber", Key.DirectionUp)
+        val first = (1..5).firstOrNull { focused("tv.player.rating.$it") }
+        assertTrue(first != null, "UP from the scrubber reaches the stars")
+        var at = first!!
+        while (at < 3) { key("tv.player.rating.$at", Key.DirectionRight); at++ }
+        while (at > 3) { key("tv.player.rating.$at", Key.DirectionLeft); at-- }
+        assertTrue(focused("tv.player.rating.3"), "LEFT and RIGHT move across the stars")
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_rating_set, 3), description("tv.player.rating.3"))
+        key("tv.player.rating.3", Key.DirectionCenter)
+        assertEquals(listOf(3), rated)
+        assertTrue((1..3).all { selected("tv.player.rating.$it") } && (4..5).none { selected("tv.player.rating.$it") },
+            "three stars fill with the press")
+        assertTrue(focused("tv.player.rating.3"), "focus stays on the star")
+        assertEquals(resources.getQuantityString(com.legitimateapps.dulcet.shared.R.plurals.library_rating_clear, 3, 3), description("tv.player.rating.3"),
+            "the shown star says it removes the rating")
+        key("tv.player.rating.3", Key.DirectionCenter)
+        assertEquals(listOf(3, 0), rated, "the centre key on the shown star removes the rating")
+        assertEquals(emptyList(), actions.calls, "rating changes the track, not playback")
+
+        val node = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode()
+        val range = node.config[SemanticsProperties.ProgressBarRangeInfo]
+        assertEquals(0f..5f, range.range)
+        assertEquals(4, range.steps)
+        compose.onNodeWithTag("tv.player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(4f) }
+        compose.waitForIdle()
+        assertEquals(listOf(3, 0, 4), rated, "an accessibility service sets the rating through setProgress")
+    }
+
+    /**
+     * A rating this device does not know — a track only ever seen in a queue, before any change — is
+     * no star selected and said "Rating unknown", never "Not rated". There is no value to step from,
+     * so the row offers no range and no setProgress (one step up would send 1 over whatever the
+     * server holds), only absolute actions; a star still sets exactly its own rating.
+     */
+    @Test fun anUnknownRatingIsSaidAsUnknownAndOffersOnlyAbsoluteSets() {
+        var rating by mutableStateOf<Int?>(null)
+        val rated = mutableListOf<Int>()
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvNowPlayingScreen(null, playing(), actions, rating = TvPlayerRating(rating) { rated += it; rating = it })
+            }
+        }
+        compose.waitForIdle()
+        val node = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode()
+        assertEquals("Rating unknown", node.config[SemanticsProperties.StateDescription])
+        assertTrue((1..5).none { selected("tv.player.rating.$it") }, "no star is selected while the rating is unknown")
+        assertEquals(com.legitimateapps.dulcet.ui.UNKNOWN_RATING_ALPHA, starAlpha("tv.player.rating"),
+            "an unknown rating's stars are dimmed, so they do not look like a known 0")
+        assertTrue(SemanticsProperties.ProgressBarRangeInfo !in node.config, "an unknown rating has no range to step through")
+        assertTrue(SemanticsActions.SetProgress !in node.config, "and no relative adjust")
+        val offered = node.config[SemanticsActions.CustomActions]
+        assertEquals((1..5).map { "Rate $it of 5 stars" }, offered.map { it.label })
+        compose.runOnIdle { offered[1].action() }
+        compose.waitForIdle()
+        assertEquals(listOf(2), rated, "an absolute action sets exactly its rating")
+        assertEquals(1f, starAlpha("tv.player.rating"), "a known rating's stars are not dimmed")
+
+        rating = null
+        compose.waitForIdle()
+        assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_rating_set, 1), description("tv.player.rating.1"),
+            "from unknown, the first star rates — it does not remove")
+        key("tv.player.playpause", Key.DirectionUp)
+        key("tv.player.scrubber", Key.DirectionUp)
+        var at = (1..5).first { focused("tv.player.rating.$it") }
+        while (at > 1) { key("tv.player.rating.$at", Key.DirectionLeft); at-- }
+        key("tv.player.rating.1", Key.DirectionCenter)
+        assertEquals(listOf(2, 1), rated)
+        assertEquals("Remove the rating of 1 star", description("tv.player.rating.1"), "one star, singular")
+    }
+
+    /**
+     * The opacity the stars tagged [tag] are drawn at: `Modifier.alpha` adds a graphics layer only
+     * below 1, so no layer is fully opaque.
+     */
+    private fun starAlpha(tag: String): Float =
+        compose.onNodeWithTag(tag).fetchSemanticsNode().layoutInfo.getModifierInfo().firstNotNullOfOrNull { info ->
+            (info.modifier as? androidx.compose.ui.platform.InspectableValue)?.inspectableElements
+                ?.firstOrNull { it.name == "alpha" }?.value as? Float
+        } ?: 1f
+
+    private fun sharedString(id: Int, vararg args: Any): String = resources.getString(id, *args)
 
     private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 

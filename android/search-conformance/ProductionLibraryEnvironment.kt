@@ -196,6 +196,9 @@ class DisposableServer(private val baseUrl: String) {
 
     fun songStarred(songId: String): Boolean = get("getSong", mapOf("id" to songId)).getJSONObject("song").has("starred")
 
+    /** The account's rating of a song as the server reports it: 0 when it has none. */
+    fun songRating(songId: String): Int = get("getSong", mapOf("id" to songId)).getJSONObject("song").optInt("userRating", 0)
+
     /** The account's playlists: id to name. */
     fun playlists(): Map<String, String> {
         val list = get("getPlaylists").optJSONObject("playlists")?.optJSONArray("playlist") ?: JSONArray()

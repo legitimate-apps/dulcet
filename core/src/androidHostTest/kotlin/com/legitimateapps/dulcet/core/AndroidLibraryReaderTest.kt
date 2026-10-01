@@ -35,7 +35,8 @@ import kotlinx.coroutines.withTimeout
 class AndroidLibraryReaderTest {
     private val driver = createTestDriver()
     private val database = DulcetDatabaseStore.open(driver)
-    private val store = SeenCacheStore(database, ManualWallClock(now = 2_000_000))
+    private val clock = ManualWallClock(now = 2_000_000)
+    private val store = SeenCacheStore(database, clock)
     private val server = SessionTestServer()
     private val readers = mutableListOf<AndroidLibraryReader>()
 
@@ -517,6 +518,196 @@ class AndroidLibraryReaderTest {
         control.close()
         Thread.sleep(200)
         assertEquals(afterClose, told.snapshot().size, "nothing is told after close")
+    }
+
+    /** An album's tracks, read live and so cached: the fixture the rating watches start from. */
+    private fun cachedTracks(reader: AndroidLibraryReader): Pair<String, List<AndroidLibraryItem.Track>> {
+        val album = CountDownLatch(1)
+        val tracks = AtomicReference<List<AndroidLibraryItem.Track>>(emptyList())
+        val seen = Seen()
+        reader.openRecording(AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Newest), seen)
+        assertTrue(seen.live.await(30, TimeUnit.SECONDS))
+        val albumId = seen.all.last().first.items.first().rawId
+        reader.openWindow(AndroidLibraryQuery.Album(albumId)) { publication ->
+            if (publication.freshness == AndroidLibraryFreshness.Live && publication.itemsState == AndroidLibraryItemsState.Present) {
+                tracks.set(publication.items.filterIsInstance<AndroidLibraryItem.Track>())
+                album.countDown()
+            }
+        }
+        assertTrue(album.await(30, TimeUnit.SECONDS), "fixture: an album's tracks are cached")
+        return albumId to tracks.get()
+    }
+
+    private fun reconnect(reader: AndroidLibraryReader) {
+        val reconnected = CountDownLatch(1)
+        reader.setOnline(true)
+        reader.reconnect { reconnected.countDown() }
+        assertTrue(reconnected.await(30, TimeUnit.SECONDS))
+    }
+
+    /**
+     * Now Playing's stars (§16.20, §18.3): the watched rating is the cached one at once, the tap's
+     * with the tap (offline, so before any request), stands through the send, and `0` clears it —
+     * on the watch and on the server.
+     */
+    @Test
+    fun aWatchedRatingFollowsTheTapTheSendAndZeroClearsIt() {
+        val reader = reader()
+        val track = cachedTracks(reader).second.first()
+        assertEquals(0, track.rating, "fixture: the track starts unrated")
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)
+        val told = Collections.synchronizedList(mutableListOf<Int?>())
+        reader.watchRating(target) { told += it }
+        pollUntil("the first value") { told.snapshot().isNotEmpty() }
+        assertEquals(listOf<Int?>(0), told.snapshot(), "the cached rating is told at once")
+
+        reader.setOnline(false)
+        val requests = server.log.size
+        assertTrue(reader.setRating(target, 4))
+        pollUntil("the tap") { told.snapshot().size == 2 }
+        assertEquals(4, told.snapshot().last(), "the rating is told with the tap")
+        assertEquals(requests, server.log.size, "offline: nothing was sent")
+
+        reconnect(reader)
+        pollUntil("the rating sent") { server.count("setRating") == 1 }
+        assertEquals(4, server.ratings[track.rawId], "the server holds the rating")
+        Thread.sleep(200)
+        assertTrue(told.snapshot().drop(1).all { it == 4 }, "the rating stands through the send: ${told.snapshot()}")
+
+        assertTrue(reader.setRating(target, 0))
+        pollUntil("the clear sent") { server.count("setRating") == 2 }
+        pollUntil("the clear told") { told.snapshot().last() == 0 }
+        assertEquals(null, server.ratings[track.rawId], "0 removed the rating on the server")
+        assertFalse(reader.setRating(target, 6), "a rating outside 0-5 is refused")
+    }
+
+    /**
+     * A track only ever seen in a queue has no cache row: the saved rating is kept from the
+     * acknowledgement, not dropped to unknown when the pending change goes.
+     */
+    @Test
+    fun aSavedRatingStaysForATrackWithNoCacheRow() {
+        val reader = reader()
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "album-0004-track-0")
+        val told = Collections.synchronizedList(mutableListOf<Int?>())
+        reader.watchRating(target) { told += it }
+        pollUntil("the first value") { told.snapshot().isNotEmpty() }
+        assertEquals(listOf<Int?>(null), told.snapshot(), "fixture: nothing is known about the track")
+        val saved = CountDownLatch(1)
+        reader.addChangeOutcomeListener { if (it is AndroidLibraryChangeOutcome.Saved) saved.countDown() }
+        assertTrue(reader.setRating(target, 3))
+        assertTrue(saved.await(30, TimeUnit.SECONDS), "the rating was saved")
+        assertEquals(3, server.ratings[target.rawId])
+        Thread.sleep(200)
+        assertEquals(3, told.snapshot().last(), "the saved rating stays: ${told.snapshot()}")
+        assertTrue(told.snapshot().drop(1).all { it == 3 }, "never told unknown after the tap: ${told.snapshot()}")
+    }
+
+    /** Changed elsewhere after the change was made, and the send failed: the server's value wins, and the watch says it. */
+    @Test
+    fun aSupersededRatingTellsTheWatchTheServersValue() {
+        val reader = reader()
+        val track = cachedTracks(reader).second.first()
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)
+        val told = Collections.synchronizedList(mutableListOf<Int?>())
+        reader.watchRating(target) { told += it }
+        val outcomes = Collections.synchronizedList(mutableListOf<AndroidLibraryChangeOutcome>())
+        reader.addChangeOutcomeListener { outcomes += it }
+        reader.setOnline(false)
+        assertTrue(reader.setRating(target, 5))
+        pollUntil("the tap") { told.snapshot().lastOrNull() == 5 }
+        server.ratings[track.rawId] = 2 // changed elsewhere
+        clock.now += LibraryReaderConfig().revalidateWithinMillis + 1 // the album is due a re-read
+        server.failWithCode["setRating"] = 0
+        val mark = server.log.size
+        reconnect(reader)
+        pollUntil("the album re-read after the failed send") {
+            server.log.drop(mark).map { it.endpoint }.let { "setRating" in it && "getAlbum" in it }
+        }
+        server.failWithCode.clear()
+        reconnect(reader) // the next flush decides it
+        pollUntil("the superseded outcome") { outcomes.snapshot().any { it is AndroidLibraryChangeOutcome.Superseded } }
+        assertEquals(
+            AndroidLibraryChangeOutcome.Superseded(target, AndroidLibraryChangeField.Rating, 2),
+            outcomes.snapshot().first { it is AndroidLibraryChangeOutcome.Superseded },
+        )
+        pollUntil("the server's value told") { told.snapshot().last() == 2 }
+        assertEquals(2, server.ratings[track.rawId], "the server's value was not overwritten")
+    }
+
+    /**
+     * A rating and a heart on ONE track, through the watches: each field's outcome reaches its own
+     * watch only. A saved heart does not become a rating of 1, a saved rating does not fill the
+     * heart, and a refused rating leaves the heart as it was — for a track with no cache row, where
+     * the watches read only what this reader was told.
+     */
+    @Test
+    fun aRatingAndAFavouriteOutcomeOnOneTrackDoNotCross() {
+        val reader = reader()
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "album-0004-track-0")
+        val ratings = Collections.synchronizedList(mutableListOf<Int?>())
+        val hearts = Collections.synchronizedList(mutableListOf<Boolean?>())
+        reader.watchRating(target) { ratings += it }
+        reader.watchFavourite(target) { hearts += it }
+        pollUntil("the first values") { ratings.snapshot().isNotEmpty() && hearts.snapshot().isNotEmpty() }
+        assertEquals(listOf<Int?>(null), ratings.snapshot(), "fixture: no rating known")
+        assertEquals(listOf<Boolean?>(null), hearts.snapshot(), "fixture: no favourite state known")
+        val outcomes = Collections.synchronizedList(mutableListOf<AndroidLibraryChangeOutcome>())
+        reader.addChangeOutcomeListener { outcomes += it }
+
+        assertTrue(reader.setFavourite(target, true))
+        pollUntil("the heart saved") { outcomes.snapshot().size == 1 }
+        assertEquals(AndroidLibraryChangeField.Favourite, outcomes.snapshot().single().field)
+        Thread.sleep(200)
+        assertEquals(true, hearts.snapshot().last(), "the saved heart stays: ${hearts.snapshot()}")
+        assertTrue(ratings.snapshot().all { it == null }, "a saved heart told the rating watch a value: ${ratings.snapshot()}")
+
+        assertTrue(reader.setRating(target, 4))
+        pollUntil("the rating saved") { outcomes.snapshot().size == 2 }
+        Thread.sleep(200)
+        assertEquals(4, ratings.snapshot().last(), "the saved rating stays: ${ratings.snapshot()}")
+        assertEquals(true, hearts.snapshot().last(), "a saved rating left the heart alone: ${hearts.snapshot()}")
+
+        server.failWithCode["setRating"] = 70
+        assertTrue(reader.setRating(target, 2))
+        pollUntil("the rating refused") { outcomes.snapshot().size == 3 }
+        assertTrue(outcomes.snapshot().last() is AndroidLibraryChangeOutcome.NotSaved, "setup: refused: ${outcomes.snapshot()}")
+        pollUntil("the rating back to the acknowledged 4") { ratings.snapshot().last() == 4 }
+        Thread.sleep(200)
+        assertEquals(4, ratings.snapshot().last(), "a refusal returns the stars to the last value the server acknowledged")
+        assertEquals(true, hearts.snapshot().last(), "a refused rating left the heart alone: ${hearts.snapshot()}")
+
+        server.failWithCode.clear()
+        assertTrue(reader.setFavourite(target, false))
+        pollUntil("the unstar saved") { outcomes.snapshot().size == 4 }
+        Thread.sleep(200)
+        assertEquals(false, hearts.snapshot().last())
+        assertEquals(4, ratings.snapshot().last(), "a saved unstar is not a rating of 0: ${ratings.snapshot()}")
+    }
+
+    /**
+     * A refused rating on a track with no cache row and no acknowledgement returns the watch to
+     * UNKNOWN — never a made-up 0, which the stars would show as "Not rated" and a relative adjust
+     * would step from.
+     */
+    @Test
+    fun aRefusedRatingWithNothingKnownReturnsTheWatchToUnknownNeverZero() {
+        val reader = reader()
+        val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "album-0004-track-0")
+        val told = Collections.synchronizedList(mutableListOf<Int?>())
+        reader.watchRating(target) { told += it }
+        pollUntil("the first value") { told.snapshot().isNotEmpty() }
+        assertEquals(listOf<Int?>(null), told.snapshot(), "fixture: nothing is known about the track")
+        val outcomes = Collections.synchronizedList(mutableListOf<AndroidLibraryChangeOutcome>())
+        reader.addChangeOutcomeListener { outcomes += it }
+        server.failWithCode["setRating"] = 70
+        assertTrue(reader.setRating(target, 3))
+        pollUntil("the refusal") { outcomes.snapshot().isNotEmpty() }
+        assertTrue(outcomes.snapshot().single() is AndroidLibraryChangeOutcome.NotSaved, "setup: refused: ${outcomes.snapshot()}")
+        pollUntil("the watch back to unknown") { told.snapshot().size >= 3 }
+        Thread.sleep(200)
+        assertEquals(listOf(null, 3, null), told.snapshot(), "unknown, the tap, then unknown again — never 0")
+        assertEquals(null, server.ratings[target.rawId], "control: the server holds no rating")
     }
 
     /** A copy taken under the list's lock: the reader's thread appends while the test reads. */

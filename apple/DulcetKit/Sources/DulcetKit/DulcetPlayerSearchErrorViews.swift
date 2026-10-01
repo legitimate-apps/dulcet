@@ -292,6 +292,14 @@ struct DulcetNowPlayingView: View {
     static let coverToTitleSpacing = DulcetSpacing.lg
     static let playerToQueueSpacing = DulcetSpacing.xl
     static let sheetVerticalPadding = DulcetSpacing.md
+    /// Each of the player's rating stars: a touch target, and on a television a focus target.
+    static var ratingStarSide: CGFloat {
+#if os(tvOS)
+        64
+#else
+        44
+#endif
+    }
     static let minimumHorizontalPadding = DulcetSpacing.lg
 
     /// Lyrics in one column: a phone's or a narrow window's width, and on a television wide enough
@@ -308,22 +316,40 @@ struct DulcetNowPlayingView: View {
     enum FooterControl: Hashable {
         /// The playing track's heart (§16.20).
         case favourite
+        /// The playing track's stars, always directly after the heart (§16.20).
+        case rating
         case airPlay
         case lyrics
         case upNext
     }
 
-    /// Which footer controls the player offers. The heart is offered only while the reader holds
-    /// the playing track's account; on macOS it is in the window's toolbar instead. Apple TV routes
-    /// audio with the remote and the TV and has no Up Next toggle, but it has lyrics and the heart,
-    /// both reached by focus.
+    /// Which footer controls the player offers. The heart and the stars beside it are offered only
+    /// while the reader holds the playing track's account -- one rule for both, so they never
+    /// part; on macOS they are in the window's toolbar instead. Apple TV routes audio with the
+    /// remote and the TV and has no Up Next toggle, but it has lyrics, the heart and the stars, all
+    /// reached by focus.
     static func footerControls(offersFavourite: Bool, showsQueueToggle: Bool) -> [FooterControl] {
+        let marks: [FooterControl] = offersFavourite ? [.favourite, .rating] : []
 #if os(tvOS)
-        (offersFavourite ? [.favourite] : []) + [.lyrics]
+        return marks + [.lyrics]
 #elseif os(macOS)
-        [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+        return [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
 #else
-        (offersFavourite ? [.favourite] : []) + [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+        return marks + [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+#endif
+    }
+
+    /// The footer's rows. On iPhone and iPad five 44-point stars, the heart and three 44-point
+    /// controls do not fit a phone's width beside the format badge, so the track's own marks --
+    /// heart, then stars -- take a row of their own above the others. Apple TV's controls column
+    /// fits them all in one row, which Down from the transport reaches.
+    static func footerRows(_ controls: [FooterControl]) -> [[FooterControl]] {
+#if os(iOS)
+        let marks = controls.filter { $0 == .favourite || $0 == .rating }
+        let rest = controls.filter { $0 != .favourite && $0 != .rating }
+        return [marks, rest].filter { !$0.isEmpty }
+#else
+        [controls]
 #endif
     }
 
@@ -418,6 +444,11 @@ struct DulcetNowPlayingView: View {
 #endif
     }
 
+    /// The playing track's stars (§16.20), beside the heart.
+    private var ratingControl: some View {
+        DulcetNowPlayingRatingControl(track: player.current, size: .title3, minimumSide: Self.ratingStarSide)
+    }
+
     private var upNextToggle: some View {
         Button {
             withAnimation(reduceMotion ? nil : .snappy) {
@@ -439,6 +470,7 @@ struct DulcetNowPlayingView: View {
     private func footerControl(_ control: FooterControl) -> some View {
         switch control {
         case .favourite: favouriteButton
+        case .rating: ratingControl
         case .lyrics: lyricsToggle
         case .upNext: upNextToggle
         case .airPlay:
@@ -627,7 +659,7 @@ struct DulcetNowPlayingView: View {
     private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
         VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
 #if os(tvOS)
-            // The heart and lyrics sit under the transport, where Down from it lands.
+            // The heart, its stars and lyrics sit under the transport, where Down from it lands.
             HStack(spacing: DulcetSpacing.lg) {
                 ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
                     footerControl(control)
@@ -643,12 +675,21 @@ struct DulcetNowPlayingView: View {
             if DulcetSystemVolumeSlider.isAvailable {
                 DulcetSystemVolumeSlider()
             }
-            HStack(spacing: DulcetSpacing.sm) {
-                formatBadge
-                Spacer(minLength: 0)
-                ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
-                    footerControl(control)
+            let rows = Self.footerRows(footerControls(showsQueueToggle: showsQueueToggle))
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                HStack(spacing: DulcetSpacing.sm) {
+                    // The badge leads the last row, the one with the player's own controls.
+                    if index == rows.count - 1 {
+                        formatBadge
+                    }
+                    Spacer(minLength: 0)
+                    ForEach(row, id: \.self) { control in
+                        footerControl(control)
+                    }
                 }
+                // As the transport row: the stars stop growing at the largest standard size, so
+                // five of them never push the heart off a phone's width.
+                .dynamicTypeSize(...(row.contains(.rating) ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility5))
             }
 #endif
             // Up Next's header already says where the queue is playing from; with the list on

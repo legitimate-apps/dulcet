@@ -119,6 +119,17 @@ public fun rememberWatchedFavourite(session: LibrarySession, target: AndroidLibr
     return state.value
 }
 
+/** The rating of [target] as this device knows it (0 unrated), for Now Playing; null while unknown. */
+@Composable
+public fun rememberWatchedRating(session: LibrarySession, target: AndroidLibraryEntity?): Int? {
+    val state = remember(session, target) { mutableStateOf<Int?>(null) }
+    DisposableEffect(session, target) {
+        val watch = target?.let { session.watchRating(it) { value -> state.value = value } }
+        onDispose { watch?.close() }
+    }
+    return state.value
+}
+
 /** What a heart on this row changes: an album, an artist or a track; null for anything else. */
 public fun AndroidLibraryItem.favouriteTarget(): AndroidLibraryEntity? = when (this) {
     is AndroidLibraryItem.Album -> AndroidLibraryEntity(AndroidLibraryEntityKind.Album, rawId)
@@ -137,7 +148,8 @@ public fun AndroidLibraryItem.isFavourite(): Boolean = when (this) {
 
 /**
  * The outcome lines (§16.20) about [targets] — the entities a screen shows a heart for — in the
- * order the targets are given, each once. They are dismissed when the screen goes, so an outcome is
+ * order the targets are given, each once: a target's heart and stars each say their own outcome, on
+ * one line ([outcomeLines]). They are dismissed when the screen goes, so an outcome is
  * only ever said on a screen that shows its entity.
  */
 @Composable
@@ -150,5 +162,5 @@ public fun rememberOutcomeLines(session: LibrarySession, targets: List<AndroidLi
     val seen = remember(session) { mutableSetOf<AndroidLibraryEntity>() }
     seen += shown
     DisposableEffect(session) { onDispose { seen.forEach(session::dismissOutcome) } }
-    return shown.mapNotNull { target -> resources.outcomeLine(outcomes[target])?.let { target to it } }
+    return shown.mapNotNull { target -> resources.outcomeLines(outcomes, target)?.let { target to it } }
 }

@@ -104,18 +104,21 @@ public class LibrarySession internal constructor(
     /** What the last successful reconnect said of the server's scan stamp; the self-heal reuses it. */
     private var serverReportsNoEpoch = false
 
-    private val latestOutcomes = MutableStateFlow<Map<AndroidLibraryEntity, AndroidLibraryChangeOutcome>>(emptyMap())
+    private val latestOutcomes = MutableStateFlow<Map<LibraryOutcomeKey, AndroidLibraryChangeOutcome>>(emptyMap())
 
     /**
-     * The latest favourite or rating outcome for each target, for a one-line message on the screen
-     * showing that target; [Saved][AndroidLibraryChangeOutcome.Saved] needs none. Keyed by kind and
-     * id, so an outcome about one entity is never shown on another's screen, and a later outcome
-     * about a different one never hides it. A screen clears its own with [dismissOutcome] when it goes.
+     * The latest favourite outcome and the latest rating outcome for each target, for a message on
+     * the screen showing that target; [Saved][AndroidLibraryChangeOutcome.Saved] needs none. Keyed by
+     * kind, id AND field, so an outcome about one entity is never shown on another's screen, a later
+     * outcome about a different one never hides it, and a heart saved after a refused rating on the
+     * same track never erases the refusal before it is said. A screen clears its own with
+     * [dismissOutcome] when it goes.
      */
-    public val outcomes: StateFlow<Map<AndroidLibraryEntity, AndroidLibraryChangeOutcome>> = latestOutcomes.asStateFlow()
+    public val outcomes: StateFlow<Map<LibraryOutcomeKey, AndroidLibraryChangeOutcome>> = latestOutcomes.asStateFlow()
 
+    /** Clears every field's outcome about [target]. */
     public fun dismissOutcome(target: AndroidLibraryEntity) {
-        latestOutcomes.update { it - target }
+        latestOutcomes.update { current -> current.filterKeys { it.target != target } }
     }
 
     private val discarded = MutableStateFlow(0L)
@@ -209,7 +212,7 @@ public class LibrarySession internal constructor(
                 (outcome is AndroidLibraryChangeOutcome.Saved || outcome is AndroidLibraryChangeOutcome.Superseded)) {
                 favouritesStale = true
             }
-            latestOutcomes.update { it + (outcome.target to outcome) }
+            latestOutcomes.update { it + (LibraryOutcomeKey(outcome.target, outcome.field) to outcome) }
             observationState.update { it.copy(changeOutcomes = (it.changeOutcomes + outcome).takeLast(MAX_FRAMES)) }
         }
 
@@ -367,6 +370,33 @@ public class LibrarySession internal constructor(
         }
         lateinit var handle: AutoCloseable
         val watch: AndroidLibraryFavouriteWatch = reader.watchFavourite(target, listener)
+        handle = AutoCloseable {
+            watch.close()
+            watches -= handle
+        }
+        watches += handle
+        return handle
+    }
+
+    /**
+     * Rates [target] 1–5, or removes its rating with 0 (§16.20); it shows in the next publication and
+     * on every rating watch, before any request. Anything else does nothing.
+     */
+    public fun setRating(target: AndroidLibraryEntity, rating: Int) {
+        if (!closed) reader.setRating(target, rating)
+    }
+
+    /**
+     * The rating of an entity no open window shows — Now Playing's track — as this device knows it,
+     * as [watchFavourite] tells a favourite: `0` is unrated, null unknown.
+     */
+    public fun watchRating(target: AndroidLibraryEntity, listener: (Int?) -> Unit): AutoCloseable {
+        if (closed) {
+            listener(null)
+            return AutoCloseable {}
+        }
+        lateinit var handle: AutoCloseable
+        val watch = reader.watchRating(target, listener)
         handle = AutoCloseable {
             watch.close()
             watches -= handle
@@ -783,6 +813,8 @@ public data class LibraryFrame(
     val itemRawIds: List<String> = emptyList(),
     val favourite: Boolean?,
     val itemsUnavailableReason: com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason? = null,
+    /** Each row's rating, in [itemRawIds]' order, any pending change already in it; null for a row with none. */
+    val itemRatings: List<Int?> = emptyList(),
 ) {
     internal companion object {
         fun of(publication: AndroidLibraryPublication) = LibraryFrame(
@@ -799,6 +831,14 @@ public data class LibraryFrame(
                 else -> null
             },
             itemsUnavailableReason = publication.itemsUnavailableReason,
+            itemRatings = publication.items.map { item ->
+                when (item) {
+                    is AndroidLibraryItem.Album -> item.rating
+                    is AndroidLibraryItem.Artist -> item.rating
+                    is AndroidLibraryItem.Track -> item.rating
+                    else -> null
+                }
+            },
         )
     }
 }
@@ -852,3 +892,6 @@ public fun AndroidLibraryFreshness.isOffline(): Boolean = when (this) {
     is AndroidLibraryFreshness.Unavailable -> reason == com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason.NotCachedOffline
     else -> false
 }
+
+/** Which outcome of [LibrarySession.outcomes]: the entity, and whether its heart or its stars. */
+public data class LibraryOutcomeKey(val target: AndroidLibraryEntity, val field: AndroidLibraryChangeField)

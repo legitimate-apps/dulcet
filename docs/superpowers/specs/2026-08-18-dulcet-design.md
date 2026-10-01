@@ -4650,8 +4650,38 @@ about publication, not about the cache:
   the rows' heart: it names the track, goes through the same session and outbox, and so a pending,
   held or saved change reads the same on the player as on the track's row, the lock screen and the
   menu. It is offered only while the reader holds the account the track came from. The Mac draws it
-  in the Now Playing window's toolbar; iPhone and iPad in the player's footer beside AirPlay and
-  Lyrics; Apple TV under the transport, reached by focus and pressed with the remote.
+  in the Now Playing window's toolbar; iPhone and iPad in the player's footer, on its own row with
+  the track's stars above AirPlay and Lyrics (five 44-point stars, the heart and three 44-point
+  controls do not fit one row of a phone's width); Apple TV under the transport, reached by focus
+  and pressed with the remote, with the stars and then Lyrics to its right.
+- **The rating control (2026-09-30).** A rating is five stars on every platform, set through the
+  same session and outbox as the heart and presented the same way: the value set shows at once, a
+  pending or held change is marked as the heart marks it, and a change that is not saved or is
+  superseded shows the server's value again with the heart's words. Pressing a star rates that many
+  stars; pressing the star already shown removes the rating, which sends `setRating` with 0. For a
+  screen reader the stars are one adjustable element on the platforms whose readers adjust (VoiceOver
+  on macOS and iOS, TalkBack), 0 to 5 in whole stars. On a television each star is its own focus
+  stop, set with Select or the centre key. **Unknown is not unrated.** A rating this device has
+  no value for — a track no screen of the session has published, such as a restored queue's — is
+  drawn with no star filled and said as unknown, and a relative step (a screen reader's adjust)
+  from it sends nothing, because a step from a guessed 0 would overwrite the server's rating; a
+  press on a star, or a menu choice, is absolute and allowed. Now Playing shows the playing track's
+  stars beside its heart, heart first, offered by the heart's own rule so the two never part (on
+  Apple one `footerControls` list in which `.rating` always follows `.favourite`; the Mac draws
+  both in the window's toolbar), only while the reader holds the track's account; a queued track carries
+  no rating of its own, so Now Playing shows what the server is last known to hold — on Apple, what
+  a screen published that this session did not set while a change was pending (every value set
+  since the ratings last settled counts, since an earlier tap's overlay can be published late), a
+  saved change's value or a superseding server value, never the value tapped; on Android, the reader's watch (the same watch
+  as the heart, keeping the value the server acknowledged for a track with no cache row). An
+  outcome never erases a known server value: the flush republishes the open screens **before** it
+  tells the outcome, so the screens may already hold the server's value when it arrives. A saved
+  outcome for an earlier value (4 saved while a later 5 is still on its way) records the 4 as the
+  server's and leaves the 5 shown, pending or held, until its own outcome. On every platform an
+  unknown rating's stars are also dimmed, so it looks different from a known 0. Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
+  Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84's
+  rating half runs against the disposable server through the production session
+  (`RatingConformanceTest`), reading the server's `userRating` back after every write.
 - The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value;
   they use the same outbox and the same publish-time overlay with a verified delivery of their own
   (§18.6).
@@ -7342,6 +7372,33 @@ service is bound instead of refusing with a notice. OBSERVED in host tests only
 `TvQueueAdditionTest`); not yet driven on an emulator or device. One known difference from Apple: a
 stop while the new queue is still loading keeps the old queue on Android (ASSUMED that Apple installs
 the new one stopped).
+
+**2026-09-30 — Ratings: five stars on every platform (§16.20).** The outbox, the overlay and the
+facades already carried `setRating`; no shell offered it, so CONF-84's rating half was exercised by
+core tests alone. Every platform now has a 0-5 star control on Now Playing, beside the heart, and in
+the track menu where the platform has one; §16.20 gains the control's rules. On iPhone and iPad this
+moves the Now Playing heart (added the same day) off the AirPlay and Lyrics row onto a row of its
+own with the stars, because the five stars do not fit beside it on a phone; on Apple TV the stars
+sit in the heart's row, between it and Lyrics. Three are new. (1)
+Pressing the star already shown removes the rating (`setRating` 0), so no separate clear control is
+needed. (2) Accessibility: one adjustable element where the screen reader adjusts, one focus stop
+per star on a television. (3) Now Playing's value: a queued track carries no rating, so Apple reads
+the value the screens last published for it and Android gains `watchRating` beside `watchFavourite`,
+which keeps the acknowledged value for a track with no cache row for the same reason the heart's
+watch does. The core gains `RatingConformanceContract`, driving the production session against the
+disposable server: rate, offline compaction and reconnect, and 0, each read back raw. Lock-screen
+rating stays unregistered (§12.10): no system entry reaches the outbox yet. (4) **Unknown is not
+unrated** (review of the first cut): the first Apple cut drew an unknown rating as 0 and let an
+outcome erase the known server value — copied from the heart — so after a superseded change Now
+Playing showed empty stars and the next adjust sent a rating of 1 over the server's 5. The flush
+republishes before it tells the outcome, so the erase removed the value the republish had just
+recorded. Unknown is now its own state, never stepped from, and an outcome only adds what the
+server holds (a saved value, a superseding value). A second review found two more ways the tap
+leaked in on Apple, both now closed: a saved outcome for an earlier tap (4, then 5, then Saved(4))
+cleared the later pending 5, so the stars fell back to 4 and a held 5 stopped being said; and only
+the latest tap was excluded from what the server holds, so a late overlay of the earlier tap was
+recorded as the server's. Android now dims an unknown rating's stars as Apple does, and its track
+menu treats a row with no rating as unknown instead of 0.
 
 **2026-09-30 — Android edits the queue (§14.1, §8).** Android's Up Next was a read-only jump list,
 and nothing on the phone or the TV added to a queue; §8 listed queue edits as unreachable there.

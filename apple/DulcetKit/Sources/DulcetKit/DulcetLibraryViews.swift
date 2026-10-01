@@ -1214,18 +1214,21 @@ struct DulcetAlbumLink: View {
 }
 
 extension View {
-    /// Play, Play Next, Add to Queue, Go to Album and Go to Artist for one track — each only
-    /// when it can act. Nothing on tvOS, whose focus engine owns the long press.
+    /// Play, Play Next, Add to Queue, Rating, Go to Album and Go to Artist for one track — each
+    /// only when it can act. `publishedRating` is the rating in the row being drawn, when the row
+    /// carries one. Nothing on tvOS, whose focus engine owns the long press.
     func dulcetTrackContextMenu(
         track: DulcetTrack,
         onPlay: (() -> Void)? = nil,
         offersAlbum: Bool = true,
+        publishedRating: Int? = nil,
         onNavigate: @escaping () -> Void = {}
     ) -> some View {
         modifier(DulcetTrackContextMenu(
             track: track,
             onPlay: onPlay,
             offersAlbum: offersAlbum,
+            publishedRating: publishedRating,
             onNavigate: onNavigate
         ))
     }
@@ -1242,6 +1245,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
     let track: DulcetTrack
     let onPlay: (() -> Void)?
     let offersAlbum: Bool
+    let publishedRating: Int?
     let onNavigate: () -> Void
 
     func body(content: Content) -> some View {
@@ -1275,6 +1279,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
         }
         DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
         DulcetAddTrackToPlaylistMenuItem(track: track)
+        DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
                 onNavigate()

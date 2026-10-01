@@ -629,8 +629,22 @@ public struct DulcetFavouriteOutcome: Sendable, Hashable {
     public let targetRawID: String
     public let targetKind: DulcetFavouriteTargetKind?
     public let field: DulcetFavouriteField
+    /// For `saved`, the value now on the server; nil when the core did not say.
+    public let value: Int?
+    /// For `superseded`, the server's value, which wins (§18.3).
+    public let serverValue: Int?
 
-    public init(kind: String, targetKind: String, rawID: String, field: String, errorKind: String?) {
+    public init(
+        kind: String,
+        targetKind: String,
+        rawID: String,
+        field: String,
+        errorKind: String?,
+        value: Int? = nil,
+        serverValue: Int? = nil
+    ) {
+        self.value = value
+        self.serverValue = serverValue
         let error = DulcetReaderErrorKind(coreName: errorKind)
         self.kind = switch kind {
         case "saved": .saved

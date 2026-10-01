@@ -152,7 +152,7 @@ public class AndroidLibraryReader internal constructor(
     private val windows = mutableListOf<AndroidLibraryWindow>()
     private val searches = mutableListOf<AndroidLibrarySearch>()
     private val outcomeListeners = mutableListOf<AndroidLibraryOutcomeRegistration>()
-    private val favouriteWatches = mutableListOf<AndroidLibraryFavouriteWatch>()
+    private val favouriteWatches = mutableListOf<AndroidLibraryValueWatch<*>>()
     private val playlistOutcomeListeners = mutableListOf<AndroidPlaylistOutcomeRegistration>()
 
     /** Playlist editing (§18.6) over this reader's session. */
@@ -164,6 +164,9 @@ public class AndroidLibraryReader internal constructor(
      * Playing after a skip away and back — still knows a star saved for a track with no cache row.
      */
     private val acknowledgedFavourites = mutableMapOf<Pair<AndroidLibraryEntityKind, String>, Boolean>()
+
+    /** Reader thread. The same as [acknowledgedFavourites], for ratings: `0` is a known "unrated". */
+    private val acknowledgedRatings = mutableMapOf<Pair<AndroidLibraryEntityKind, String>, Int>()
 
     /** Completed by [close], so a reader closed while it waits for its predecessor stops waiting. */
     private val closeRequested = CompletableDeferred<Unit>()
@@ -241,7 +244,7 @@ public class AndroidLibraryReader internal constructor(
             composition?.let { built ->
                 windows.toList().forEach { it.reopen(built) }
                 searches.toList().forEach { it.reopen(built) }
-                favouriteWatches.toList().forEach { it.emit(favouriteOf(it)) }
+                favouriteWatches.toList().forEach(::emitCurrent)
             }
         }
         return composition
@@ -316,17 +319,35 @@ public class AndroidLibraryReader internal constructor(
      * A value another client sets reaches it only once a window or search has read it into the cache
      * and a later change to [target] is told; a window showing the entity is the live view.
      */
-    public fun watchFavourite(target: AndroidLibraryEntity, listener: (Boolean?) -> Unit): AndroidLibraryFavouriteWatch {
-        val watch = AndroidLibraryFavouriteWatch(this, target, listener)
-        if (target.rawId.isBlank()) {
+    public fun watchFavourite(target: AndroidLibraryEntity, listener: (Boolean?) -> Unit): AndroidLibraryFavouriteWatch =
+        register(AndroidLibraryFavouriteWatch(this, target, listener))
+
+    /**
+     * The rating of one entity as this device knows it, exactly as [watchFavourite] tells a
+     * favourite: the pending change, else the seen-cache, else what the server acknowledged to this
+     * reader; `0` is a known "unrated", null is unknown. For Now Playing's stars.
+     */
+    public fun watchRating(target: AndroidLibraryEntity, listener: (Int?) -> Unit): AndroidLibraryRatingWatch =
+        register(AndroidLibraryRatingWatch(this, target, listener))
+
+    private fun <W : AndroidLibraryValueWatch<*>> register(watch: W): W {
+        if (watch.target.rawId.isBlank()) {
             watch.emitUnknown()
             return watch
         }
         onReader(onDropped = watch::emitUnknown) {
             favouriteWatches += watch
-            watch.emit(favouriteOf(watch))
+            emitCurrent(watch)
         }
         return watch
+    }
+
+    /** Reader thread: tells [watch] the value a publication would show for its target now. */
+    private fun emitCurrent(watch: AndroidLibraryValueWatch<*>) {
+        when (watch) {
+            is AndroidLibraryFavouriteWatch -> watch.emit(favouriteOf(watch))
+            is AndroidLibraryRatingWatch -> watch.emit(ratingOf(watch))
+        }
     }
 
     /**
@@ -334,9 +355,19 @@ public class AndroidLibraryReader internal constructor(
      * seen-cache holds no row for it — a track only ever seen in a queue — what the server last
      * acknowledged to this reader, since an acknowledgement is adopted into a cache row and there is none.
      */
-    private fun favouriteOf(watch: AndroidLibraryFavouriteWatch): Boolean? = try {
+    private fun favouriteOf(watch: AndroidLibraryValueWatch<*>): Boolean? = try {
         composed()?.session?.favourites?.isFavourite(LibraryEntityRef(watch.target.kind.toCore(), watch.target.rawId))
             ?: acknowledgedFavourites[watch.target.kind to watch.target.rawId]
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Reader thread. The rating a publication would show for the watched target; see [favouriteOf]. */
+    private fun ratingOf(watch: AndroidLibraryValueWatch<*>): Int? = try {
+        composed()?.session?.favourites?.rating(LibraryEntityRef(watch.target.kind.toCore(), watch.target.rawId))
+            ?: acknowledgedRatings[watch.target.kind to watch.target.rawId]
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Throwable) {
@@ -353,7 +384,7 @@ public class AndroidLibraryReader internal constructor(
      */
     private fun fanOutFavouriteChange(rawIds: Set<String>) {
         onReader {
-            favouriteWatches.toList().filter { it.target.rawId in rawIds }.forEach { it.emit(favouriteOf(it)) }
+            favouriteWatches.toList().filter { it.target.rawId in rawIds }.forEach(::emitCurrent)
         }
     }
 
@@ -363,20 +394,22 @@ public class AndroidLibraryReader internal constructor(
      * known value, since the server's did not change.
      */
     private fun noteAcknowledged(outcome: MutationOutcome) {
-        if (outcome.field != MutationField.Starred) return
         val known = when (outcome) {
-            is MutationOutcome.Saved -> outcome.value == 1
-            is MutationOutcome.Superseded -> outcome.serverValue == 1
+            is MutationOutcome.Saved -> outcome.value
+            is MutationOutcome.Superseded -> outcome.serverValue
             else -> return
         }
-        val watched = favouriteWatches.toList()
-            .filter { it.target.rawId == outcome.target.rawId && it.target.kind.toCore() == outcome.target.kind }
-        AndroidLibraryEntityKind.entries.firstOrNull { it.toCore() == outcome.target.kind }
-            ?.let { acknowledgedFavourites[it to outcome.target.rawId] = known }
-        watched.forEach { it.emit(favouriteOf(it)) }
+        val kind = AndroidLibraryEntityKind.entries.firstOrNull { it.toCore() == outcome.target.kind } ?: return
+        when (outcome.field) {
+            MutationField.Starred -> acknowledgedFavourites[kind to outcome.target.rawId] = known == 1
+            MutationField.Rating -> acknowledgedRatings[kind to outcome.target.rawId] = known
+        }
+        favouriteWatches.toList()
+            .filter { it.target.rawId == outcome.target.rawId && it.target.kind == kind }
+            .forEach(::emitCurrent)
     }
 
-    internal fun unregister(watch: AndroidLibraryFavouriteWatch) {
+    internal fun unregister(watch: AndroidLibraryValueWatch<*>) {
         favouriteWatches -= watch
     }
 
@@ -569,6 +602,7 @@ public class AndroidLibraryReader internal constructor(
                         favouriteWatches.clear()
                         playlistOutcomeListeners.clear()
                         acknowledgedFavourites.clear()
+                        acknowledgedRatings.clear()
                         closing?.session?.reader?.setForeground(false)
                     } catch (_: Throwable) {
                         // Closing is best effort and exports nothing.
@@ -1390,13 +1424,13 @@ public class AndroidLibrarySearch internal constructor(
     }
 }
 
-/** One entity's favourite state, watched ([AndroidLibraryReader.watchFavourite]). [close] is idempotent. */
-public class AndroidLibraryFavouriteWatch internal constructor(
+/** One entity's value, watched. [close] is idempotent. */
+public sealed class AndroidLibraryValueWatch<T : Any> constructor(
     private val owner: AndroidLibraryReader,
     public val target: AndroidLibraryEntity,
-    listener: (Boolean?) -> Unit,
+    listener: (T?) -> Unit,
 ) : AutoCloseable {
-    private val listener = AtomicReference<((Boolean?) -> Unit)?>(listener)
+    private val listener = AtomicReference<((T?) -> Unit)?>(listener)
 
     override fun close() {
         if (listener.getAndSet(null) == null) return
@@ -1404,9 +1438,9 @@ public class AndroidLibraryFavouriteWatch internal constructor(
     }
 
     /** Reader thread. */
-    internal fun emit(favourite: Boolean?) {
+    internal fun emit(value: T?) {
         if (listener.get() == null) return
-        owner.onMain { listener.get()?.invoke(favourite) }
+        owner.onMain { listener.get()?.invoke(value) }
     }
 
     /** Never registered (a blank id, a closed reader): the state is unknown, told once. */
@@ -1414,6 +1448,20 @@ public class AndroidLibraryFavouriteWatch internal constructor(
         owner.onMain(checkClosed = false) { listener.get()?.invoke(null) }
     }
 }
+
+/** One entity's favourite state, watched ([AndroidLibraryReader.watchFavourite]). [close] is idempotent. */
+public class AndroidLibraryFavouriteWatch internal constructor(
+    owner: AndroidLibraryReader,
+    target: AndroidLibraryEntity,
+    listener: (Boolean?) -> Unit,
+) : AndroidLibraryValueWatch<Boolean>(owner, target, listener)
+
+/** One entity's rating (0–5, `0` unrated), watched ([AndroidLibraryReader.watchRating]). [close] is idempotent. */
+public class AndroidLibraryRatingWatch internal constructor(
+    owner: AndroidLibraryReader,
+    target: AndroidLibraryEntity,
+    listener: (Int?) -> Unit,
+) : AndroidLibraryValueWatch<Int>(owner, target, listener)
 
 /** A favourite-outcome listener's registration. [close] is idempotent. */
 public class AndroidLibraryOutcomeRegistration internal constructor(

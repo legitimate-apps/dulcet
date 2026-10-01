@@ -332,6 +332,12 @@
 "reader.favorite.pending" = "Waiting to send";
 "reader.favorite.held" = "Not sent yet";
 "reader.favorite.on" = "Favorite";
+"reader.rating" = "Rating";
+"reader.rating.none" = "Not rated";
+"reader.rating.unknown" = "Rating unknown";
+"reader.rating.remove" = "Remove Rating";
+"reader.rating.menuNone" = "No Rating";
+"reader.rating.accessibility" = "Rating for %@";
 "reader.deviceOnly.title" = "Showing what’s on this device";
 "reader.search.scope.device" = "On this device";
 "reader.search.scope.server" = "Your server";
