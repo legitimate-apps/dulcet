@@ -17,6 +17,7 @@ import kotlinx.cinterop.value
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.IntVar
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -25,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.readByteArray
 import platform.Foundation.NSLock
 import platform.posix.AF_INET
@@ -62,6 +64,17 @@ import kotlin.test.assertTrue
  * had not consumed yet. Each test reads only after the server has closed and the task has had time
  * to end, which makes that race's losing side deterministic: without the session delegate in
  * AccountHttpClient.apple.kt the estimated read fails with the -1005 and no bytes at all.
+ *
+ * The fixture holds the end of the stream (its FIN) until the client's session delegate has
+ * forwarded a body byte. NSURLSession discards body bytes it has read but not yet handed over when
+ * the end arrives close behind them, and on a loaded host that can be every byte of this short body:
+ * the completion then arrives with nothing received and nothing forwarded, and no delegate can keep
+ * what it was never given. OBSERVED on macOS under 16 busy loops: sending the body and the FIN back
+ * to back ended 65 of 200 and 49 of 100 reads with zero bytes, and holding the FIN 200 ms behind the
+ * body ended 0 of 100 that way, against 36 of 100 for the same body sent with the FIN. That -- not the
+ * delegate's byte count -- is what failed this class on CI's macOS host (spec §28, 2026-10-01). Each
+ * test that holds asserts the hold was released by a delivery rather than its timeout, so the
+ * condition the test is about is shown to have been reached.
  */
 class DarwinEstimatedLengthBodyTest {
     @Test
@@ -69,6 +82,7 @@ class DarwinEstimatedLengthBodyTest {
         val outcome = readAfterTheServerCloses(query = ESTIMATED_QUERY)
 
         assertTrue(outcome.requestHead.startsWith("GET /rest/stream.view?"), "the fixture never served the request")
+        assertTrue(outcome.endFollowedDelivery, "the stream ended before the client had been handed a byte")
         val body = outcome.body.getOrThrow()
         // NSURLSession itself hands over only a prefix when the rest arrives with the end of the
         // stream -- the whole body, or its first 16 KiB read (both OBSERVED here). The prefix is
@@ -86,6 +100,7 @@ class DarwinEstimatedLengthBodyTest {
         // The control reached the condition: the server served it the same short body.
         assertTrue(outcome.requestHead.startsWith("GET /rest/stream.view?"), "the fixture never served the request")
         assertFalse(outcome.requestHead.contains("estimateContentLength"), "the control asked for an estimate")
+        assertTrue(outcome.endFollowedDelivery, "the stream ended before the client had been handed a byte")
         // A failure, not merely a shorter body: the session hands over a prefix either way.
         assertTrue(outcome.body.isFailure, "a truncated body with an exact Content-Length was accepted as complete")
         assertTrue(
@@ -100,6 +115,7 @@ class DarwinEstimatedLengthBodyTest {
         val outcome = readAfterTheServerCloses(query = ESTIMATED_QUERY, range = "bytes=0-")
 
         assertTrue(outcome.requestHead.contains("\r\nRange: bytes=0-", ignoreCase = true), "the Range header never arrived")
+        assertTrue(outcome.endFollowedDelivery, "the stream ended before the client had been handed a byte")
         // A failure, not merely a shorter body: the session hands over a prefix either way.
         assertTrue(outcome.body.isFailure, "a ranged request's truncated body was accepted as complete")
         assertTrue(
@@ -168,7 +184,8 @@ class DarwinEstimatedLengthBodyTest {
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
     @Test
     fun aCappedLegacyLoadOfAShortEstimatedBodySucceedsWithEveryForwardedByte() = runBlocking {
-        val server = OneShotLoopbackServer(RESPONSE_HEAD + MP3_BODY)
+        val delivery = DeliveryLatch()
+        val server = OneShotLoopbackServer(RESPONSE_HEAD + MP3_BODY, holdEnd = delivery::await)
         val serverThread = newSingleThreadContext("short-body-fixture")
         val ends = EstimatedBodyEnds()
         val account = PlaybackEndpointAccount(
@@ -185,7 +202,10 @@ class DarwinEstimatedLengthBodyTest {
                 saltSource = null,
                 logSink = null,
                 hostResolver = systemHostResolver(),
-                clientTransport = AccountClientTransport.Default(estimatedBodyEndObserver = ends::record),
+                clientTransport = AccountClientTransport.Default(
+                    estimatedBodyEndObserver = ends::record,
+                    bodyForwardedObserver = delivery::record,
+                ),
             ),
         )
         try {
@@ -195,9 +215,10 @@ class DarwinEstimatedLengthBodyTest {
                 assertTrue(plan.usesEstimatedLegacyContentLength(), "the plan does not ask for an estimate")
                 wire.load(plan)
             }
-            val head = served.await()
+            val (head, endFollowedDelivery) = served.await()
 
             assertTrue(head.startsWith("GET /rest/stream.view?"), "the fixture never served the request")
+            assertTrue(endFollowedDelivery, "the stream ended before the client had been handed a byte")
             assertTrue(head.contains("estimateContentLength=true"), "the load did not ask for an estimate")
             val audio = assertIs<PlaybackLoadResult.Audio>(result, "the short estimated body failed to load")
             assertTrue(audio.bytes.isNotEmpty(), "every delivered byte was discarded")
@@ -234,7 +255,24 @@ class DarwinEstimatedLengthBodyTest {
         legacyPreference = LegacyPlaybackPreference(format = AudioContainer.Mp3, maxBitRateKbps = 96),
     )
 
-    private class Outcome(val requestHead: String, val body: Result<ByteArray>, val estimatedBodyEnds: List<Long>)
+    private class Outcome(
+        val requestHead: String,
+        val endFollowedDelivery: Boolean,
+        val body: Result<ByteArray>,
+        val estimatedBodyEnds: List<Long>,
+    )
+
+    /** Opened by the first body byte the client's session delegate forwards; awaited by the server. */
+    private class DeliveryLatch {
+        private val delivered = CompletableDeferred<Unit>()
+
+        fun record(@Suppress("UNUSED_PARAMETER") forwardedSoFar: Long) {
+            delivered.complete(Unit)
+        }
+
+        /** True when a byte was forwarded within [HOLD_MILLIS]; false when the hold timed out. */
+        fun await(): Boolean = runBlocking { withTimeoutOrNull(HOLD_MILLIS) { delivered.await() } != null }
+    }
 
     /** What the session delegate reported through the transport's observer, from its own queue. */
     private class EstimatedBodyEnds {
@@ -267,10 +305,14 @@ class DarwinEstimatedLengthBodyTest {
         body: ByteArray = BODY,
         head: ByteArray = RESPONSE_HEAD,
     ): Outcome {
-        val server = OneShotLoopbackServer(head + body)
+        // With no body there is nothing to deliver, so nothing to hold the end behind.
+        val delivery = DeliveryLatch()
+        val server = OneShotLoopbackServer(head + body, holdEnd = delivery::await.takeIf { body.isNotEmpty() })
         val serverThread = newSingleThreadContext("short-body-fixture")
         val ends = EstimatedBodyEnds()
-        val client = createAccountHttpClient(AccountClientTransport.Default(estimatedBodyEndObserver = ends::record)) {}
+        val client = createAccountHttpClient(
+            AccountClientTransport.Default(estimatedBodyEndObserver = ends::record, bodyForwardedObserver = delivery::record),
+        ) {}
         try {
             val served = CoroutineScope(serverThread).async { server.serveOnce() }
             // A failure anywhere in the exchange is an outcome; running out of time is not one.
@@ -286,7 +328,8 @@ class DarwinEstimatedLengthBodyTest {
                     }
                 }.onFailure { if (it is CancellationException) throw it }
             }
-            return Outcome(served.await(), body, ends.snapshot())
+            val (requestHead, endFollowedDelivery) = served.await()
+            return Outcome(requestHead, endFollowedDelivery, body, ends.snapshot())
         } finally {
             client.close()
             server.closeListener()
@@ -300,6 +343,7 @@ class DarwinEstimatedLengthBodyTest {
         const val DECLARED_LENGTH = 24_576
         const val SETTLE_MILLIS = 500L
         const val TIMEOUT_MILLIS = 10_000L
+        const val HOLD_MILLIS = 5_000L
         const val PROVIDER_ID = "provider:estimated-body"
         val BODY = ByteArray(23_385) { (it % 251).toByte() }
 
@@ -320,9 +364,16 @@ class DarwinEstimatedLengthBodyTest {
     }
 }
 
-/** Accepts one connection, reads its request head, writes [response] and closes: nothing more. */
+/**
+ * Accepts one connection, reads its request head, writes [response] and closes: nothing more. With
+ * [holdEnd], the close waits for it after the last byte; what it returns is reported as
+ * [Served.endFollowedDelivery].
+ */
 @OptIn(ExperimentalForeignApi::class)
-private class OneShotLoopbackServer(private val response: ByteArray) {
+private class OneShotLoopbackServer(
+    private val response: ByteArray,
+    private val holdEnd: (() -> Boolean)? = null,
+) {
     private val listener: Int = socket(AF_INET, SOCK_STREAM, 0).also { check(it >= 0) { "socket failed" } }
     val port: Int
 
@@ -342,7 +393,9 @@ private class OneShotLoopbackServer(private val response: ByteArray) {
         }
     }
 
-    fun serveOnce(): String {
+    data class Served(val requestHead: String, val endFollowedDelivery: Boolean)
+
+    fun serveOnce(): Served {
         val connection = accept(listener, null, null)
         check(connection >= 0) { "accept failed" }
         try {
@@ -365,11 +418,14 @@ private class OneShotLoopbackServer(private val response: ByteArray) {
                     sent += count.toInt()
                 }
             }
+            // A FIN arriving close behind bytes the session has not handed over yet discards them,
+            // so a test about delivered bytes holds it until the client has been handed one.
+            val endFollowedDelivery = holdEnd?.invoke() ?: false
             // End the stream the way the reference server does -- a FIN after the last byte, then
             // wait for the peer -- rather than an abortive close that could discard bytes in flight.
             shutdown(connection, SHUT_WR)
             buffer.usePinned { while (recv(connection, it.addressOf(0), buffer.size.convert(), 0) > 0) Unit }
-            return head.toString()
+            return Served(head.toString(), endFollowedDelivery)
         } finally {
             close(connection)
         }

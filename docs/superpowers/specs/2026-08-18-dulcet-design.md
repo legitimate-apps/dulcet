@@ -1727,7 +1727,15 @@ length is truncation. **ASSUMED** (no real mid-transcode drop has been measured)
 part-way through a transcode arrives as the same connection-lost end after a prefix of the body, so
 it cannot be told from a body that ended short of its estimate and is accepted as the end of the
 representation -- the track ends early rather than failing; that has been the policy since revision
-84. No validator, download promoter, or platform media loader may collapse those
+84. **OBSERVED 2026-10-01 on macOS** (loopback fixture, `DarwinEstimatedLengthBodyTest`): when the end
+of the stream follows body bytes closely, NSURLSession discards the ones it has read but not yet
+handed to its delegate and reports the -1005 without them -- on an idle host usually the tail after
+its first 16 KiB read, and under CPU load every byte of a 23,385-byte body in 65 of 200 reads. Those
+bytes never reach `countOfBytesReceived` either, so the Apple client's end-of-estimate rewrite (§28,
+2026-09-30 and 2026-10-01) cannot keep them: a short estimated body can lose its tail, and one whose
+every byte arrives before the first hand-over fails as `Unreachable`. **ASSUMED:** a full-length track
+is not exposed to the second case, because its body cannot all arrive before the session hands over
+a first read; nothing has measured it. No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
 this path so the UI never claims a negotiated result.
 
@@ -7333,6 +7341,36 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-01 — The Darwin -1005 flake is the session discarding bytes it never handed over, not the
+forwarded-byte gate; #186 is re-landed (§12.5).** `DarwinEstimatedLengthBodyTest` failed on apple-ci's
+macOS host in about 3 of 12 runs, under **both** byte gates: runs 36815978834 and 36851094584 on the
+received-byte gate, 36842072853 on the forwarded-byte gate. #190 reverted the forwarded gate (#186)
+on the belief that the host produced bytes received but not yet forwarded. **That rationale was
+wrong.** Instrumenting the delegate and running the read in a loop under 16 busy loops on a 12-core
+Mac, OBSERVED:
+
+1. Every failing read completed `-1005`, status 200, with **zero** `didReceiveData` calls and
+   `countOfBytesReceived == 0` (65 of 200 reads failed; all 65 had that shape), although the server
+   had sent all 23,385 body bytes. Both gates are 0 there, so neither can end the body, and the raw
+   `-1005` reaches the reader -- the CI signature exactly. Received and forwarded counts were equal at
+   every one of 500 instrumented completions under load; no sample has told the two gates apart.
+2. The trigger is the end of the stream arriving close behind bytes the session has not handed over.
+   With the head sent first and a 5,000-byte body sent together with the FIN, 36 of 100 reads
+   delivered nothing; the same body with the FIN held 200 ms behind it, 0 of 100. Idle, both 0 of 40.
+3. The fault was in the fixture's timing, not the product's decision: the test sent head, body and FIN
+   back to back, so on a loaded host the session could discard the whole body -- something no delegate
+   can recover, and what playback-length bodies are not expected to meet (§12.5, ASSUMED). The fixture
+   now holds the FIN until the delegate reports a forwarded byte, through a second test-only seam
+   (`AccountClientTransport.bodyForwardedObserver`, null in every production construction), and each
+   test that holds asserts the hold was released by a delivery rather than its 5 s timeout. Under the
+   same load, the class with the hold removed failed 31 of 100 repeats of the read-after-close test
+   (raw `-1005`) and 35 of 100 of the capped legacy load (`Failed`); with the hold, 700 of 700 test
+   executions passed. With the hold removed and no load, the delivery assertion failed 20 of 20 in each
+   of the four tests that hold; with the rewrite disabled, the two estimated tests still fail 5 of 5.
+4. #186's forwarded-byte gate is re-landed: the evidence that removed it is refuted, and it makes an
+   empty success impossible by construction. CONF-92's single tvOS `Unreachable` (2026-09-30 entry) may
+   be this discard rather than the cancellation race that entry assumed; neither is established.
 
 **2026-10-01 — Android refuses queue edits while a queue loads, says when held additions are dropped, and holds a Play pressed before the service binds (§14.1).**
 Three follow-ups to the entry below. (1) Move, Remove and Clear upcoming made while a new queue is

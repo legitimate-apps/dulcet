@@ -77,7 +77,11 @@ internal actual fun createAccountHttpClient(
         val ktorDelegate = KtorNSURLSessionDelegate(challengeHandler)
         val session = NSURLSession.sessionWithConfiguration(
             configuration,
-            EstimatedLengthCompletingDelegate(ktorDelegate, transport.estimatedBodyEndObserver),
+            EstimatedLengthCompletingDelegate(
+                ktorDelegate,
+                transport.estimatedBodyEndObserver,
+                transport.bodyForwardedObserver,
+            ),
             delegateQueue = null,
         )
         usePreconfiguredSession(session, ktorDelegate)
@@ -110,12 +114,22 @@ internal actual fun createAccountHttpClient(
  * become an empty success -- an unexpected payload to the playback validator instead of the
  * connection failure it is, which is what the transcode budget and the circuit breaker must see.
  * The count is kept per task under a lock and dropped at the task's completion. Nothing here throws
- * across the Objective-C callback: [estimatedBodyEndObserver]'s failures are dropped.
+ * across the Objective-C callback: the observers' failures are dropped.
+ *
+ * What neither count can rescue: when the end of the stream arrives close behind body bytes the
+ * session has read but not yet handed over, the session discards them with the -1005 -- the tail of
+ * the body, or on a loaded host every byte of a short one, so the completion arrives with nothing
+ * received and nothing forwarded and stays a failure (OBSERVED on macOS under CPU load; spec §12.5,
+ * §28 2026-10-01, "The Darwin -1005 flake"). Those bytes never reach `countOfBytesReceived` either:
+ * over 500 loopback completions the received and forwarded counts were equal every time, so the
+ * forwarded count is chosen because an empty success is impossible by construction, not because a
+ * sample has told the two apart.
  */
 @OptIn(ExperimentalForeignApi::class, UnsafeNumber::class)
 private class EstimatedLengthCompletingDelegate(
     private val ktor: KtorNSURLSessionDelegate,
     private val estimatedBodyEndObserver: ((forwardedBytes: Long) -> Unit)?,
+    private val bodyForwardedObserver: ((forwardedSoFar: Long) -> Unit)?,
 ) : NSObject(), NSURLSessionDataDelegateProtocol {
     private val lock = NSLock()
     private val forwardedBytes = HashMap<ULong, Long>()
@@ -124,7 +138,12 @@ private class EstimatedLengthCompletingDelegate(
         ktor.URLSession(session, dataTask, didReceiveData)
         val task = dataTask.taskIdentifier.toULong()
         val length = didReceiveData.length.toLong()
-        locked { forwardedBytes[task] = (forwardedBytes[task] ?: 0L) + length }
+        val forwarded = locked { ((forwardedBytes[task] ?: 0L) + length).also { forwardedBytes[task] = it } }
+        try {
+            bodyForwardedObserver?.invoke(forwarded)
+        } catch (_: Throwable) {
+            // An observer must never take the session down with it.
+        }
     }
 
     override fun URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError: NSError?) {
