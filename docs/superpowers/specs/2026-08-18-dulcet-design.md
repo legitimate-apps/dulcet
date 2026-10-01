@@ -6189,6 +6189,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
 | `apple-ci.yml` | pinned standard `macos-26` for the two legs; `ubuntu-latest` for the aggregator | two parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, and the app-host, download, playback and `core-conformance` legs on macOS, iOS/iPadOS and tvOS. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned both legs resolves every Apple `FEATURES.yml` evidence identity against both legs' JUnit. Future Apple-only measurements and tests join one of the two legs, never a third macOS job without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
+| `android-test-soak.yml` | `ubuntu-latest` | `workflow_dispatch` only: repeats one `--tests` filter of an Android host-test task N times, counting each repetition from its JUnit XML; fails on any failing repetition or on a filter that executes zero tests. A measurement instrument, never a gate |
 | `release.yml` | `macos-latest` (standard) | archive + TestFlight upload for **both channels** (§22.6). `workflow_dispatch` only, in the approval-gated `release` environment; DEV is dispatched on significant merges, PROD from a `v<version>`-tagged commit. Before any secret is read it requires every required check and both `apple-ci` legs green on the commit it archives (§21.6). The only workflow able to read signing secrets |
 
 **Note on the Linux-only claim:** GitHub Actions **service containers** require a Linux runner, so the
@@ -6481,7 +6482,7 @@ the aggregator, so two legs at these figures finish in 45–75 minutes, against 
   non-deterministic macOS shipping reference (~0.9 min, 0 failures) — would save ~2.5 minutes and one
   failure in 63. **Not worth weakening the gate for; not adopted.** A scheduled workflow is also
   standing automation, which this project adds only by explicit maintainer decision. Soaks remain
-  `workflow_dispatch` instruments (`capture-soak`, `apple-contention-soak`) for measuring flake
+  `workflow_dispatch` instruments (`capture-soak`, `apple-contention-soak`, `android-test-soak`) for measuring flake
   rates, never a place to move an assertion.
 
 ### 21.6 A fast check on every pull request; the full run before a release — 2026-09-29
