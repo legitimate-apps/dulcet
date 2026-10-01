@@ -7,6 +7,10 @@ import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.core.AndroidQueueSource
+import com.legitimateapps.dulcet.core.AndroidTrack
+import com.legitimateapps.dulcet.core.CreditRole
+import com.legitimateapps.dulcet.core.SearchResultItem
+import com.legitimateapps.dulcet.core.SearchResultType
 
 /*
  * Playing from the library (spec §14.1), one implementation for the phone and the TV: an album from a
@@ -148,6 +152,33 @@ public fun AndroidLibraryItem.Track.queueSource(album: AndroidLibraryItem.Album?
 /** Whether a row may offer Play Next and Add to Queue: the track can play now and has a title to show. */
 public fun AndroidLibraryItem.Track.canBeQueued(): Boolean =
     playability != AndroidLibraryPlayability.UnavailableOffline && !title.isNullOrBlank()
+
+/**
+ * One search track added to the queue, attributed to the search (spec §14.1 `sourceContext`), exactly
+ * as the Apple shells attribute a search result. False as for [queueTrack]; nothing is added, and the
+ * surface says so, when the result is not a track, cannot play now, or no playback service is bound.
+ */
+public fun queueSearchResult(
+    playback: AndroidPlaybackController?,
+    providerInstanceId: String,
+    result: SearchResultItem,
+    insertion: AndroidQueueInsertion,
+    searchName: String,
+): Boolean {
+    if (playback == null || result.type != SearchResultType.Track) return false
+    val title = result.title.takeIf { it.isNotBlank() } ?: return false
+    val artist = result.credits.singleOrNull { it.role == CreditRole.Artist }?.name?.takeIf { it.isNotBlank() }
+    val track = AndroidTrack(
+        providerInstanceId = providerInstanceId,
+        rawId = result.id.rawId,
+        title = title,
+        artist = artist,
+        album = result.albumTitle?.takeIf { it.isNotBlank() },
+        durationMilliseconds = result.duration?.inWholeMilliseconds,
+        artworkKey = result.artworkKey,
+    )
+    return playback.addToQueue(listOf(track), insertion, AndroidQueueSource.Search, searchName)
+}
 
 /** An album whose tracks this device cannot play only because it is offline (§16.14). */
 internal fun AndroidLibraryPublication.heldBackOffline(): Boolean =

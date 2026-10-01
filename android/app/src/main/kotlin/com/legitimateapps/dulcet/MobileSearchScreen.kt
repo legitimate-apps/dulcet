@@ -3,6 +3,8 @@ package com.legitimateapps.dulcet
 import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -21,7 +24,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -33,6 +39,7 @@ import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
+import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.searchScopeLabel
@@ -70,6 +77,8 @@ internal fun MobileSearchScreen(
     onActivate: (SearchResultItem) -> Unit,
     account: SearchAccount? = null,
     onPlay: ((SearchResultItem) -> Unit)? = null,
+    /** Play Next and Add to Queue for a track result; null disables the items (spec §14.1). */
+    onQueue: ((SearchResultItem, AndroidQueueInsertion) -> Unit)? = null,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -124,6 +133,8 @@ internal fun MobileSearchScreen(
                         unavailableOffline = !playable,
                         onActivate = { onActivate(result) },
                         onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { play(result) } },
+                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable }
+                            ?.let { queue -> { insertion -> queue(result, insertion) } },
                     )
                 }
             }
@@ -140,6 +151,7 @@ private fun MobileSearchResult(
     unavailableOffline: Boolean,
     onActivate: () -> Unit,
     onPlay: (() -> Unit)?,
+    onQueue: ((AndroidQueueInsertion) -> Unit)? = null,
 ) {
     val resources = libraryResources()
     val kind = stringResource(when (result.type) {
@@ -162,13 +174,42 @@ private fun MobileSearchResult(
             if (account != null && result.type != SearchResultType.Artist) Artwork(account, result.artworkKey, result.title, 48.dp)
             else Icon(if (result.type == SearchResultType.Artist) DulcetIcons.Person else DulcetIcons.MusicNote, null)
         },
-        trailingContent = onPlay?.let { play ->
+        trailingContent = if (onPlay == null && onQueue == null) null else {
             {
-                IconButton(onClick = play, modifier = Modifier.testTag("search.play.$index")) {
-                    Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, result.title))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    onPlay?.let { play ->
+                        IconButton(onClick = play, modifier = Modifier.testTag("search.play.$index")) {
+                            Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, result.title))
+                        }
+                    }
+                    onQueue?.let { queue ->
+                        SearchResultQueueMenu(index, { insertion -> queue(insertion) })
+                    }
                 }
             }
         },
         modifier = Modifier.fillMaxWidth().clickable(onClick = onActivate).testTag("search.result.$index"),
     )
+}
+
+/**
+ * Play Next and Add to Queue on a search result's menu (spec §14.1), tagged `search.queue.<index>` and
+ * `search.queue.<index>.playNext` / `.addToQueue` — the same queue-edit path the album and track menus use.
+ */
+@Composable
+private fun SearchResultQueueMenu(
+    index: Int,
+    onQueue: (AndroidQueueInsertion) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.testTag("search.queue.$index")) {
+            Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_add_options))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            QueueInsertionItems("search.queue.$index", { open = false },
+                { onQueue(AndroidQueueInsertion.PlayNext) },
+                { onQueue(AndroidQueueInsertion.AddToQueue) })
+        }
+    }
 }

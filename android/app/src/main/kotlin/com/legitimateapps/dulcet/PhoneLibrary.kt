@@ -572,8 +572,9 @@ internal fun AlbumScreen(
             if (album != null) FavouriteButton(album.favourite == true, "album.favourite") {
                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
             }
-            // Play Next and Add to Queue for the whole album, beside its download (spec §14.1).
-            if (album != null && shown != null && shown.playableTracks(account.providerInstanceId).isNotEmpty()) {
+            // Play Next and Add to Queue for the whole album, beside its download (spec §14.1). Hidden
+            // while queue editing is unavailable rather than shown and then refused.
+            if (actions.queueEditing && album != null && shown != null && shown.playableTracks(account.providerInstanceId).isNotEmpty()) {
                 var open by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { open = true }, modifier = Modifier.testTag("album.menu")) {

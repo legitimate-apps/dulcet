@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AccountConnector
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Button
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.Border
@@ -105,8 +107,9 @@ class TvSearchActivity : ComponentActivity() {
                         }
                     } else {
                         val presenter = rememberSearchPresenter(current, searchDependencies)
-                        TvLibraryEntry(current) { navigator ->
-                            TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator))
+                        TvLibraryEntry(current) { navigator, playback ->
+                            TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator),
+                                playback = playback)
                         }
                     }
                 }
@@ -149,6 +152,8 @@ internal fun TvSearchScreen(
     presenter: SearchPresenter,
     /** Rows show cover art when the account is known; tests without one draw the placeholder. */
     account: SearchAccount? = null,
+    /** The playback controller, for Play Next and Add to Queue on a track result (spec §14.1). */
+    playback: AndroidPlaybackController? = null,
     onActivate: (SearchResultItem) -> Unit,
 ) {
     val state by presenter.state.collectAsStateWithLifecycle()
@@ -267,6 +272,8 @@ internal fun TvSearchScreen(
             ) {
                 itemsIndexed(rows) { index, row ->
                     val result = row.item
+                    val context = LocalContext.current
+                    val addition = tvSearchAddition(context, playback, account?.providerInstanceId, result, row.playability)
                     TvSearchResult(
                         result = result,
                         note = listOfNotNull(
@@ -280,6 +287,7 @@ internal fun TvSearchScreen(
                         ).joinToString(" · ").ifEmpty { null },
                         index = index,
                         account = account,
+                        addition = addition,
                         focusRequester = resultFocus[index],
                         queryFocusRequester = queryFocus.takeIf { index == 0 },
                         onActivate = { onActivate(result) },
@@ -291,63 +299,80 @@ internal fun TvSearchScreen(
 }
 
 @Composable
-private fun TvSearchResult(
+internal fun TvSearchResult(
     result: SearchResultItem,
     note: String?,
     index: Int,
     account: SearchAccount?,
+    addition: TvQueueAddition?,
     focusRequester: FocusRequester,
     /** The query field, above the first result only: UP from there goes to it. */
     queryFocusRequester: FocusRequester?,
     onActivate: () -> Unit,
 ) {
-    Card(
-        onClick = onActivate,
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRequester(focusRequester)
-            .onPreviewKeyEvent { event ->
-                // The centre key activates once, on release, as the Card's own click would. The Card
-                // is kept from seeing it: it clicked on the release of a press this handler had also
-                // acted on, and every result opened twice (Back then left a duplicate on top).
-                if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
-                    if (event.type == KeyEventType.KeyUp) onActivate()
-                    return@onPreviewKeyEvent true
-                }
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                // Between results the list's own focus search moves UP and DOWN: it composes a
-                // result not yet on screen, where a requester of one never composed takes nothing,
-                // which left the D-pad stuck at the last result the screen had room for.
-                when (event.key) {
-                    Key.DirectionUp -> if (queryFocusRequester != null) {
-                        queryFocusRequester.requestFocus()
-                        true
-                    } else {
-                        false
+    var adding by remember { mutableStateOf(false) }
+    if (addition != null) TvAddToUpNext(if (adding) addition else null) { adding = false }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Card(
+            onClick = onActivate,
+            modifier = Modifier
+                .weight(1f)
+                .focusRequester(focusRequester)
+                .onPreviewKeyEvent { event ->
+                    // The centre key activates once, on release, as the Card's own click would. The Card
+                    // is kept from seeing it: it clicked on the release of a press this handler had also
+                    // acted on, and every result opened twice (Back then left a duplicate on top).
+                    if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
+                        if (event.type == KeyEventType.KeyUp) onActivate()
+                        return@onPreviewKeyEvent true
                     }
-                    else -> false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // Between results the list's own focus search moves UP and DOWN: it composes a
+                    // result not yet on screen, where a requester of one never composed takes nothing,
+                    // which left the D-pad stuck at the last result the screen had room for.
+                    when (event.key) {
+                        Key.DirectionUp -> if (queryFocusRequester != null) {
+                            queryFocusRequester.requestFocus()
+                            true
+                        } else {
+                            false
+                        }
+                        else -> false
+                    }
+                }
+                .tvFocus("search.result.$index"),
+            // The same obvious focus as the library's cards: a touch of growth and a ring.
+            scale = CardDefaults.scale(focusedScale = 1.02f),
+            border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary))),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TvArtwork(account, result.artworkKey, 72, when (result.type) {
+                    SearchResultType.Artist -> DulcetIcons.Person
+                    SearchResultType.Album -> DulcetIcons.Album
+                    SearchResultType.Track -> DulcetIcons.MusicNote
+                })
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(result.title, style = MaterialTheme.typography.titleLarge, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
+                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            .tvFocus("search.result.$index"),
-        // The same obvious focus as the library's cards: a touch of growth and a ring.
-        scale = CardDefaults.scale(focusedScale = 1.02f),
-        border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary))),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TvArtwork(account, result.artworkKey, 72, when (result.type) {
-                SearchResultType.Artist -> DulcetIcons.Person
-                SearchResultType.Album -> DulcetIcons.Album
-                SearchResultType.Track -> DulcetIcons.MusicNote
-            })
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(result.title, style = MaterialTheme.typography.titleLarge, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis)
-                Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
-                    style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        // Play Next and Add to Queue for a track result, as a library row offers them (spec §14.1).
+        // Beside the card, not in it: the card's centre key opens the result, so the button is its own
+        // focus target, reached by one RIGHT, as the library rows' queue button is.
+        if (addition != null) {
+            Button(onClick = { adding = true }, modifier = Modifier.tvFocus("search.result.$index.queue")) {
+                Text(stringResource(SharedR.string.queue_add_options))
             }
         }
     }
