@@ -2,14 +2,14 @@
 # design-tour-apple -- photograph the real Apple app's key screens for design review.
 #
 # USAGE
-#   tools/design-tour-apple <out-dir> [--device iphone|ipad|mac|all] [--keep-server] [--keep-simulator]
+#   tools/design-tour-apple <out-dir> [--device iphone|ipad|mac|tvos|all] [--keep-server] [--keep-simulator]
 #
 #   Starts (or reuses) a local disposable Navidrome seeded with the conformance corpus
 #   (tools/design-tour-server), builds the app and its tour once (incrementally after the first
 #   run), then runs one tour per device and writes compressed JPEGs, about 1000 px on the long
 #   edge, to:
 #       <out-dir>/<device>-<nn>-<screen>.jpg
-#   where <device> is iphone-light, iphone-dark, ipad or mac. A screen the tour could not reach is
+#   where <device> is iphone-light, iphone-dark, ipad, mac or tvos. A screen the tour could not reach is
 #   still written, as <nn>-<screen>-UNREACHED.jpg, and the command exits 1 naming it.
 #   <out-dir>/tour-summary.txt lists every shot and the result of each device's run.
 #
@@ -21,11 +21,16 @@
 #   root view in a 1280x800 window of the hosted app, captured with screencapture (the terminal
 #   running this tool needs the Screen Recording permission; without it the shot falls back to
 #   the view hierarchy drawn into an image, which leaves translucent materials out).
+#   Apple TV (apple/DulcetTVUITests/DulcetTVDesignTourUITests.swift), by the remote alone: Library
+#   root with its launch focus, an album, Now Playing while playing with focus on Play/Pause, the
+#   same with focus on the third star and then on the heart (focused, never pressed), the lyrics
+#   panel while playing, Search with results, and Settings with focus on streaming quality.
 #
 # RUNTIME (measured on an Apple Silicon laptop)
 #   cold: first build ~80 s (iOS) + ~40 s (Mac), plus the first boot of a newly created simulator,
 #   which took ~10 min once. warm (simulators reused, nothing changed): ~2 min per iOS tour,
 #   ~2.5 min for iPad, ~25 s for Mac, ~7 min for all four. An edit rebuilds incrementally (~10 s).
+#   tvOS: first build ~130 s and a first tour ~3 min on a newly created simulator; warm, ~70 s.
 #
 # ENVIRONMENT (all optional)
 #   DULCET_DESIGN_TOUR_WORK          server root, result bundles and logs
@@ -35,8 +40,10 @@
 #                                    zero tests (default $WORK/DerivedData)
 #   DULCET_DESIGN_TOUR_IPHONE_UDID   use this booted-or-bootable iPhone simulator
 #   DULCET_DESIGN_TOUR_IPAD_UDID     use this iPad simulator
+#   DULCET_DESIGN_TOUR_TVOS_UDID     use this Apple TV simulator
 #                                    Without them the tool creates, and afterwards reuses,
-#                                    simulators named "Dulcet Design Tour iPhone"/"... iPad".
+#                                    simulators named "Dulcet Design Tour iPhone"/"... iPad"/
+#                                    "... Apple TV".
 #   DULCET_DESIGN_TOUR_NAVIDROME     a Navidrome binary to use instead of fetching the pinned one
 #   DULCET_DESIGN_TOUR_PORT          server port (default 4861)
 #
@@ -67,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
 done
-case "$DEVICE" in iphone|ipad|mac|all) ;; *) echo "--device must be iphone, ipad, mac or all" >&2; exit 2 ;; esac
+case "$DEVICE" in iphone|ipad|mac|tvos|all) ;; *) echo "--device must be iphone, ipad, mac, tvos or all" >&2; exit 2 ;; esac
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${DULCET_DESIGN_TOUR_WORK:-$HOME/Library/Caches/dulcet-design-tour}"
@@ -120,6 +127,7 @@ build() { # scheme destination [settings...]
 }
 want() { [[ "$DEVICE" == all || "$DEVICE" == "$1" ]]; }
 if want iphone || want ipad; then build DulcetiOS "generic/platform=iOS Simulator"; fi
+if want tvos; then build DulcetTV "generic/platform=tvOS Simulator"; fi
 if want mac; then
   build DulcetMac "platform=macOS" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= \
     DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
@@ -200,17 +208,25 @@ run_tour() { # label xctestrun only-testing destination...
 }
 
 # ---- iOS --------------------------------------------------------------------------------------
-simulator() { # env-udid device-name device-type
+simulator() { # env-udid device-name device-type [runtime-platform]
   if [[ -n "$1" ]]; then echo "$1"; return; fi
-  local udid
+  local udid platform="${4:-iOS}" runtime=
   udid=$(xcrun simctl list devices available -j | python3 -c '
 import json, sys
-name = sys.argv[1]
+name, platform = sys.argv[1], sys.argv[2]
 for runtime, devices in json.load(sys.stdin)["devices"].items():
     for d in devices:
-        if d["name"] == name and "iOS" in runtime:
-            print(d["udid"]); sys.exit()' "$2")
-  [[ -n "$udid" ]] || udid=$(xcrun simctl create "$2" "$3")
+        if d["name"] == name and "." + platform + "-" in runtime:
+            print(d["udid"]); sys.exit()' "$2" "$platform")
+  if [[ -z "$udid" && "$platform" != iOS ]]; then
+    # simctl create picks the newest runtime of the device type's own platform only when told
+    # which; without one it may choose an iOS runtime and refuse the device type.
+    runtime=$(xcrun simctl list runtimes available -j | python3 -c '
+import json, sys
+found = [r["identifier"] for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == sys.argv[1]]
+print(found[-1] if found else "")' "$platform")
+  fi
+  [[ -n "$udid" ]] || udid=$(xcrun simctl create "$2" "$3" ${runtime:+"$runtime"})
   echo "$udid"
 }
 
@@ -233,7 +249,8 @@ prepare_simulator() { # udid appearance
     xcrun simctl boot "$1"; BOOTED_BY_US+=("$1")
   fi
   xcrun simctl bootstatus "$1" -b >/dev/null
-  xcrun simctl ui "$1" appearance "$2"
+  # tvOS keeps its own appearance setting, which simctl cannot set; the tour shoots its default.
+  [[ -z "$2" ]] || xcrun simctl ui "$1" appearance "$2"
   xcrun simctl status_bar "$1" override --time 9:41 --batteryState charged --batteryLevel 100 \
     --cellularBars 4 --wifiBars 3 --dataNetwork wifi >/dev/null 2>&1 || true
 }
@@ -253,6 +270,14 @@ if want ipad; then
   RUN=$(tour_xctestrun 'DulcetiOS_iphonesimulator*.xctestrun' ios)
   prepare_simulator "$IPAD" light
   run_tour ipad "$RUN" "$IOS_ONLY" -destination "id=$IPAD"
+fi
+
+# ---- tvOS -------------------------------------------------------------------------------------
+if want tvos; then
+  TV=$(simulator "${DULCET_DESIGN_TOUR_TVOS_UDID:-}" "Dulcet Design Tour Apple TV" "Apple TV 4K (3rd generation)" tvOS)
+  RUN=$(tour_xctestrun 'DulcetTV_appletvsimulator*.xctestrun' tvos)
+  prepare_simulator "$TV" ""
+  run_tour tvos "$RUN" DulcetTVUITests/DulcetTVDesignTourUITests/testDesignTour -destination "id=$TV"
 fi
 
 # ---- macOS ------------------------------------------------------------------------------------
