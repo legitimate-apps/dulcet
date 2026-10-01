@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit
  * A small OpenSubsonic server on this machine's loopback for host tests of the library screens over
  * the PRODUCTION session and reader: only the server is a fixture. It answers the reader's epoch reads
  * with one unchanging scan stamp, an album list per `getAlbumList2` type (each type its own albums, so
- * a screen shows which order it asked for), [genres] from `getGenres`, and [songsByGenre] from
- * `getSongsByGenre`. Every request is recorded, credentials and all, and never leaves the test.
+ * a screen shows which order it asked for), each album with one song from `getAlbum`, [genres] from
+ * `getGenres`, and [songsByGenre] from `getSongsByGenre`. Every request is recorded, credentials and all, and never leaves the test.
  */
 class LoopbackLibraryServer : AutoCloseable {
     private val socket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
@@ -99,6 +99,13 @@ class LoopbackLibraryServer : AutoCloseable {
                     """{"value":${quote(name)},"songCount":${songsByGenre[name].orEmpty().size},"albumCount":1}"""
                 }
                 """"genres":{"genre":[$list]}"""
+            }
+            "getAlbum" -> {
+                val id = parameters["id"].orEmpty()
+                val title = quote(albumTitle(id.substringBeforeLast('-'), id.substringAfterLast('-').toIntOrNull() ?: 1))
+                """"album":{"id":${quote(id)},"name":$title,"artist":"Fixture Artist","artistId":"artist-1","songCount":1,""" +
+                    """"song":[{"id":${quote("$id-song-1")},"title":"Opening","album":$title,"albumId":${quote(id)},""" +
+                    """"artist":"Fixture Artist","track":1,"duration":120,"suffix":"mp3","contentType":"audio/mpeg"}]}"""
             }
             "getSongsByGenre" -> {
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0

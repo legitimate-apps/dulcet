@@ -43,6 +43,7 @@ import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.library.queueAlbum
 import com.legitimateapps.dulcet.library.queueTrack
 import com.legitimateapps.dulcet.library.queueSearchResult
+import com.legitimateapps.dulcet.ui.DroppedAdditionsNotice
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.library.ArtistPlayResult
 import com.legitimateapps.dulcet.library.LibraryLifecycle
@@ -54,7 +55,9 @@ import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.titledTracks
 import com.legitimateapps.dulcet.playback.PlayRequest
+import com.legitimateapps.dulcet.playback.PlaybackBinding
 import com.legitimateapps.dulcet.playback.PlaybackIntents
+import com.legitimateapps.dulcet.playback.rememberPlaybackBinding
 import com.legitimateapps.dulcet.playback.rememberPlaybackController
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchActivation
@@ -86,10 +89,16 @@ private fun List<String>.toMutableStateList() = mutableStateListOf<String>().als
 
 /**
  * The phone app once an account exists. Presentation state lives here and in the screens; library
- * data comes from the existing [LibrarySession] read and playback from the service's controller.
+ * data comes from the existing [LibrarySession] read and playback from the service's controller,
+ * [playback], null until the service binds.
  */
 @Composable
-internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependencies, requests: PhonePlaybackRequests) {
+internal fun PhoneApp(
+    account: SearchAccount,
+    dependencies: SearchHostDependencies,
+    requests: PhonePlaybackRequests,
+    playback: AndroidPlaybackController? = rememberPlaybackController(),
+) {
     val context = LocalContext.current
     val preferences = remember { runCatching { context.getSharedPreferences("dulcet.ui", 0) }.getOrNull() }
     var tab by rememberSaveable {
@@ -100,7 +109,8 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     var playerOpen by rememberSaveable { mutableStateOf(false) }
     var adding by remember { mutableStateOf<PlaylistAddition?>(null) }
 
-    val playback = rememberPlaybackController()
+    // A Play pressed before the service binds is held and made once it does (spec §14.1).
+    val plays = rememberPlaybackBinding(playback)
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
         .collectAsStateWithLifecycle()
     val foreground = hostInForeground()
@@ -121,13 +131,14 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
-        playAlbum = { album, start, shuffle -> playAlbumFrom(playback, provider, album, start, shuffle) },
-        playArtist = { artist, shuffle, done -> playArtist(playback, library, provider, artist, shuffle, done) },
+        playAlbum = { album, start, shuffle -> playAlbumFrom(plays, provider, album, start, shuffle) },
+        playArtist = { artist, shuffle, done -> playArtist(plays, library, provider, artist, shuffle, done) },
         // Up Next rows take their titles from albums already on screen, every titled track whether or
         // not it can play right now; no request is made for them.
         rememberAlbum = { album -> playback?.rememberTracks(album.titledTracks(provider)) },
+        // The player opens at once; it covers the page only once the service is bound to play.
         playTracks = { items, rawId, source ->
-            if (playTracks(playback, provider, items, rawId, source)) playerOpen = true
+            if (playTracks(plays, provider, items, rawId, source)) playerOpen = true
         },
         openPlaylist = { routes += "playlist:$it" },
         followPlaylist = { local, server ->
@@ -135,7 +146,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
             if (index >= 0) routes[index] = "playlist:$server"
         },
         playPlaylist = { playlist, position, shuffle ->
-            if (playPlaylist(playback, provider, playlist, position, shuffle)) playerOpen = true
+            if (playPlaylist(plays, provider, playlist, position, shuffle)) playerOpen = true
         },
         addToPlaylist = { adding = it },
         // A refused addition is said, as the Apple shells say it, rather than silently not happening.
@@ -147,7 +158,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
         },
         openGenre = { routes += "genre:$it" },
         playTracksFrom = { items, rawId, source, shuffle ->
-            if (playTracks(playback, provider, items, rawId, source, shuffle)) playerOpen = true
+            if (playTracks(plays, provider, items, rawId, source, shuffle)) playerOpen = true
         },
         queueEditing = playback != null,
     )
@@ -203,7 +214,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
             tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
             else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
-                playback?.playSong(result.id.providerInstanceId, result.id.rawId, result.title)
+                plays.play { it.playSong(result.id.providerInstanceId, result.id.rawId, result.title) }
             }, (if (playback != null) { result, insertion ->
                 if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
             } else null))
@@ -215,6 +226,7 @@ internal fun PhoneApp(account: SearchAccount, dependencies: SearchHostDependenci
     // its reconnect's first request — comes before the screens open their windows; each window still
     // paints from the cache before its own read is issued.
     adding?.let { addition -> AddToPlaylistSheet(account, library, addition) { adding = null } }
+    DroppedAdditionsNotice(playback, playbackState.droppedAdditions)
     LibraryLifecycle(library)
 }
 
@@ -330,7 +342,7 @@ internal class PhoneActions(
 
 /** [position] indexes the album's rows; the queue skips rows with no metadata to play. */
 private fun playAlbumFrom(
-    playback: AndroidPlaybackController?,
+    playback: PlaybackBinding,
     provider: String,
     publication: AndroidLibraryPublication,
     position: Int,

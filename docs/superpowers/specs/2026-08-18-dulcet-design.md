@@ -2762,8 +2762,17 @@ core still holds the old queue, and an addition made then would be replaced when
 starts. Android holds it and applies it, in order and with its own source, once that queue is in
 place, so it lands where it would have had the queue already started; if that queue never starts
 (stopped, replaced by another play, or failed), the held additions go with it and are never applied
-to a different queue. Android also refuses moving the playing entry, an entry already played, or
-any entry onto or before the playing one, as Apple's Up Next offers moves only after it.
+to a different queue, and the person is told how many tracks were not added (Apple has no such
+moment, so no Apple wording exists to match). Every other edit made in that moment -- Move, Remove,
+Clear upcoming -- is refused and changes nothing, since it would change the queue about to be
+replaced and vanish with it. Android also refuses moving the playing entry, an entry already played,
+or any entry onto or before the playing one, as Apple's Up Next offers moves only after it.
+
+A second Android-only moment: the playback service binds asynchronously, so a screen has no
+controller for an instant after it starts. A Play pressed then -- an album, an artist, a list's
+tracks, a playlist, a search result -- is held, the latest only, and made once the service binds, as
+a play delivered by intent always was; the TV opens Now Playing only once it has been made. Play Next
+and Add to Queue are not held: they stay hidden until the service is bound.
 
 **Restoration recovery:** before creating a playback session from a persisted queue, check whether
 its selection can resolve in the supplied playback catalog for the active account. If it cannot,
@@ -7316,6 +7325,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-01 — Android refuses queue edits while a queue loads, says when held additions are dropped, and holds a Play pressed before the service binds (§14.1).**
+Three follow-ups to the entry below. (1) Move, Remove and Clear upcoming made while a new queue is
+still being read returned success, changed the old queue, and were then wiped when the new one
+started; they are now refused, as a move of the playing entry is. (2) Additions dropped with a queue
+that never started -- failed, replaced, or stopped -- vanished silently; the controller now publishes
+how many tracks were dropped, each app says so once, and the controller is told it was said. (3) A
+Play pressed before the playback service had bound found no controller and was lost with nothing
+said; it is now held and made once the service binds, on the phone and the TV, and a TV button that
+keeps a click handler from an earlier composition reaches the controller bound now rather than the
+one (possibly none) it captured. The controller's per-generation filter on held additions was
+unreachable -- every path that ends a resolution without starting it now drops them -- and is
+removed. An adjacent defect closed: a superseded queue whose read failed late, through a read that
+ignores cancellation, dropped the newer queue's held additions and showed a failure for a queue
+nobody was waiting for; that failure is now ignored. OBSERVED in host tests only (`AndroidPlaybackControllerTest`, `PlayBeforeBindTest`,
+`TvPlayBeforeBindTest`); not driven on an emulator or device.
 
 **2026-09-30 — Android genres and album orders (§16.9, §16.14).** The Android library showed no
 genres, and its Albums screen read `alphabeticalByName` only, where the Apple shells offer a Genres

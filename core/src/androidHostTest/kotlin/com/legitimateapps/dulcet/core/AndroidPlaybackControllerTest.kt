@@ -291,9 +291,112 @@ class AndroidPlaybackControllerTest {
                 }
                 val expected = if (how == "superseded") listOf("m1", "m2") else listOf("t1", "t2")
                 assertEquals(expected, f.controller.state.value.queue.map { it.track.rawId }, "$how: x is not applied")
-                // A later queue does not pick up what was held for the abandoned one.
+                // The person is told, at the moment the queue is abandoned -- not at some later play.
+                val dropped = assertNotNull(f.controller.state.value.droppedAdditions, "$how: the drop is said")
+                assertEquals(1, dropped.trackCount, how)
+                // A later queue does not pick up what was held for the abandoned one, and says nothing
+                // more: nothing was held for it.
                 f.controller.playQueue(album("k1", "k2"), 0, AndroidQueueSource.Album, "K", "k-album")
                 assertEquals(listOf("k1", "k2"), f.controller.state.value.queue.map { it.track.rawId }, "$how")
+                assertEquals(dropped, f.controller.state.value.droppedAdditions, "$how: no second drop")
+                f.controller.dismissDroppedAdditions(dropped.sequence)
+                assertNull(f.controller.state.value.droppedAdditions, "$how: dismissed once said")
+            }
+        }
+    }
+
+    /**
+     * A superseded queue whose read fails only afterwards takes nothing with it: what is held by then
+     * is the newer queue's, which still receives it, and no failure is shown for a queue nobody awaits.
+     * The fixture's read ignores cancellation, so the superseded resolution does see the failure.
+     */
+    @Test fun aSupersededQueueFailingLateKeepsTheNewerQueuesAdditions() {
+        val pending = mutableMapOf<String, Continuation<AuthenticatedEndpointResponse>>()
+        Fixture(loadSong = { id ->
+            if (id == "n1" || id == "m1") suspendCoroutine<AuthenticatedEndpointResponse> { pending[id] = it } else song(id)
+        }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "N", "n-album")
+            f.controller.playQueue(album("m1", "m2"), 0, AndroidQueueSource.Album, "M", "m-album")
+            assertNotNull(pending["n1"], "setup: the superseded read is still outstanding")
+            assertTrue(f.controller.addToQueue(album("x"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            pending.getValue("n1").resume(missingSong())
+            assertNull(f.controller.state.value.droppedAdditions, "the newer queue's addition is not dropped")
+            assertNull(f.controller.state.value.error, "no failure for a queue nobody awaits")
+            pending.getValue("m1").resume(song("m1"))
+            assertEquals(listOf("m1", "x", "m2"), f.controller.state.value.queue.map { it.track.rawId })
+        }
+    }
+
+    /**
+     * A drop counts every track of every addition held, and a queue abandoned with nothing held says
+     * nothing. Dismissing an earlier drop never hides a later one.
+     */
+    @Test fun aDropCountsEveryHeldTrackAndAnEmptyDropSaysNothing() {
+        val pending = mutableMapOf<String, Continuation<AuthenticatedEndpointResponse>>()
+        Fixture(loadSong = { id ->
+            if (id == "n1" || id == "m1") suspendCoroutine<AuthenticatedEndpointResponse> { pending[id] = it } else song(id)
+        }).use { f ->
+            f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "New", "new-album")
+            assertNotNull(pending["n1"], "setup: the new queue must be resolving")
+            f.controller.stop()
+            assertNull(f.controller.state.value.droppedAdditions, "nothing was held, so nothing is said")
+
+            f.controller.playQueue(album("m1", "m2"), 0, AndroidQueueSource.Album, "M", "m-album")
+            assertNotNull(pending["m1"], "setup: the next queue must be resolving")
+            assertTrue(f.controller.addToQueue(album("x", "y"), AndroidQueueInsertion.AddToQueue, AndroidQueueSource.Album, "X", "x-album"))
+            assertTrue(f.controller.addToQueue(album("z"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            pending.getValue("m1").resume(missingSong())
+            val first = assertNotNull(f.controller.state.value.droppedAdditions)
+            assertEquals(3, first.trackCount, "two additions, three tracks")
+
+            f.controller.playQueue(album("n1", "n2"), 0, AndroidQueueSource.Album, "New", "new-album")
+            assertTrue(f.controller.addToQueue(album("w"), AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"))
+            f.controller.stop()
+            val second = assertNotNull(f.controller.state.value.droppedAdditions)
+            assertTrue(second.sequence > first.sequence)
+            f.controller.dismissDroppedAdditions(first.sequence)
+            assertEquals(second, f.controller.state.value.droppedAdditions, "dismissing the earlier drop keeps the later one")
+        }
+    }
+
+    /**
+     * Move, Remove and Clear made while a new queue is loading are refused, as a move of the playing
+     * entry is: the queue shown is the one about to be replaced, so the edit would change it and then
+     * vanish with it. Once the new queue is in place, edits apply to it.
+     */
+    @Test fun editsWhileANewQueueLoadsAreRefusedAndChangeNothing() {
+        for (edit in listOf("move", "remove", "clear")) {
+            var pending: Continuation<AuthenticatedEndpointResponse>? = null
+            Fixture(loadSong = { id ->
+                if (id == "n1") suspendCoroutine<AuthenticatedEndpointResponse> { pending = it } else song(id)
+            }).use { f ->
+                f.controller.playQueue(album("t1", "t2", "t3", "t4"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                val ids = f.controller.state.value.queue.associate { it.track.rawId to it.queueEntryId }
+                // The control: each edit is accepted on the queue before a new one is loading.
+                val accepted = when (edit) {
+                    "move" -> f.controller.moveEntry(ids.getValue("t4"), 1)
+                    "remove" -> f.controller.removeEntry(ids.getValue("t4"))
+                    else -> f.controller.clearUpcoming()
+                }
+                assertTrue(accepted, "$edit: the control requires the edit to be accepted while nothing loads")
+                f.controller.playQueue(album("t1", "t2", "t3", "t4"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                f.controller.playQueue(album("n1", "n2", "n3"), 0, AndroidQueueSource.Album, "New", "new-album")
+                val held = assertNotNull(pending, "$edit: setup: the new queue must be resolving")
+                val shown = f.controller.state.value.queue
+                val loadingIds = shown.associate { it.track.rawId to it.queueEntryId }
+                val refused = when (edit) {
+                    "move" -> f.controller.moveEntry(loadingIds.getValue("t4"), 1)
+                    "remove" -> f.controller.removeEntry(loadingIds.getValue("t4"))
+                    else -> f.controller.clearUpcoming()
+                }
+                assertFalse(refused, "$edit: refused while the new queue loads")
+                assertEquals(shown, f.controller.state.value.queue, "$edit: the old queue is unchanged")
+                held.resume(song("n1"))
+                assertEquals(listOf("n1", "n2", "n3"), f.controller.state.value.queue.map { it.track.rawId }, edit)
+                val newIds = f.controller.state.value.queue.associate { it.track.rawId to it.queueEntryId }
+                assertTrue(f.controller.removeEntry(newIds.getValue("n3")), "$edit: the new queue takes edits")
             }
         }
     }

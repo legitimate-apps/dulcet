@@ -7,6 +7,7 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,4 +88,46 @@ public fun rememberPlaybackController(): AndroidPlaybackController? {
         onDispose { lifecycle.removeObserver(observer); unbind() }
     }
     return controller
+}
+
+/**
+ * A Play pressed before the playback service has bound. Binding is asynchronous, so for a moment
+ * after a screen starts there is no controller; a Play pressed then is held -- only the latest, as a
+ * later Play would replace its queue anyway -- and applied the moment the controller arrives, as a
+ * play delivered by intent is held. Nothing is lost to binding, and nothing is played twice.
+ *
+ * Remembered for the composition ([rememberPlaybackBinding]), it is also the one object a click
+ * handler kept from an earlier composition reaches: the handler asks it for the controller bound
+ * NOW, never the one -- possibly none -- that was current when the handler was made.
+ */
+public class PlaybackBinding {
+    private var controller: AndroidPlaybackController? = null
+    private var held: ((AndroidPlaybackController) -> Unit)? = null
+
+    /** Whether a Play is waiting for the service to bind. */
+    public val holding: Boolean get() = held != null
+
+    /** Runs [action] on the bound controller now, or holds it, replacing any held, until one binds. */
+    public fun play(action: (AndroidPlaybackController) -> Unit) {
+        val bound = controller
+        if (bound != null) { held = null; action(bound) } else held = action
+    }
+
+    /** The controller now bound, or null; a held Play is applied to the first one that arrives. */
+    public fun bind(controller: AndroidPlaybackController?) {
+        this.controller = controller
+        if (controller == null) return
+        val action = held ?: return
+        held = null
+        action(controller)
+    }
+}
+
+/** A [PlaybackBinding] kept for this composition and following [controller]. */
+@Composable
+public fun rememberPlaybackBinding(controller: AndroidPlaybackController?): PlaybackBinding {
+    val binding = remember { PlaybackBinding() }
+    // After the composition that saw the controller arrive, so a held Play starts outside composition.
+    SideEffect { binding.bind(controller) }
+    return binding
 }

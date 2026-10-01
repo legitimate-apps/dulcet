@@ -195,4 +195,9 @@
     <string name="queue_add_options">Add to Up Next</string>
     <string name="queue_cancel">Cancel</string>
     <string name="queue_edit_refused">Couldn’t change Up Next</string>
+    <!-- Android only: Play Next and Add to Queue made while a queue loaded that never started (spec §14.1). -->
+    <plurals name="queue_additions_dropped">
+        <item quantity="one">%d track wasn’t added to Up Next: what it was added to didn’t start.</item>
+        <item quantity="other">%d tracks weren’t added to Up Next: what they were added to didn’t start.</item>
+    </plurals>
 </resources>
