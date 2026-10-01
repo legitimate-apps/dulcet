@@ -9,6 +9,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.UnsafeNumber
 import platform.Foundation.NSError
 import platform.Foundation.NSHTTPURLResponse
+import platform.Foundation.NSLock
 import platform.Foundation.NSURLAuthenticationChallenge
 import platform.Foundation.NSURLAuthenticationMethodServerTrust
 import platform.Foundation.NSURLComponents
@@ -76,7 +77,11 @@ internal actual fun createAccountHttpClient(
         val ktorDelegate = KtorNSURLSessionDelegate(challengeHandler)
         val session = NSURLSession.sessionWithConfiguration(
             configuration,
-            EstimatedLengthCompletingDelegate(ktorDelegate),
+            EstimatedLengthCompletingDelegate(
+                ktorDelegate,
+                transport.estimatedBodyEndObserver,
+                transport.bodyForwardedObserver,
+            ),
             delegateQueue = null,
         )
         usePreconfiguredSession(session, ktorDelegate)
@@ -98,22 +103,70 @@ internal actual fun createAccountHttpClient(
  * the load failed as Unreachable -- the likeliest reading of CONF-92's one Unreachable on the tvOS
  * simulator in apple-ci, which did not reproduce locally.
  *
- * For a request that asked for an estimate, carries no Range header, and was answered 2xx with at
- * least one body byte, that particular completion is the end of the representation, so Ktor is told
- * the task succeeded and ends the body channel normally with every byte it was handed. Every other
- * completion, including the same error on a ranged or exact request, reaches Ktor unchanged.
+ * For a request that asked for an estimate, carries no Range header, and was answered 2xx after at
+ * least one body byte had been forwarded to Ktor, that particular completion is the end of the
+ * representation, so Ktor is told the task succeeded and ends the body channel normally with every
+ * byte it was handed. Every other completion, including the same error on a ranged or exact request,
+ * on a non-2xx answer, or after nothing was forwarded, reaches Ktor unchanged.
+ *
+ * The byte clause counts what this delegate forwarded, not the task's `countOfBytesReceived`: the
+ * session can have received bytes it never handed over, and an end with nothing forwarded would
+ * become an empty success -- an unexpected payload to the playback validator instead of the
+ * connection failure it is, which is what the transcode budget and the circuit breaker must see.
+ * The count is kept per task under a lock and dropped at the task's completion. Nothing here throws
+ * across the Objective-C callback: the observers' failures are dropped.
+ *
+ * What neither count can rescue: when the end of the stream arrives close behind body bytes the
+ * session has read but not yet handed over, the session discards them with the -1005 -- the tail of
+ * the body, or on a loaded host every byte of a short one, so the completion arrives with nothing
+ * received and nothing forwarded and stays a failure (OBSERVED on macOS under CPU load; spec §12.5,
+ * §28 2026-10-01, "The Darwin -1005 flake"). Those bytes never reach `countOfBytesReceived` either:
+ * over 500 loopback completions the received and forwarded counts were equal every time, so the
+ * forwarded count is chosen because an empty success is impossible by construction, not because a
+ * sample has told the two apart.
  */
 @OptIn(ExperimentalForeignApi::class, UnsafeNumber::class)
 private class EstimatedLengthCompletingDelegate(
     private val ktor: KtorNSURLSessionDelegate,
+    private val estimatedBodyEndObserver: ((forwardedBytes: Long) -> Unit)?,
+    private val bodyForwardedObserver: ((forwardedSoFar: Long) -> Unit)?,
 ) : NSObject(), NSURLSessionDataDelegateProtocol {
+    private val lock = NSLock()
+    private val forwardedBytes = HashMap<ULong, Long>()
+
     override fun URLSession(session: NSURLSession, dataTask: NSURLSessionDataTask, didReceiveData: NSData) {
         ktor.URLSession(session, dataTask, didReceiveData)
+        val task = dataTask.taskIdentifier.toULong()
+        val length = didReceiveData.length.toLong()
+        val forwarded = locked { ((forwardedBytes[task] ?: 0L) + length).also { forwardedBytes[task] = it } }
+        try {
+            bodyForwardedObserver?.invoke(forwarded)
+        } catch (_: Throwable) {
+            // An observer must never take the session down with it.
+        }
     }
 
     override fun URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError: NSError?) {
-        val error = didCompleteWithError?.takeUnless { task.endedAnEstimatedBody(it) }
-        ktor.URLSession(session, task, error)
+        val identifier = task.taskIdentifier.toULong()
+        val forwarded = locked { forwardedBytes.remove(identifier) } ?: 0L
+        val endsTheBody = didCompleteWithError != null && task.endedAnEstimatedBody(didCompleteWithError, forwarded)
+        if (endsTheBody) {
+            try {
+                estimatedBodyEndObserver?.invoke(forwarded)
+            } catch (_: Throwable) {
+                // An observer must never take the session down with it.
+            }
+        }
+        ktor.URLSession(session, task, if (endsTheBody) null else didCompleteWithError)
+    }
+
+    private inline fun <T> locked(block: () -> T): T {
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
     }
 
     override fun URLSession(
@@ -137,7 +190,7 @@ private class EstimatedLengthCompletingDelegate(
 }
 
 @OptIn(ExperimentalForeignApi::class, UnsafeNumber::class)
-private fun NSURLSessionTask.endedAnEstimatedBody(error: NSError): Boolean {
+private fun NSURLSessionTask.endedAnEstimatedBody(error: NSError, forwardedBytes: Long): Boolean {
     if (error.domain != NSURLErrorDomain || error.code != NSURLErrorNetworkConnectionLost) return false
     val request = originalRequest ?: return false
     val status = (response as? NSHTTPURLResponse)?.statusCode?.toInt() ?: return false
@@ -148,17 +201,17 @@ private fun NSURLSessionTask.endedAnEstimatedBody(error: NSError): Boolean {
             ?.queryItems
             ?.any { (it as? NSURLQueryItem)?.let { item -> item.name == "estimateContentLength" && item.value == "true" } == true }
             == true,
-        bodyBytesReceived = countOfBytesReceived,
+        bodyBytesForwarded = forwardedBytes,
     )
 }
 
 /** The pure decision [EstimatedLengthCompletingDelegate] applies to a connection-lost completion. */
-private fun isEstimatedBodyEnd(
+internal fun isEstimatedBodyEnd(
     statusCode: Int,
     hasRangeHeader: Boolean,
     asksForEstimate: Boolean,
-    bodyBytesReceived: Long,
-): Boolean = asksForEstimate && !hasRangeHeader && statusCode in 200..299 && bodyBytesReceived > 0
+    bodyBytesForwarded: Long,
+): Boolean = asksForEstimate && !hasRangeHeader && statusCode in 200..299 && bodyBytesForwarded > 0
 
 /**
  * Explicit forward-proxy connector used by the hosted Darwin wire conformance control.
