@@ -726,8 +726,8 @@
         "android": {
           "status": "partial",
           "unevidenced_conformance": {
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives them through this app.",
-            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader (LibraryWindowTest), whose results no evidence-verified job exports; no test drives them through this app. The albums window pages at 500 and the fixture holds eight albums, so no app test can span a second page.",
+            "CONF-87": "The app test drives the two-in-flight bound, the constrained-network skip, each album read once and a looked-ahead album opening with zero requests. Two bounds stay with the core's DetailLookAheadTest, whose results no evidence-verified job exports: that no more than 24 are read per settled viewport, which the eight-album fixture never reaches, and that a fling which never settles reads nothing, which the app test cannot make."
           },
           "evidence": [
             {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
@@ -777,16 +777,23 @@
              "test": "PhoneGenresAndAlbumSortTest/theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn"},
             {"observes": "with the platform reporting no network, an album order never read shows the albums the device has seen, labelled Available offline, and reads nothing for that order",
              "workflow": "core-ci", "job": "core-ci",
-             "test": "PhoneGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"}
+             "test": "PhoneGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"},
+            {"observes": "through the phone app's albums grid and the production reader against the disposable server, with the network reported constrained a settled grid reads no album detail; unconstrained with every getAlbum held, exactly two are in flight and no third starts while the grid stays still; released, each album is read once and no more than 24; and an album read ahead opens with no request, live and complete in its first publication",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest"}
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "android-app-level-window-and-lookahead-proofs", "reason": "CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests; no test in this repository drives them through the phone app, so no workflow, job or test can be named yet."},
-          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; genre play is observed at the action the screen calls, not in the playback service."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-app-level-window-proof-and-two-lookahead-bounds",
+            "reason": "Two things remain. CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) has no app-level proof: the reader's albums window pages at 500 and the disposable corpus holds eight albums, so the phone app test needs either a fixture of more than one page or a settable page size, and the tear triggers are core tests only. CONF-87 is now driven through the phone app for the two-in-flight bound, the constrained-network skip and the zero-request open, but two of its bounds are core-only: no more than 24 per settled viewport, which eight albums never reach, and nothing read during a fling that never settles. No workflow, job or test can be named for either yet."
+          },
+          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 has no app-level evidence and CONF-87 has it only for the bounds the app test can reach. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; genre play is observed at the action the screen calls, not in the playback service."
         },
         "androidtv": {
           "status": "partial",
           "unevidenced_conformance": {
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives them through this app.",
-            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader (LibraryWindowTest), whose results no evidence-verified job exports; no test drives them through this app. The albums window pages at 500 and the fixture holds eight albums, so no app test can span a second page.",
+            "CONF-87": "The app test drives the two-in-flight bound, the constrained-network skip, each album read once and a looked-ahead album opening with zero requests. Two bounds stay with the core's DetailLookAheadTest, whose results no evidence-verified job exports: that no more than 24 are read per settled viewport, which the eight-album fixture never reaches, and that a fling which never settles reads nothing, which the app test cannot make."
           },
           "evidence": [
             {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
@@ -836,10 +843,17 @@
              "test": "TvGenresAndAlbumSortTest/theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn"},
             {"observes": "with the platform reporting no network, an album order never read chosen on the TV shows the albums the device has seen, labelled Available offline, and reads nothing for that order",
              "workflow": "core-ci", "job": "core-ci",
-             "test": "TvGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"}
+             "test": "TvGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"},
+            {"observes": "through the TV app's albums grid and the production reader against the disposable server, with the network reported constrained a settled grid reads no album detail; unconstrained with every getAlbum held, exactly two are in flight and no third starts while the grid stays still; released, each album is read once and no more than 24; and an album read ahead opens with no request, live and complete in its first publication",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest"}
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "android-app-level-window-and-lookahead-proofs", "reason": "CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) and CONF-87 (bounded detail look-ahead) are exercised only by core reader tests; no test in this repository drives them through the TV app, so no workflow, job or test can be named yet."},
-          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 and CONF-87 have no app-level evidence. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; playing a genre on the TV is not exercised by any test."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "android-app-level-window-proof-and-two-lookahead-bounds",
+            "reason": "Two things remain. CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) has no app-level proof: the reader's albums window pages at 500 and the disposable corpus holds eight albums, so the TV app test needs either a fixture of more than one page or a settable page size, and the tear triggers are core tests only. CONF-87 is now driven through the TV app for the two-in-flight bound, the constrained-network skip and the zero-request open, but two of its bounds are core-only: no more than 24 per settled viewport, which eight albums never reach, and nothing read during a fling that never settles. No workflow, job or test can be named for either yet."
+          },
+          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 has no app-level evidence and CONF-87 has it only for the bounds the app test can reach. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; playing a genre on the TV is not exercised by any test."
         }
       }
     },
@@ -1459,8 +1473,32 @@
           "reason": "tvOS lists playlists and opens a read-only page that plays; editing is not offered on tvOS. No test drives that surface yet."
         },
         "android": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
+            {
+              "conformance": "CONF-88",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidProductionLibraryReaderAppConformanceTest/conf90ARemovalOnAViewChangedElsewhereIsRefusedUnwrittenAndTheControlRemovesTheIntendedSong"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidProductionLibraryReaderAppConformanceTest/conf91AnotherUsersPlaylistIsReadOnlyInTheAppAndTheOwnPlaylistIsTheControl"
+            },
             {
               "observes": "through the phone app against the disposable server, a playlist is created from the Playlists list (the page opens at once under its local id and follows it to the server's id), an album is added from its header and a song from its row menu, the first entry is moved down and the last removed in edit mode, the playlist is renamed and deleted; after each step the server is read directly and holds exactly what the person did; every write is one of createPlaylist, updatePlaylist or deletePlaylist, each but the delete is followed by a getPlaylist read-back before the next write, every create after the first replaces this playlist by playlistId, and no outcome ends other than Created or Saved",
               "workflow": "core-ci",
@@ -1490,20 +1528,33 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistAndLyricsPresentationTest/anEditAnswerIsSaidOnlyWhenItDidNotSimplyShow"
+            },
+            {
+              "observes": "in the core's Android host runtime against the disposable server, without formPost every write fits the query budget as the HTTP client encodes it or is refused unwritten",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf89WithoutFormPostEveryWriteFitsOrIsRefused"
+            },
+            {
+              "observes": "in the core's Android host runtime against the disposable server, a create whose answer was lost is identified by what was listed before its send, never by a clock",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf89ALostCreateIsIdentifiedByWhatWasListedBeforeItsSendNeverByAClock"
+            },
+            {
+              "observes": "in the core's Android host runtime against the disposable server, a positional edit on a stale index is prevented and not sent",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "observes": "in the core's Android host runtime against the disposable server, another user's playlist is not editable to the editor and the server refuses it",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
             }
           ],
-          "unevidenced_conformance": {
-            "CONF-88": "A server fact about the reference server's playlist writes, measured by the core conformance suite; no app test re-measures it.",
-            "CONF-89": "The app test drives create, append, album append, move, remove, rename and delete through the production editor with a server read-back after each, but not an offline replay, formPost batching or a lost create; those are exercised by the core conformance suite, whose results no evidence-verified job exports for this cell.",
-            "CONF-90": "A stale positional edit is refused by the core editor (core host test aStaleViewIsRefusedAndACurrentOneIsWrittenAndReadBackThroughTheFacade, and the core conformance suite); no app test makes another client change the playlist between the view and the edit.",
-            "CONF-91": "The app offers no edit on a playlist published not editable and says whose it is; no app test signs in a second user to drive another user's playlist through it."
-          },
-          "reason": "The phone app lists playlists in the Library, opens a playlist page that plays and shuffles in the playlist's order, and edits through the core editor only: create (from the list or from Add to playlist), rename, delete, append from track rows, row menus and an album's header, and move and remove in edit mode naming the entries shown as the view acted on (spec 18.6). A queued change says Not saved to your server yet; a create in doubt asks Keep or Make another; a stale view, a refusal or a change made elsewhere is said on the page. Compose/Robolectric evidence against the disposable server, not a physical-device claim.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-playlist-stale-view-and-other-user-app-proofs",
-            "reason": "CONF-90 and CONF-91 need an app-level proof that makes another client change the playlist between the view and the edit, and one that signs in a second user; neither exists. CONF-88 and the offline, formPost and lost-create parts of CONF-89 are core and server contracts measured by the core conformance suite, whose results are not exported as evidence for an app cell."
-          }
+          "reason": "The phone app lists playlists in the Library, opens a playlist page that plays and shuffles in the playlist's order, and edits through the core editor only: create (from the list or from Add to playlist), rename, delete, append from track rows, row menus and an album's header, and move and remove in edit mode naming the entries shown as the view acted on (spec 18.6). A queued change says Not saved to your server yet; a create in doubt asks Keep or Make another; a stale view, a refusal or a change made elsewhere is said on the page. Compose/Robolectric evidence against the disposable server, not a physical-device claim. The declared contracts are evidenced in core-ci: CONF-88, and CONF-89's offline replay, formPost batching and lost create, by the core's own conformance suite run in the Android host runtime against the disposable server; CONF-90 by the phone's production playlist page, where another client removes the first song on the server while the page shows the old four entries, removing entry 3 is refused as changed elsewhere with nothing written and the server unchanged, and the control removes exactly the intended song from the current view; and CONF-91 by the phone's app, where another user's public playlist opens read-only with no edit, menu, remove or move control and is not offered by the add-to-playlist sheet, with the user's own playlist as the control. They passed, with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. Compose/Robolectric evidence, not a physical-device claim."
         },
         "androidtv": {
           "status": "partial",
@@ -1634,8 +1685,20 @@
           "reason": "apple-ci executes CONF-42 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: Lyrics opens the same lyrics panel and model the other Apple players use, one column up to 1,200 points wide with the lit line following media time, and a line lights. Plain lyrics, no lyrics and a failed read are not rendered through the app on Apple TV, so the cell stays partial. Readability at television distance is a layout choice, not a measurement. Resolved on main."
         },
         "android": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
+            {
+              "conformance": "CONF-42",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"
+            },
+            {
+              "observes": "in the core's Android host runtime against the disposable server, getLyrics is used only when the songLyrics extension is not advertised, and every lyrics request, structured or legacy, went out with the response size limit",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LyricsConformanceTest/conf42LegacyGetLyricsOnlyWhenTheExtensionIsNotAdvertised"
+            },
             {
               "observes": "a track with embedded synced lyrics in three languages is played from its album on the phone, the lyrics button on the full player opens the lyrics, and the English layer is shown synced and live, read through getLyricsBySongId for that track after a single extension-list read",
               "workflow": "core-ci",
@@ -1653,21 +1716,43 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaylistAndLyricsPresentationTest/aTrackWithoutLyricsSaysSoAndNeverSpins"
+            },
+            {
+              "observes": "through the phone's production lyrics panel and session against the disposable server, a German device is shown the German synced layer, and with Portuguese first a synced German layer is shown over the unsynced Portuguese layer, whose line is not drawn",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidLyricsProductionLibraryReaderAppConformanceTest/conf42TheLayerShownFollowsTheDevicesLanguageAndSyncedBeatsUnsynced"
+            },
+            {
+              "observes": "through the phone's lyrics panel, lyrics seen live show offline with no request sent, a track never seen says it is unavailable offline, and after reconnect the lyrics are read live again",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidLyricsProductionLibraryReaderAppConformanceTest/conf42SeenLyricsShowOfflineWithNoRequestAndUnseenOnesSaySo"
+            },
+            {
+              "observes": "through the phone's lyrics panel with the songLyrics extension hidden from getOpenSubsonicExtensions, the lyrics are read with exactly one getLyrics call carrying artist and title, shown unsynced, and getLyricsBySongId is never called",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidLyricsProductionLibraryReaderAppConformanceTest/conf42WithoutTheExtensionAdvertisedTheLyricsAreReadWithGetLyrics"
             }
           ],
-          "unevidenced_conformance": {
-            "CONF-42": "The response shape, layer selection, offline serving, the response size limit and the getLyrics fallback are the core's, exercised by the core conformance suite, whose results no evidence-verified job exports for this cell; the app test observes only the synced English layer read live."
-          },
-          "reason": "Now Playing on the phone has a lyrics button that opens a lyrics sheet: synced lines follow media time (the controller's samples, interpolated between them while playback progresses), plain lyrics scroll; a track with none says so. Scrolling the lit line into view and a tap on a line seeking a seekable track are in the app and covered by no test. Compose/Robolectric evidence against the disposable server; the lit line following real audio on a device is ASSUMED.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "core-lyrics-conformance-not-exported-to-app-cells",
-            "reason": "CONF-42's response shape, layer selection, offline serving, size limit and getLyrics fallback are proved by the core conformance suite, whose JUnit is not an evidence source for an app cell; the app proof covers the synced layer read live and shown."
-          }
+          "reason": "Now Playing on the phone has a lyrics button that opens a lyrics sheet: synced lines follow media time (the controller's samples, interpolated between them while playback progresses), plain lyrics scroll; a track with none says so. Scrolling the lit line into view and a tap on a line seeking a seekable track are in the app and covered by no test. Compose/Robolectric evidence against the disposable server; the lit line following real audio on a device is ASSUMED. CONF-42 is evidenced twice over in core-ci: the core's own conformance suite, run in the Android host runtime against the disposable server, covers the structured response shape, layer selection, offline serving, the response size limit and the getLyrics fallback; and the phone's production lyrics panel is driven for the layer shown for the device's language, offline serving with no request, and the no-extension getLyrics path. Both passed, with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The phone panel's scroll to the lit line and a tap on a line to seek remain covered by no test."
         },
         "androidtv": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
+            {
+              "conformance": "CONF-42",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LyricsConformanceTest/conf42SongLyricsStructuredShapeSelectionAndOfflineCache"
+            },
+            {
+              "observes": "in the core's Android host runtime against the disposable server, getLyrics is used only when the songLyrics extension is not advertised, and every lyrics request, structured or legacy, went out with the response size limit",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "LyricsConformanceTest/conf42LegacyGetLyricsOnlyWhenTheExtensionIsNotAdvertised"
+            },
             {
               "observes": "on the TV's production Now Playing, the lyrics toggle reached with the remote replaces Up Next with the playing track's English synced lyrics, read live through getLyricsBySongId, and at 3 s the first line is lit and the next is not",
               "workflow": "core-ci",
@@ -1679,17 +1764,27 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvLyricsProductionLibraryReaderAppConformanceTest/aTrackWithNoLyricsSaysSoOnTheTv"
+            },
+            {
+              "observes": "through the TV's production lyrics panel and session against the disposable server, a German device is shown the German synced layer, and with Portuguese first a synced German layer is shown over the unsynced Portuguese layer, whose line is not drawn",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvLyricsProductionLibraryReaderAppConformanceTest/conf42TheLayerShownFollowsTheDevicesLanguageAndSyncedBeatsUnsynced"
+            },
+            {
+              "observes": "through the TV's lyrics panel, lyrics seen live show offline with no request sent, a track never seen says it is unavailable offline, and after reconnect the lyrics are read live again",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvLyricsProductionLibraryReaderAppConformanceTest/conf42SeenLyricsShowOfflineWithNoRequestAndUnseenOnesSaySo"
+            },
+            {
+              "observes": "through the TV's lyrics panel with the songLyrics extension hidden from getOpenSubsonicExtensions, the lyrics are read with exactly one getLyrics call carrying artist and title, shown unsynced, and getLyricsBySongId is never called",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvLyricsProductionLibraryReaderAppConformanceTest/conf42WithoutTheExtensionAdvertisedTheLyricsAreReadWithGetLyrics"
             }
           ],
-          "unevidenced_conformance": {
-            "CONF-42": "The response shape, layer selection, offline serving, the response size limit and the getLyrics fallback are the core's, exercised by the core conformance suite, whose results no evidence-verified job exports for this cell."
-          },
-          "reason": "The TV player has a lyrics toggle beside the transport that shows a lyrics panel in place of Up Next; lines are large and not focusable, the lit line follows media time and is kept in view. Compose/Robolectric evidence against the disposable server, not a physical-device claim.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "core-lyrics-conformance-not-exported-to-app-cells",
-            "reason": "CONF-42's response shape, layer selection, offline serving, size limit and getLyrics fallback are proved by the core conformance suite, whose JUnit is not an evidence source for an app cell; the app proof covers the synced layer read live, the lit line at media time and the no-lyrics statement."
-          }
+          "reason": "The TV player has a lyrics toggle beside the transport that shows a lyrics panel in place of Up Next; lines are large and not focusable, the lit line follows media time and is kept in view. Compose/Robolectric evidence against the disposable server, not a physical-device claim. CONF-42 is evidenced twice over in core-ci: the core's own conformance suite, run in the Android host runtime against the disposable server, covers the structured response shape, layer selection, offline serving, the response size limit and the getLyrics fallback; and the TV's production lyrics panel is driven for the layer shown for the device's language, offline serving with no request, and the no-extension getLyrics path. Both passed, with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. Plain lyrics and a failed read are not driven through the TV panel, and the lit line following real audio is not claimed."
         }
       }
     },
@@ -1779,12 +1874,7 @@
           "reason": "Apple TV offers the choice on the Connection screen as a row of buttons per network, the chosen one checked. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
         },
         "android": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-streaming-quality-device-proof",
-            "reason": "The choice is proved into the controller's next resolve by host tests; no emulator or device run plays a capped stream through the app and observes the server transcode it. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-92",
@@ -1803,17 +1893,18 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "PlaybackServiceStreamingQualityTest/theControllerFollowsTheSavedChoiceAndTheNetworksCost"
+            },
+            {
+              "observes": "on an API 34 phone emulator in core-ci, against the disposable server, the production play entry plays the 123 kbps FLAC fixture through a byte-level relay with a 96 kbps cap saved in the settings store the app's quality controls write: no audio answer the server gives starts with fLaC, at least one is a transcoded encoding, and the player reports the stream not seekable; with Original chosen again the next play streams the fLaC original",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorStreamingQualityProofTest/aCapChosenMakesTheServerTranscodeTheNextSongAndOriginalStreamsTheSource"
             }
           ],
-          "reason": "The phone offers the choice in the account dialog. core-ci runs CONF-92 in the Android host core-conformance runtime against the disposable reference server, transcoding asserted first. That the controller applies the quality to the next resolve and never re-resolves or restarts the current one is AndroidPlaybackControllerTest's, in :core:testAndroidHostTest, which core-ci runs but whose results are not among the evidence it verifies, so it is named and not cited. Robolectric compositions and host tests, not a device claim; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5)."
+          "reason": "The phone offers the choice in the account dialog. core-ci runs CONF-92 in the Android host core-conformance runtime against the disposable reference server, transcoding asserted first. That the controller applies the quality to the next resolve and never re-resolves or restarts the current one is AndroidPlaybackControllerTest's, in :core:testAndroidHostTest, which core-ci runs but whose results are not among the evidence it verifies, so it is named and not cited. The controls and the hand-off to the controller are Robolectric compositions and host tests; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 phone emulator in core-ci (AndroidEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the account dialog is the Robolectric rows' claim. No physical device was used."
         },
         "androidtv": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-streaming-quality-device-proof",
-            "reason": "The TV choice is proved by a Robolectric composition driven with remote keys; no emulator or device run plays a capped stream through the TV app. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-92",
@@ -1826,9 +1917,15 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvAccountEntryFocusTest/theRemoteChoosesAStreamingQualityBelowSignOut"
+            },
+            {
+              "observes": "on an API 34 Android TV emulator in core-ci, against the disposable server, the production play entry plays the 123 kbps FLAC fixture through a byte-level relay with a 96 kbps cap saved in the settings store the app's quality controls write: no audio answer the server gives starts with fLaC, at least one is a transcoded encoding, and the player reports the stream not seekable; with Original chosen again the next play streams the fLaC original",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvEmulatorStreamingQualityProofTest/aCapChosenMakesTheServerTranscodeTheNextSongAndOriginalStreamsTheSource"
             }
           ],
-          "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. Robolectric evidence, not a device claim; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5)."
+          "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
         }
       }
     }
