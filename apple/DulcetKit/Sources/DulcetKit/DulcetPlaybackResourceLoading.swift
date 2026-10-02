@@ -147,6 +147,10 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     private let sessionConfiguration: URLSessionConfiguration
     private let lock = NSLock()
     private var redirectsByTask: [Int: Int] = [:]
+    /// Per task: the body received so far and what to do when the task completes. A delegate
+    /// task rather than a completion-handler one, because a completion handler is given no data
+    /// when the task ends in an error, so a body cut short could not reach the validator.
+    private var transfersByTask: [Int: PlaybackTransfer] = [:]
     private lazy var session: URLSession = {
         let configuration = sessionConfiguration
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -187,7 +191,8 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .failure(error):
                 completion(.failed(error: error, refreshReason: nil))
             case let .success(authorized):
-                let task = self.session.dataTask(with: authorized.request) { [weak self, weak operation] data, response, error in
+                let task = self.session.dataTask(with: authorized.request)
+                self.setTaskCompletion(taskIdentifier: task.taskIdentifier) { [weak self, weak operation] data, response, error in
                     guard let self, let operation else {
                         completion(.cancelled)
                         return
@@ -197,7 +202,17 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                         completion(.cancelled)
                         return
                     }
-                    guard error == nil else {
+                    // A 200 body cut off by a lost connection after some of it arrived is handed to the
+                    // validator as received: Navidrome's estimated Content-Length overshoots a cold
+                    // transcode and the server stops at the end of the body, which URLSession reports
+                    // as -1005 (spec §12.5). Only the core validator knows whether the plan's length
+                    // is an estimate -- EOF before an estimate is the end of the representation, EOF
+                    // before an exact length is truncation -- so when it refuses the short body the
+                    // load fails as the lost connection it was.
+                    let endedShort = error.map { Self.isLostConnection($0) } == true
+                        && (response as? HTTPURLResponse)?.statusCode == 200
+                        && !data.isEmpty
+                    guard error == nil || endedShort else {
                         completion(.failed(error: Self.closedFailure(for: error), refreshReason: nil))
                         return
                     }
@@ -212,7 +227,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                         ))
                         return
                     }
-                    let body = data ?? Data()
+                    let body = data
                     let response = DulcetPlaybackHTTPResponse(
                         statusCode: http.statusCode,
                         contentType: http.value(forHTTPHeaderField: "Content-Type"),
@@ -230,8 +245,12 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                     ) {
                     case let .accepted(contentInformation):
                         completion(.loaded(data: body, contentInformation: contentInformation))
-                    case let .rejected(error, refreshReason):
-                        completion(.failed(error: error, refreshReason: refreshReason))
+                    case let .rejected(rejection, refreshReason):
+                        if endedShort {
+                            completion(.failed(error: Self.closedFailure(for: error), refreshReason: nil))
+                        } else {
+                            completion(.failed(error: rejection, refreshReason: refreshReason))
+                        }
                     }
                 }
                 operation.install(task: task)
@@ -268,6 +287,33 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         }
     }
 
+    private static func isLostConnection(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorNetworkConnectionLost
+    }
+
+    private func setTaskCompletion(
+        taskIdentifier: Int,
+        _ completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void
+    ) {
+        lock.lock()
+        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion)
+        lock.unlock()
+    }
+
+    fileprivate func append(_ data: Data, taskIdentifier: Int) {
+        lock.lock()
+        transfersByTask[taskIdentifier]?.body.append(data)
+        lock.unlock()
+    }
+
+    fileprivate func completeTransfer(_ task: URLSessionTask, error: Error?) {
+        lock.lock()
+        let transfer = transfersByTask.removeValue(forKey: task.taskIdentifier)
+        lock.unlock()
+        transfer?.completion(transfer?.body ?? Data(), task.response, error)
+    }
+
     private static func closedFailure(for error: Error?) -> DulcetPlaybackFailure {
         DulcetApplePlaybackErrorSanitizer.urlSessionFailure(error)
     }
@@ -292,7 +338,20 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     }
 }
 
-extension DulcetURLSessionPlaybackResource: URLSessionTaskDelegate {
+private struct PlaybackTransfer {
+    var body = Data()
+    let completion: @Sendable (Data, URLResponse?, Error?) -> Void
+}
+
+extension DulcetURLSessionPlaybackResource: URLSessionDataDelegate {
+    public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        append(data, taskIdentifier: dataTask.taskIdentifier)
+    }
+
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        completeTransfer(task, error: error)
+    }
+
     public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -563,7 +622,13 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
             case let .failed(error, refreshReason):
                 self.finish(context.loadingRequest, failure: error, refreshReason: refreshReason)
             case let .loaded(data, information):
-                guard !data.isEmpty, Int64(data.count) <= range.length else {
+                // A body longer than the chunk is accepted only as the whole representation from
+                // its first byte: a transcode the server has not cached honours no range and
+                // answers the first read with HTTP 200 and every byte (spec §12.5), which the
+                // validator has already measured as the resource's length.
+                let isWholeRepresentation = range.start == 0
+                    && Int64(data.count) == information.contentLength
+                guard !data.isEmpty, Int64(data.count) <= range.length || isWholeRepresentation else {
                     self.finish(
                         context.loadingRequest,
                         failure: .protocolViolation,

@@ -1735,7 +1735,13 @@ bytes never reach `countOfBytesReceived` either, so the Apple client's end-of-es
 2026-09-30 and 2026-10-01) cannot keep them: a short estimated body can lose its tail, and one whose
 every byte arrives before the first hand-over fails as `Unreachable`. **ASSUMED:** a full-length track
 is not exposed to the second case, because its body cannot all arrive before the session hands over
-a first read; nothing has measured it. No validator, download promoter, or platform media loader may collapse those
+a first read; nothing has measured it. **The Apple playback loader is a second client with its own
+session** (`DulcetURLSessionPlaybackResource`): it reads each chunk through its delegate and, when a
+200 body ends in the -1005 after at least one byte, hands what arrived to the core validator, which
+accepts it only when the plan's length is an estimate; refused, or with no byte, the load stays the
+lost connection. A cold transcode answers the loader's first ranged read with 200 and the whole
+representation, which the loader accepts as the resource only from byte 0 and only at the length
+the validator measured (§28, 2026-10-02). No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
 this path so the UI never claims a negotiated result.
 
@@ -7346,6 +7352,37 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-02 — The Apple playback loader ends an estimated body at the bytes it received, and
+takes a cold transcode's whole answer (§12.5).** The Mac streaming-quality proof's play never
+started on apple-ci (runs 36997213085, 37001712209: `now playing=nil`). Cause, OBSERVED in both
+runs' app log: the loader's read of the 96 kbps stream of "Dulcet Health Probe" ended `failed strict
+content length check - expected: 24576, received: 23385` and `-1005`. The loader
+(`DulcetURLSessionPlaybackResource`) read through a completion-handler task, which is given no
+data when a task ends in an error, so the core client's end-of-estimate rule (2026-09-30) never
+applied on this path: every first play of an uncached capped legacy transcode failed as `transport`.
+Reproduced locally against Navidrome 0.63.2 with an empty transcoding cache (1 of 1; with a warm
+cache the stream is exact and the proof passed, which is why it did not reproduce at first). A
+direct URLSession probe of 6 uncached transcodes: the completion handler got no body all 6 times;
+the same reads through a delegate received the whole body before the -1005 in 8 of 8 idle and 30 of
+30 under 16 busy loops, so the session-discard case (2026-10-01) was not met against this server.
+
+Two defects, both fixed in DulcetKit, each with a test that failed before the fix:
+1. The loader now accumulates the body in its delegate. A 200 body ended by
+   `NSURLErrorNetworkConnectionLost` after at least one byte goes to the validator, which accepts it
+   only for an estimated length (`validateAppleRangeAndTotalLength`); a refusal, a 206, or no byte
+   at all stays the lost connection, `transport` (`PlaybackResourceLoadingTests`).
+2. A cold transcode honours no range: Navidrome answered the loader's `bytes=0-262143` for a
+   2-minute FLAC capped at 96 kbps with 200 and all 1,440,509 bytes (OBSERVED). The loader refused
+   any body longer than its chunk as `protocolViolation`, so with (1) alone a full-length track
+   still failed its first capped play (OBSERVED in the hosted Mac proof pointed at that track). A
+   body longer than the chunk is now accepted when the chunk starts at byte 0 and the body is the
+   validated length (`AVPlayerWholeRepresentationTests`).
+
+OBSERVED after both, hosted Mac proof on an empty transcoding cache each time: "Dulcet Health Probe"
+3 of 3, the 2-minute track 2 of 2. This revises 2026-10-01's ASSUMED "a full-length track is not
+exposed": it was not exposed to the discard, but it failed for reason (2). Not driven here: iOS,
+iPadOS and tvOS (same DulcetKit code), and real hardware.
 
 **2026-10-01 — The Darwin -1005 flake is the session discarding bytes it never handed over, not the
 forwarded-byte gate; #186 is re-landed (§12.5).** `DarwinEstimatedLengthBodyTest` failed on apple-ci's

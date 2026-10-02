@@ -121,6 +121,100 @@ func urlSessionPlaybackResourcePassesEveryNegativeHTTPShapeToTheCoreValidator() 
 }
 
 @Test
+func aBodyEndedByALostConnectionReachesTheValidatorWithEveryByteReceived() async throws {
+    // Navidrome's estimated Content-Length overshoots a cold transcode, the server stops at the end
+    // of the body, and URLSession reports the short body as -1005 after delivering all of it
+    // (OBSERVED on macOS against Navidrome 0.63.2: 24,576 declared, 24,012 delivered). The core
+    // validator, which knows whether the plan's length is an estimate, decides what that is.
+    let body = Data("ID3".utf8) + Data(repeating: 0xFF, count: 61)
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    ScriptedPlaybackURLProtocol.install { _ in
+        .endedByLostConnection(
+            status: 200,
+            headers: ["Content-Type": "audio/mpeg", "Content-Length": "96"],
+            body: body
+        )
+    }
+    let validator = ShortBodyValidator(verdict: .accepted(
+        contentInformation: .init(contentLength: Int64(body.count), supportsByteRanges: false)
+    ))
+    let resource = makeURLSessionResource(validator: validator, configuration: configuration)
+
+    let outcome = await load(resource, range: .init(start: 0, endInclusive: 262_143))
+
+    guard case let .loaded(data, information) = outcome else {
+        Issue.record("a body ended by a lost connection did not reach the validator: \(outcome)")
+        return
+    }
+    #expect(data == body)
+    #expect(information == .init(contentLength: Int64(body.count), supportsByteRanges: false))
+    #expect(validator.observed.map(\.body) == [body])
+    #expect(validator.observed.map(\.contentLength) == [96])
+}
+
+@Test
+func aLostConnectionStaysATransportFailureWhenTheValidatorRefusesTheShortBody() async throws {
+    // An exact length cut short is truncation; the validator refuses it, and the load reports the
+    // lost connection it was, not the validator's verdict on a body that never completed.
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    ScriptedPlaybackURLProtocol.install { _ in
+        .endedByLostConnection(
+            status: 200,
+            headers: ["Content-Type": "audio/mpeg", "Content-Length": "96"],
+            body: Data("ID3".utf8)
+        )
+    }
+    let validator = ShortBodyValidator(verdict: .rejected(error: .protocolViolation, refreshReason: .validationFailed))
+    let resource = makeURLSessionResource(validator: validator, configuration: configuration)
+
+    let outcome = await load(resource, range: .init(start: 0, endInclusive: 262_143))
+
+    guard case let .failed(error, refreshReason) = outcome else {
+        Issue.record("a refused short body did not fail")
+        return
+    }
+    #expect(error == .transport)
+    #expect(refreshReason == nil)
+    #expect(validator.observed.count == 1)
+}
+
+@Test
+func aLostConnectionWithNoBodyOrAPartialAnswerFailsWithoutValidation() async throws {
+    let cases: [(String, Int, [String: String], Data)] = [
+        ("no body byte delivered", 200, ["Content-Type": "audio/mpeg", "Content-Length": "96"], Data()),
+        (
+            "a partial answer cut short",
+            206,
+            ["Content-Type": "audio/mpeg", "Content-Length": "96", "Content-Range": "bytes 0-95/960"],
+            Data("ID3".utf8)
+        ),
+    ]
+    for (label, status, headers, body) in cases {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+        ScriptedPlaybackURLProtocol.install { _ in
+            .endedByLostConnection(status: status, headers: headers, body: body)
+        }
+        let validator = ShortBodyValidator(verdict: .accepted(
+            contentInformation: .init(contentLength: 3, supportsByteRanges: false)
+        ))
+        let resource = makeURLSessionResource(validator: validator, configuration: configuration)
+
+        let outcome = await load(resource, range: .init(start: 0, endInclusive: 262_143))
+
+        guard case let .failed(error, refreshReason) = outcome else {
+            Issue.record("\(label) did not fail")
+            continue
+        }
+        #expect(error == .transport, "\(label)")
+        #expect(refreshReason == nil, "\(label)")
+        #expect(validator.observed.isEmpty, "\(label)")
+    }
+}
+
+@Test
 func credentialBearingCrossOriginRedirectStripsCanariesBeforeTheTargetRequest() async throws {
     let usernameCanary = "redirect-user-canary"
     let tokenCanary = "redirect-token-canary"
@@ -191,13 +285,14 @@ private func makeURLSessionResource(
 }
 
 private func load(
-    _ resource: DulcetURLSessionPlaybackResource
+    _ resource: DulcetURLSessionPlaybackResource,
+    range: DulcetPlaybackByteRange = .init(start: 0, endInclusive: 2)
 ) async -> DulcetPlaybackResourceLoadOutcome {
     let holder = PlaybackOperationHolder()
     return await withCheckedContinuation { continuation in
         holder.operation = resource.load(
             DulcetPlaybackResourceLoadRequest(
-                range: .init(start: 0, endInclusive: 2),
+                range: range,
                 requiresAudioSignature: true
             )
         ) { outcome in
@@ -296,6 +391,34 @@ private final class AcceptingPlaybackValidator: DulcetPlaybackResponseValidating
     }
 }
 
+private final class ShortBodyValidator: DulcetPlaybackResponseValidating, @unchecked Sendable {
+    private let lock = NSLock()
+    private let verdict: DulcetPlaybackResponseValidation
+    private var responses: [DulcetPlaybackHTTPResponse] = []
+
+    init(verdict: DulcetPlaybackResponseValidation) {
+        self.verdict = verdict
+    }
+
+    var observed: [DulcetPlaybackHTTPResponse] {
+        lock.lock()
+        defer { lock.unlock() }
+        return responses
+    }
+
+    func validate(
+        response: DulcetPlaybackHTTPResponse,
+        expectedContainer: DulcetAudioContainer,
+        requestedRange: DulcetPlaybackByteRange,
+        requiresAudioSignature: Bool
+    ) -> DulcetPlaybackResponseValidation {
+        lock.lock()
+        responses.append(response)
+        lock.unlock()
+        return verdict
+    }
+}
+
 private final class TotalLengthValidator: DulcetPlaybackResponseValidating, @unchecked Sendable {
     private let lock = NSLock()
     private let expected: Int64
@@ -364,6 +487,8 @@ private final class RedirectRequestObservations: @unchecked Sendable {
 private final class ScriptedPlaybackURLProtocol: URLProtocol, @unchecked Sendable {
     enum Response: Sendable {
         case response(status: Int, headers: [String: String], body: Data)
+        /// The head and `body`, then the connection lost before the declared length arrived.
+        case endedByLostConnection(status: Int, headers: [String: String], body: Data)
         case redirect(URL)
     }
 
@@ -410,6 +535,34 @@ private final class ScriptedPlaybackURLProtocol: URLProtocol, @unchecked Sendabl
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: body)
             client?.urlProtocolDidFinishLoading(self)
+        case let .endedByLostConnection(status, headers, body):
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: status,
+                httpVersion: "HTTP/1.1",
+                headerFields: headers
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            guard !body.isEmpty else {
+                client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                return
+            }
+            client?.urlProtocol(self, didLoad: body)
+            // The loss is held until the session has handed the body over: an end close behind
+            // bytes not yet handed over makes the session discard them (spec §28, 2026-10-01),
+            // which no delegate can recover and which is not what these tests are about.
+            failWhenDelivered(body.count, deadline: Date().addingTimeInterval(5))
+        }
+    }
+
+    private func failWhenDelivered(_ count: Int, deadline: Date) {
+        if (task?.countOfBytesReceived ?? 0) >= Int64(count) || Date() >= deadline {
+            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            return
+        }
+        RunLoop.current.perform { [self] in
+            Thread.sleep(forTimeInterval: 0.005)
+            failWhenDelivered(count, deadline: deadline)
         }
     }
 

@@ -44,6 +44,90 @@ struct AVPlayerResourceLoaderIntegrationTests {
     }
 }
 
+#if os(macOS)
+/// Spec §12.5: a cold transcode honours no range. Navidrome answers the loader's first ranged read
+/// with HTTP 200 and the whole representation (OBSERVED against Navidrome 0.63.2: a 2-minute
+/// FLAC capped at 96 kbps answered `bytes=0-262143` with all 1,440,509 bytes). That body is longer
+/// than the chunk the loader asked for and is still the resource from its first byte, so the item
+/// must become ready from it rather than fail.
+@Suite(.serialized)
+struct AVPlayerWholeRepresentationTests {
+    @Test
+    func aWholeRepresentationLongerThanTheChunkMakesTheItemReady() async throws {
+        let wave = makePCMWave(duration: 20)
+        #expect(Int64(wave.count) > DulcetAVAssetResourceLoaderDelegate.maximumChunkLength,
+                "The control: the body must outgrow one chunk")
+        let resource = WholeRepresentationPlaybackResource(data: wave)
+        let engine = DulcetAVPlayerEngine()
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let failures: @Sendable () -> [DulcetPlaybackFailure] = {
+            events.snapshot.compactMap { event in
+                switch event {
+                case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error): error
+                default: nil
+                }
+            }
+        }
+
+        let ready: @Sendable () -> Bool = {
+            events.snapshot.contains { if case .ready = $0 { true } else { false } }
+        }
+
+        _ = await execute(engine, .prepare(commandID: .init("whole-prepare"), plan: plan(resource: resource)))
+        try await waitUntil(
+            "AVPlayer neither became ready nor failed on a whole-representation answer",
+            engine: engine,
+            timeout: realAVFoundationProgressTimeout
+        ) {
+            ready() || !failures().isEmpty
+        }
+        #expect(failures().isEmpty, "reported \(failures())")
+        #expect(ready())
+        #expect(resource.requestCount > 0)
+        _ = await execute(engine, .release(commandID: .init("whole-release")))
+    }
+}
+
+/// Answers every read, whatever its range, with the whole representation and no range support,
+/// as a server does for a transcode it has not cached.
+private final class WholeRepresentationPlaybackResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
+    private let data: Data
+    private let lock = NSLock()
+    private var requests = 0
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    var description: String { "WholeRepresentationPlaybackResource(<redacted>)" }
+
+    var requestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    func load(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        lock.lock()
+        requests += 1
+        lock.unlock()
+        guard request.range.start == 0 else {
+            completion(.failed(error: .protocolViolation, refreshReason: .validationFailed))
+            return InMemoryPlaybackOperation()
+        }
+        completion(.loaded(
+            data: data,
+            contentInformation: .init(contentLength: Int64(data.count), supportsByteRanges: false)
+        ))
+        return InMemoryPlaybackOperation()
+    }
+}
+#endif
+
 /// Spec §12.12: a failure that belongs to the item moves the queue past it. AVFoundation failing
 /// to decode an item's own media is that failure, so the engine must name it `.undecodable`
 /// (which the core reads as `Playback.NoPlayableSource`), never `.engine`, which the queue stops on.
