@@ -123,6 +123,13 @@ final class HostedApp {
         try await waitUntil(timeout: .seconds(5), "state=\(store.snapshot.state)") {
             self.store.snapshot.state == .nowPlaying
         }
+        // In one column (a window narrowed to its screen) lyrics left open take the player's place,
+        // and the title returns when they are hidden.
+        if await element(identifiedBy: "dulcet.now-playing.title", within: .seconds(10)) == nil,
+           let toggle = firstElement(where: { self.identifier($0) == "dulcet.now-playing.lyrics" }),
+           label(toggle) == "Hide Lyrics" {
+            try press(toggle, named: "dulcet.now-playing.lyrics")
+        }
         let title = try await element(identifiedBy: "dulcet.now-playing.title", timeout: .seconds(10))
         XCTAssertEqual(label(title), track, "Now Playing must show \(track)")
     }
@@ -413,6 +420,19 @@ final class HostedApp {
         }
         XCTFail("\(description) never appeared; dulcet elements: \(tree.joined(separator: "; "))")
         throw HostedAppError.unexpected(description)
+    }
+
+    /// The hosted window's content width, after AppKit fitted the window to the screen.
+    var contentWidth: CGFloat { hostingView.bounds.width }
+
+    /// The element with this identifier if it appears within `timeout`; nil (no failure) if not.
+    func element(identifiedBy id: String, within timeout: Duration) async -> Any? {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        repeat {
+            if let match = firstElement(where: { identifier($0) == id }) { return match }
+            try? await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        return nil
     }
 
     func firstElement(where matches: (Any) -> Bool) -> Any? {
