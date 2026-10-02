@@ -1980,7 +1980,6 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-junit" \
             "$RUNNER_TEMP/dulcet-mac-lyrics-states-junit" \
-            "$RUNNER_TEMP/dulcet-mac-streaming-quality-junit" \
             "$RUNNER_TEMP/dulcet-ios-lyrics-states-junit" \
             "$RUNNER_TEMP/dulcet-ios-streaming-quality-junit" \
             "$RUNNER_TEMP/dulcet-ipados-lyrics-states-junit" \
