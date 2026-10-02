@@ -669,9 +669,15 @@ internal class ListWindow(
         emitSnapshot()
     }
 
+    /**
+     * The 60-second rule (§16.11 rule 3): read live under the CURRENT epoch within the interval. A
+     * server with no epoch has no current epoch, so nothing is ever read recently under it — two
+     * no-epoch readings are never "unchanged".
+     */
     private fun readRecently(state: CachedListState, epoch: CatalogEpoch): Boolean {
         val readAt = reader.liveListReads[spec.listKey] ?: return false
-        return state.windowEpoch == epoch.key && cache.now() - readAt < reader.config.revalidateWithinMillis
+        val current = epoch.key ?: return false
+        return state.windowEpoch == current && cache.now() - readAt < reader.config.revalidateWithinMillis
     }
 
     private suspend fun readWhole(epoch: CatalogEpoch) {
@@ -1386,7 +1392,9 @@ internal class CollectionDetailWindow(
         if (isLocalPlaylist) return false
         val readAt = reader.liveListReads[listKey] ?: return true
         val state = cache.listState(listKey) ?: return true
-        return state.windowEpoch != reader.sessionEpoch?.key || cache.now() - readAt >= reader.config.revalidateWithinMillis
+        // No epoch is never "unchanged": without a current stamp the 60-second rule spares nothing.
+        val current = reader.sessionEpoch?.key ?: return true
+        return state.windowEpoch != current || cache.now() - readAt >= reader.config.revalidateWithinMillis
     }
 
     /** An artist or playlist is re-read by every revalidation, whatever its age. */
