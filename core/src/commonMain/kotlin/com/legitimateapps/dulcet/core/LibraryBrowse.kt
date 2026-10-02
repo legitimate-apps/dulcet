@@ -845,6 +845,13 @@ internal fun parseReaderSongsByGenre(body: String): List<CacheTrackRecord> {
     return container.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
 }
 
+internal fun parseReaderSong(body: String, expectedRawId: String): CacheTrackRecord {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val song = (payload["song"] as? JsonObject ?: malformed()).readerTrack(null)
+    if (song.rawId != expectedRawId) malformed()
+    return song
+}
+
 private fun JsonObject.readerUserState(withPlays: Boolean): CacheUserState {
     val starredAt = string("starred")?.takeIf(String::isNotBlank)
     return CacheUserState(

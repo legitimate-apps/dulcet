@@ -485,6 +485,35 @@ public class AndroidLibraryReader internal constructor(
         }
     }
 
+    /**
+     * Ensures a requested download has display metadata in the seen-cache (§16.13), before its
+     * bytes are transferred. The download row already pins this track. Existing metadata needs
+     * no request; a song never browsed is read through the same ordered cache writer as the UI.
+     * A getSong response supplies metadata but never clears a previously observed `gone` flag.
+     */
+    internal fun prepareDownloadMetadata(rawId: String, completion: (DomainError?) -> Unit) {
+        operation(completion, { DomainError.Transport.Unreachable }) { session ->
+            val reader = session.reader
+            try {
+                if (reader.cache.track(rawId)?.record == null) {
+                    if (!reader.online) reader.reconnect()
+                    val sent = reader.sendChecked("getSong", mapOf("id" to rawId))
+                    val song = parseReaderSong(sent.response.body, rawId)
+                    reader.cache.writeEntities(
+                        CacheWriteStamp(sent.issueSeq, reader.cache.now(), reader.sessionEpoch?.key),
+                        CacheEntitySource.SongLookup, CacheEntities(tracks = listOf(song)),
+                    )
+                    reader.cache.evictIfNeeded()
+                }
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                failure.asReaderError()
+            }
+        }
+    }
+
     // ---- Connection lifecycle ------------------------------------------------------------------------------
 
     /**

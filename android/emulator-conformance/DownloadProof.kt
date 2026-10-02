@@ -55,6 +55,9 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
     fun conf52(startPlayback: (StoredAccount, String) -> AutoCloseable) =
         session { controller, account, rawId, container, duration, original, relay ->
             proveDownload(controller, rawId, container, duration, original)
+            // Playback must recover persisted metadata, not a download controller's memory or
+            // a title supplied by the launching intent. No library page was opened in this proof.
+            controller.close()
             println("ANDROID DOWNLOAD CONF-52 OBSERVED " + proveOfflinePlayback(account, rawId, original, relay, startPlayback))
         }
 
@@ -141,6 +144,13 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
                 observer.bind()
                 val position = requireMediaTimeAdvances(observer, "offline")
                 check(observer.state().playingDownload) { "Playback advanced, but not from the download" }
+                check(observer.state().title == DisposableServerProbe.CANARY_TITLE) {
+                    "The offline download did not recover its saved title: ${observer.state().title}"
+                }
+                check(observer.state().queue.any { it.track.rawId == rawId && it.track.title == DisposableServerProbe.CANARY_TITLE }) {
+                    "The offline queue did not recover the downloaded song's title"
+                }
+                if (DesignTourShots.requested()) DesignTourShots("offline-download").shoot("saved-title")
                 // Read before any further control request: an HTTP client may retry a refused
                 // request (MEASURED on the JVM: one failed GET arrived as two connections), so the
                 // count is taken while only the app can have added to it.
@@ -154,7 +164,7 @@ class DownloadProof(private val context: Context, private val probe: DisposableS
                 observer.stopPlayback()
                 observer.unbind()
                 return "server=unreachable(relay-cut, control-refused) server-requests-during-playback=0 " +
-                    "app-attempts-refused=$appAttempts playing-download=true media-ms=$position bytes-identical=true"
+                    "app-attempts-refused=$appAttempts playing-download=true media-ms=$position bytes-identical=true saved-title=true"
             }
         }
     }
