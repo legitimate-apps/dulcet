@@ -27,6 +27,7 @@
 		1DF0D7C03F7E2F0DD71CDF71 /* navidrome-reference.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 15F1FBE62418F9CA54452CFD /* navidrome-reference.mp3 */; };
 		1E40CAD1F413157EC16CBE3F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = CB3B9619098523C87EAD03B6 /* PrivacyInfo.xcprivacy */; };
 		20C40A8C5DC75C327A0E2CE8 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */; };
+		23EDD8E6D6146AA30F61D9C7 /* DulcetMacLyricsAndQualityAppTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 442DB23CD71B21DE7C9FF492 /* DulcetMacLyricsAndQualityAppTest.swift */; };
 		2465B1912D37EBB7B5096F35 /* DulcetCorePlaylistsLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06FBA814D3D61A115F8FFEE2 /* DulcetCorePlaylistsLyrics.swift */; };
 		293F3C8BB79CC7DE1F60E765 /* DulcetKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64D9945C6F39753DCB62BD2F /* DulcetKitTests.swift */; };
 		29AF4900E93CCB997FC61B5B /* DulcetCorePlaylistsLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06FBA814D3D61A115F8FFEE2 /* DulcetCorePlaylistsLyrics.swift */; };
@@ -193,6 +194,7 @@
 		3C480BFD2055575C8E86BA5D /* BackgroundAudio.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = BackgroundAudio.plist; sourceTree = "<group>"; };
 		41D4E46A00FEC9EC06B9005F /* DulcetMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DulcetMacRelease.entitlements; sourceTree = "<group>"; };
 		43AACCDAF49333ECEDAF3CB8 /* DulcetKeychainAttributeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetKeychainAttributeTests.swift; sourceTree = "<group>"; };
+		442DB23CD71B21DE7C9FF492 /* DulcetMacLyricsAndQualityAppTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetMacLyricsAndQualityAppTest.swift; sourceTree = "<group>"; };
 		480370FE166DA88FF853AA52 /* PlaylistsAndLyricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaylistsAndLyricsTests.swift; sourceTree = "<group>"; };
 		4D987F3787F2565B8F07E73C /* AccountConnectionPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountConnectionPresentationTests.swift; sourceTree = "<group>"; };
 		4F7960D633A721CFE78E827C /* PlayerTintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerTintTests.swift; sourceTree = "<group>"; };
@@ -393,6 +395,7 @@
 			children = (
 				708A2DD03E359D16B2324C1E /* DulcetMacAccountConnectAppTest.swift */,
 				6658C2AEAF00CB8868EECC87 /* DulcetMacDesignTourTest.swift */,
+				442DB23CD71B21DE7C9FF492 /* DulcetMacLyricsAndQualityAppTest.swift */,
 			);
 			path = DulcetMacTests;
 			sourceTree = "<group>";
@@ -1256,6 +1259,7 @@
 			files = (
 				BAFBB629BB389F4FE6AEC78F /* DulcetMacAccountConnectAppTest.swift in Sources */,
 				7D2C76FF4DB3E8B1479156A8 /* DulcetMacDesignTourTest.swift in Sources */,
+				23EDD8E6D6146AA30F61D9C7 /* DulcetMacLyricsAndQualityAppTest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

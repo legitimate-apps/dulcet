@@ -89,6 +89,16 @@
             value = "$(DULCET_TEST_CONFORMANCE_DISPOSABLE)"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_LYRICS_FAULT_PROXY_URL"
+            value = "$(DULCET_TEST_LYRICS_FAULT_PROXY_URL)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "DULCET_SERVER_LOG"
+            value = "$(DULCET_TEST_SERVER_LOG)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </TestAction>
    <LaunchAction
