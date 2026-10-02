@@ -67,12 +67,25 @@ final class DulcetMacLyricsAndQualityAppTest: XCTestCase {
         let litLabel = app.label(lit) ?? ""
         XCTAssertTrue(litLabel.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(litLabel)")
         let panel = try await app.element(identifiedBy: "dulcet.lyrics.panel", timeout: .seconds(5))
-        let title = try await app.element(identifiedBy: "dulcet.now-playing.title", timeout: .seconds(5))
+        // Beside the player only where the window is wide enough for two columns (820 points of
+        // Now Playing, DulcetNowPlayingView.usesSideBySideLayout). The window asks for 1180 points,
+        // but AppKit fits a titled window to the screen, and a CI host's screen can be narrower, so
+        // the placement is asserted for the width the window actually got.
         let panelFrame = try app.frame(panel)
-        let titleFrame = try app.frame(title)
-        let placement = "panel=\(panelFrame) title=\(titleFrame)"
-        XCTAssertGreaterThanOrEqual(panelFrame.minX, titleFrame.maxX,
-            "The lyrics must sit beside the player in the Mac window; \(placement)")
+        let width = app.contentWidth
+        let placement: String
+        if let title = await app.element(identifiedBy: "dulcet.now-playing.title", within: .seconds(5)) {
+            let titleFrame = try app.frame(title)
+            placement = "side-by-side panel=\(panelFrame) title=\(titleFrame) window=\(width)"
+            print("OBSERVED Mac lyrics placement: \(placement)")
+            XCTAssertGreaterThanOrEqual(panelFrame.minX, titleFrame.maxX,
+                "The lyrics must sit beside the player in the Mac window; \(placement)")
+        } else {
+            placement = "one-column panel=\(panelFrame) window=\(width)"
+            print("OBSERVED Mac lyrics placement: \(placement)")
+            XCTAssertLessThan(width, 1180,
+                "Only a window narrowed to its screen may put the lyrics in place of the player; window=\(width)")
+        }
 
         // 2. Plain: both lines, nothing lit.
         try await app.play(query: "Ogg Probe", track: "Ogg Probe")
@@ -352,6 +365,13 @@ private final class HostedApp {
         try await waitUntil(timeout: .seconds(5), "state=\(store.snapshot.state)") {
             self.store.snapshot.state == .nowPlaying
         }
+        // In one column (a window narrowed to its screen) lyrics left open take the player's place,
+        // and the title returns when they are hidden.
+        if await element(identifiedBy: "dulcet.now-playing.title", within: .seconds(10)) == nil,
+           let toggle = firstElement(where: { self.identifier($0) == "dulcet.now-playing.lyrics" }),
+           label(toggle) == "Hide Lyrics" {
+            try press(toggle, named: "dulcet.now-playing.lyrics")
+        }
         let title = try await element(identifiedBy: "dulcet.now-playing.title", timeout: .seconds(10))
         XCTAssertEqual(label(title), track, "Now Playing must show \(track)")
     }
@@ -454,6 +474,19 @@ private final class HostedApp {
         }
         XCTFail("\(description) never appeared; dulcet elements: \(tree.joined(separator: "; "))")
         throw HostedAppError.unexpected(description)
+    }
+
+    /// The hosted window's content width, after AppKit fitted the window to the screen.
+    var contentWidth: CGFloat { hostingView.bounds.width }
+
+    /// The element with this identifier if it appears within `timeout`; nil (no failure) if not.
+    func element(identifiedBy id: String, within timeout: Duration) async -> Any? {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        repeat {
+            if let match = firstElement(where: { identifier($0) == id }) { return match }
+            try? await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        return nil
     }
 
     func firstElement(where matches: (Any) -> Bool) -> Any? {
