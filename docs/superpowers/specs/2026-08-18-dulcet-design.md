@@ -4691,8 +4691,11 @@ about publication, not about the cache:
   superseded shows the server's value again with the heart's words. Pressing a star rates that many
   stars; pressing the star already shown removes the rating, which sends `setRating` with 0. For a
   screen reader the stars are one adjustable element on the platforms whose readers adjust (VoiceOver
-  on macOS and iOS, TalkBack), 0 to 5 in whole stars. On a television each star is its own focus
-  stop, set with Select or the centre key. **Unknown is not unrated.** A rating this device has
+  on iOS, TalkBack), 0 to 5 in whole stars. On macOS they are a group whose label says the track and
+  the rating, holding one button per star labelled with what pressing it does: SwiftUI gave the
+  adjustable element no role, value or actions in the Mac window's toolbar, and an AppKit group
+  carries no value nor a button a selected state (OBSERVED, macOS 26, hosted Mac proof). On a
+  television each star is its own focus stop, set with Select or the centre key. **Unknown is not unrated.** A rating this device has
   no value for — a track no screen of the session has published, such as a restored queue's — is
   drawn with no star filled and said as unknown, and a relative step (a screen reader's adjust)
   from it sends nothing, because a step from a guessed 0 would overwrite the server's rating; a
@@ -7353,6 +7356,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-02 — Mac stars are a group of star buttons, not one adjustable element (§16.20).** In the
+Mac window's toolbar the iOS-style adjustable element reached accessibility as a node with role
+`AXUnknown`, no value and no actions, so VoiceOver could neither read nor change a rating there
+(OBSERVED through the hosted Mac app). On macOS the stars are now a group whose label carries the
+rating -- unknown and pending included -- with a button per star, identified
+`<control>.star.<n>` as on Apple TV. iOS keeps the adjustable element; its UI proof taps a star
+where it is drawn and reads the element's value.
 
 **2026-10-02 — The Apple playback loader ends an estimated body at the bytes it received, and
 takes a cold transcode's whole answer (§12.5).** The Mac streaming-quality proof's play never

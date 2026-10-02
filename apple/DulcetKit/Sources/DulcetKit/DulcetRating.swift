@@ -64,9 +64,9 @@ extension DulcetPresentationStore {
 }
 
 /// Five stars: the rating as the person set it while it is being sent, and the heart's mark while a
-/// change is pending or kept unsent. For VoiceOver it is one adjustable element -- swipe up or down
-/// to change it -- on macOS and iOS; on Apple TV each star takes focus, so the remote moves across
-/// them and Select sets that many.
+/// change is pending or kept unsent. For VoiceOver on iOS it is one adjustable element -- swipe up
+/// or down to change it; on macOS a group whose label says the rating, holding a button per star; on
+/// Apple TV each star takes focus, so the remote moves across them and Select sets that many.
 struct DulcetRatingControl: View {
     @Environment(DulcetPresentationStore.self) private var store
     let target: DulcetFavouriteTarget
@@ -104,6 +104,18 @@ struct DulcetRatingControl: View {
         // own, so all five read as one id and a remote proof cannot tell them apart (observed).
         row
             .focusSection()
+#elseif os(macOS)
+        // On macOS each star is its own button, labelled with what pressing it does, in a group
+        // whose label says the rating. The single adjustable element iOS uses reached the Mac's
+        // accessibility as a node with no role, no value and no actions (observed in the window's
+        // toolbar, macOS 26), so VoiceOver could neither read nor change the rating there. An
+        // AXGroup carries no value and an AXButton no selected state (both observed), so the
+        // group's label carries the value, unknown and pending included.
+        row
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel((title.isEmpty ? DulcetStrings.readerRating : DulcetStrings.readerRatingAccessibility(title))
+                + ", " + DulcetRating.accessibilityValue(rating: rating, state: state))
+            .accessibilityIdentifier(identifier)
 #else
         row
             .accessibilityElement(children: .ignore)
@@ -154,11 +166,13 @@ struct DulcetRatingControl: View {
         .accessibilityLabel(DulcetRating.starLabel(star: star, current: rating))
         .accessibilityAddTraits(DulcetRating.isFilled(star: star, rating: rating) ? .isSelected : [])
         .accessibilityIdentifier("\(identifier).star.\(star)")
+#elseif os(macOS)
+        .buttonStyle(.borderless)
+        .help(DulcetRating.starLabel(star: star, current: rating))
+        .accessibilityLabel(DulcetRating.starLabel(star: star, current: rating))
+        .accessibilityIdentifier("\(identifier).star.\(star)")
 #else
         .buttonStyle(.borderless)
-#if os(macOS)
-        .help(DulcetRating.starLabel(star: star, current: rating))
-#endif
 #endif
     }
 }
