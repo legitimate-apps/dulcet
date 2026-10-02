@@ -6459,15 +6459,20 @@ because the median is above 75 minutes. Either reading adopts the split.
    `dulcet-apple-parity-evidence-apple-platform-36188503621-1` alongside the conformance leg's
    `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
 5. **Each leg's timeout is 1.5 times its measured maximum, rounded up to a multiple of 5:** 80
-   minutes for `apple-platform` (measured maximum 51.5, run 36196670168) and 115 for
-   `apple-conformance` (measured maximum 74.6, run 36205806012). The aggregator gets 5. The legs
-   were first sized the same way from projected maxima, 95 from 60.2 and 110 from 71.3; measured
-   history replaced the projection once the conformance leg exceeded its own. Each leg's cap must
+   minutes for `apple-platform` (measured maximum 51.5, run 36196670168) and 215 for
+   `apple-conformance`. The conformance figure is a projection until it is re-measured: its
+   measured maximum, 113.5 (run 36896866024), plus 27 minutes for the lyrics-state and
+   streaming-quality proofs, ASSUMED from their 10.2 minutes of local test time at the 2.2x that
+   tvOS Now Playing's proof showed between a local run and the leg, plus their nine `xcodebuild`
+   invocations. The aggregator gets 5. The legs were first sized the same way from projected maxima,
+   95 from 60.2 and 110 from 71.3; measured history replaced the projection once the conformance leg
+   exceeded its own, and it was 115 from 74.6 until the proofs above joined it. Each leg's cap must
    also exceed every one of its step caps plus the rest of that leg as measured, or a healthy step
    is killed by the job and reported against whichever step was active: the worst case is 74.1
-   for the platform leg and 103.5 for the conformance leg. The composite's own cap is 85 minutes,
-   raised from the single job's 67 after it measured 62.2 on a slow host. Every other per-step cap
-   is unchanged. Re-size from the legs' history as it grows.
+   for the platform leg and 179.8 for the conformance leg. The composite's own cap is 150 minutes,
+   1.37x its projected maximum of 110.7 (measured 83.7, plus the same 27), the ratio its earlier 85
+   had to the 62.2 it was raised from. Every other per-step cap is unchanged. Re-size from the
+   legs' history as it grows.
 6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
    aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
    test each leg's result for `success` in an unconditional step. It must make exactly one direct
