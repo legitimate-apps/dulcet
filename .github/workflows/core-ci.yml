@@ -51,8 +51,11 @@ jobs:
         run: python3 tools/migration_gate.py
       - name: Verify Apple presents every playback phase the core can send
         run: python3 tools/verify-playback-phase-parity
+      - name: Verify stalled Gradle diagnostics
+        run: python3 tools/test-observe-gradle
       - name: Build, test, and audit dependency licences
         run: >-
+          python3 tools/ci/observe-gradle --output "${{ runner.temp }}/core-gradle-diagnostics" --
           ./gradlew --no-daemon
           --max-workers=2
           :core:verifySqlDelightMigration
@@ -88,6 +91,19 @@ jobs:
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
           :android:tv:testDebugUnitTest
+      # Retain core results even when the command stalls before the app test step. The observer
+      # takes one bounded thread snapshot after eight minutes; it never changes the job deadline.
+      - name: Upload core Gradle diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-gradle-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/core-gradle-diagnostics
+            core/build/test-results/jvmTest
+            core/build/test-results/testAndroidHostTest
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload Android app evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
