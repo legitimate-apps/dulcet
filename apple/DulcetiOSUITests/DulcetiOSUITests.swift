@@ -2432,6 +2432,23 @@ final class DulcetiOSUITests: XCTestCase {
               playAlbumTrack(track, in: app),
               openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
 
+        // The capped play must start, not only reach the server: a first play that failed after
+        // its stream request still leaves the transcode in the log. Media time moving in Now
+        // Playing -- this short track's or the album's next -- is the start.
+        let progress = app.sliders["Now Playing"].firstMatch
+        var started: PlaybackProgressSample?
+        let playDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if let value = progress.value as? String, let sample = playbackProgressSample(from: value),
+               sample.elapsed > 0 {
+                started = sample
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < playDeadline
+        XCTAssertNotNil(started, "The capped play must start: Now Playing's media time must move;"
+            + " last value \(String(describing: progress.value))")
+
         var lines: [[String: String]] = []
         let deadline = Date().addingTimeInterval(30)
         repeat {
@@ -2454,7 +2471,8 @@ final class DulcetiOSUITests: XCTestCase {
               chooseStreamingQuality("Original", row: "dulcet.streaming-quality.metered", in: app) else { return }
         let summary = lines.map { "\($0["format"] ?? "?")@\($0["bitRate"] ?? "?")" }.joined(separator: ",")
         print("DULCET STREAMING QUALITY PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
-            + " track=\(track.debugDescription) source-kbps=\(sourceKbps) server-streams=\(summary)")
+            + " track=\(track.debugDescription) source-kbps=\(sourceKbps) server-streams=\(summary)"
+            + " started=\(started?.accessibilityValue ?? "nil")")
     }
 
     /// Launches the app with the account injected for `serverURL` and waits for its live
