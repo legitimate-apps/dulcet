@@ -7352,6 +7352,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-02 — Persist Android download display metadata (§14.5).** Before transferring a
+never-browsed song, the production reader stores its checked song metadata under the download's
+existing cache pin. Local playback and restored queue rows consult this metadata without a server
+read. OBSERVED in core-ci run 37029227749: phone and TV CONF-52 launch without a supplied title after
+the download controller closes and the server relay is cut; both show the saved title in Now Playing
+and queue while playing identical local bytes. The app-host executor test also recreates the controller
+with the server closed and reads title, artist, album and duration. Together with the resumed-partial
+fix below, this closes the two recorded Android/Android TV download gaps in FEATURES.yml.
+
 **2026-10-02 — Keep resumable downloads across a relaunch (§14.5).** Relaunch reconciliation used
 only outstanding platform tasks to decide which temporary files to keep. It therefore discarded a
 saved prefix when the platform lost its task, or a failed task had finished and was waiting for its
