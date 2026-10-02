@@ -30,6 +30,10 @@ class CountingProxy(private val target: String) : AutoCloseable {
         @Volatile var status: Int = 0,
         /** The server's answer reached the app changed by a [rewrite] rule. */
         @Volatile var rewritten: Boolean = false,
+        /** The server's own `X-Total-Count`, whether or not the app was handed it; null when it sent none. */
+        @Volatile var serverTotalCount: String? = null,
+        /** A response header the server sent reached the app removed by a [withoutHeader] rule. */
+        @Volatile var headerWithheld: Boolean = false,
     ) {
         override fun toString(): String = "$endpoint${parameters["type"]?.let { "[$it]" } ?: ""}:$status"
     }
@@ -40,6 +44,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
     private var failRule: ((Seen) -> Boolean)? = null
     private var dropRule: ((Seen) -> Boolean)? = null
     private var rewriteRule: Pair<(Seen) -> Boolean, (ByteArray) -> ByteArray>? = null
+    private var withoutHeaderRule: Pair<(Seen) -> Boolean, String>? = null
     private var gate = CountDownLatch(1)
     private val executor = Executors.newFixedThreadPool(16)
     private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 64).apply {
@@ -96,6 +101,15 @@ class CountingProxy(private val target: String) : AutoCloseable {
         rewriteRule = rule?.let { it to transform }
     }
 
+    /**
+     * Passes every matching request to the server as usual and hands the app the server's answer
+     * without the response header [name]: a server presented as one that does not send it, the rest
+     * of its answer unchanged. Null stops it.
+     */
+    fun withoutHeader(rule: ((Seen) -> Boolean)?, name: String = "") = synchronized(lock) {
+        withoutHeaderRule = rule?.let { it to name }
+    }
+
     private fun forward(exchange: HttpExchange) {
         val uri = exchange.requestURI
         val body = exchange.requestBody.readBytes()
@@ -138,8 +152,13 @@ class CountingProxy(private val target: String) : AutoCloseable {
             val gzipped = rewriting != null && connection.contentEncoding.equals("gzip", ignoreCase = true)
             val answer = rewriting?.second?.invoke(if (gzipped) GZIPInputStream(served.inputStream()).readBytes() else served)
                 ?.also { entry.rewritten = true } ?: served
+            val withheld = synchronized(lock) { withoutHeaderRule?.takeIf { (rule, _) -> rule(entry) }?.second }
+            entry.serverTotalCount = connection.getHeaderField("X-Total-Count")
+            if (withheld != null && connection.getHeaderField(withheld) != null) entry.headerWithheld = true
             connection.headerFields.forEach { (name, values) ->
-                if (name != null && name.lowercase() !in HOP_HEADERS && !(gzipped && name.equals("content-encoding", true))) {
+                if (name != null && name.lowercase() !in HOP_HEADERS && !(gzipped && name.equals("content-encoding", true)) &&
+                    !name.equals(withheld, ignoreCase = true)
+                ) {
                     values.forEach { exchange.responseHeaders.add(name, it) }
                 }
             }

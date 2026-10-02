@@ -28,6 +28,7 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
+import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
@@ -47,6 +48,7 @@ import com.legitimateapps.dulcet.playback.PlaybackService
 import com.legitimateapps.dulcet.search.SearchObservation
 import com.legitimateapps.dulcet.search.SearchUiState
 import java.time.Duration
+import org.json.JSONObject
 import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -77,6 +79,15 @@ interface ReaderAppUi {
 
     /** Leaves a browse view (the albums grid) for the library's home, the way a person does on this platform. */
     fun leaveBrowseView()
+
+    /**
+     * Brings the albums grid's card at [index] (already drawn or within reach) on screen the way a
+     * person scrolls on this platform; the grid reports its new viewport as it moves.
+     */
+    fun showAlbum(index: Int)
+
+    /** Brings the albums grid's status lines (freshness, coverage, "Try again") on screen: the grid's top. */
+    fun showListStatus()
 }
 
 /**
@@ -1397,6 +1408,468 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     private fun detailReads(mark: Int): List<String> =
         proxy.since(mark).filter { it.endpoint == "getAlbum" }.map { it.parameters.getValue("id") }
 
+    // ---- CONF-82 ----------------------------------------------------------------------------------
+    //
+    // The window rules of §16.12 through the albums grid. The fixture has eight albums, so the process's
+    // reader asks for [WINDOW_PAGE] row per page (a test-only seam, null in the app): the albums are a
+    // list of eight pages, the grid holds more of them than are on screen, and every rule below runs
+    // in the production reader exactly as it does at the app's 100 rows. A scan is a real scan of the
+    // disposable server; only a scanning server, a server reporting no stamp or another library, a
+    // failed status read and a missing X-Total-Count are presented by the forwarder, each named.
+
+    /**
+     * Tear rule 1 (§16.12), the rebase bounded to the viewport, and the anchor. The grid scrolls to its
+     * end, the page it then asks for is held at the forwarder, and the server runs a real scan before
+     * the page is answered, so the page's *after* reading carries a new stamp: the check fires, the page
+     * is never appended, and only the pages on screen are re-read, under the new stamp. The album first
+     * on screen stays first, by id. The rebase starts the window below the top, so the screen's own
+     * scrolling then reads the rest under the check, and every album appears exactly once.
+     */
+    fun conf82AScanDuringAPageReadTearsTheWindowAndOnlyTheViewportPagesAreReRead() = withWindowPages {
+        val grid = openPagedAlbums()
+        val type = windowReads(0).last().parameters.getValue("type")
+        val ids = server.albumIds(type)
+        val opened = last(grid)
+        val end = opened.itemCount
+        assertEquals(AndroidLibraryCoverage.Open, opened.coverage, "setup: the grid holds part of the list")
+        assertTrue(end in 2 until ids.size, "setup: the grid must hold part of the list, so it asks for more: $end of ${ids.size}")
+        assertEquals(ids.take(end), opened.itemRawIds, "setup: the window is the server's list from its top")
+
+        proxy.hold { it.endpoint == "getAlbumList2" && it.parameters["offset"] == end.toString() }
+        val mark = proxy.size()
+        ui.showAlbum(end - 1)
+        await("the next page asked for, and held") { windowReads(mark).any { it.offset() == end && !it.answered } }
+        awaitQuiet(held = true)
+        val viewport = viewportPages(grid)
+        val firstShown = firstShownAlbum(grid)
+        val stampBefore = server.scanStatus().getString("lastScan")
+        val stampAfter = server.scan()
+        assertTrue(stampAfter != stampBefore, "setup: the scan moved the stamp")
+        val releaseMark = proxy.size()
+        val framesBefore = frames(grid).size
+        proxy.release()
+        await("the window rebased") { frames(grid).drop(framesBefore).any { it.anchorRawId != null } }
+        awaitQuiet()
+
+        val after = readerRequests(releaseMark)
+        assertEquals("getScanStatus", after.first().endpoint, "the held page's after reading comes first: $after")
+        assertTrue(proxy.log().single { it.endpoint == "getAlbumList2" && it.parameters["offset"] == end.toString() && it.sequence < releaseMark }.answered,
+            "setup: the held page was answered")
+        val rebaseReads = windowReads(releaseMark).take(viewport.size).map { it.offset() }
+        assertEquals(viewport, rebaseReads.sorted(), "the rebase re-reads the pages on screen, and only those: $after")
+        val rebased = frames(grid).drop(framesBefore).first { it.anchorRawId != null }
+        val from = viewport.first()
+        val expected = ids.subList(from, minOf(viewport.last() + WINDOW_PAGE, ids.size))
+        assertEquals(expected, rebased.itemRawIds, "the rebased window is the viewport's pages, re-read; the torn page is not in it")
+        assertEquals(from, rebased.leadingOffset, "the rebased window starts at the viewport's first page")
+        assertEquals(firstShown, rebased.anchorRawId, "the core keeps the album first on screen first, by id")
+        // The re-read viewport is shorter than the screen here, so the grid settles at its top and reads
+        // the pages above (loadBefore) beneath its header: the anchored album stays on screen, by id.
+        assertTrue(firstShown in visibleAlbums().map { last(grid).itemRawIds[it] }, "the screen still shows the anchored album")
+
+        val final = last(grid)
+        // The person's own "load more" torn by the scan is not retried by the core: it is owed to the
+        // next revalidation, unless the screen asks again because the rebase changed what it shows.
+        assertTrue(final.freshness == AndroidLibraryFreshness.Live ||
+            (final.freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Owed,
+            "the rebased window is live, or owes the torn page to the next revalidation: ${final.freshness}")
+        assertTrue(final.coverage == AndroidLibraryCoverage.Open || final.coverage == AndroidLibraryCoverage.Complete,
+            "the window is guarded under the new stamp: ${final.coverage}")
+        assertEquals(ids.subList(final.leadingOffset, final.leadingOffset + final.itemCount), final.itemRawIds,
+            "the window is a run of the server's list, every album once")
+        val dropped = (0 until end step WINDOW_PAGE).filter { it !in viewport }
+        assertNoCredentialLeak()
+        println("CONF-82 OBSERVED $platform tear=fired-check page=$WINDOW_PAGE held-offset=$end stamp-moved=true " +
+            "viewport-pages=$viewport loaded-pages-off-screen=$dropped rebase-reads=$rebaseReads anchor=kept " +
+            "rebased-rows=${rebased.itemCount} leading-offset=${rebased.leadingOffset} after=${after.map { it.toString() }} cover-art=${coverArt(releaseMark)}")
+    }
+
+    /**
+     * Tear rules 2 and 3 (§16.12), and their control. The grid is left holding more pages than are on
+     * screen, then the app is relaunched three times. With nothing changed, its first live read
+     * revalidates the pages on screen in place and the window keeps every page. After a real scan (a
+     * stored-epoch mismatch) and after the server reports another library for the account (a
+     * folder-set change, stamp unchanged), the first live read is the viewport's pages under the new
+     * epoch, the page below the screen is dropped, and the window is never extended before that read.
+     */
+    fun conf82AWindowSeenUnderAnotherEpochIsRebasedAtItsFirstLiveReadAndNeverExtended() = withWindowPages {
+        val grid = openPagedAlbums()
+        val type = windowReads(0).last().parameters.getValue("type")
+        val ids = server.albumIds(type)
+        val held = last(grid).itemCount
+        val viewport = viewportPages(grid)
+        val below = (0 until held step WINDOW_PAGE).filter { it !in viewport }
+        assertTrue(below.isNotEmpty(), "setup: the grid must hold a page that is not on screen: holds $held, shows $viewport")
+        ui.leaveBrowseView()
+        awaitQuiet()
+
+        var left = held
+        fun relaunch(what: String): Pair<List<Int>, LibraryFrame> {
+            val mark = proxy.size()
+            relaunchIntoAlbums()
+            val albums = checkNotNull(albumsGrid())
+            val first = frames(albums).first()
+            assertIs<AndroidLibraryFreshness.Cached>(first.freshness, "$what: the cached window paints first")
+            assertEquals(left, first.itemCount, "$what: the cached window paints whole")
+            val live = frames(albums).first { it.freshness == AndroidLibraryFreshness.Live }
+            return windowReads(mark).map { it.offset() } to live
+        }
+
+        val (unchangedReads, unchanged) = relaunch("unchanged")
+        assertTrue(unchangedReads.isNotEmpty() && unchangedReads.first() in viewport,
+            "control: an unchanged epoch first revalidates on-screen pages in place (one read in the last minute is not re-read): $unchangedReads")
+        assertEquals(ids.take(held), unchanged.itemRawIds, "control: an unchanged epoch keeps every page of the window")
+        left = last(checkNotNull(albumsGrid())).itemCount
+        ui.leaveBrowseView()
+        awaitQuiet()
+
+        val stampBefore = server.scanStatus().getString("lastScan")
+        server.scan()
+        val (scannedReads, scanned) = relaunch("after a scan")
+        assertEquals(viewport, scannedReads.take(viewport.size).sorted(),
+            "after a scan the first live read is the viewport's pages, never an extension: $scannedReads")
+        assertTrue(scanned.itemCount in 1..viewport.size * WINDOW_PAGE && scanned.itemCount < left && scanned.itemRawIds == ids.take(scanned.itemCount),
+            "after a scan the first live window is the viewport's pages re-read; the page below the screen is dropped: ${scanned.itemRawIds}")
+        assertTrue(scannedReads.drop(viewport.size).all { it >= viewport.size * WINDOW_PAGE },
+            "the window extends only after the rebase, from its new end: $scannedReads")
+        await("the window extended again under the new stamp") { last(checkNotNull(albumsGrid())).itemCount > scanned.itemCount }
+        awaitQuiet()
+        left = last(checkNotNull(albumsGrid())).itemCount
+        ui.leaveBrowseView()
+        awaitQuiet()
+
+        val stampHeld = server.scanStatus().getString("lastScan")
+        proxy.rewrite({ it.endpoint == "getMusicFolders" }) { body -> withASecondLibrary(body) }
+        val (foldersReads, folders) = try {
+            relaunch("another library")
+        } finally {
+            proxy.rewrite(null)
+        }
+        assertEquals(stampHeld, server.scanStatus().getString("lastScan"), "setup: the stamp did not move")
+        assertTrue(proxy.log().any { it.endpoint == "getMusicFolders" && it.rewritten }, "setup: the forwarder presented the second library")
+        assertEquals(viewport, foldersReads.take(viewport.size).sorted(),
+            "after a folder-set change the first live read is the viewport's pages, never an extension: $foldersReads")
+        assertTrue(folders.itemCount in 1..viewport.size * WINDOW_PAGE && folders.itemCount < left && folders.itemRawIds == ids.take(folders.itemCount),
+            "after a folder-set change the first live window is the viewport's pages re-read; the page below the screen is dropped: ${folders.itemRawIds}")
+        assertNoCredentialLeak()
+        println("CONF-82 OBSERVED $platform tear=stored-epoch+folder-set page=$WINDOW_PAGE window-rows=$held viewport-pages=$viewport " +
+            "pages-below-screen=$below unchanged=${unchanged.itemCount}rows/$unchangedReads scanned=${scanned.itemCount}rows/$scannedReads " +
+            "folders=${folders.itemCount}rows/$foldersReads stamp-before=${stampBefore != stampHeld}")
+    }
+
+    /**
+     * Scanning mode (§16.12). With the server presented as scanning (its stamp as it really is), the
+     * grid's pages append as the person scrolls — scrolling never freezes — each unguarded, and the list
+     * says the server is updating its library. When the server is presented idle again under the SAME
+     * stamp, the next epoch reading (a return to the foreground) rebases the window around the viewport
+     * and the line goes: "scanning cleared" is the trigger, not a moved stamp.
+     */
+    fun conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp() = withWindowPages {
+        val stamp = server.scanStatus().getString("lastScan")
+        val presented = proxy.size()
+        proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body) { it.put("scanning", true) } }
+        try {
+            relaunchIntoAlbums()
+            val grid = checkNotNull(albumsGrid())
+            val type = windowReads(0).last().parameters.getValue("type")
+            val ids = server.albumIds(type)
+            assertEquals(AndroidLibraryCoverage.UnverifiedScanning, last(grid).coverage, "a window read while scanning says so")
+            val scanning = RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.shared.R.string.library_coverage_scanning)
+            ui.showListStatus()
+            compose.onNodeWithTag("library.albums.coverage").assertTextEquals(scanning)
+            val opened = last(grid).itemCount
+            assertTrue(opened >= 2, "pages append while scanning before the person scrolls: $opened")
+            var steps = 0
+            while (last(grid).itemCount < ids.size && steps++ < ids.size) {
+                ui.showAlbum(last(grid).itemCount - 1)
+                awaitQuiet()
+            }
+            assertEquals(ids, last(grid).itemRawIds, "scrolling never froze: every album appended while scanning")
+            val scanningFrames = frames(grid).filter { it.freshness == AndroidLibraryFreshness.Live }
+            assertTrue(scanningFrames.all { it.coverage == AndroidLibraryCoverage.UnverifiedScanning },
+                "every page appended while scanning is unguarded: ${scanningFrames.map { it.coverage }}")
+            ui.showListStatus()
+            awaitQuiet()
+            compose.onNodeWithTag("library.albums.coverage").assertTextEquals(scanning)
+            assertTrue(proxy.since(presented).filter { it.endpoint == "getScanStatus" }.let { reads -> reads.isNotEmpty() && reads.all { it.rewritten } }, "setup: every status read was presented as scanning")
+
+            proxy.rewrite(null)
+            assertEquals(stamp, server.scanStatus().getString("lastScan"), "setup: the stamp is the one the window was read under")
+            val viewport = viewportPages(grid)
+            val mark = proxy.size()
+            foregroundReturn()
+            await("the window rebased and guarded") {
+                last(grid).coverage.let { it == AndroidLibraryCoverage.Open || it == AndroidLibraryCoverage.Complete }
+            }
+            awaitQuiet()
+            val reads = windowReads(mark).map { it.offset() }
+            assertEquals(viewport, reads.take(viewport.size).sorted(), "the scan's end rebases the viewport's pages: $reads")
+            ui.showListStatus()
+            awaitQuiet()
+            assertTrue(compose.onAllNodesWithTag("library.albums.coverage").fetchSemanticsNodes().isEmpty(), "the scanning line goes")
+            assertEquals(stamp, server.scanStatus().getString("lastScan"), "the stamp never moved")
+            assertNoCredentialLeak()
+            println("CONF-82 OBSERVED $platform scanning page=$WINDOW_PAGE appended-rows=${ids.size} opened-rows=$opened " +
+                "label=scanning scan-end-stamp=unchanged rebase-reads=$reads viewport-pages=$viewport final=${last(grid).coverage}")
+        } finally {
+            proxy.rewrite(null)
+        }
+    }
+
+    /**
+     * No epoch (§16.11, §16.12). The first-scan sentinel and an absent `lastScan` are "no epoch" whatever
+     * `scanning` says, and never "unchanged": a window read live seconds earlier under a real stamp,
+     * which an unchanged epoch leaves unread (the control), is re-read as soon as the server reports
+     * the sentinel, and is labelled unverified; its pages still append. Each of the four presentations
+     * makes the session say the server reports no epoch, and the library's home says so once; the real
+     * stamp back, it no longer does.
+     */
+    fun conf82TheSentinelAndAnAbsentStampAreNoEpochWhateverScanningSaysAndNeverUnchanged() = withWindowPages {
+        val grid = openPagedAlbums()
+        val type = windowReads(0).last().parameters.getValue("type")
+        val ids = server.albumIds(type)
+        val viewport = viewportPages(grid)
+
+        var mark = proxy.size()
+        foregroundReturn()
+        assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = false), observed().connections.last())
+        assertEquals(emptyList(), windowReads(mark).map { it.offset() }, "control: an unchanged epoch leaves a window read seconds ago unread")
+
+        proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body) { it.put("lastScan", SENTINEL); it.put("scanning", false) } }
+        mark = proxy.size()
+        foregroundReturn()
+        await("the window re-read with no epoch") { last(grid).coverage == AndroidLibraryCoverage.UnverifiedNoEpoch }
+        awaitQuiet()
+        assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = true), observed().connections.last(), "the sentinel is no epoch")
+        val reread = windowReads(mark).map { it.offset() }
+        assertEquals(viewport, reread.take(viewport.size).sorted(), "the sentinel is never unchanged: the window is re-read: $reread")
+        var steps = 0
+        while (last(grid).itemCount < ids.size && steps++ < ids.size) {
+            ui.showAlbum(last(grid).itemCount - 1)
+            awaitQuiet()
+        }
+        assertEquals(ids, last(grid).itemRawIds, "a window with no epoch still pages on, every album once")
+        assertEquals(AndroidLibraryCoverage.UnverifiedNoEpoch, last(grid).coverage)
+
+        val presentations = listOf<Pair<String, (JSONObject) -> Unit>>(
+            "sentinel, scanning" to { it.put("lastScan", SENTINEL); it.put("scanning", true) },
+            "absent, idle" to { it.remove("lastScan"); it.put("scanning", false) },
+            "absent, scanning" to { it.remove("lastScan"); it.put("scanning", true) },
+        )
+        for ((name, change) in presentations) {
+            proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body, change) }
+            foregroundReturn()
+            assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = true), observed().connections.last(), "$name is no epoch")
+        }
+        ui.leaveBrowseView()
+        awaitQuiet()
+        val noEpoch = RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.shared.R.string.library_no_epoch)
+        compose.onNodeWithTag("library.noEpoch").assertTextEquals(noEpoch)
+
+        proxy.rewrite(null)
+        foregroundReturn()
+        assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = false), observed().connections.last(), "control: a real stamp is an epoch")
+        assertTrue(compose.onAllNodesWithTag("library.noEpoch").fetchSemanticsNodes().isEmpty(), "the line goes with a real stamp")
+        assertNoCredentialLeak()
+        println("CONF-82 OBSERVED $platform no-epoch page=$WINDOW_PAGE control-reads=0 sentinel-reread=$reread " +
+            "no-epoch-rows=${ids.size} presentations=sentinel/idle,${presentations.joinToString(",") { it.first }} line=shown-then-gone")
+    }
+
+    /**
+     * A failed status read is *unread* (§16.12): with every `getScanStatus` failing, the page the grid
+     * asks for as it scrolls is read but not used — the window keeps its rows and its label, never
+     * "no epoch" — and the window says it is showing what it had because the read failed. The page
+     * is still owed: once status reads succeed, the person asking for it again (scrolling to the end)
+     * makes it. Leaving the end gives the page up: the window is what it was, live, with no request.
+     */
+    fun conf82AFailedStatusReadIsUnreadAndTheWindowKeepsItsPagesAndLabel() = withWindowPages {
+        val grid = openPagedAlbums()
+        val type = windowReads(0).last().parameters.getValue("type")
+        val ids = server.albumIds(type)
+        val end = last(grid).itemCount
+        assertTrue(end < ids.size, "setup: the grid holds part of the list: $end")
+        proxy.fail { it.endpoint == "getScanStatus" }
+        val mark = proxy.size()
+        try {
+            ui.showAlbum(end - 1)
+            await("the page read and its status read failed") {
+                windowReads(mark).any { it.offset() == end && it.answered } &&
+                    proxy.since(mark).any { it.endpoint == "getScanStatus" && it.status == 500 }
+            }
+            awaitQuiet()
+            await("the failure published") { last(grid).freshness.isFailed() }
+            val failed = last(grid)
+            assertIs<AndroidLibraryFreshness.Cached>(failed.freshness, "the window keeps what it had, saying why: ${failed.freshness}")
+            assertEquals(ids.take(end), failed.itemRawIds, "a page whose status read failed is not used")
+            assertEquals(AndroidLibraryCoverage.Open, failed.coverage, "the window is not relabelled: never no epoch")
+            assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = false), observed().connections.last(),
+                "a failed status read is never evidence the server reports no epoch")
+            assertTrue(frames(grid).none { it.itemCount > end }, "no publication ever carried the unread page")
+        } finally {
+            proxy.fail(null)
+        }
+        // To the list's status lines. Where that leaves the end (the phone: the window is taller than
+        // the screen), the owed page is given up — live again, reading nothing — and is made when the
+        // person scrolls back to the end. Where the end stays on screen (the TV: the window fits), the
+        // failure stays, said on screen with "Try again", which makes the page.
+        val leaveMark = proxy.size()
+        ui.showListStatus()
+        awaitQuiet()
+        val path: String
+        if (last(grid).freshness.isFailed()) {
+            path = "try-again"
+            compose.onNodeWithTag("library.albums.freshness").assertExists()
+            assertEquals(emptyList(), windowReads(leaveMark), "nothing is read while the failure is shown")
+            val retryMark = proxy.size()
+            ui.activate(compose.onNodeWithTag("library.albums.retry"))
+            await("the owed page made by Try again") { last(grid).itemCount > end }
+            awaitQuiet()
+            assertTrue(windowReads(retryMark).any { it.offset() == end }, "Try again reads the page that was unread")
+        } else {
+            path = "asked-again"
+            assertEquals(AndroidLibraryFreshness.Live, last(grid).freshness, "leaving the end gives the owed page up")
+            assertEquals(emptyList(), windowReads(leaveMark), "giving the page up reads nothing")
+            assertEquals(ids.take(end), last(grid).itemRawIds)
+            val againMark = proxy.size()
+            ui.showAlbum(end - 1)
+            await("the page made when asked for again") { last(grid).itemCount > end }
+            awaitQuiet()
+            assertEquals(end, windowReads(againMark).first().offset(), "the page asked for again is the one that was unread")
+        }
+        assertEquals(ids.subList(0, last(grid).itemCount), last(grid).itemRawIds)
+        assertNoCredentialLeak()
+        println("CONF-82 OBSERVED $platform unread page=$WINDOW_PAGE unread-offset=$end rows-kept=$end coverage-kept=Open " +
+            "freshness=Cached(Failed) no-epoch=false then=$path rows=${last(grid).itemCount} cover-art=${coverArt(mark)}")
+    }
+
+    /**
+     * A window whose answers carry no `X-Total-Count` has an unknown total (§16.12). The control first:
+     * with the header, the grid scrolled to its end knows the total and completes on it. Then, on a
+     * fresh install, with the forwarder withholding the header the server sends: every publication's
+     * total is unknown, and the window is complete only once an empty page past the end confirms it.
+     */
+    fun conf82AWindowWithoutXTotalCountHasAnUnknownTotalAndConfirmsItsEnd() = withWindowPages {
+        fun scrollToTheEnd(grid: String, rows: Int) {
+            var steps = 0
+            while (last(grid).coverage != AndroidLibraryCoverage.Complete && steps++ <= rows) {
+                ui.showAlbum(last(grid).itemCount - 1)
+                awaitQuiet()
+            }
+            assertEquals(AndroidLibraryCoverage.Complete, last(grid).coverage, "the grid scrolled to its end is complete")
+        }
+
+        var grid = openPagedAlbums()
+        val type = windowReads(0).last().parameters.getValue("type")
+        val ids = server.albumIds(type)
+        scrollToTheEnd(grid, ids.size)
+        val withTotal = frames(grid).filter { it.itemCount > 0 }
+        assertTrue(withTotal.all { it.total == ids.size }, "control: with the header every publication knows the total: ${withTotal.map { it.total }}")
+        val controlReads = windowReads(0).filter { it.parameters["type"] == type }.map { it.offset() }
+        assertTrue(ids.size !in controlReads, "control: the window completes on the total, with no read past the end: $controlReads")
+
+        ui.leaveBrowseView()
+        awaitQuiet()
+        closeProcessReader()
+        RuntimeEnvironment.getApplication().deleteDatabase("dulcet.db")
+        proxy.withoutHeader({ it.endpoint == "getAlbumList2" }, "X-Total-Count")
+        try {
+            val mark = proxy.size()
+            compose.activityRule.scenario.recreate()
+            grid = openPagedAlbums()
+            scrollToTheEnd(grid, ids.size + 1)
+            val reads = windowReads(mark).filter { it.parameters["type"] == type }
+            assertTrue(reads.all { it.headerWithheld && it.serverTotalCount == ids.size.toString() },
+                "setup: the server sent X-Total-Count and the forwarder withheld it: ${reads.map { it.serverTotalCount to it.headerWithheld }}")
+            val unknown = frames(grid).filter { it.itemCount > 0 }
+            assertTrue(unknown.all { it.total == null }, "no header, no total: ${unknown.map { it.total }}")
+            assertEquals(ids, last(grid).itemRawIds)
+            val confirming = reads.filter { it.offset() == ids.size }
+            assertEquals(1, confirming.size, "the end is confirmed by one read past it: ${reads.map { it.offset() }}")
+            assertTrue(confirming.single().answered && confirming.single().status == 200)
+            assertNoCredentialLeak()
+            println("CONF-82 OBSERVED $platform no-total page=$WINDOW_PAGE control-reads=$controlReads control-total=${ids.size} " +
+                "no-header-reads=${reads.map { it.offset() }} no-header-total=null confirming-read-offset=${ids.size}")
+        } finally {
+            proxy.withoutHeader(null)
+        }
+    }
+
+    /** The pages that hold the albums on screen, as server offsets. */
+    private fun viewportPages(grid: String): List<Int> {
+        val leading = last(grid).leadingOffset
+        return visibleAlbums().map { (leading + it) / WINDOW_PAGE * WINDOW_PAGE }.distinct().sorted()
+    }
+
+    /** The album the grid shows first, by id. */
+    private fun firstShownAlbum(grid: String): String = last(grid).itemRawIds[visibleAlbums().first()]
+
+    /** A cold start into the albums grid, live and quiet. */
+    private fun relaunchIntoAlbums() {
+        closeProcessReader()
+        compose.activityRule.scenario.recreate()
+        openPagedAlbums()
+    }
+
+    /** The app stopped and brought back: the session reconnects, reading the epoch (§16.11 policy 1). */
+    private fun foregroundReturn() {
+        val before = observed().reconnects
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        awaitQuiet(composed = false)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        await("the foreground reconnect to finish") {
+            observed().reconnects > before && observed().connections.last() is LibraryConnectionState.Online
+        }
+        awaitQuiet()
+    }
+
+    /**
+     * Runs [block] on a process reader whose window pages hold [WINDOW_PAGE] rows, so the disposable
+     * library's albums are a list of several pages (§16.12); every other part of the reader is the
+     * production one. A cold start follows, so the app's session obtains that reader.
+     */
+    private fun withWindowPages(block: () -> Unit) {
+        AndroidLibraryReader.testPageSize = WINDOW_PAGE
+        try {
+            closeProcessReader()
+            compose.activityRule.scenario.recreate()
+            block()
+        } finally {
+            AndroidLibraryReader.testPageSize = null
+        }
+    }
+
+    /**
+     * The library opened, then its albums grid, live. The network is reported constrained, so the
+     * grid reads no album details ahead (§16.13) and every request counted is the window's own.
+     */
+    private fun openPagedAlbums(): String {
+        ui.openLibrary()
+        awaitHomeLive()
+        environment.network.constrain(true)
+        awaitQuiet()
+        ui.activate(compose.onNodeWithTag("library.view.albums"))
+        await("the albums grid live") { albumsGrid()?.let { last(it).freshness == AndroidLibraryFreshness.Live } == true }
+        awaitQuiet()
+        return checkNotNull(albumsGrid())
+    }
+
+    /** The albums window's page reads since [mark]: `getAlbumList2` with an offset (a home row has none). */
+    private fun windowReads(mark: Int): List<CountingProxy.Seen> =
+        proxy.since(mark).filter { it.endpoint == "getAlbumList2" && "offset" in it.parameters }
+
+    private fun CountingProxy.Seen.offset(): Int = parameters.getValue("offset").toInt()
+
+    /** The albums grid's cards on screen (any part of them inside the grid), by index into what it draws. */
+    private fun visibleAlbums(): List<Int> {
+        val bounds = compose.onNodeWithTag("library.albums").fetchSemanticsNode().boundsInRoot
+        return compose.onAllNodes(SemanticsMatcher("an album card") {
+            it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith(ALBUM_CARD)
+        }).fetchSemanticsNodes()
+            .filter { it.boundsInRoot.overlaps(bounds) }
+            .map { it.config[SemanticsProperties.TestTag].removePrefix(ALBUM_CARD).toInt() }
+            .sorted()
+    }
+
     // ---- Instruments ------------------------------------------------------------------------------
 
     /** Credentials ride in the query string; nothing the app logged may carry them (docs/TRAPS.md trap 12). */
@@ -1517,6 +1990,14 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         const val LOOK_AHEAD_MAX_PER_VIEWPORT = 24
 
         /**
+         * Rows per window page in the CONF-82 tests: the fixture's eight albums are eight pages, so on
+         * both platforms the grid holds a page below the albums on screen and asks for more as it scrolls.
+         */
+        const val WINDOW_PAGE = 1
+        const val SENTINEL = "0001-01-01T00:00:00Z"
+        const val ALBUM_CARD = "library.albums.item."
+
+        /**
          * Longer than the reader's next retry wait after two retries (8 s: 2 s doubling, ASSUMED
          * figures, §16.14), so a retry the background failed to stop would land inside it.
          */
@@ -1580,4 +2061,20 @@ fun DisposableServer.albumId(name: String): String {
         if (album.getString("name") == name) return album.getString("id")
     }
     error("The disposable fixture has no album named $name")
+}
+
+/** A `getScanStatus` answer changed by [change], as a server reporting that status would answer. */
+internal fun scanStatus(body: ByteArray, change: (JSONObject) -> Unit): ByteArray {
+    val document = JSONObject(String(body, Charsets.UTF_8))
+    change(document.getJSONObject("subsonic-response").getJSONObject("scanStatus"))
+    return document.toString().toByteArray(Charsets.UTF_8)
+}
+
+/** A `getMusicFolders` answer with one more library in it, as a server that gave the account a second one would answer. */
+internal fun withASecondLibrary(body: ByteArray): ByteArray {
+    val document = JSONObject(String(body, Charsets.UTF_8))
+    val folders = document.getJSONObject("subsonic-response").getJSONObject("musicFolders").getJSONArray("musicFolder")
+    check(folders.length() >= 1) { "setup: the server lists its library" }
+    folders.put(JSONObject().put("id", 990_001).put("name", "Second Library"))
+    return document.toString().toByteArray(Charsets.UTF_8)
 }

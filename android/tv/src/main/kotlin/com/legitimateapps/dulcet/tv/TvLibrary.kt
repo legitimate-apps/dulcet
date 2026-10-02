@@ -98,7 +98,6 @@ import com.legitimateapps.dulcet.downloads.albumDownloadLine
 import com.legitimateapps.dulcet.downloads.downloadItem
 import com.legitimateapps.dulcet.downloads.downloadLine
 import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
-import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
@@ -120,6 +119,7 @@ import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.LibrarySurface
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
+import com.legitimateapps.dulcet.library.growsAtEnd
 import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
 import com.legitimateapps.dulcet.library.isFavourite
@@ -815,16 +815,20 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
 private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publication: AndroidLibraryPublication?) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface, grid) {
+        // Re-evaluated when the window changes shape as well as on every move, as the phone's grid is:
+        // a window rebased or given back to what fits the screen can show its end with nowhere left to
+        // move, and must still grow; a publication changing freshness or coverage alone asks for nothing.
         snapshotFlow {
             val visible = grid.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            visible.firstOrNull()?.index to visible.lastOrNull()?.index
-        }.collect { (first, last) ->
-            val shown = latest ?: return@collect
-            if (first == null || last == null) return@collect
+            (visible.firstOrNull()?.index to visible.lastOrNull()?.index) to latest?.let { it.items.size to it.leadingOffset }
+        }.collect { (range, _) ->
+            val (first, last) = range
+            val shown = latest
+            if (shown == null || first == null || last == null) return@collect
             val from = (first - 1).coerceAtLeast(0)
             val to = (last - 1).coerceAtLeast(from)
             surface.setViewport(from, to)
-            if (shown.coverage == AndroidLibraryCoverage.Open && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
+            if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
             if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
         }
     }
@@ -837,16 +841,18 @@ private const val PAGE_AHEAD = 12
 private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, publication: AndroidLibraryPublication?, header: Int) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface, list) {
+        // Re-evaluated when the window changes shape as well as on every move ([ReportViewport]).
         snapshotFlow {
             val visible = list.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            visible.firstOrNull()?.index to visible.lastOrNull()?.index
-        }.collect { (first, last) ->
-            val shown = latest ?: return@collect
-            if (first == null || last == null) return@collect
+            (visible.firstOrNull()?.index to visible.lastOrNull()?.index) to latest?.let { it.items.size to it.leadingOffset }
+        }.collect { (range, _) ->
+            val (first, last) = range
+            val shown = latest
+            if (shown == null || first == null || last == null) return@collect
             val from = (first - header).coerceAtLeast(0)
             val to = (last - header).coerceAtLeast(from)
             surface.setViewport(from, to)
-            if (shown.coverage == AndroidLibraryCoverage.Open && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
+            if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
             if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
         }
     }

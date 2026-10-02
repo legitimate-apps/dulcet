@@ -277,6 +277,33 @@ class DisposableServer(
         }
     }
 
+    /** `getScanStatus` as the server reports it now: the scan stamp and whether a scan is running. */
+    fun scanStatus(): JSONObject = get("getScanStatus").getJSONObject("scanStatus")
+
+    /**
+     * A real scan of the disposable library, finished: `startScan`, then `getScanStatus` until no scan
+     * runs and the stamp has moved (a scan that changes nothing still moves it, §16.11). Returns the
+     * new stamp. It changes no file, so every id stays the same.
+     */
+    fun scan(): String {
+        val before = scanStatus().optString("lastScan")
+        get("startScan")
+        repeat(600) {
+            val status = scanStatus()
+            val stamp = status.optString("lastScan")
+            if (!status.optBoolean("scanning") && stamp.isNotEmpty() && stamp != before) return stamp
+            Thread.sleep(50)
+        }
+        error("The disposable server's scan did not finish with a new stamp")
+    }
+
+    /** One album list's ids in the server's order, read whole. */
+    fun albumIds(type: String): List<String> {
+        val albums = get("getAlbumList2", mapOf("type" to type, "size" to "500")).getJSONObject("albumList2")
+            .optJSONArray("album") ?: JSONArray()
+        return (0 until albums.length()).map { albums.getJSONObject(it).getString("id") }
+    }
+
     fun unstarEverything() {
         val starred = get("getStarred2").optJSONObject("starred2") ?: return
         for (kind in listOf("artist", "album", "song")) {

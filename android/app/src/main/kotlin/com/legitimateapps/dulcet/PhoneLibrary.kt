@@ -84,7 +84,6 @@ import com.legitimateapps.dulcet.downloads.albumDownloadLine
 import com.legitimateapps.dulcet.downloads.downloadItem
 import com.legitimateapps.dulcet.downloads.downloadLine
 import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
-import com.legitimateapps.dulcet.core.AndroidLibraryCoverage
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
@@ -102,6 +101,7 @@ import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.LibrarySurface
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
+import com.legitimateapps.dulcet.library.growsAtEnd
 import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
 import com.legitimateapps.dulcet.library.favouriteTarget
@@ -327,14 +327,19 @@ internal fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pu
 private fun ReportViewport(surface: LibrarySurface, publication: AndroidLibraryPublication?, visible: () -> Pair<Int?, Int?>) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface) {
-        snapshotFlow(visible).collect { (first, last) ->
-            val shown = latest ?: return@collect
-            if (first == null || last == null) return@collect
+        // Re-evaluated when the window changes shape as well as on every scroll: a window rebased or
+        // given back to what fits the screen can show its end with nothing left to scroll, and must
+        // still grow. Only the shape: a publication that changes freshness or coverage alone (a
+        // failed or empty page) asks for nothing, or a failing page would be asked for in a loop.
+        snapshotFlow { visible() to latest?.let { it.items.size to it.leadingOffset } }.collect { (range, _) ->
+            val (first, last) = range
+            val shown = latest
+            if (shown == null || first == null || last == null) return@collect
             // Index 0 is the header; items start at 1.
             val from = (first - 1).coerceAtLeast(0)
             val to = (last - 1).coerceAtLeast(from)
             surface.setViewport(from, to)
-            if (shown.coverage == AndroidLibraryCoverage.Open && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
+            if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
             if (shown.leadingOffset > 0 && from == 0) surface.loadBefore()
         }
     }
