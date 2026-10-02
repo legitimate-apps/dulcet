@@ -28,6 +28,7 @@ import com.legitimateapps.dulcet.library.LibraryObservationState
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
+import com.legitimateapps.dulcet.search.conformance.LyricsPanelScenarios
 import com.legitimateapps.dulcet.search.conformance.ProductionLibraryEnvironment
 import com.legitimateapps.dulcet.search.conformance.songId
 import org.junit.After
@@ -59,8 +60,14 @@ class AndroidTvLyricsProductionLibraryReaderAppConformanceTest {
 
     private var library: LibrarySession? = null
 
+    /** CONF-42 through the TV's own lyrics panel, the one Now Playing shows in place of Up Next. */
+    private val panelScenarios = LyricsPanelScenarios(compose, environment, tags = "tv.player.lyrics", platform = "androidtv") {
+            session, state -> TvLyricsPanel(session, state)
+    }
+
     @After fun closeLibrary() {
         library?.close()
+        panelScenarios.close()
     }
 
     private fun account(): SearchAccount {
@@ -146,6 +153,15 @@ class AndroidTvLyricsProductionLibraryReaderAppConformanceTest {
         assertTrue(compose.onAllNodesWithTag("tv.player.lyrics.loading").fetchSemanticsNodes().isEmpty(), "no spinner for a song with none")
         println("LYRICS OBSERVED androidtv none=statement")
     }
+
+    @Test fun conf42TheLayerShownFollowsTheDevicesLanguageAndSyncedBeatsUnsynced() =
+        panelScenarios.conf42TheLayerShownFollowsTheDevicesLanguageAndSyncedBeatsUnsynced()
+
+    @Test fun conf42SeenLyricsShowOfflineWithNoRequestAndUnseenOnesSaySo() =
+        panelScenarios.conf42SeenLyricsShowOfflineWithNoRequestAndUnseenOnesSaySo()
+
+    @Test fun conf42WithoutTheExtensionAdvertisedTheLyricsAreReadWithGetLyrics() =
+        panelScenarios.conf42WithoutTheExtensionAdvertisedTheLyricsAreReadWithGetLyrics()
 
     private companion object {
         const val LYRICS_TRACK = "Twenty Nine Seconds"
