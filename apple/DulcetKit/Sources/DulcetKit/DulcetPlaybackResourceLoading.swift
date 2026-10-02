@@ -208,10 +208,14 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                     // as -1005 (spec §12.5). Only the core validator knows whether the plan's length
                     // is an estimate -- EOF before an estimate is the end of the representation, EOF
                     // before an exact length is truncation -- so when it refuses the short body the
-                    // load fails as the lost connection it was.
-                    let endedShort = error.map { Self.isLostConnection($0) } == true
-                        && (response as? HTTPURLResponse)?.statusCode == 200
-                        && !data.isEmpty
+                    // load fails as the lost connection it was. A 200 that declared no length is never
+                    // ended this way: with nothing to compare against, a body cut off by a real drop
+                    // would pass as the whole representation.
+                    let lostConnectionResponse = error.map { Self.isLostConnection($0) } == true
+                        ? response as? HTTPURLResponse : nil
+                    let endedShort = lostConnectionResponse.map {
+                        $0.statusCode == 200 && Self.resourceTotalLength(in: $0) != nil
+                    } == true && !data.isEmpty
                     guard error == nil || endedShort else {
                         completion(.failed(error: Self.closedFailure(for: error), refreshReason: nil))
                         return

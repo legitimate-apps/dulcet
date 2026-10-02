@@ -1738,8 +1738,8 @@ is not exposed to the second case, because its body cannot all arrive before the
 a first read; nothing has measured it. **The Apple playback loader is a second client with its own
 session** (`DulcetURLSessionPlaybackResource`): it reads each chunk through its delegate and, when a
 200 body ends in the -1005 after at least one byte, hands what arrived to the core validator, which
-accepts it only when the plan's length is an estimate; refused, or with no byte, the load stays the
-lost connection. A cold transcode answers the loader's first ranged read with 200 and the whole
+accepts it only when the plan's length is an estimate; refused, with no byte, or on a 200 that declared
+no length, the load stays the lost connection. A cold transcode answers the loader's first ranged read with 200 and the whole
 representation, which the loader accepts as the resource only from byte 0 and only at the length
 the validator measured (§28, 2026-10-02). No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
@@ -7370,8 +7370,8 @@ the same reads through a delegate received the whole body before the -1005 in 8 
 Two defects, both fixed in DulcetKit, each with a test that failed before the fix:
 1. The loader now accumulates the body in its delegate. A 200 body ended by
    `NSURLErrorNetworkConnectionLost` after at least one byte goes to the validator, which accepts it
-   only for an estimated length (`validateAppleRangeAndTotalLength`); a refusal, a 206, or no byte
-   at all stays the lost connection, `transport` (`PlaybackResourceLoadingTests`).
+   only for an estimated length (`validateAppleRangeAndTotalLength`); a refusal, a 206, a 200 that
+   declared no length, or no byte at all stays the lost connection, `transport` (`PlaybackResourceLoadingTests`).
 2. A cold transcode honours no range: Navidrome answered the loader's `bytes=0-262143` for a
    2-minute FLAC capped at 96 kbps with 200 and all 1,440,509 bytes (OBSERVED). The loader refused
    any body longer than its chunk as `protocolViolation`, so with (1) alone a full-length track

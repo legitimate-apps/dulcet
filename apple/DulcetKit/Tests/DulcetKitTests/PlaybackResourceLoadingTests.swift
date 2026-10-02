@@ -181,9 +181,11 @@ func aLostConnectionStaysATransportFailureWhenTheValidatorRefusesTheShortBody() 
 }
 
 @Test
-func aLostConnectionWithNoBodyOrAPartialAnswerFailsWithoutValidation() async throws {
+func aLostConnectionWithNoBodyNoDeclaredLengthOrAPartialAnswerFailsWithoutValidation() async throws {
     let cases: [(String, Int, [String: String], Data)] = [
         ("no body byte delivered", 200, ["Content-Type": "audio/mpeg", "Content-Length": "96"], Data()),
+        // A chunked 200 declares no length, so a real drop could not be told from the end.
+        ("a 200 that declared no length", 200, ["Content-Type": "audio/mpeg"], Data("ID3".utf8)),
         (
             "a partial answer cut short",
             206,
