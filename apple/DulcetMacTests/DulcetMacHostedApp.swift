@@ -98,6 +98,9 @@ final class HostedApp {
             (fieldElement as? NSTextField) ?? (fieldElement as? NSCell)?.controlView as? NSTextField,
             "dulcet.search.field must resolve to NSTextField; observed \(type(of: fieldElement))"
         )
+        // Typed keys go to the key window; a Settings window an earlier step made key would take them.
+        window.makeKeyAndOrderFront(nil)
+        print("OBSERVED play: app window key=\(window.isKeyWindow) keyWindow=\(NSApp.keyWindow?.title ?? "nil")")
         XCTAssertTrue(window.makeFirstResponder(field), "The search field must take focus")
         // A query an earlier step typed is selected, so the typing replaces it.
         field.currentEditor()?.selectAll(nil)
@@ -140,7 +143,10 @@ final class HostedApp {
         let settings = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         settings.isReleasedWhenClosed = false
         settings.contentView = hosting
-        settings.orderFront(nil)
+        // Key and active, as Dulcet > Settings… leaves it: a menu picker opens its menu on AXPress
+        // only in a key window of the active app, and a CI host's test runner is not active.
+        NSApp.activate(ignoringOtherApps: true)
+        settings.makeKeyAndOrderFront(nil)
         hosting.layoutSubtreeIfNeeded()
         return settings
     }
@@ -162,6 +168,7 @@ final class HostedApp {
             var offered: [String] = []
             var performed = false
             var opened = false
+            var ended = false
             var menu: NSMenu?
         }
         let tracking = Tracking()
@@ -184,17 +191,47 @@ final class HostedApp {
                 }
             }
         }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let endObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil
+        ) { notification in
+            if tracking.menu != nil, notification.object as? NSMenu === tracking.menu { tracking.ended = true }
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+            NotificationCenter.default.removeObserver(endObserver)
+        }
         // AXPress returns before the menu opens: SwiftUI opens it on a later turn of the main run
         // loop (OBSERVED on macOS 26), which the wait below spins.
-        try press(picker, named: identifier)
-        try await waitUntil(timeout: .seconds(5), "\(identifier) opens its menu on AXPress") { tracking.opened }
+        // On the CI macOS host a press can be dropped (OBSERVED: the second picker's AXPress opened
+        // no menu while the first picker's had), so the press is repeated, up to three times, until a
+        // menu begins tracking. Every choice goes through the opened menu; there is no other path.
+        var presses = 0
+        while presses < 3 {
+            presses += 1
+            try press(picker, named: identifier)
+            if await poll(for: .seconds(5), { tracking.opened }) { break }
+        }
+        try await waitUntil(timeout: .seconds(1), "\(identifier) opens its menu on AXPress (\(presses) presses)") {
+            tracking.opened
+        }
+        print("OBSERVED \(identifier): menu opened on press \(presses)")
         XCTAssertTrue(tracking.offered.contains(option), "\(identifier) must offer \(option); offers \(tracking.offered)")
+        // The menu must have finished closing before anything else is pressed.
+        try await waitUntil(timeout: .seconds(5), "\(identifier)'s menu ends tracking") { tracking.ended }
         try await waitUntil(timeout: .seconds(5), "\(identifier) shows \(option); reads \(self.label(picker) ?? "nil")") {
             root.layoutSubtreeIfNeeded()
             return tracking.performed && ((self.label(picker) ?? "").contains(option)
                 || (self.value("accessibilityValue", of: picker) as? String)?.contains(option) == true)
         }
+    }
+
+    private func poll(for timeout: Duration, _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        repeat {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+        return condition()
     }
 
     // MARK: The window's toolbar
