@@ -77,6 +77,12 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             override fun backFromAlbum() = press("album.back")
 
+            /** The remote's Back, from a browse grid to the library's home. */
+            override fun leaveBrowseView() {
+                back()
+                check(exists("library.surface")) { "Back did not return to the library's home" }
+            }
+
             /** A TV has no touch: focus on the node, then the remote's centre key. */
             override fun activate(node: SemanticsNodeInteraction) {
                 node.performSemanticsAction(SemanticsActions.RequestFocus)
@@ -151,6 +157,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =
         scenarios.conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive()
+
+    @Test fun conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest() =
+        scenarios.conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest()
 
     @Test fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() =
         scenarios.aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline()

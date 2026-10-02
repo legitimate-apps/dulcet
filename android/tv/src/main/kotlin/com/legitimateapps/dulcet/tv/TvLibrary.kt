@@ -770,6 +770,7 @@ private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navig
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
                          controls: (@Composable () -> Unit)? = null, open: (AndroidLibraryItem) -> Unit) {
     val publication by surface.state.collectAsState()
+    val observation by session.observation.collectAsState()
     val current = publication
     val grid = rememberLazyGridState()
     // A different window (another order) is a different list: it starts at its top. The grid itself
@@ -788,7 +789,8 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
         // Grid index 0 is the header; items start at 1.
         if (returning != null && returning < size) grid.scrollToItem(returning + 1)
     }
-    LazyVerticalGrid(GridCells.Adaptive(180.dp), Modifier.fillMaxSize().testTag(tag), state = grid,
+    LazyVerticalGrid(GridCells.Adaptive(180.dp),
+        Modifier.fillMaxSize().testTag(tag).semantics { this[LibraryObservation] = observation }, state = grid,
         contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {

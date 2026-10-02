@@ -74,6 +74,9 @@ interface ReaderAppUi {
     fun activate(node: SemanticsNodeInteraction) {
         node.performClick()
     }
+
+    /** Leaves a browse view (the albums grid) for the library's home, the way a person does on this platform. */
+    fun leaveBrowseView()
 }
 
 /**
@@ -1180,6 +1183,85 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             "row-sequences=${HOME.map { frames(it).size }} cover-art=${coverArt()}")
     }
 
+    // ---- CONF-87 ----------------------------------------------------------------------------------
+
+    /**
+     * Detail look-ahead (§16.13) through the albums grid: the grid reports its viewport, the reader
+     * reads album details around it. On a constrained network a settled grid reads none; on an
+     * unconstrained one, with every `getAlbum` held, exactly two are in flight and no third starts
+     * however long the grid stays still; released, every album is read at most once and no more than
+     * the per-viewport cap; and an album read ahead opens with no request at all.
+     *
+     * The fixture has eight albums, all inside one look-ahead region, so the 24-per-viewport cap is
+     * not reached here and a fling cannot be made; those two bounds are the core's evidence
+     * (`DetailLookAheadTest`), not this test's.
+     */
+    fun conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest() {
+        ui.openLibrary()
+        awaitHomeLive()
+        awaitQuiet()
+        val network = environment.network
+
+        // A constrained network: the grid settles and nothing is read ahead. (Robolectric's default
+        // network is metered, so each leg reports its constraint explicitly rather than inheriting it.)
+        network.constrain(true)
+        val constrainedMark = proxy.size()
+        ui.activate(compose.onNodeWithTag("library.view.albums"))
+        await("the albums grid live") { albumsGrid()?.let { last(it).freshness == AndroidLibraryFreshness.Live } == true }
+        val grid = checkNotNull(albumsGrid())
+        val albums = last(grid).itemRawIds
+        assertTrue(albums.size >= 3, "setup: the grid must hold more albums than may be in flight, had ${albums.size}")
+        idleRealTime(LOOK_AHEAD_STILL_MILLIS)
+        awaitQuiet()
+        assertEquals(emptyList(), detailReads(constrainedMark), "a settled grid on a constrained network read details ahead")
+        ui.leaveBrowseView()
+        awaitQuiet()
+        network.constrain(false)
+        awaitQuiet()
+
+        // Unconstrained, every detail read held: two in flight, and no third while they are.
+        proxy.hold { it.endpoint == "getAlbum" }
+        val mark = proxy.size()
+        ui.activate(compose.onNodeWithTag("library.view.albums"))
+        // A finder, so the main looper and the frames that report the viewport run as the wait polls.
+        await("the albums grid drawn") { exists("library.albums.item.0") }
+        await("two look-ahead reads in flight") { detailReads(mark).size >= 2 }
+        idleRealTime(LOOK_AHEAD_STILL_MILLIS)
+        val held = detailReads(mark)
+        assertEquals(2, held.size, "look-ahead reads in flight while two were unanswered: $held")
+        assertTrue(proxy.since(mark).none { it.endpoint == "getAlbum" && it.answered }, "setup: the held reads stayed unanswered")
+        proxy.release()
+        awaitQuiet()
+        val fetched = detailReads(mark)
+        assertEquals(fetched.size, fetched.toSet().size, "an album was read ahead twice: $fetched")
+        assertTrue(fetched.size in 3..LOOK_AHEAD_MAX_PER_VIEWPORT, "look-ahead read ${fetched.size} albums")
+        assertTrue(albums.containsAll(fetched), "look-ahead read albums the grid does not hold: $fetched")
+
+        // An album read ahead opens with no request, live and complete in its first publication.
+        val index = albums.indexOfFirst { it in fetched }
+        val opened = albums[index]
+        val openMark = proxy.size()
+        ui.activate(compose.onNodeWithTag("library.albums.item.$index"))
+        await("the looked-ahead album published") { frames("album:$opened").isNotEmpty() }
+        awaitQuiet()
+        assertEquals(emptyList(), readerRequests(openMark).map { it.endpoint }, "opening a looked-ahead album issued a request")
+        val published = frames("album:$opened")
+        assertTrue(published.all { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present },
+            "a looked-ahead album opens live with its tracks, never loading: ${published.map { it.freshness to it.itemsState }}")
+        assertTrue(exists("album.track.0"), "the album's first track is drawn")
+        assertNoCredentialLeak()
+        println("CONF-87 OBSERVED $platform grid-albums=${albums.size} constrained-reads=0 held-in-flight=${held.size} " +
+            "read-ahead=${fetched.size} cap=$LOOK_AHEAD_MAX_PER_VIEWPORT opened-index=$index open-requests=0 " +
+            "album-publications=${published.size} cover-art=${coverArt()}")
+    }
+
+    /** The albums grid's surface key, whichever order it is in. */
+    private fun albumsGrid(): String? = observed().surfaces.keys.firstOrNull { it.startsWith("albums") }
+
+    /** The `getAlbum` reads issued since [mark], by album id. */
+    private fun detailReads(mark: Int): List<String> =
+        proxy.since(mark).filter { it.endpoint == "getAlbum" }.map { it.parameters.getValue("id") }
+
     // ---- Instruments ------------------------------------------------------------------------------
 
     /** Credentials ride in the query string; nothing the app logged may carry them (docs/TRAPS.md trap 12). */
@@ -1294,6 +1376,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         /** Seen in the home row, never opened, and never read by CONF-76's offline leg. */
         const val GRID_ONLY_ALBUM = "Paging Atlas"
         const val CADENCE_MILLIS = 400L
+
+        /** Five times the reader's 300 ms look-ahead settle (§16.13): a grid this still has settled. */
+        const val LOOK_AHEAD_STILL_MILLIS = 1_500L
+        const val LOOK_AHEAD_MAX_PER_VIEWPORT = 24
 
         /**
          * Longer than the reader's next retry wait after two retries (8 s: 2 s doubling, ASSUMED

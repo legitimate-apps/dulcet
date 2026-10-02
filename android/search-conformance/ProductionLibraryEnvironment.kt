@@ -157,6 +157,20 @@ class PlatformNetwork(app: Application) {
 
     private var switches = 0
 
+    /**
+     * The platform's report that the default network is [constrained] (metered) or not, as Android
+     * gives it: the network's capabilities change, and every default-network callback hears it.
+     */
+    fun constrain(constrained: Boolean) {
+        check(!lost) { "setup: a constraint is reported for a network the device has" }
+        val network = checkNotNull(reported ?: manager.activeNetwork) { "setup: the host must start with a network" }
+        check(shadow.networkCallbacks.isNotEmpty()) { "setup: the session registered no network callback" }
+        val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        if (!constrained) shadowOf(capabilities).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        shadow.setNetworkCapabilities(network, capabilities)
+        shadow.networkCallbacks.toList().forEach { it.onCapabilitiesChanged(network, capabilities) }
+    }
+
     internal fun restoreIfLost() {
         if (lost) {
             shadow.setActiveNetworkInfo(saved)
