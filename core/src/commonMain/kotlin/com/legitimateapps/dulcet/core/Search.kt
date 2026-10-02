@@ -270,9 +270,9 @@ internal data class LibrarySearchPublication(
  *   the server's answer replaces in place and appends. Across a keystroke the list is ranked again,
  *   over everything this device now holds — including rows the previous query's server answer wrote
  *   through — so a row appended at the bottom for one query takes its ranked place on the next. The
- *   ranker is total ([rankResultsStably]: match tier, then type, then normalized title, then id), so
- *   two rows kept across a keystroke keep their relative order unless their match tiers change, and
- *   never reorder by arrival.
+ *   ranker is total ([rankResultsStably]: match tier, own-name before related-metadata match, type,
+ *   normalized title, id), so rows never reorder by arrival. Across a keystroke their relative
+ *   order changes only when their match strength or matching field changes.
  * - **One label while the server is unreachable.** Once `search3` has failed as unreachable, the
  *   device's rows for later keystrokes are published as `deviceOffline` at once rather than
  *   `deviceWhileServerPending`, so the label does not alternate on every keystroke; the server is
@@ -713,10 +713,10 @@ internal fun rankResults(query: String, results: List<SearchResultItem>): List<S
 }
 
 /**
- * [rankResults] with a total order: ties within a match tier and type break on the normalized
- * title and then the opaque id, never on input order. The reader's search uses it for both halves,
- * so the same rows rank the same way whichever order the database or the server returned them in,
- * and a keystroke that keeps a row keeps it in the same place relative to the rows it kept too.
+ * [rankResults] with a total order: ties within a match tier, matching field and type break on the
+ * normalized title and then the opaque id, never on input order. The reader's search uses it for
+ * both halves, so the same rows rank the same way whichever order the database or server returned
+ * them in. Across keystrokes, rows keep their relative order while their match ranks stay equal.
  */
 internal fun rankResultsStably(query: String, results: List<SearchResultItem>): List<SearchResultItem> {
     val normalizedQuery = normalizeSearchText(query)
@@ -730,20 +730,30 @@ internal fun rankResultsStably(query: String, results: List<SearchResultItem>): 
     )
 }
 
-private fun matchRank(query: String, result: SearchResultItem): Int = buildList {
-    add(result.title)
-    result.albumTitle?.let(::add)
-    addAll(result.credits.map(Credit::name))
-}.minOfOrNull { candidate ->
+/**
+ * Two slots per match tier: an item's own title/name first, then its related album/credits.
+ * Match strength remains primary: an exact credit still beats a prefix title. Within a tier,
+ * matching an album's title must put that album ahead of tracks matching only their album field.
+ */
+private fun matchRank(query: String, result: SearchResultItem): Int {
+    val title = textMatchRank(query, result.title) * 2
+    val related = buildList {
+        result.albumTitle?.let(::add)
+        addAll(result.credits.map(Credit::name))
+    }.minOfOrNull { textMatchRank(query, it) * 2 + 1 }
+    return minOf(title, related ?: title)
+}
+
+private fun textMatchRank(query: String, candidate: String): Int {
     val value = normalizeSearchText(candidate)
-    when {
+    return when {
         value == query -> 0
         value.startsWith(query) -> 1
         value.hasWordStartingWith(query) -> 2
         value.contains(query) -> 3
         else -> 4
     }
-} ?: 4
+}
 
 private fun String.hasWordStartingWith(query: String): Boolean {
     var atWordStart = true

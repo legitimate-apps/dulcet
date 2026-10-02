@@ -82,6 +82,24 @@ class LibrarySearchSessionTest {
     }
 
     @Test
+    fun offlineAlbumSearchShowsTheAlbumBeforeTracksMatchingOnlyItsAlbumName() = sessionTest { env ->
+        val session = primed(env)
+        session.reader.readAlbumDetail(albumId(20))
+        assertEquals(2L, env.cache().counts().tracks, "fixture: browsing the album cached both tracks")
+        session.setOnline(false)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        val before = env.server.log.size
+        search.updateQuery("Album 0020")
+        advanceUntilIdle()
+        assertIs<SearchScope.DeviceOffline>(pubs.last.scope)
+        assertEquals(listOf(albumId(20), "${albumId(20)}-track-0", "${albumId(20)}-track-1"),
+            pubs.last.rows.ids(), "the album's own name must lead its related tracks")
+        assertTrue(pubs.last.rows.all { it.source == SearchResultSource.Device })
+        assertEquals(before, env.server.log.size, "offline ranking issues no request")
+    }
+
+    @Test
     fun conf79AServerFailureKeepsTheDeviceRowsAndNamesTheKindWithCounts() = sessionTest { env ->
         val session = primed(env)
         env.server.failWithCode["search3"] = 10

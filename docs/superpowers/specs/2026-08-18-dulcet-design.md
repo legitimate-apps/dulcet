@@ -4395,8 +4395,8 @@ a transport may not observe cancellation. A `search3` that fails as unreachable 
 `search3` succeeds, so it does not alternate; every other failure is `deviceServerFailed(kind)`.
 Every row names its source (`server` or `device`). Within one query rows never move; across a
 keystroke the list is ranked again over everything the device now holds — including rows the
-previous answer wrote through — with a total order (match tier, type, normalized title, id), so rows
-never reorder by arrival.
+previous answer wrote through — with a total order (match tier, own-name before related-metadata
+match, type, normalized title, id), so rows never reorder by arrival.
 
 **Revalidated like a window (R2a review, §28 revision 104 item 30).** Open searches are part of the
 visible screen of §16.14 step 3, revalidated after the windows, and by the windows' rule: a server
@@ -4763,7 +4763,11 @@ every result carries a scope — `serverAndDevice`, `deviceWhileServerPending`, 
   that disagreement is user-visible. **CONF-43** issues a fixed query set against the pinned container
   and records the returned id sets, so the divergence is measured rather than assumed.
 - **Ranking** is explicit and identical in shape for both sources: exact, prefix, word-start, substring,
-  weighted by type (track > album > artist by default).
+  then by whether that tier matches the result's own title/name or only its related metadata
+  (album title or credits), then by type (track > album > artist by default). An exact album name
+  therefore leads tracks matching only that album name, and an artist's own name leads albums or
+  tracks matching only its credit. Match strength remains first: an exact related match still leads
+  a prefix title. Related matches remain in the list.
 - **Merging:** identity is the opaque id, so a server result **replaces** the local row of the same id
   (refreshing the cached object) rather than appearing twice. Late results never reorder items above the
   user's current scroll position; they append or replace in place.
@@ -7341,6 +7345,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-02 — Search ranks an item's own matching name before related metadata (§16.15, §18.1).**
+Within each match tier, a match in the result's own title/name precedes one found only in its album
+title or credits. Previously the track-first type tie-breaker buried an exact album below all its
+tracks and an artist below tracks crediting it. Both the server and device rankers use the same rule;
+match strength remains first, and late server results still replace in place or append. Common tests
+cover all four tiers, both credit roles, type ties and a stronger related match, plus the production
+reader's offline search after browsing an album. This changes result ordering, not matching scope.
 
 **2026-10-01 — The Darwin -1005 flake is the session discarding bytes it never handed over, not the
 forwarded-byte gate; #186 is re-landed (§12.5).** `DarwinEstimatedLengthBodyTest` failed on apple-ci's

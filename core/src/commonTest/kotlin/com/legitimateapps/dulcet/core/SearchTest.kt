@@ -223,6 +223,42 @@ class SearchTest {
     }
 
     @Test
+    fun ownNameWinsOverAlbumAndCreditMatchesWithinEveryTierForBothRankers() {
+        for (title in listOf("Écho", "Échoes", "An Écho", "Reécho")) {
+            val titleTrack = item(ProviderItemId(PROVIDER_INSTANCE_ID, "track-title"), SearchResultType.Track, title)
+            val album = item(ProviderItemId(PROVIDER_INSTANCE_ID, "album"), SearchResultType.Album, title)
+            val artist = item(ProviderItemId(PROVIDER_INSTANCE_ID, "artist"), SearchResultType.Artist, title)
+            val albumMatch = titleTrack.copy(id = ProviderItemId(PROVIDER_INSTANCE_ID, "track-album"),
+                title = "Other song", albumTitle = title)
+            val artistMatch = titleTrack.copy(id = ProviderItemId(PROVIDER_INSTANCE_ID, "track-credit"),
+                title = "Different song", credits = listOf(Credit(CreditRole.Artist, title, null)))
+            val albumArtistMatch = album.copy(id = ProviderItemId(PROVIDER_INSTANCE_ID, "album-credit"),
+                title = "Different record", credits = listOf(Credit(CreditRole.AlbumArtist, title, null)))
+            val rows = listOf(albumMatch, artistMatch, albumArtistMatch, artist, album, titleTrack)
+            for (ranker in listOf(::rankResults, ::rankResultsStably)) {
+                val ranked = ranker("echo", rows)
+                assertEquals(listOf("track-title", "album", "artist"), ranked.take(3).map { it.id.rawId },
+                    "an own title/name must outrank related metadata in the same tier: $title")
+                assertEquals(rows.toSet(), ranked.toSet(), "related matches remain discoverable")
+                assertTrue(ranked.indexOf(albumArtistMatch) > ranked.indexOf(artistMatch),
+                    "type remains the tie-breaker for related matches")
+            }
+        }
+    }
+
+    @Test
+    fun strongerRelatedMatchKeepsItsTierAndAnEquallyStrongTitleBreaksItsTie() {
+        val album = item(ProviderItemId(PROVIDER_INSTANCE_ID, "album"), SearchResultType.Album, "Echo")
+        val related = item(ProviderItemId(PROVIDER_INSTANCE_ID, "related"), SearchResultType.Track, "Echoes")
+            .copy(albumTitle = "Echo")
+        val prefix = item(ProviderItemId(PROVIDER_INSTANCE_ID, "prefix"), SearchResultType.Track, "Echoes")
+        for (ranker in listOf(::rankResults, ::rankResultsStably)) {
+            assertEquals(listOf(album, related, prefix), ranker("echo", listOf(prefix, related, album)),
+                "an exact related match beats a prefix title, but not an exact own title")
+        }
+    }
+
+    @Test
     fun cancellationStopsTheInFlightTransport() = runTest {
         val entered = CompletableDeferred<Unit>()
         var transportCancelled = false
