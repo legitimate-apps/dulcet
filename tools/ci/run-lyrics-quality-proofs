@@ -101,12 +101,9 @@ macos)
     # build settings, which the DulcetMac scheme hands the test host. It reuses the product the
     # first macOS app-host proof built, and signs ad hoc without entitlements as the other
     # hosted proofs do, so the host can read the server's log.
-    # The Mac streaming-quality proof (streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp)
-    # is not run here yet: on the CI host its play after the Settings choices never starts
-    # (now playing stays nil), which is under investigation; the playback.quality macOS cell stays
-    # blocked on mac-streaming-quality-ui-proof until it passes.
     for test_method in \
-        lyricsPanelShowsEveryStateThroughTheHostedMacApp; do
+        lyricsPanelShowsEveryStateThroughTheHostedMacApp \
+        streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp; do
         result_bundle="$RUNNER_TEMP/dulcet-mac-$test_method.xcresult"
         DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
             DULCET_CONFORMANCE_DISPOSABLE=true \
@@ -138,6 +135,10 @@ macos)
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-mac-lyricsPanelShowsEveryStateThroughTheHostedMacApp.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-lyrics-states-junit/TEST-DulcetMacLyricsAndQualityAppTest.xml" \
+        DulcetMacLyricsAndQualityAppTest
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-streaming-quality-junit/TEST-DulcetMacLyricsAndQualityAppTest.xml" \
         DulcetMacLyricsAndQualityAppTest
     ;;
 iphone-lyrics)
