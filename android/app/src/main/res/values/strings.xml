@@ -126,4 +126,5 @@
         <item quantity="one">%1$d song</item>
         <item quantity="other">%1$d songs</item>
     </plurals>
+    <string name="playlist_adding">Adding to playlist…</string>
 </resources>
