@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""A forwarding proxy in front of the disposable server that can fail one song's lyrics read.
+
+The Apple lyrics proofs need a lyrics read that fails, then succeeds when the person presses Try
+Again (spec §18.4). The disposable server answers every lyrics read, and nothing about the corpus
+can make one fail on demand, so this proxy sits in front of it for those proofs alone: every
+request is forwarded unchanged to the upstream server, except `getLyricsBySongId` for a song a test
+has armed, which is answered with HTTP 500 until the test disarms it.
+
+A test drives it over plain HTTP on the same port, outside `/rest`:
+
+    GET  /__dulcet/health                      {"ok": true}
+    POST /__dulcet/lyrics-failure?song=<id>&state=on|off
+    GET  /__dulcet/observations?song=<id>      {"armed": bool, "failed": n, "forwardedAfterDisarm": n}
+
+`failed` counts the reads this proxy failed for the song since it was last armed, and
+`forwardedAfterDisarm` the reads it forwarded for the song after the last disarm. Both start again
+from zero, so each of several proofs sharing one proxy sees only its own reads. A proof can then
+show it met the failure it handles and that its retry sent a new read -- not only that the screen
+ended up right.
+
+Requests carry credentials in their query strings, so nothing here ever prints a request line,
+a query or a header: the base handler's request log is silenced, and the only output is the
+listening line and the names of the endpoints that were failed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import http.client
+import json
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+
+LYRICS_ENDPOINTS = {"getLyricsBySongId", "getLyricsBySongId.view"}
+# Hop-by-hop headers (RFC 9110 §7.6.1) are this connection's, never forwarded.
+HOP_BY_HOP = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+    "transfer-encoding", "upgrade", "proxy-connection",
+}
+CHUNK = 64 * 1024
+
+
+class FaultState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.armed: set[str] = set()
+        self.failed: dict[str, int] = {}
+        self.forwarded_after_disarm: dict[str, int] = {}
+
+    def arm(self, song: str, on: bool) -> None:
+        with self.lock:
+            if on:
+                self.armed.add(song)
+                self.failed[song] = 0
+            else:
+                self.armed.discard(song)
+                self.forwarded_after_disarm[song] = 0
+
+    def should_fail(self, song: str | None) -> bool:
+        with self.lock:
+            if song is None:
+                return False
+            if song in self.armed:
+                self.failed[song] = self.failed.get(song, 0) + 1
+                return True
+            if song in self.forwarded_after_disarm:
+                self.forwarded_after_disarm[song] += 1
+            return False
+
+    def observations(self, song: str) -> dict[str, object]:
+        with self.lock:
+            return {
+                "armed": song in self.armed,
+                "failed": self.failed.get(song, 0),
+                "forwardedAfterDisarm": self.forwarded_after_disarm.get(song, 0),
+            }
+
+
+def lyrics_song(path: str, query: str, body: bytes, content_type: str) -> str | None:
+    """The song id of a `getLyricsBySongId` request, from its query or its form body; else None."""
+    if not path.startswith("/rest/") or path[len("/rest/"):] not in LYRICS_ENDPOINTS:
+        return None
+    fields = parse_qs(query)
+    if content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded":
+        for name, values in parse_qs(body.decode("utf-8", "replace")).items():
+            fields.setdefault(name, []).extend(values)
+    ids = fields.get("id") or []
+    return ids[0] if ids else None
+
+
+class ProxyHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server: "ProxyServer"
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        # The base handler logs the request line, and the request line carries credentials.
+        return
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._handle()
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._handle()
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self._handle()
+
+    def _handle(self) -> None:
+        parts = urlsplit(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length > 0 else b""
+        if parts.path.startswith("/__dulcet/"):
+            self._control(parts.path, parse_qs(parts.query))
+            return
+        song = lyrics_song(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
+        if self.server.state.should_fail(song):
+            print(f"LYRICS FAULT PROXY failed {parts.path}", flush=True)
+            self._send_json(500, {"error": "lyrics read failed by the fault proxy"})
+            return
+        self._forward(body)
+
+    def _control(self, path: str, query: dict[str, list[str]]) -> None:
+        if path == "/__dulcet/health":
+            self._send_json(200, {"ok": True})
+            return
+        song = (query.get("song") or [""])[0]
+        if not song:
+            self._send_json(400, {"error": "song is required"})
+            return
+        if path == "/__dulcet/lyrics-failure" and self.command == "POST":
+            state = (query.get("state") or [""])[0]
+            if state not in {"on", "off"}:
+                self._send_json(400, {"error": "state must be on or off"})
+                return
+            self.server.state.arm(song, state == "on")
+            self._send_json(200, self.server.state.observations(song))
+            return
+        if path == "/__dulcet/observations":
+            self._send_json(200, self.server.state.observations(song))
+            return
+        self._send_json(404, {"error": "unknown control"})
+
+    def _forward(self, body: bytes) -> None:
+        upstream = http.client.HTTPConnection(self.server.upstream_host, self.server.upstream_port, timeout=60)
+        try:
+            headers = {
+                name: value for name, value in self.headers.items()
+                if name.lower() not in HOP_BY_HOP and name.lower() != "host"
+            }
+            headers["Host"] = f"{self.server.upstream_host}:{self.server.upstream_port}"
+            upstream.request(self.command, self.path, body=body or None, headers=headers)
+            response = upstream.getresponse()
+            self.send_response(response.status, response.reason)
+            length = response.getheader("Content-Length")
+            for name, value in response.getheaders():
+                if name.lower() not in HOP_BY_HOP:
+                    self.send_header(name, value)
+            # Without a length the body ends when the connection does.
+            self.send_header("Connection", "keep-alive" if length is not None else "close")
+            self.end_headers()
+            if self.command != "HEAD":
+                while True:
+                    chunk = response.read(CHUNK)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            if length is None:
+                self.close_connection = True
+        except (OSError, http.client.HTTPException) as error:
+            # The kind only: an exception's text can carry the request, and so its credentials.
+            print(f"LYRICS FAULT PROXY upstream error {type(error).__name__}", flush=True)
+            self.close_connection = True
+            try:
+                self._send_json(502, {"error": "upstream unavailable"})
+            except OSError:
+                pass
+        finally:
+            upstream.close()
+
+    def _send_json(self, status: int, value: object) -> None:
+        data = json.dumps(value, separators=(",", ":")).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+
+class ProxyServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, port: int, upstream: str) -> None:
+        target = urlsplit(upstream)
+        if target.scheme != "http" or target.hostname not in {"127.0.0.1", "localhost"} or target.path not in {"", "/"}:
+            raise SystemExit("lyrics-fault-proxy: the upstream must be a loopback http origin")
+        super().__init__(("127.0.0.1", port), ProxyHandler)
+        self.upstream_host = target.hostname
+        self.upstream_port = target.port or 80
+        self.state = FaultState()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--upstream", required=True, help="the disposable server's origin, e.g. http://127.0.0.1:4533")
+    args = parser.parse_args()
+    server = ProxyServer(args.port, args.upstream)
+    print(f"LYRICS FAULT PROXY listening port={server.server_port} upstream-port={server.upstream_port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

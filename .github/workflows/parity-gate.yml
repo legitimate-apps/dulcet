@@ -54,6 +54,8 @@ jobs:
         run: python3 tools/test-report-main-health
       - name: Prove the lyrics language generator checks each table's own citation
         run: python3 tools/test-lyrics-language-tables
+      - name: Prove the lyrics fault proxy fails only the armed read and forwards the rest
+        run: python3 tools/test-lyrics-fault-proxy
       - name: Check every generated migration fixture against its generator, on any SQLite build
         run: python3 tools/generate_migration_fixture.py --all --check-semantic
       - name: Prove the migration fixture check refuses a changed seed, row or schema

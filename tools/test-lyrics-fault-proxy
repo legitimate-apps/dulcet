@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Controls for conformance-env/lyrics-fault-proxy, against a fake upstream on a real socket.
+
+The proxy stands in front of the disposable server for the Apple lyrics proofs, so it must be
+transparent for everything but the one read it is armed to fail -- a proxy that dropped a range
+header or a POST body would turn a playback or connect failure into a lyrics "proof". Each control
+here can fail: the forwarded request is compared field by field with what the client sent, and
+the failure counters are read back after the state that should have moved them.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import http.client
+import io
+import json
+import runpy
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+
+TOOL = Path(__file__).resolve().parent / "conformance-env" / "lyrics-fault-proxy"
+CANARY = "canary-token-0123456789abcdef"
+
+
+class Upstream(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    seen: list[dict] = []
+
+    def log_message(self, *_args):
+        return
+
+    def _record(self, body: bytes) -> None:
+        Upstream.seen.append({
+            "method": self.command, "path": self.path, "body": body,
+            "range": self.headers.get("Range"), "host": self.headers.get("Host"),
+        })
+
+    def do_GET(self):  # noqa: N802
+        self._record(b"")
+        if self.path.startswith("/rest/stream"):
+            payload = bytes(range(256)) * 4
+            if self.headers.get("Range") == "bytes=10-19":
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes 10-19/{len(payload)}")
+                self.send_header("Content-Length", "10")
+                self.send_header("Content-Type", "audio/flac")
+                self.end_headers()
+                self.wfile.write(payload[10:20])
+                return
+            # No Content-Length: the proxy must close to end the body.
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/flac")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(payload)
+            self.close_connection = True
+            return
+        body = json.dumps({"subsonic-response": {"status": "ok", "path": self.path}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):  # noqa: N802
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self._record(body)
+        reply = json.dumps({"subsonic-response": {"status": "ok"}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+
+class LyricsFaultProxyTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.module = runpy.run_path(str(TOOL))
+        cls.upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.upstream.shutdown()
+        cls.upstream.server_close()
+
+    def setUp(self):
+        Upstream.seen = []
+        self.stdout = io.StringIO()
+        self.redirect = contextlib.redirect_stdout(self.stdout)
+        self.redirect.__enter__()
+        self.proxy = self.module["ProxyServer"](0, f"http://127.0.0.1:{self.upstream.server_port}")
+        self.thread = threading.Thread(target=self.proxy.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.proxy.shutdown()
+        self.proxy.server_close()
+        self.redirect.__exit__(None, None, None)
+        # Nothing the proxy printed may carry a request's query: it carries credentials.
+        self.assertNotIn(CANARY, self.stdout.getvalue())
+
+    def request(self, method, path, body=None, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.proxy.server_port, timeout=10)
+        try:
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, dict(response.getheaders()), response.read()
+        finally:
+            connection.close()
+
+    def control(self, method, path):
+        status, _, body = self.request(method, path)
+        return status, json.loads(body)
+
+    def test_an_unarmed_request_is_forwarded_unchanged(self):
+        path = f"/rest/getLyricsBySongId?u=a&t={CANARY}&s=x&id=song-1"
+        status, headers, body = self.request("GET", path)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["subsonic-response"]["path"], path)
+        self.assertEqual([seen["path"] for seen in Upstream.seen], [path])
+        self.assertEqual(Upstream.seen[0]["host"], f"127.0.0.1:{self.upstream.server_port}")
+
+    def test_a_range_request_keeps_its_range_and_partial_answer(self):
+        status, headers, body = self.request("GET", f"/rest/stream?id=s&t={CANARY}", headers={"Range": "bytes=10-19"})
+        self.assertEqual(status, 206)
+        self.assertEqual(headers.get("Content-Range"), "bytes 10-19/1024")
+        self.assertEqual(body, bytes(range(10, 20)))
+        self.assertEqual(Upstream.seen[0]["range"], "bytes=10-19")
+
+    def test_a_body_without_a_length_is_relayed_whole(self):
+        status, headers, body = self.request("GET", f"/rest/stream?id=s&t={CANARY}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, bytes(range(256)) * 4)
+        self.assertEqual(headers.get("Connection"), "close")
+
+    def test_a_post_body_is_forwarded(self):
+        form = f"u=a&t={CANARY}&id=song-9".encode()
+        status, _, _ = self.request("POST", "/rest/getTranscodeDecision", body=form,
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 200)
+        self.assertEqual(Upstream.seen[0]["body"], form)
+
+    def test_an_armed_song_fails_until_disarmed_and_the_counts_say_so(self):
+        status, armed = self.control("POST", "/__dulcet/lyrics-failure?song=song-1&state=on")
+        self.assertEqual((status, armed), (200, {"armed": True, "failed": 0, "forwardedAfterDisarm": 0}))
+        # Another song's read is not failed, and the armed song's other endpoints are not either.
+        self.assertEqual(self.request("GET", f"/rest/getLyricsBySongId?t={CANARY}&id=song-2")[0], 200)
+        self.assertEqual(self.request("GET", f"/rest/getSong?t={CANARY}&id=song-1")[0], 200)
+        for _ in range(2):
+            status, _, body = self.request("GET", f"/rest/getLyricsBySongId.view?t={CANARY}&id=song-1")
+            self.assertEqual(status, 500)
+        form = f"t={CANARY}&id=song-1".encode()
+        status, _, _ = self.request("POST", "/rest/getLyricsBySongId", body=form,
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 500, "an id in a form body must be matched too")
+        self.assertNotIn("/rest/getLyricsBySongId.view", [seen["path"].split("?")[0] for seen in Upstream.seen])
+        _, observed = self.control("GET", "/__dulcet/observations?song=song-1")
+        self.assertEqual(observed, {"armed": True, "failed": 3, "forwardedAfterDisarm": 0})
+        _, disarmed = self.control("POST", "/__dulcet/lyrics-failure?song=song-1&state=off")
+        self.assertEqual(disarmed, {"armed": False, "failed": 3, "forwardedAfterDisarm": 0})
+        self.assertEqual(self.request("GET", f"/rest/getLyricsBySongId?t={CANARY}&id=song-1")[0], 200)
+        _, observed = self.control("GET", "/__dulcet/observations?song=song-1")
+        self.assertEqual(observed, {"armed": False, "failed": 3, "forwardedAfterDisarm": 1})
+        self.assertIn("LYRICS FAULT PROXY failed /rest/getLyricsBySongId", self.stdout.getvalue())
+        # A second proof arming the same song starts from zero: an earlier proof's failures must
+        # never answer for a later one that met none.
+        _, rearmed = self.control("POST", "/__dulcet/lyrics-failure?song=song-1&state=on")
+        self.assertEqual(rearmed, {"armed": True, "failed": 0, "forwardedAfterDisarm": 1})
+
+    def test_malformed_controls_are_refused(self):
+        self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?state=on")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?song=s&state=maybe")[0], 400)
+        self.assertEqual(self.control("GET", "/__dulcet/lyrics-failure?song=s&state=on")[0], 404)
+        self.assertEqual(self.control("GET", "/__dulcet/nothing?song=s")[0], 404)
+        self.assertEqual(self.control("GET", "/__dulcet/health"), (200, {"ok": True}))
+        self.assertEqual(Upstream.seen, [], "control requests never reach the server")
+
+    def test_an_unreachable_upstream_is_a_502_that_names_no_request(self):
+        dead = self.module["ProxyServer"](0, "http://127.0.0.1:9")
+        worker = threading.Thread(target=dead.serve_forever, daemon=True)
+        worker.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", dead.server_port, timeout=10)
+            connection.request("GET", f"/rest/ping?t={CANARY}")
+            self.assertEqual(connection.getresponse().status, 502)
+            connection.close()
+        finally:
+            dead.shutdown()
+            dead.server_close()
+
+    def test_a_non_loopback_upstream_is_refused(self):
+        for upstream in ("http://192.168.1.5:4533", "https://127.0.0.1:4533", "http://127.0.0.1:4533/base"):
+            with self.assertRaises(SystemExit, msg=upstream):
+                self.module["ProxyServer"](0, upstream)
+
+    def test_the_base_handler_never_logs_a_request_line(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.request("GET", f"/rest/ping?t={CANARY}")
+        self.assertNotIn(CANARY, stderr.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
