@@ -220,6 +220,7 @@ internal class DownloadPolicyEngine(
         val cancel = activeTaskIds.filterTo(mutableSetOf()) { it !in rowsById }
         val interrupted = mutableSetOf<DownloadId>()
         val recovered = mutableSetOf<DownloadId>()
+        val resumable = mutableSetOf<DownloadId>()
 
         rows.forEach { row ->
             val currentCredentialGeneration = currentCredentialGenerations[row.identity.serverId]
@@ -229,6 +230,7 @@ internal class DownloadPolicyEngine(
             ) {
                 if (row.downloadId in activeTaskIds) cancel += row.downloadId
                 store.requeueForCredentialChange(row, currentCredentialGeneration)
+                store.clearResumeData(row.downloadId)
                 interrupted += row.downloadId
                 return@forEach
             }
@@ -245,9 +247,18 @@ internal class DownloadPolicyEngine(
                 store.markInterrupted(row.downloadId)
                 interrupted += row.downloadId
             }
+            if (row.state !in setOf(DownloadState.Complete, DownloadState.Stale) &&
+                row.platformResumeData?.isNotEmpty() == true && row.resumeDataCreatedAtWallClock != null
+            ) {
+                // A failed task can finish before its retry wake, or be lost by the platform.
+                // Its row and resume data still own the partial file. The executor checks the
+                // resume age and the server's range before appending; a crash temp with no resume
+                // data remains disposable.
+                resumable += row.downloadId
+            }
         }
 
-        val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds)
+        val deletedTemps = files.deleteUnownedTemporaryFiles((activeTaskIds - cancel) + resumable)
         reconciled = true
         return DownloadReconciliationResult(cancel, interrupted, recovered, deletedTemps)
     }
@@ -703,13 +714,13 @@ internal class DownloadFileStore(
         return unnamed.size
     }
 
-    fun deleteUnownedTemporaryFiles(activeTaskIds: Set<DownloadId>): Set<DownloadId> {
+    fun deleteUnownedTemporaryFiles(ownedIds: Set<DownloadId>): Set<DownloadId> {
         val deleted = mutableSetOf<DownloadId>()
         fileSystem.listOrNull(temporaryRoot).orEmpty().forEach { path ->
             val name = path.name
             if (!name.endsWith(".partial")) return@forEach
             val id = DownloadId(name.removeSuffix(".partial"))
-            if (id !in activeTaskIds) {
+            if (id !in ownedIds) {
                 fileSystem.delete(path, mustExist = false)
                 deleted += id
             }

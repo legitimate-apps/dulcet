@@ -2870,6 +2870,11 @@ and reconciliation against a changed server item. The platform owns the **execut
   Android build the request from one core function.
 - **Partial files** keep platform-supplied resume data; resume data older than 7 days, or rejected by
   the platform, causes a restart from zero rather than a stuck row.
+  A row with saved resume data owns its partial file even when no platform task remains: a failed
+  transfer waiting for its retry, or a lost task restarted at launch, must not lose its progress.
+  Reconciliation still deletes temporary files without an owner or resume data; the executor checks
+  resume-data age before reusing a retained prefix. A credential change clears the old resume data
+  and partial file before the task is reissued.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
 - **Server-side change** (duration or size changed since download) is detected at the next sync and
   marks the file stale; stale files still play but are flagged for re-download. **Revision 104:**
@@ -7341,6 +7346,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-02 — Keep resumable downloads across a relaunch (§14.5).** Relaunch reconciliation used
+only outstanding platform tasks to decide which temporary files to keep. It therefore discarded a
+saved prefix when the platform lost its task, or a failed task had finished and was waiting for its
+retry. A pending row with saved resume data now also owns its temporary file. Crash leftovers without
+resume data are still removed; credential changes clear the old prefix and resume data. OBSERVED by
+`AndroidDownloadControllerTest.aRelaunchResumesAStoppedTransferEvenWhenItsPlatformTaskWasLost`:
+a fresh controller over the same file database resumes the stopped HTTP transfer with the saved byte
+offset and promotes bytes identical to the original. The policy controls also cover an interrupted
+row waiting for a retry, crash leftovers, and a credential change. This is host-runtime evidence;
+it does not claim an OS process-death or background-scheduling proof.
 
 **2026-10-01 — The Darwin -1005 flake is the session discarding bytes it never handed over, not the
 forwarded-byte gate; #186 is re-landed (§12.5).** `DarwinEstimatedLengthBodyTest` failed on apple-ci's

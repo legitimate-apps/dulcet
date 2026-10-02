@@ -60,10 +60,31 @@ class DownloadPolicyTest {
         }
 
     @Test
+    fun relaunchKeepsAResumablePartialWithoutAnOutstandingTask() = withFixture { fixture ->
+        fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        val row = fixture.engine.enqueue(request())
+        assertIs<DownloadScheduleResult.Start>(fixture.engine.schedule(scheduleContext()))
+        fixture.engine.writeCompletedTemporaryFile(row.downloadId, MP3_BYTES)
+        fixture.engine.recordResumeData(row.downloadId, byteArrayOf(1, 2, 3), NOW)
+        fixture.engine.recordFailure(row.downloadId, DomainError.Transport.Unreachable, NOW)
+
+        val relaunched = DownloadPolicyEngine(fixture.database.database, fixture.files)
+        val result = relaunched.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+
+        assertTrue(result.deletedTemporaryFiles.isEmpty())
+        assertTrue(FileSystem.SYSTEM.exists(relaunched.temporaryFilePath(row.downloadId).toPath()))
+        assertEquals(DownloadState.Interrupted, relaunched.record(row.downloadId)?.state)
+        assertContentEquals(byteArrayOf(1, 2, 3),
+            assertIs<DownloadResumeDecision.Resume>(relaunched.resumeDecision(row.downloadId, NOW)).data)
+    }
+
+    @Test
     fun credentialGenerationChangeCancelsAndRequeuesOutstandingTask() = withFixture { fixture ->
         fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
         val row = fixture.engine.enqueue(request())
         assertIs<DownloadScheduleResult.Start>(fixture.engine.schedule(scheduleContext()))
+        fixture.engine.writeCompletedTemporaryFile(row.downloadId, MP3_BYTES)
+        fixture.engine.recordResumeData(row.downloadId, byteArrayOf(1, 2, 3), NOW)
 
         val relaunched = DownloadPolicyEngine(fixture.database.database, fixture.files)
         val result = relaunched.reconcile(
@@ -74,6 +95,8 @@ class DownloadPolicyTest {
         assertEquals(setOf(row.downloadId), result.taskIdsToCancel)
         assertEquals(DownloadState.Queued, relaunched.record(row.downloadId)?.state)
         assertEquals(2L, relaunched.record(row.downloadId)?.credentialGeneration)
+        assertEquals(setOf(row.downloadId), result.deletedTemporaryFiles)
+        assertEquals(DownloadResumeDecision.RestartFromZero, relaunched.resumeDecision(row.downloadId, NOW))
     }
 
     @Test
