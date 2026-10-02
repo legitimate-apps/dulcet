@@ -76,6 +76,10 @@ struct DulcetStreamingQualitySection: View {
                     .lineLimit(nil)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // A container of its own: without it the section's identifier is applied to every
+            // element inside it, and each choice loses its own (OBSERVED on iOS and tvOS 26.5:
+            // both pickers, and every tvOS choice, reported `dulcet.streaming-quality`).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.streaming-quality")
         }
     }
