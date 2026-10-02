@@ -154,9 +154,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             guard self.selectSection(app, "settings") else { return false }
             let quality = app.descendants(matching: .any)["dulcet.streaming-quality"].firstMatch
             guard quality.waitForExistence(timeout: 30) else { return false }
-            // The section's own identifier reaches its buttons too (OBSERVED on tvOS 26.5: every
-            // choice reports `dulcet.streaming-quality`, not its `.unmetered.<quality>` one), so
-            // a choice is matched by the section's identifier rather than its own.
+            // Every choice's identifier starts with the section's (`.unmetered.<quality>`,
+            // `.metered.<quality>`), so the prefix finds any of them.
             let choices = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.streaming-quality'"))
             return self.press(.down, until: { self.focused(in: choices) != nil }, bound: 12) && self.settle(1.5)
         }

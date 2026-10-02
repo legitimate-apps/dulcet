@@ -597,6 +597,434 @@ final class DulcetTVUITests: XCTestCase {
             + " setup=debug-account-only")
     }
 
+    /// The lyrics panel's other states on Apple TV, every step by remote (spec §18.4): plain
+    /// lyrics whose lines each take focus, so Down reads from one to the next; a track with none
+    /// says so; and a failed read says so and offers Try Again, which the remote reaches and
+    /// presses. The synced state is `testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote`'s.
+    ///
+    /// Each track's shape is read back from the disposable server first, so a drifted corpus fails
+    /// as a precondition. The failed read goes through `tools/conformance-env/lyrics-fault-proxy`,
+    /// which answers "Thirty One Seconds"' lyrics read with HTTP 500 until disarmed; its count shows
+    /// the failure was met and that Try Again sent a new read. That needs a track this device has
+    /// never stored lyrics for, so no earlier phase on the simulator may open its lyrics.
+    @MainActor
+    func testLyricsPlainNoneAndAFailedReadAreDrivenByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+        let proxyURL = try XCTUnwrap(ProcessInfo.processInfo.environment["DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL"],
+            "DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL must name the lyrics fault proxy")
+        XCTAssertTrue(Self.isLoopbackURL(proxyURL), "The lyrics fault proxy must be a loopback host")
+        let album = "Threshold Boundary"
+        let plainID = try XCTUnwrap(readServerSong("Ogg Probe", album: "Dulcet Conformance", server: server)?["id"] as? String)
+        let noneID = try XCTUnwrap(readServerSong("UI Playback Canary", album: album, server: server)?["id"] as? String)
+        let failingID = try XCTUnwrap(readServerSong("Thirty One Seconds", album: album, server: server)?["id"] as? String)
+        let plainLayers = try XCTUnwrap(readServerLyrics(songID: plainID, server: server))
+        XCTAssertEqual(plainLayers.map(\.synced), [false], "Ogg Probe must carry one unsynced layer")
+        let plainLines = try XCTUnwrap(plainLayers.first?.lines)
+        XCTAssertEqual(plainLines, ["Dulcet plain sidecar line one", "Dulcet plain sidecar line two"])
+        XCTAssertEqual(try XCTUnwrap(readServerLyrics(songID: noneID, server: server)).count, 0,
+            "UI Playback Canary must carry no lyrics")
+        XCTAssertTrue(try XCTUnwrap(readServerLyrics(songID: failingID, server: server)).contains { $0.synced },
+            "Thirty One Seconds must carry synced lyrics")
+        // Server identity: the proxy's library is the server's.
+        let proxied = (url: proxyURL, username: server.username, password: server.password)
+        XCTAssertEqual(readServerSong("Thirty One Seconds", album: album, server: proxied)?["id"] as? String, failingID,
+            "The lyrics fault proxy must front the disposable server")
+
+        // Plain: the lines take focus one after another.
+        let plainApp = try launchAndConnect(serverURL: server.url, server: server)
+        try playFromSearch(plainApp, query: "Ogg Probe", track: "Ogg Probe")
+        let plainPanel = try showLyricsByRemote(plainApp)
+        let lines = plainApp.descendants(matching: .any).matching(identifier: "dulcet.lyrics.line")
+        let first = lines.matching(NSPredicate(format: "label == %@", plainLines[0])).firstMatch
+        let second = lines.matching(NSPredicate(format: "label == %@", plainLines[1])).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 20) && second.exists,
+            "Plain lyrics must show both lines: " + plainApp.debugDescription)
+        XCTAssertFalse(plainApp.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch.exists,
+            "Plain lyrics have no current line, so none may be lit")
+        // Right from the footer enters the panel; the focus engine picks the line nearest the
+        // move (OBSERVED: the second line), so the walk then goes Up to the first and Down again.
+        var intoLines: [String] = []
+        while !(first.hasFocus || second.hasFocus), intoLines.count < 4 {
+            XCUIRemote.shared.press(.right)
+            intoLines.append("right")
+        }
+        XCTAssertTrue(first.hasFocus || second.hasFocus,
+            "The remote must reach the plain lines from the footer: " + plainApp.debugDescription)
+        func awaitFocus(on line: XCUIElement) -> Bool {
+            let moved = ContinuousClock.now.advanced(by: .seconds(3))
+            while !line.hasFocus, ContinuousClock.now < moved { Thread.sleep(forTimeInterval: 0.1) }
+            return line.hasFocus
+        }
+        if second.hasFocus {
+            XCUIRemote.shared.press(.up)
+            intoLines.append("up")
+        }
+        XCTAssertTrue(awaitFocus(on: first), "Up must move focus to the first plain line: " + plainApp.debugDescription)
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(awaitFocus(on: second), "Down must move focus to the next plain line: " + plainApp.debugDescription)
+        XCTAssertTrue(plainPanel.exists)
+
+        // None: said, and no spinner.
+        let noneApp = try launchAndConnect(serverURL: server.url, server: server)
+        try playFromSearch(noneApp, query: "UI Playback Canary", track: "UI Playback Canary")
+        _ = try showLyricsByRemote(noneApp)
+        let noLyrics = noneApp.staticTexts["dulcet.lyrics.none"].firstMatch
+        XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
+        // Read now: the next launch replaces this app, and its elements with it.
+        let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
+        XCTAssertEqual(noneShown, "No lyrics for this song.")
+        XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
+            "A track the server has no lyrics for must never show a spinner")
+
+        // A failed read, then Try Again by remote.
+        XCTAssertNotNil(proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=on", proxyURL: proxyURL),
+            "The proxy must arm the failure")
+        defer { _ = proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=off", proxyURL: proxyURL) }
+        let failedApp = try launchAndConnect(serverURL: proxyURL, server: server)
+        try playFromSearch(failedApp, query: "Thirty One", track: "Thirty One Seconds")
+        _ = try showLyricsByRemote(failedApp)
+        let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
+        let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
+        if !(unavailable.waitForExistence(timeout: 30) && retry.waitForExistence(timeout: 5)) {
+            let saved = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing saved lyrics")).firstMatch
+            XCTFail(saved.exists
+                ? "This device already holds Thirty One Seconds' lyrics, so the failure shows as a note over them; the proof needs a simulator that never opened them"
+                : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
+            return
+        }
+        XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
+            "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
+        let disarmed = try XCTUnwrap(proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=off", proxyURL: proxyURL))
+        let failedReads = disarmed["failed"] as? Int ?? 0
+        XCTAssertGreaterThanOrEqual(failedReads, 1,
+            "The proxy must have failed this track's lyrics read; otherwise the state above came from somewhere else")
+        var toRetry: [String] = []
+        while !retry.hasFocus, toRetry.count < 4 {
+            XCUIRemote.shared.press(.right)
+            toRetry.append("right")
+        }
+        XCTAssertTrue(retry.hasFocus, "The remote must reach Try Again: " + failedApp.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let recovered = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet synced line")).firstMatch
+        XCTAssertTrue(recovered.waitForExistence(timeout: 30), "Try Again must read the lyrics again and show them: " + failedApp.debugDescription)
+        let afterRetry = try XCTUnwrap(proxyControl("GET", "/__dulcet/observations?song=\(failingID)", proxyURL: proxyURL))
+        let retryReads = afterRetry["forwardedAfterDisarm"] as? Int ?? 0
+        XCTAssertGreaterThanOrEqual(retryReads, 1, "Try Again must send a new lyrics read")
+        print("DULCET TV LYRICS STATES PASS plain-into-lines=\(intoLines.joined(separator: ",")) plain-down=focus-moved"
+            + " none=\(noneShown.debugDescription) failed-reads=\(failedReads)"
+            + " to-retry=\(toRetry.joined(separator: ",")) retry-reads=\(retryReads) setup=debug-account-only")
+    }
+
+    /// The Wi-Fi choice of the Connection screen's Streaming Quality rows (spec §12.5), made by
+    /// remote, caps the next song the app streams: the disposable server's own log records the
+    /// stream of "Dulcet Health Probe" -- a 123 kbps FLAC, read back first -- as transcoded to
+    /// 96 kbps. The log is read from the offset it had before the play, so a line an earlier run
+    /// left cannot answer. The cellular row is set to 128 kbps first, so a cap from the wrong row
+    /// would show as 128. Both rows are put back to Original by remote at the end.
+    @MainActor
+    func testAStreamingQualityChosenByRemoteCapsTheStream() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+        let logPath = try XCTUnwrap(ProcessInfo.processInfo.environment["DULCET_UI_TEST_SERVER_LOG"],
+            "DULCET_UI_TEST_SERVER_LOG must name the disposable server's log")
+        let track = "Dulcet Health Probe"
+        let songID = try XCTUnwrap(readServerSong(track, album: "Dulcet Conformance", server: server)?["id"] as? String)
+        let song = try XCTUnwrap(restCall("getSong", [URLQueryItem(name: "id", value: songID)], server: server)?["song"] as? [String: Any])
+        let sourceKbps = try XCTUnwrap(song["bitRate"] as? Int, "The server must report the source bitrate")
+        XCTAssertGreaterThan(sourceKbps, 96, "The control: the source must be above the cap, or no cap would be sent")
+        let logBefore = try XCTUnwrap(Self.fileSize(logPath), "The disposable server's log must be readable: \(logPath)")
+
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        let metered = try chooseStreamingQualityByRemote(app, row: "metered", quality: "128")
+        let unmetered = try chooseStreamingQualityByRemote(app, row: "unmetered", quality: "96")
+        // The quality rows sit at the foot of the Connection page, deeper than the bar's
+        // up-navigation bound reaches (OBSERVED: four Up presses did not); leaving a deep surface
+        // is the exit command's job, as it is for a person.
+        XCUIRemote.shared.press(.menu)
+        let toBar = ContinuousClock.now.advanced(by: .seconds(3))
+        while focusedSection(app) == nil, ContinuousClock.now < toBar { Thread.sleep(forTimeInterval: 0.1) }
+        XCTAssertEqual(focusedSection(app), "settings",
+            "The exit command must return focus to Connection's control on the bar: " + app.debugDescription)
+        try playFromSearch(app, query: track, track: track)
+
+        var lines: [[String: String]] = []
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        repeat {
+            lines = Self.streamLines(logPath, from: logBefore).filter { $0["title"] == track }
+            if !lines.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        } while ContinuousClock.now < deadline
+        XCTAssertFalse(lines.isEmpty, "The server must log a stream of \(track) after the play")
+        for line in lines {
+            XCTAssertEqual(line["transcoding"], "true", "The server must transcode the capped stream; line=\(line)")
+            XCTAssertEqual(line["bitRate"], "96", "The stream must carry the Wi-Fi choice, 96 kbps; line=\(line)")
+            XCTAssertEqual(line["originalBitRate"], String(sourceKbps), "The line must be this source's; line=\(line)")
+        }
+
+        XCTAssertTrue(selectSection(app, "settings"), "The section bar must reach Connection again: " + app.debugDescription)
+        _ = try chooseStreamingQualityByRemote(app, row: "unmetered", quality: "original")
+        _ = try chooseStreamingQualityByRemote(app, row: "metered", quality: "original")
+        let summary = lines.map { "\($0["format"] ?? "?")@\($0["bitRate"] ?? "?")" }.joined(separator: ",")
+        print("DULCET TV STREAMING QUALITY PASS track=\(track.debugDescription) source-kbps=\(sourceKbps)"
+            + " metered-presses=\(metered) unmetered-presses=\(unmetered) server-streams=\(summary) setup=debug-account-only")
+    }
+
+    // MARK: - Lyrics and streaming-quality helpers
+
+    private typealias Server = (url: String, username: String, password: String)
+
+    private struct DisposableServerRefused: Error {}
+
+    /// The disposable server named by the run, refused unless it is on loopback.
+    private func disposableServer() throws -> Server {
+        let environment = ProcessInfo.processInfo.environment
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"], "Missing disposable server URL")
+        let username = try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"], "Missing disposable username")
+        let password = try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"], "Missing disposable password")
+        guard Self.isLoopbackURL(url) else {
+            XCTFail("Only a disposable loopback server is allowed; refusing \(URLComponents(string: url)?.host ?? "<none>")")
+            throw DisposableServerRefused()
+        }
+        return (url, username, password)
+    }
+
+    private static func isLoopbackURL(_ url: String) -> Bool {
+        guard let components = URLComponents(string: url), components.scheme == "http",
+              let host = components.host?.lowercased() else { return false }
+        return host == "localhost" || host == "127.0.0.1"
+    }
+
+    /// Launches with the account injected for `serverURL` and waits for its live connection on
+    /// Connection.
+    @MainActor
+    private func launchAndConnect(serverURL: String, server: Server) throws -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", server.username,
+            "-dulcet-debug-account-password", server.password,
+        ]
+        app.launch()
+        _ = try awaitLaunchAndLiveConnection(app)
+        return app
+    }
+
+    /// Reaches a track by remote -- Search through the section bar, the query typed, the
+    /// track's row focused and pressed -- and waits for Now Playing to show it.
+    @MainActor
+    private func playFromSearch(_ app: XCUIApplication, query: String, track: String) throws {
+        XCTAssertTrue(selectSection(app, "search"), "The section bar must reach Search: " + app.debugDescription)
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 40), "Search must present its field: " + app.debugDescription)
+        for _ in 0..<4 where !field.hasFocus {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(field.hasFocus, "Search field must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // A field an earlier search left filled is cleared first, so the query is exactly this.
+        if let existing = field.value as? String, !existing.isEmpty, existing != field.placeholderValue {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+        }
+        field.typeText(query)
+        let done = app.buttons["done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !done.hasFocus {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(done.hasFocus, "Keyboard Done must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let settle = ContinuousClock.now.advanced(by: .seconds(10))
+        while field.value as? String != query, ContinuousClock.now < settle {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(field.value as? String, query, "The typed query must reach the app's field")
+        let rowPrefix = "\(track), "
+        var trackRow: XCUIElement?
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        repeat {
+            trackRow = (0..<8).lazy
+                .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
+                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Track") }
+            if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
+        } while trackRow == nil && ContinuousClock.now < rowsDeadline
+        let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
+        for _ in 0..<10 where !(row.exists && row.hasFocus) {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
+        XCTAssertTrue(waitForLabel(track, of: title, timeout: 15), "Now Playing must show \(track); title=\(title.label)")
+    }
+
+    /// Down from the transport to the footer row, Right to Lyrics, Select; returns the panel.
+    @MainActor
+    private func showLyricsByRemote(_ app: XCUIApplication) throws -> XCUIElement {
+        let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        XCTAssertTrue(lyrics.waitForExistence(timeout: 10), "Now Playing must offer lyrics: " + app.debugDescription)
+        var presses = 0
+        while !lyrics.hasFocus, presses < 12 {
+            let inFooter = app.buttons["dulcet.now-playing.favorite"].firstMatch.hasFocus
+                || (1...5).contains { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch.hasFocus }
+            XCUIRemote.shared.press(inFooter ? .right : .down)
+            presses += 1
+        }
+        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus: " + app.debugDescription)
+        XCTAssertEqual(lyrics.label, "Show Lyrics")
+        XCUIRemote.shared.press(.select)
+        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "The lyrics panel must open: " + app.debugDescription)
+        // Showing lyrics keeps focus on the toggle, so the next press starts from it.
+        let kept = ContinuousClock.now.advanced(by: .seconds(3))
+        while !lyrics.hasFocus, ContinuousClock.now < kept { Thread.sleep(forTimeInterval: 0.1) }
+        XCTAssertTrue(lyrics.hasFocus, "Showing lyrics must leave focus on the toggle: " + app.debugDescription)
+        return panel
+    }
+
+    /// On Connection, moves remote focus to one Streaming Quality row and along it to `quality`,
+    /// presses it, and requires that button to read as chosen. Returns the presses it took.
+    @MainActor
+    private func chooseStreamingQualityByRemote(_ app: XCUIApplication, row: String, quality: String) throws -> String {
+        let prefix = "dulcet.streaming-quality.\(row)."
+        let target = app.buttons[prefix + quality].firstMatch
+        XCTAssertTrue(target.waitForExistence(timeout: 10), "Connection must offer \(prefix + quality): " + app.debugDescription)
+        var presses: [String] = []
+        func focused() -> String? { focusedControlIdentifier(app) }
+        // Down, then Up if Down passed the row, until focus is in it.
+        while !(focused()?.hasPrefix(prefix) ?? false), presses.count < 16 {
+            let below = focused().map { current in
+                current.hasPrefix("dulcet.streaming-quality.metered.") && row == "unmetered"
+            } ?? false
+            XCUIRemote.shared.press(below ? .up : .down)
+            presses.append(below ? "up" : "down")
+        }
+        let order = ["original", "320", "256", "192", "128", "96"]
+        let wanted = try XCTUnwrap(order.firstIndex(of: quality))
+        while let current = focused(), current.hasPrefix(prefix), current != prefix + quality, presses.count < 32 {
+            let index = order.firstIndex(of: String(current.dropFirst(prefix.count))) ?? wanted
+            let direction: XCUIRemote.Button = index < wanted ? .right : .left
+            XCUIRemote.shared.press(direction)
+            presses.append(direction == .right ? "right" : "left")
+        }
+        XCTAssertEqual(focused(), prefix + quality, "The remote must reach \(prefix + quality): " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let chosen = ContinuousClock.now.advanced(by: .seconds(5))
+        while !target.isSelected, ContinuousClock.now < chosen { Thread.sleep(forTimeInterval: 0.1) }
+        XCTAssertTrue(target.isSelected, "\(prefix + quality) must read as chosen once pressed: " + app.debugDescription)
+        return presses.joined(separator: ",")
+    }
+
+    private struct LyricsLayer {
+        let synced: Bool
+        let lines: [String]
+    }
+
+    /// The server's own lyrics layers for a song, from `getLyricsBySongId`.
+    private func readServerLyrics(songID: String, server: Server) -> [LyricsLayer]? {
+        guard let list = restCall("getLyricsBySongId", [URLQueryItem(name: "id", value: songID)], server: server)?[
+            "lyricsList"] as? [String: Any] else { return nil }
+        return (list["structuredLyrics"] as? [[String: Any]] ?? []).map { layer in
+            LyricsLayer(
+                synced: layer["synced"] as? Bool ?? false,
+                lines: (layer["line"] as? [[String: Any]] ?? []).compactMap { $0["value"] as? String }
+            )
+        }
+    }
+
+    /// One `/rest` call with the disposable account; the envelope's body on `ok`, else nil with
+    /// the endpoint named -- never the URL, which carries a token.
+    private func restCall(_ endpoint: String, _ query: [URLQueryItem], server: Server) -> [String: Any]? {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((server.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: server.url) else { return nil }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/" + endpoint
+        components.queryItems = [
+            URLQueryItem(name: "u", value: server.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+            URLQueryItem(name: "f", value: "json"),
+        ] + query
+        guard let url = components.url else { return nil }
+        return Self.fetchJSON(URLRequest(url: url)).flatMap { document in
+            guard let envelope = document["subsonic-response"] as? [String: Any],
+                  envelope["status"] as? String == "ok" else {
+                print("DULCET REST \(endpoint) did not return an ok envelope")
+                return nil
+            }
+            return envelope
+        }
+    }
+
+    /// One credential-free control request to the lyrics fault proxy.
+    private func proxyControl(_ method: String, _ path: String, proxyURL: String) -> [String: Any]? {
+        guard let url = URL(string: proxyURL + path) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        return Self.fetchJSON(request)
+    }
+
+    private static func fetchJSON(_ request: URLRequest) -> [String: Any]? {
+        final class Outcome: @unchecked Sendable { var data: Data? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 { outcome.data = data }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 15) == .success else {
+            task.cancel()
+            return nil
+        }
+        return outcome.data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    private static func fileSize(_ path: String) -> UInt64? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.seekToEnd()
+    }
+
+    /// The server's "Streaming file" lines written after `offset`, as their key=value fields.
+    private static func streamLines(_ path: String, from offset: UInt64) -> [[String: String]] {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").filter { $0.contains("msg=\"Streaming file\"") }.map { line in
+            var fields: [String: String] = [:]
+            var rest = Substring(line)
+            while let equals = rest.firstIndex(of: "=") {
+                let key = rest[..<equals].split(separator: " ").last.map(String.init) ?? ""
+                rest = rest[rest.index(after: equals)...]
+                let value: Substring
+                if rest.first == "\"" {
+                    let body = rest.dropFirst()
+                    let end = body.firstIndex(of: "\"") ?? body.endIndex
+                    value = body[..<end]
+                    rest = end < body.endIndex ? body[body.index(after: end)...] : ""
+                } else {
+                    let end = rest.firstIndex(of: " ") ?? rest.endIndex
+                    value = rest[..<end]
+                    rest = rest[end...]
+                }
+                if !key.isEmpty { fields[key] = String(value) }
+            }
+            return fields
+        }
+    }
+
     @MainActor
     private func waitForLabel(_ label: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)

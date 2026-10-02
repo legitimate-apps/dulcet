@@ -25,6 +25,10 @@ struct DulcetLyricsPanel: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // A container of its own, so each state keeps its identifier: without it the panel's
+            // identifier replaced the one on a single-element state (OBSERVED on iOS 26.5: the
+            // no-lyrics text reported `dulcet.lyrics.panel`, not `dulcet.lyrics.none`).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.lyrics.panel")
             .onAppear {
                 anchor = DulcetLyricsClockAnchor(elapsed: elapsed, at: .now)
@@ -90,6 +94,11 @@ struct DulcetLyricsPanel: View {
                     .font(.headline)
                     .multilineTextAlignment(.center)
                     .dulcetForeground(.secondaryTextOnWindow)
+                    // The message is the state's own witness. An identifier on the stack around
+                    // it was applied to the message and Try Again alike, and as a container of
+                    // its own the stack was folded into the panel and its identifier lost
+                    // (both OBSERVED on iOS 26.5).
+                    .accessibilityIdentifier("dulcet.lyrics.unavailable")
                 if offersRetry {
                     Button(DulcetStrings.lyricsTryAgain) { model.retry(from: reader) }
                         .buttonStyle(.bordered)
@@ -97,7 +106,6 @@ struct DulcetLyricsPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 160)
-            .accessibilityIdentifier("dulcet.lyrics.unavailable")
         }
     }
 

@@ -676,18 +676,21 @@ jobs:
   # proof that talks to the disposable server. It builds the app schemes its
   # `test-without-building` legs reuse, so it is the longer leg and the run's critical path.
   #
-  # 115 = ceil(1.5 x 74.6 / 5) x 5. 74.6 minutes is this leg's MEASURED maximum over its green
-  # runs on the split (run 36205806012; the others took 44.6 to 63.1). It replaces the 71.3-minute
-  # projection the leg was first sized from (110), which that run exceeded. It must stay above the
-  # composite's own 85-minute cap plus the rest of the leg, or a slow-but-healthy composite would
+  # 215 = ceil(1.5 x 140.5 / 5) x 5. 140.5 minutes is a PROJECTION, not a measurement: this leg's
+  # measured maximum, 113.5 (run 36896866024; its last five green runs took 75.8 to 113.5), plus
+  # 27 minutes for the lyrics-state and streaming-quality proofs (tools/ci/run-lyrics-quality-proofs),
+  # which took 10.2 minutes of test time locally and are projected at 2.2x on this runner -- the
+  # ratio tvOS Now Playing's proof showed between a local run (26 s) and this leg (37 to 57 s) --
+  # plus half a minute for each of their nine xcodebuild invocations. It must stay above the
+  # composite's own 150-minute cap plus the rest of the leg, or a slow-but-healthy composite would
   # be killed by the job and reported against whichever step was active: the rest has measured
-  # 12.4 to 18.5 minutes, so 85 + 18.5 = 103.5. Re-measure as the leg's history grows.
+  # up to 29.8 minutes, so 150 + 29.8 = 179.8. Re-size from measurement once the proofs have run.
   apple-conformance:
     name: apple-conformance
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 115
+    timeout-minutes: 215
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -869,13 +872,12 @@ jobs:
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
       - name: Assert Darwin conformance preconditions
-        # 85, raised from 67 (ceil(2 x 33.38), sized on the single job). On the split it measured 30.7
-        # to 62.2 minutes. 62.2 (run 36205806012) was a slow host, not a stall: 12 of its 13 phases ran
-        # longer than in the run before, and it left 4.8 minutes. The split also moved the three
-        # library-sync devices' first boots into this step. The step rule's ceil(2 x 62.2) = 125 would
-        # not fit inside a leg sized by spec §21.5 rule 5, so this is a set value, 1.37x the measured
-        # maximum, and the leg cap above is checked against it.
-        timeout-minutes: 85
+        # 150, raised from 85: a set value, 1.37x this step's projected maximum, the ratio the 85 had
+        # to the 62.2 it was set from. The projection is the measured maximum, 83.7 minutes (run
+        # 36896866024; its last five green runs took 60.0 to 83.7), plus 27 minutes for the
+        # lyrics-state and streaming-quality proofs (see the leg's cap), so 110.7. The leg cap
+        # above is checked against it. Re-size from measurement once the proofs have run.
+        timeout-minutes: 150
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -915,6 +917,10 @@ jobs:
           tls_pid=$!
           python3 tools/conformance-env/redirect-server --port 4543 --forward-proxy-auth &
           proxy_pid=$!
+          # The Apple lyrics proofs' fault proxy (tools/ci/run-lyrics-quality-proofs): forwards
+          # every request to this server unchanged, except a lyrics read a proof arms it to fail.
+          python3 tools/conformance-env/lyrics-fault-proxy --port 4544 --upstream http://127.0.0.1:4533 &
+          lyrics_proxy_pid=$!
           cleanup() {
             kill "$redirect_pid" >/dev/null 2>&1 || true
             wait "$redirect_pid" 2>/dev/null || true
@@ -922,6 +928,8 @@ jobs:
             wait "$tls_pid" 2>/dev/null || true
             kill "$proxy_pid" >/dev/null 2>&1 || true
             wait "$proxy_pid" 2>/dev/null || true
+            kill "$lyrics_proxy_pid" >/dev/null 2>&1 || true
+            wait "$lyrics_proxy_pid" 2>/dev/null || true
             kill "$navidrome_pid" >/dev/null 2>&1 || true
             wait "$navidrome_pid" 2>/dev/null || true
             # Backstop only: the macOS leg stops this server itself, and clears the pid when it has.
@@ -970,12 +978,14 @@ jobs:
           for _ in {1..20}; do
             if curl --fail --silent http://127.0.0.1:4540/health >/dev/null && \
               curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null && \
-              curl --fail --silent http://127.0.0.1:4543/health >/dev/null; then break; fi
+              curl --fail --silent http://127.0.0.1:4543/health >/dev/null && \
+              curl --fail --silent http://127.0.0.1:4544/__dulcet/health >/dev/null; then break; fi
             sleep 0.1
           done
           curl --fail --silent http://127.0.0.1:4540/health >/dev/null
           curl --fail --silent --insecure https://127.0.0.1:4542/health >/dev/null
           curl --fail --silent http://127.0.0.1:4543/health >/dev/null
+          curl --fail --silent http://127.0.0.1:4544/__dulcet/health >/dev/null
           tools/conformance-env/health-check \
             --base-url http://127.0.0.1:4533 \
             --runtime darwin/arm64 \
@@ -1053,6 +1063,9 @@ jobs:
           # The Mac library on the reader (spec §16.14): live, then a device-only relaunch from what
           # this device saw, then Reconnect in place. In a file for the same reason.
           tools/ci/run-app-host-reader-proof macos
+          # The Mac lyrics panel's states and the Settings window's streaming-quality cap
+          # (spec §18.4, §12.5), through the hosted app. In a file for the same reason.
+          tools/ci/run-lyrics-quality-proofs macos
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
@@ -1518,6 +1531,9 @@ jobs:
           # The iPad library on the reader (spec §16.14), while the iPad is still booted: a saved
           # account reopens into what this device saw, then Reconnect in place.
           tools/ci/run-app-host-reader-proof ipados "$IPAD_PLAYBACK_DESTINATION"
+          # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
+          # the iPad (see the script header).
+          tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
           python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -1592,6 +1608,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
+          # streaming-quality cap chosen by remote, last on this device (see the script header).
+          tools/ci/run-lyrics-quality-proofs tvos
           # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
           # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
           # renames it from its page and reads the new name back from the server, then deletes it:
@@ -1641,6 +1660,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-lyrics.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-lyrics-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # Every lyrics state on iPhone: synced, plain, none, and a failed read with Try Again.
+          tools/ci/run-lyrics-quality-proofs iphone-lyrics
           # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -1741,6 +1762,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # The streaming-quality cap on iPhone, after the skip probe: it sets a cap on the device,
+          # and a cap left by a failed run must not reach any proof that streams after it. It reads
+          # no library count, so the skip probe's albums do not disturb it.
+          tools/ci/run-lyrics-quality-proofs iphone-quality
       # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
@@ -1953,4 +1978,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-library-sync-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-download-junit"
+            "$RUNNER_TEMP/dulcet-ipados-download-junit" \
+            "$RUNNER_TEMP/dulcet-mac-lyrics-states-junit" \
+            "$RUNNER_TEMP/dulcet-mac-streaming-quality-junit" \
+            "$RUNNER_TEMP/dulcet-ios-lyrics-states-junit" \
+            "$RUNNER_TEMP/dulcet-ios-streaming-quality-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-lyrics-states-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-streaming-quality-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-lyrics-states-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-streaming-quality-junit"

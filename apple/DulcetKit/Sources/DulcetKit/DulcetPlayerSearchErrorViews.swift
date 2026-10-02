@@ -458,6 +458,13 @@ struct DulcetNowPlayingView: View {
 
     private var lyricsPanel: some View {
         DulcetLyricsPanel(track: player.current, elapsed: player.elapsed, isPlaying: player.isPlaying)
+#if os(tvOS)
+            // A section, so Right from the footer reaches the panel's lines and Try Again: they
+            // sit high in the right column, out of the footer's row, and without a section the
+            // focus engine found nothing to the right (OBSERVED on tvOS 26.5: four presses of
+            // Right left focus on the lyrics toggle).
+            .focusSection()
+#endif
     }
 
     private var lyricsToggle: some View {

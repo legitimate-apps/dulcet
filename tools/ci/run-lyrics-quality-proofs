@@ -1,0 +1,192 @@
+#!/bin/bash
+# Run the Apple lyrics-state and streaming-quality proofs (spec §18.4, §12.5) against the
+# disposable server and turn each result bundle into cited evidence.
+#
+# A file rather than inline YAML for the reason tools/ci/run-app-host-reader-proof gives: the
+# "Assert Darwin conformance preconditions" step is the largest `run:` block in apple-ci, and it
+# must run INSIDE that step, because the disposable server's lifetime -- and the lyrics fault
+# proxy's, which that step starts beside it on port 4544 -- is that step's shell.
+#
+# Usage:
+#   run-lyrics-quality-proofs macos
+#   run-lyrics-quality-proofs iphone-lyrics
+#   run-lyrics-quality-proofs iphone-quality
+#   run-lyrics-quality-proofs ipados <ipad-simulator-destination>
+#   run-lyrics-quality-proofs tvos
+#
+# One mode per call, so each keeps its own position in the calling step. Two orderings matter:
+#
+# - The lyrics proofs fail a read of "Thirty One Seconds" and need a device that has never stored
+#   that track's lyrics; on every device they run before anything else opens that track's lyrics.
+# - The streaming-quality proofs set a cap on the device and put it back at the end. A run that
+#   fails part-way leaves the cap set, so on each device they are the LAST proof, and nothing
+#   after them streams on that device.
+#
+# Each simulator proof is its own test method that fails on the other device class, so an iPhone
+# run cannot stand as iPad evidence.
+#
+# Each proof runs under XCTest's own execution-time allowance, so a proof that hangs fails by name
+# after 15 minutes instead of holding the composite step to its cap. The longest proof took 140 s
+# locally; 15 minutes is over twice its projection on the hosted runner.
+
+set -euo pipefail
+
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+: "${ROOT:?ROOT must name the conformance root whose logs/navidrome.log the server writes}"
+
+server_log="$ROOT/logs/navidrome.log"
+allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
+proxy_url=http://127.0.0.1:4544
+iphone='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
+
+mode="${1:-}"
+case "$mode" in
+    macos|iphone-lyrics|iphone-quality|tvos)
+        [ "$#" -eq 1 ] || { echo "run-lyrics-quality-proofs $mode: takes no further arguments" >&2; exit 2; }
+        ;;
+    ipados)
+        [ "$#" -eq 2 ] || { echo "run-lyrics-quality-proofs ipados: needs the iPad destination" >&2; exit 2; }
+        ipad_destination="$2"
+        ;;
+    *)
+        echo "run-lyrics-quality-proofs: mode must be macos, iphone-lyrics, iphone-quality, ipados or tvos, got '${mode}'" >&2
+        exit 2
+        ;;
+esac
+
+# Both fixtures are asserted before any test runs: a proof whose fixture is missing fails here,
+# naming it, rather than as a missing line inside a UI test.
+curl --fail --silent "$proxy_url/__dulcet/health" >/dev/null || {
+    echo "run-lyrics-quality-proofs: the lyrics fault proxy does not answer on $proxy_url" >&2
+    exit 1
+}
+[ -r "$server_log" ] || { echo "run-lyrics-quality-proofs: the server log is not readable" >&2; exit 1; }
+
+# One UI test: run it, require that it executed, then write its JUnit. The execution guard comes
+# BEFORE the JUnit: `swift-testing-junit` writes a well-formed tests="0" file for an empty bundle,
+# so a renamed test would otherwise ship green. The account and fixtures reach the test runner as
+# TEST_RUNNER_-prefixed variables; a trailing KEY=value would be parsed as a build setting.
+ui_proof() {
+    scheme="$1"
+    derived_data="$2"
+    destination="$3"
+    target="$4"
+    test_method="$5"
+    slug="$6"
+
+    result_bundle="$RUNNER_TEMP/dulcet-$slug.xcresult"
+    TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+        TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+        TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+        TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url" \
+        TEST_RUNNER_DULCET_UI_TEST_SERVER_LOG="$server_log" \
+        xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme "$scheme" \
+            -configuration Debug \
+            -destination "$destination" \
+            -derivedDataPath "$derived_data" \
+            -resultBundlePath "$result_bundle" \
+            -parallel-testing-enabled NO \
+            "${allowance[@]}" \
+            -only-testing:"$target/$target/$test_method" 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-$slug.log"
+    python3 tools/verify-xcode-test-execution "$result_bundle" "$target.$target" "$test_method"
+}
+
+case "$mode" in
+macos)
+    # A macOS host test does not inherit xcodebuild's environment, so the fixtures are passed as
+    # build settings, which the DulcetMac scheme hands the test host. It reuses the product the
+    # first macOS app-host proof built, and signs ad hoc without entitlements as the other
+    # hosted proofs do, so the host can read the server's log.
+    for test_method in \
+        lyricsPanelShowsEveryStateThroughTheHostedMacApp \
+        streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp; do
+        result_bundle="$RUNNER_TEMP/dulcet-mac-$test_method.xcresult"
+        DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+            DULCET_CONFORMANCE_DISPOSABLE=true \
+            xcodebuild test-without-building \
+                -project apple/Dulcet.xcodeproj \
+                -scheme DulcetMac \
+                -configuration Debug \
+                -destination 'platform=macOS' \
+                -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+                -resultBundlePath "$result_bundle" \
+                -parallel-testing-enabled NO \
+                "${allowance[@]}" \
+                -only-testing:"DulcetMacTests/DulcetMacLyricsAndQualityAppTest/$test_method" \
+                CODE_SIGN_STYLE=Manual \
+                CODE_SIGN_IDENTITY=- \
+                CODE_SIGN_ENTITLEMENTS= \
+                DEVELOPMENT_TEAM= \
+                PROVISIONING_PROFILE_SPECIFIER= \
+                DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
+                DULCET_TEST_CONFORMANCE_DISPOSABLE=true \
+                DULCET_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url" \
+                DULCET_TEST_SERVER_LOG="$server_log" 2>&1 |
+            tee "$RUNNER_TEMP/dulcet-mac-$test_method.log"
+        python3 tools/verify-xcode-test-execution \
+            "$result_bundle" \
+            DulcetMacTests.DulcetMacLyricsAndQualityAppTest \
+            "$test_method"
+    done
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-lyricsPanelShowsEveryStateThroughTheHostedMacApp.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-lyrics-states-junit/TEST-DulcetMacLyricsAndQualityAppTest.xml" \
+        DulcetMacLyricsAndQualityAppTest
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-streaming-quality-junit/TEST-DulcetMacLyricsAndQualityAppTest.xml" \
+        DulcetMacLyricsAndQualityAppTest
+    ;;
+iphone-lyrics)
+    python3 tools/ci/isolate-simulator --phase lyrics-states-iphone --keep-name "iPhone 17 Pro"
+    ui_proof DulcetiOS "$RUNNER_TEMP/DulcetiOSDerivedData" "$iphone" DulcetiOSUITests \
+        testTheLyricsPanelShowsEveryStateOnIPhone ios-lyrics-states
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-lyrics-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-lyrics-states-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+iphone-quality)
+    python3 tools/ci/isolate-simulator --phase streaming-quality-iphone --keep-name "iPhone 17 Pro"
+    ui_proof DulcetiOS "$RUNNER_TEMP/DulcetiOSDerivedData" "$iphone" DulcetiOSUITests \
+        testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPhone ios-streaming-quality
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-streaming-quality.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-streaming-quality-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+ipados)
+    python3 tools/ci/isolate-simulator --phase lyrics-quality-ipad --keep "${ipad_destination##*id=}"
+    ui_proof DulcetiOS "$RUNNER_TEMP/DulcetiPadOSDerivedData" "$ipad_destination" DulcetiOSUITests \
+        testTheLyricsPanelShowsEveryStateOnIPadOS ipados-lyrics-states
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-lyrics-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-lyrics-states-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ui_proof DulcetiOS "$RUNNER_TEMP/DulcetiPadOSDerivedData" "$ipad_destination" DulcetiOSUITests \
+        testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPadOS ipados-streaming-quality
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-streaming-quality.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-streaming-quality-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+tvos)
+    python3 tools/ci/isolate-simulator --phase lyrics-quality-tvos --keep-name "Apple TV 4K (3rd generation)"
+    ui_proof DulcetTV "$RUNNER_TEMP/DulcetTVDerivedData" "$tv" DulcetTVUITests \
+        testLyricsPlainNoneAndAFailedReadAreDrivenByRemote tvos-lyrics-states
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-lyrics-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-lyrics-states-junit/TEST-DulcetTVUITests.xml" \
+        DulcetTVUITests
+    ui_proof DulcetTV "$RUNNER_TEMP/DulcetTVDerivedData" "$tv" DulcetTVUITests \
+        testAStreamingQualityChosenByRemoteCapsTheStream tvos-streaming-quality
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-streaming-quality.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-streaming-quality-junit/TEST-DulcetTVUITests.xml" \
+        DulcetTVUITests
+    ;;
+esac

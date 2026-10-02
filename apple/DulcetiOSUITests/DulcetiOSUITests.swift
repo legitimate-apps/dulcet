@@ -630,7 +630,15 @@ final class DulcetiOSUITests: XCTestCase {
         if !compact, !openSidebarLibrarySection("albums", in: app) { return false }
         let tile = app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
-        guard tile.waitForExistence(timeout: 30), scrollIntoView(tile, in: app) else {
+        // A phone's Recently Added grid is extended as it scrolls, newest first, so an older album
+        // is reached by scrolling down to it (OBSERVED on CI: eight newer fixture albums filled the
+        // first window and the oldest, Dulcet Conformance, was not yet in the grid).
+        var swipes = 0
+        while compact, !tile.waitForExistence(timeout: swipes == 0 ? 30 : 3), swipes < 12 {
+            app.swipeUp()
+            swipes += 1
+        }
+        guard tile.waitForExistence(timeout: 1), scrollIntoView(tile, in: app) else {
             XCTFail("The library must show the \(album) tile: " + app.debugDescription)
             return false
         }
@@ -1799,6 +1807,573 @@ final class DulcetiOSUITests: XCTestCase {
         let lit = current.exists ? current.label : "<none>"
         XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be one of the English layer's; lit=\(lit)")
         print("DULCET LYRICS PROOF PASS destination=\(compact ? "compact" : "regular") lit=\(lit.debugDescription)")
+    }
+
+    /// Every state of the lyrics panel (spec §18.4) rendered through the iPhone app, in the sheet.
+    @MainActor
+    func testTheLyricsPanelShowsEveryStateOnIPhone() {
+        proveLyricsPanelStates(compact: true)
+    }
+
+    /// Every state of the lyrics panel (spec §18.4) rendered through the iPad app, beside the
+    /// player in the full-screen player.
+    @MainActor
+    func testTheLyricsPanelShowsEveryStateOnIPadOS() {
+        proveLyricsPanelStates(compact: false)
+    }
+
+    /// The lyrics panel draws each state the core can publish, through the app, for a track the
+    /// disposable server really holds in that shape -- each shape first read back from the server,
+    /// so a corpus that drifted fails here as a precondition and never as a missing line:
+    ///
+    /// 1. synced: "Twenty Nine Seconds" lights an English line as media time moves;
+    /// 2. plain: "Ogg Probe"'s two unsynced sidecar lines, and nothing lit;
+    /// 3. none: "UI Playback Canary" says it has no lyrics, with no spinner left behind;
+    /// 4. a failed read: "Thirty One Seconds" read through `tools/conformance-env/lyrics-fault-proxy`,
+    ///    which answers its lyrics read with HTTP 500 until the test disarms it. The panel says the
+    ///    read failed and offers Try Again; the proxy's own count shows the failure was met, and
+    ///    after it is disarmed Try Again sends a new read and the synced lines appear.
+    ///
+    /// Each state is its own launch, so one state's panel can never stand in for the next. The
+    /// failed read needs a track this device has never stored lyrics for -- a stored document is
+    /// painted first and the failure then shows as a note over it, with no Try Again -- so no
+    /// earlier phase on the simulator may open that track's lyrics, and this test fails, naming
+    /// why, when one did. The test fails on the other device class, so an iPhone run cannot stand
+    /// as iPad evidence.
+    @MainActor
+    private func proveLyricsPanelStates(compact expectedCompact: Bool) {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        let expectedIdiom: UIUserInterfaceIdiom = expectedCompact ? .phone : .pad
+        guard UIDevice.current.userInterfaceIdiom == expectedIdiom else {
+            XCTFail("This proof names \(expectedCompact ? "iPhone" : "iPad") but runs on idiom \(UIDevice.current.userInterfaceIdiom.rawValue)")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration(),
+              let proxy = lyricsFaultProxyConfiguration(server: configuration) else { return }
+        let album = "Threshold Boundary"
+
+        // The server's own shapes, read before anything is driven.
+        guard let synced = serverSongID("Twenty Nine Seconds", album: album, configuration: configuration),
+              let plain = serverSongID("Ogg Probe", album: "Dulcet Conformance", configuration: configuration),
+              let none = serverSongID("UI Playback Canary", album: album, configuration: configuration),
+              let failing = serverSongID("Thirty One Seconds", album: album, configuration: configuration) else { return }
+        let layers = { (id: String) in self.serverLyricsLayers(songID: id, configuration: configuration) }
+        guard let syncedLayers = layers(synced), syncedLayers.contains(where: { $0.synced && $0.lines.contains("Dulcet English line one") }),
+              let plainLayers = layers(plain), plainLayers.count == 1, plainLayers.allSatisfy({ !$0.synced }),
+              plainLayers[0].lines == ["Dulcet plain sidecar line one", "Dulcet plain sidecar line two"],
+              let noLayers = layers(none), noLayers.isEmpty,
+              let failingLayers = layers(failing), failingLayers.contains(where: { $0.synced }) else {
+            XCTFail("The disposable server's lyrics fixtures drifted: synced, plain, none and a synced sidecar are required")
+            return
+        }
+
+        // 1. Synced: a line lights as media time moves.
+        guard let syncedApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                              compact: expectedCompact),
+              openLibraryAlbum(album, in: syncedApp, compact: expectedCompact) else { return }
+        syncedApp.buttons["dulcet.album.play"].firstMatch.tap()
+        guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
+              let syncedPanel = openLyricsPanel(in: syncedApp) else { return }
+        let current = syncedApp.staticTexts["dulcet.lyrics.line.current"].firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 25), "A synced line must light as the track plays: " + syncedApp.debugDescription)
+        let lit = current.exists ? current.label : "<none>"
+        XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
+        var placement = "sheet"
+        if !expectedCompact {
+            // Beside the player: the panel starts right of the player's own title, in one row.
+            let title = syncedApp.staticTexts["dulcet.now-playing.title"].firstMatch
+            XCTAssertTrue(title.exists, "The player's title must be on screen beside the lyrics")
+            placement = "panel=\(syncedPanel.frame) title=\(title.frame)"
+            XCTAssertGreaterThanOrEqual(syncedPanel.frame.minX, title.frame.maxX,
+                "On a regular width the lyrics must sit beside the player, not over or under it; \(placement)")
+            XCTAssertTrue(syncedPanel.frame.minY < title.frame.maxY && title.frame.minY < syncedPanel.frame.maxY,
+                "The lyrics and the player must share a row; \(placement)")
+        }
+        attachScreenshot(named: "lyrics-synced", app: syncedApp)
+
+        // 2. Plain: both lines, and nothing lit.
+        guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                             compact: expectedCompact),
+              playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
+        // A one-second track, played from a search that matches it alone, so it is the whole
+        // queue: the finished queue keeps it as Now Playing's track (spec §14.3). Played from its
+        // album it would advance to the next track and show that track's lyrics instead.
+        guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
+              openLyricsPanel(in: plainApp) != nil else { return }
+        let plainLines = plainApp.staticTexts.matching(identifier: "dulcet.lyrics.line")
+        for line in plainLayers[0].lines {
+            XCTAssertTrue(plainLines.matching(NSPredicate(format: "label == %@", line)).firstMatch.waitForExistence(timeout: 20),
+                "Plain lyrics must show \(line.debugDescription): " + plainApp.debugDescription)
+        }
+        XCTAssertFalse(plainApp.staticTexts["dulcet.lyrics.line.current"].firstMatch.exists,
+            "Plain lyrics have no current line, so none may be lit")
+        let plainShown = plainLines.count
+        attachScreenshot(named: "lyrics-plain", app: plainApp)
+
+        // 3. None: said, and no spinner left.
+        guard let noneApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                            compact: expectedCompact),
+              openLibraryAlbum(album, in: noneApp, compact: expectedCompact),
+              playAlbumTrack("UI Playback Canary", in: noneApp),
+              openNowPlayingFromBar(in: noneApp, expectingTitle: "UI Playback Canary"),
+              openLyricsPanel(in: noneApp) != nil else { return }
+        let noLyrics = noneApp.staticTexts["dulcet.lyrics.none"].firstMatch
+        XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
+        // Read now: the next launch replaces this app, and its elements with it.
+        let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
+        XCTAssertEqual(noneShown, "No lyrics for this song.")
+        XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
+            "A track the server has no lyrics for must never show a spinner")
+        attachScreenshot(named: "lyrics-none", app: noneApp)
+
+        // 4. A failed read, then Try Again.
+        guard proxyLyricsFailure(song: failing, on: true, proxy: proxy) != nil else { return }
+        afterTest.append { _ = self.proxyLyricsFailure(song: failing, on: false, proxy: proxy) }
+        guard let failedApp = launchConnected(serverURL: proxy.url, configuration: configuration,
+                                              compact: expectedCompact),
+              // From a search that matches it alone, so the queue ends on it: played from its
+              // album, a slow read outlived the 31 s track and the panel moved on to the next
+              // track's lyrics (OBSERVED locally under host load).
+              playFromSearch("Thirty One Seconds", in: failedApp, compact: expectedCompact),
+              openNowPlayingFromBar(in: failedApp, expectingTitle: "Thirty One Seconds"),
+              openLyricsPanel(in: failedApp) != nil else { return }
+        let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
+        let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
+        guard unavailable.waitForExistence(timeout: 30), retry.waitForExistence(timeout: 5) else {
+            let saved = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing saved lyrics")).firstMatch
+            XCTFail(saved.exists
+                ? "This device already holds Thirty One Seconds' lyrics, so the failure shows as a note over them; the proof needs a simulator that never opened them"
+                : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
+            return
+        }
+        XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
+            "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
+        guard let afterFailure = proxyLyricsFailure(song: failing, on: false, proxy: proxy) else { return }
+        XCTAssertGreaterThanOrEqual(afterFailure.failed, 1,
+            "The proxy must have failed this track's lyrics read; otherwise the state above came from somewhere else")
+        attachScreenshot(named: "lyrics-failed", app: failedApp)
+        retry.tap()
+        let recovered = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet synced line")).firstMatch
+        XCTAssertTrue(recovered.waitForExistence(timeout: 30), "Try Again must read the lyrics again and show them: " + failedApp.debugDescription)
+        XCTAssertFalse(unavailable.exists, "The failure must give way to the lyrics")
+        let afterRetry = proxyObservations(song: failing, proxy: proxy)
+        XCTAssertGreaterThanOrEqual(afterRetry?.forwardedAfterDisarm ?? 0, 1,
+            "Try Again must send a new lyrics read; observed \(String(describing: afterRetry))")
+        print("DULCET LYRICS STATES PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " synced-lit=\(lit.debugDescription) placement=\(placement) plain-lines=\(plainShown)"
+            + " none=\(noneShown.debugDescription) failed-reads=\(afterFailure.failed)"
+            + " retry-reads=\(afterRetry?.forwardedAfterDisarm ?? 0)")
+    }
+
+    /// A streaming-quality cap chosen in the iPhone Connection screen reaches the server.
+    @MainActor
+    func testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPhone() {
+        proveStreamingQualityCapsTheStream(compact: true)
+    }
+
+    /// A streaming-quality cap chosen in the iPad Connection screen reaches the server.
+    @MainActor
+    func testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPadOS() {
+        proveStreamingQualityCapsTheStream(compact: false)
+    }
+
+    /// The Wi-Fi choice of the Connection screen's Streaming Quality section (spec §12.5), made
+    /// with the real picker, caps the next song the app streams: the disposable server's own log
+    /// records the stream of "Dulcet Health Probe" -- a 123 kbps FLAC, read back first -- as
+    /// transcoded to 96 kbps. The log is read from the offset it had before the play, so a line
+    /// an earlier run left behind cannot answer. A simulator's network is not metered, so the
+    /// Wi-Fi choice is the one in force; the cellular choice is set to 128 kbps first, so a cap
+    /// that came from the wrong row would show as 128 instead. Both are put back to Original at
+    /// the end through the same picker.
+    @MainActor
+    private func proveStreamingQualityCapsTheStream(compact expectedCompact: Bool) {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        let expectedIdiom: UIUserInterfaceIdiom = expectedCompact ? .phone : .pad
+        guard UIDevice.current.userInterfaceIdiom == expectedIdiom else {
+            XCTFail("This proof names \(expectedCompact ? "iPhone" : "iPad") but runs on idiom \(UIDevice.current.userInterfaceIdiom.rawValue)")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration(),
+              let logPath = runtimeValue(environment: "DULCET_UI_TEST_SERVER_LOG", argument: "-dulcet-ui-test-server-log") else {
+            XCTFail("DULCET_UI_TEST_SERVER_LOG must name the disposable server's log")
+            return
+        }
+        let track = "Dulcet Health Probe"
+        let album = "Dulcet Conformance"
+        guard let songID = serverSongID(track, album: album, configuration: configuration),
+              let song = restCall("getSong", [URLQueryItem(name: "id", value: songID)], configuration: configuration)?[
+                  "song"] as? [String: Any],
+              let sourceKbps = song["bitRate"] as? Int else {
+            XCTFail("The server must report \(track)'s bitrate")
+            return
+        }
+        XCTAssertGreaterThan(sourceKbps, 96, "The control: the source must be above the cap, or no cap would be sent")
+        guard let logBefore = serverLogSize(logPath) else {
+            XCTFail("The disposable server's log must be readable from the test: \(logPath)")
+            return
+        }
+
+        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                        compact: expectedCompact) else { return }
+        // launchConnected leaves the app on Connection, where Sign Out confirmed the account.
+        guard chooseStreamingQuality("128 kbps", row: "dulcet.streaming-quality.metered", in: app),
+              chooseStreamingQuality("96 kbps", row: "dulcet.streaming-quality.unmetered", in: app) else { return }
+        attachScreenshot(named: "streaming-quality-chosen", app: app)
+        guard openLibraryAlbum(album, containing: track, in: app, compact: expectedCompact),
+              playAlbumTrack(track, in: app),
+              openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
+
+        var lines: [[String: String]] = []
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            lines = serverStreamLines(logPath, from: logBefore).filter { $0["title"] == track }
+            if !lines.isEmpty { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+        XCTAssertFalse(lines.isEmpty, "The server must log a stream of \(track) after the play")
+        for line in lines {
+            XCTAssertEqual(line["transcoding"], "true", "The server must transcode the capped stream; line=\(line)")
+            XCTAssertEqual(line["bitRate"], "96", "The stream must carry the Wi-Fi choice, 96 kbps; line=\(line)")
+            XCTAssertEqual(line["originalBitRate"], String(sourceKbps), "The line must be this source's; line=\(line)")
+        }
+
+        // Put both choices back, through the same screen, so later phases stream originals.
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
+        guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: expectedCompact),
+              chooseStreamingQuality("Original", row: "dulcet.streaming-quality.unmetered", in: app),
+              chooseStreamingQuality("Original", row: "dulcet.streaming-quality.metered", in: app) else { return }
+        let summary = lines.map { "\($0["format"] ?? "?")@\($0["bitRate"] ?? "?")" }.joined(separator: ",")
+        print("DULCET STREAMING QUALITY PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " track=\(track.debugDescription) source-kbps=\(sourceKbps) server-streams=\(summary)")
+    }
+
+    /// Launches the app with the account injected for `serverURL` and waits for its live
+    /// connection, on the device class the caller names.
+    @MainActor
+    private func launchConnected(
+        serverURL: String,
+        configuration: LivePlaybackConfiguration,
+        compact expectedCompact: Bool
+    ) -> XCUIApplication? {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", serverURL,
+            "-dulcet-debug-account-username", configuration.username,
+            "-dulcet-debug-account-password", configuration.password,
+        ]
+        app.launch()
+        let window = app.windows.firstMatch
+        guard window.waitForExistence(timeout: 10) else {
+            XCTFail("The app window must exist")
+            return nil
+        }
+        let compact = window.frame.width < 700
+        guard compact == expectedCompact else {
+            XCTFail("This proof needs a \(expectedCompact ? "compact" : "regular") window; observed \(window.frame)")
+            return nil
+        }
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
+            XCTFail("The live account connection must succeed first")
+            return nil
+        }
+        return app
+    }
+
+    /// Starts one track of the open album from its row.
+    /// Searches for `query` and activates the one track result titled by it. A search queue holds
+    /// the playable track results (`activateSearchResult`), so a query matching one track queues
+    /// exactly that track; the result count is asserted so a corpus change cannot widen it.
+    @MainActor
+    private func playFromSearch(_ query: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
+            return false
+        }
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 10) else {
+            XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
+            return false
+        }
+        // A tap under load has been seen not to give the field focus (OBSERVED locally: "Neither
+        // element nor any descendant has keyboard focus"), so focus is confirmed before typing.
+        let focused = NSPredicate(format: "hasKeyboardFocus == true")
+        var taps = 0
+        repeat {
+            taps += 1
+            field.tap()
+        } while XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: focused, object: field)], timeout: 3) != .completed && taps < 3
+        guard (field.value(forKey: "hasKeyboardFocus") as? Bool) == true else {
+            XCTFail("The search field must take focus; \(taps) taps: " + app.debugDescription)
+            return false
+        }
+        field.typeText(query)
+        let tracks = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label ENDSWITH %@", "dulcet.search.result.", ", Track"))
+        let result = tracks.matching(NSPredicate(format: "label BEGINSWITH %@", query + ", ")).firstMatch
+        guard result.waitForExistence(timeout: 30) else {
+            XCTFail("Search must find \(query): " + app.debugDescription)
+            return false
+        }
+        XCTAssertEqual(tracks.count, 1, "The search must match \(query) alone, so the queue holds one track")
+        guard dismissKeyboardBeforeActivation(in: app), scrollIntoView(result, in: app) else { return false }
+        result.tap()
+        return true
+    }
+
+    /// Opens the album of that name that lists `track`. The corpus holds two albums named "Dulcet
+    /// Conformance" by the same artist, so a tile's label cannot tell them apart; each is opened
+    /// in turn until one lists the track.
+    @MainActor
+    private func openLibraryAlbum(_ album: String, containing track: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return false }
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
+        let tiles = app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", album))
+        var opened = 1
+        while !row.waitForExistence(timeout: 5) {
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            guard opened < 4, back.exists else {
+                XCTFail("No \(album) album among the \(opened) opened lists \(track): " + app.debugDescription)
+                return false
+            }
+            back.tap()
+            let tile = tiles.element(boundBy: opened)
+            guard tile.waitForExistence(timeout: 10), scrollIntoView(tile, in: app) else {
+                XCTFail("Only \(opened) \(album) tile(s), and none lists \(track): " + app.debugDescription)
+                return false
+            }
+            tile.tap()
+            opened += 1
+            guard app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 10) else {
+                XCTFail("The \(album) tile must open its album: " + app.debugDescription)
+                return false
+            }
+        }
+        return true
+    }
+
+    @MainActor
+    private func playAlbumTrack(_ track: String, in app: XCUIApplication) -> Bool {
+        // The now-playing bar names a track too; its own identifier keeps it out of the match.
+        let row = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@ AND identifier != %@", track, "dulcet.mini-player.open")
+        ).firstMatch
+        guard row.waitForExistence(timeout: 15), scrollIntoView(row, in: app) else {
+            XCTFail("The album must list \(track): " + app.debugDescription)
+            return false
+        }
+        row.tap()
+        return true
+    }
+
+    /// Shows lyrics from Now Playing's toggle and returns the panel.
+    @MainActor
+    private func openLyricsPanel(in app: XCUIApplication) -> XCUIElement? {
+        let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+        guard toggle.waitForExistence(timeout: 10) else {
+            XCTFail("Now Playing must offer lyrics: " + app.debugDescription)
+            return nil
+        }
+        toggle.tap()
+        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        guard panel.waitForExistence(timeout: 10) else {
+            XCTFail("The lyrics panel must open: " + app.debugDescription)
+            return nil
+        }
+        return panel
+    }
+
+    /// Chooses `option` in one of the Streaming Quality pickers on the Connection screen, then
+    /// reads the picker back.
+    @MainActor
+    private func chooseStreamingQuality(_ option: String, row identifier: String, in app: XCUIApplication) -> Bool {
+        let picker = app.buttons[identifier].firstMatch
+        guard picker.waitForExistence(timeout: 10), scrollIntoView(picker, in: app) else {
+            XCTFail("Connection must offer the \(identifier) picker: " + app.debugDescription)
+            return false
+        }
+        picker.tap()
+        let item = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", option, identifier)).firstMatch
+        guard item.waitForExistence(timeout: 5) else {
+            XCTFail("The picker must offer \(option): " + app.debugDescription)
+            return false
+        }
+        item.tap()
+        let deadline = Date().addingTimeInterval(5)
+        while !pickerShows(option, picker), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        guard pickerShows(option, picker) else {
+            XCTFail("The \(identifier) picker must show \(option) once chosen; label=\(picker.label) value=\(String(describing: picker.value))")
+            return false
+        }
+        return true
+    }
+
+    private func pickerShows(_ option: String, _ picker: XCUIElement) -> Bool {
+        picker.label.contains(option) || (picker.value as? String)?.contains(option) == true
+    }
+
+    /// The id of the one song of `album` named `title`, read from the disposable server.
+    @MainActor
+    private func serverSongID(_ title: String, album: String, configuration: LivePlaybackConfiguration) -> String? {
+        let songs = (restCall("search3", [
+            URLQueryItem(name: "query", value: title), URLQueryItem(name: "songCount", value: "20"),
+            URLQueryItem(name: "albumCount", value: "0"), URLQueryItem(name: "artistCount", value: "0"),
+        ], configuration: configuration)?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
+        let matches = songs.filter { $0["title"] as? String == title && $0["album"] as? String == album }
+        guard matches.count == 1, let id = matches[0]["id"] as? String else {
+            XCTFail("\(matches.count) songs named \(title) on \(album); exactly one is required")
+            return nil
+        }
+        return id
+    }
+
+    private struct ServerLyricsLayer {
+        let synced: Bool
+        let lines: [String]
+    }
+
+    /// The server's own lyrics layers for a song, from `getLyricsBySongId`.
+    private func serverLyricsLayers(songID: String, configuration: LivePlaybackConfiguration) -> [ServerLyricsLayer]? {
+        guard let list = restCall("getLyricsBySongId", [URLQueryItem(name: "id", value: songID)],
+                                  configuration: configuration)?["lyricsList"] as? [String: Any] else { return nil }
+        let structured = list["structuredLyrics"] as? [[String: Any]] ?? []
+        return structured.map { layer in
+            ServerLyricsLayer(
+                synced: layer["synced"] as? Bool ?? false,
+                lines: (layer["line"] as? [[String: Any]] ?? []).compactMap { $0["value"] as? String }
+            )
+        }
+    }
+
+    private struct LyricsFaultProxy {
+        let url: String
+    }
+
+    private struct LyricsFaultObservations {
+        let failed: Int
+        let forwardedAfterDisarm: Int
+    }
+
+    /// The lyrics fault proxy in front of the disposable server, after checking that it is a
+    /// loopback proxy, that it answers, and that it serves the same library as the server.
+    @MainActor
+    private func lyricsFaultProxyConfiguration(server: LivePlaybackConfiguration) -> LyricsFaultProxy? {
+        guard let url = runtimeValue(environment: "DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL",
+                                     argument: "-dulcet-ui-test-lyrics-fault-proxy-url") else {
+            XCTFail("DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL must name the lyrics fault proxy")
+            return nil
+        }
+        guard Self.isLoopbackHost(URLComponents(string: url)?.host?.lowercased() ?? "") else {
+            XCTFail("The lyrics fault proxy must be a loopback host")
+            return nil
+        }
+        let proxy = LyricsFaultProxy(url: url)
+        // Up to three bounded attempts: the first request a freshly launched runner sends has
+        // been seen to stall past its 10 s bound (OBSERVED once locally, under host load).
+        var attempts = 0
+        var healthy = false
+        while !healthy, attempts < 3 {
+            attempts += 1
+            healthy = proxyRequest("GET", "/__dulcet/health", proxy: proxy)?["ok"] as? Bool == true
+        }
+        print("DULCET LYRICS FAULT PROXY health attempts=\(attempts) healthy=\(healthy)")
+        guard healthy else {
+            XCTFail("The lyrics fault proxy must answer its health check; \(attempts) attempts")
+            return nil
+        }
+        // Server identity: the proxy's library is the server's, by a song id read through both.
+        let through = LivePlaybackConfiguration(serverURL: url, username: server.username, password: server.password)
+        let direct = serverSongID("Thirty One Seconds", album: "Threshold Boundary", configuration: server)
+        let proxied = serverSongID("Thirty One Seconds", album: "Threshold Boundary", configuration: through)
+        guard direct != nil, direct == proxied else {
+            XCTFail("The lyrics fault proxy must front the disposable server; direct=\(String(describing: direct)) proxied=\(String(describing: proxied))")
+            return nil
+        }
+        return proxy
+    }
+
+    @discardableResult
+    private func proxyLyricsFailure(song: String, on: Bool, proxy: LyricsFaultProxy) -> LyricsFaultObservations? {
+        observations(proxyRequest("POST", "/__dulcet/lyrics-failure?song=\(song)&state=\(on ? "on" : "off")", proxy: proxy))
+    }
+
+    private func proxyObservations(song: String, proxy: LyricsFaultProxy) -> LyricsFaultObservations? {
+        observations(proxyRequest("GET", "/__dulcet/observations?song=\(song)", proxy: proxy))
+    }
+
+    private func observations(_ body: [String: Any]?) -> LyricsFaultObservations? {
+        guard let body, let failed = body["failed"] as? Int, let forwarded = body["forwardedAfterDisarm"] as? Int else {
+            XCTFail("The lyrics fault proxy must report its observations")
+            return nil
+        }
+        return LyricsFaultObservations(failed: failed, forwardedAfterDisarm: forwarded)
+    }
+
+    /// One control request to the proxy: credential-free, so it may be named in a failure.
+    private func proxyRequest(_ method: String, _ path: String, proxy: LyricsFaultProxy) -> [String: Any]? {
+        guard let url = URL(string: proxy.url + path) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        final class Outcome: @unchecked Sendable { var data: Data? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if error == nil, (response as? HTTPURLResponse)?.statusCode == 200 { outcome.data = data }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 10) == .success else {
+            task.cancel()
+            print("DULCET LYRICS FAULT PROXY \(method) \(path) timed out")
+            return nil
+        }
+        return outcome.data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    /// The size of the server's log, or nil when it cannot be read.
+    private func serverLogSize(_ path: String) -> UInt64? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.seekToEnd()
+    }
+
+    /// The server's "Streaming file" lines written after `offset`, as their key=value fields.
+    private func serverStreamLines(_ path: String, from offset: UInt64) -> [[String: String]] {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").filter { $0.contains("msg=\"Streaming file\"") }.map { line in
+            var fields: [String: String] = [:]
+            var rest = Substring(line)
+            while let equals = rest.firstIndex(of: "=") {
+                let key = rest[..<equals].split(separator: " ").last.map(String.init) ?? ""
+                rest = rest[rest.index(after: equals)...]
+                let value: Substring
+                if rest.first == "\"" {
+                    let body = rest.dropFirst()
+                    let end = body.firstIndex(of: "\"") ?? body.endIndex
+                    value = body[..<end]
+                    rest = end < body.endIndex ? body[body.index(after: end)...] : ""
+                } else {
+                    let end = rest.firstIndex(of: " ") ?? rest.endIndex
+                    value = rest[..<end]
+                    rest = rest[end...]
+                }
+                if !key.isEmpty { fields[key] = String(value) }
+            }
+            return fields
+        }
     }
 
     /// Now Playing's heart for the playing track (spec §16.20) on iPhone, in the player sheet.

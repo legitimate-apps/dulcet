@@ -1735,7 +1735,13 @@ bytes never reach `countOfBytesReceived` either, so the Apple client's end-of-es
 2026-09-30 and 2026-10-01) cannot keep them: a short estimated body can lose its tail, and one whose
 every byte arrives before the first hand-over fails as `Unreachable`. **ASSUMED:** a full-length track
 is not exposed to the second case, because its body cannot all arrive before the session hands over
-a first read; nothing has measured it. No validator, download promoter, or platform media loader may collapse those
+a first read; nothing has measured it. **The Apple playback loader is a second client with its own
+session** (`DulcetURLSessionPlaybackResource`): it reads each chunk through its delegate and, when a
+200 body ends in the -1005 after at least one byte, hands what arrived to the core validator, which
+accepts it only when the plan's length is an estimate; refused, with no byte, or on a 200 that declared
+no length, the load stays the lost connection. A cold transcode answers the loader's first ranged read with 200 and the whole
+representation, which the loader accepts as the resource only from byte 0 and only at the length
+the validator measured (§28, 2026-10-02). No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
 this path so the UI never claims a negotiated result.
 
@@ -6459,15 +6465,20 @@ because the median is above 75 minutes. Either reading adopts the split.
    `dulcet-apple-parity-evidence-apple-platform-36188503621-1` alongside the conformance leg's
    `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
 5. **Each leg's timeout is 1.5 times its measured maximum, rounded up to a multiple of 5:** 80
-   minutes for `apple-platform` (measured maximum 51.5, run 36196670168) and 115 for
-   `apple-conformance` (measured maximum 74.6, run 36205806012). The aggregator gets 5. The legs
-   were first sized the same way from projected maxima, 95 from 60.2 and 110 from 71.3; measured
-   history replaced the projection once the conformance leg exceeded its own. Each leg's cap must
+   minutes for `apple-platform` (measured maximum 51.5, run 36196670168) and 215 for
+   `apple-conformance`. The conformance figure is a projection until it is re-measured: its
+   measured maximum, 113.5 (run 36896866024), plus 27 minutes for the lyrics-state and
+   streaming-quality proofs, ASSUMED from their 10.2 minutes of local test time at the 2.2x that
+   tvOS Now Playing's proof showed between a local run and the leg, plus their nine `xcodebuild`
+   invocations. The aggregator gets 5. The legs were first sized the same way from projected maxima,
+   95 from 60.2 and 110 from 71.3; measured history replaced the projection once the conformance leg
+   exceeded its own, and it was 115 from 74.6 until the proofs above joined it. Each leg's cap must
    also exceed every one of its step caps plus the rest of that leg as measured, or a healthy step
    is killed by the job and reported against whichever step was active: the worst case is 74.1
-   for the platform leg and 103.5 for the conformance leg. The composite's own cap is 85 minutes,
-   raised from the single job's 67 after it measured 62.2 on a slow host. Every other per-step cap
-   is unchanged. Re-size from the legs' history as it grows.
+   for the platform leg and 179.8 for the conformance leg. The composite's own cap is 150 minutes,
+   1.37x its projected maximum of 110.7 (measured 83.7, plus the same 27), the ratio its earlier 85
+   had to the 62.2 it was raised from. Every other per-step cap is unchanged. Re-size from the
+   legs' history as it grows.
 6. **`tools/verify_ci_policy.py` enforces the shape, and a control proves each rule fires.** The
    aggregator must be named `apple-ci` and must run `if: always()`. It must need every macOS job and
    test each leg's result for `success` in an unconditional step. It must make exactly one direct
@@ -7341,6 +7352,37 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-02 — The Apple playback loader ends an estimated body at the bytes it received, and
+takes a cold transcode's whole answer (§12.5).** The Mac streaming-quality proof's play never
+started on apple-ci (runs 36997213085, 37001712209: `now playing=nil`). Cause, OBSERVED in both
+runs' app log: the loader's read of the 96 kbps stream of "Dulcet Health Probe" ended `failed strict
+content length check - expected: 24576, received: 23385` and `-1005`. The loader
+(`DulcetURLSessionPlaybackResource`) read through a completion-handler task, which is given no
+data when a task ends in an error, so the core client's end-of-estimate rule (2026-09-30) never
+applied on this path: every first play of an uncached capped legacy transcode failed as `transport`.
+Reproduced locally against Navidrome 0.63.2 with an empty transcoding cache (1 of 1; with a warm
+cache the stream is exact and the proof passed, which is why it did not reproduce at first). A
+direct URLSession probe of 6 uncached transcodes: the completion handler got no body all 6 times;
+the same reads through a delegate received the whole body before the -1005 in 8 of 8 idle and 30 of
+30 under 16 busy loops, so the session-discard case (2026-10-01) was not met against this server.
+
+Two defects, both fixed in DulcetKit, each with a test that failed before the fix:
+1. The loader now accumulates the body in its delegate. A 200 body ended by
+   `NSURLErrorNetworkConnectionLost` after at least one byte goes to the validator, which accepts it
+   only for an estimated length (`validateAppleRangeAndTotalLength`); a refusal, a 206, a 200 that
+   declared no length, or no byte at all stays the lost connection, `transport` (`PlaybackResourceLoadingTests`).
+2. A cold transcode honours no range: Navidrome answered the loader's `bytes=0-262143` for a
+   2-minute FLAC capped at 96 kbps with 200 and all 1,440,509 bytes (OBSERVED). The loader refused
+   any body longer than its chunk as `protocolViolation`, so with (1) alone a full-length track
+   still failed its first capped play (OBSERVED in the hosted Mac proof pointed at that track). A
+   body longer than the chunk is now accepted when the chunk starts at byte 0 and the body is the
+   validated length (`AVPlayerWholeRepresentationTests`).
+
+OBSERVED after both, hosted Mac proof on an empty transcoding cache each time: "Dulcet Health Probe"
+3 of 3, the 2-minute track 2 of 2. This revises 2026-10-01's ASSUMED "a full-length track is not
+exposed": it was not exposed to the discard, but it failed for reason (2). Not driven here: iOS,
+iPadOS and tvOS (same DulcetKit code), and real hardware.
 
 **2026-10-01 — The Darwin -1005 flake is the session discarding bytes it never handed over, not the
 forwarded-byte gate; #186 is re-landed (§12.5).** `DarwinEstimatedLengthBodyTest` failed on apple-ci's

@@ -523,6 +523,14 @@ schemes:
         - variable: DULCET_CONFORMANCE_DISPOSABLE
           value: "$(DULCET_TEST_CONFORMANCE_DISPOSABLE)"
           isEnabled: true
+        # The Mac lyrics and streaming-quality proofs' fixtures: the lyrics fault proxy in front
+        # of the disposable server, and that server's own log, read for the capped stream.
+        - variable: DULCET_LYRICS_FAULT_PROXY_URL
+          value: "$(DULCET_TEST_LYRICS_FAULT_PROXY_URL)"
+          isEnabled: true
+        - variable: DULCET_SERVER_LOG
+          value: "$(DULCET_TEST_SERVER_LOG)"
+          isEnabled: true
   DulcetMacRelease:
     build:
       targets:
