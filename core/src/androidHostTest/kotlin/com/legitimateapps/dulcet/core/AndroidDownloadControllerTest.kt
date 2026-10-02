@@ -151,6 +151,35 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun aRelaunchResumesAStoppedTransferEvenWhenItsPlatformTaskWasLost(): Unit = runBlocking {
+        val stopped = CountDownLatch(1)
+        WireServer { request -> rangeAware(request, stopped) }.use { server ->
+            val firstTasks = RecordingTasks()
+            val first = controller(server, firstTasks)
+            first.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = firstTasks.started.single()
+            val partial = stopMidBody(first, task, stopped)
+            val kept = partial.length()
+            assertTrue(kept in STOP_AT until AUDIO.size.toLong())
+            first.close()
+
+            // A fresh controller opens the same on-disk DB and directory, but WorkManager no
+            // longer holds the old task. Recovery must restart the task without losing its bytes.
+            val nextTasks = RecordingTasks()
+            val relaunched = controller(server, nextTasks)
+            assertTrue(relaunched.awaitReconciled())
+            relaunched.scheduleNext()
+            assertEquals(listOf(task), nextTasks.started)
+            assertEquals(kept, partial.length(), "relaunch must retain the resumable prefix")
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, relaunched.runTask(task))
+
+            assertEquals(listOf(null, "bytes=$kept-"), server.requests.map { it.headers["range"] })
+            assertContentEquals(AUDIO, File(root, rows().single().file_relative_path).readBytes())
+            assertFalse(partial.exists())
+            assertNotNull(relaunched.localPlan(RAW_ID))
+        }
+    }
+
     @Test fun aResumeAnsweredForADifferentFileRestartsFromZeroAndNeverStitches() = runBlocking {
         val stopped = CountDownLatch(1)
         val changed = AUDIO.copyOf().also { it[AUDIO.size - 1] = 7 } + ByteArray(333) { 5 }
