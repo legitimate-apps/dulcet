@@ -258,16 +258,21 @@ final class HostedApp {
     }
 
     /// A left click at a point on screen, sent to the window as the event a mouse makes, so it
-    /// reaches whichever control is drawn there by the window's own hit testing.
+    /// reaches whichever control is drawn there by the window's own hit testing. The mouse-up is
+    /// queued before the mouse-down is sent: a control that tracks the mouse (a toolbar's
+    /// NSButton) takes its mouse-up from the event queue inside the mouse-down's `sendEvent`, and
+    /// one sent after that call returns never arrives.
     func click(atScreenPoint point: NSPoint) throws {
         let location = window.convertPoint(fromScreen: point)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = try XCTUnwrap(NSEvent.mouseEvent(
+        func event(_ type: NSEvent.EventType) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(
                 with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0
             ))
-            window.sendEvent(event)
         }
+        let down = try event(.leftMouseDown)
+        NSApp.postEvent(try event(.leftMouseUp), atStart: false)
+        window.sendEvent(down)
     }
 
     // MARK: The sidebar, menus and alerts
