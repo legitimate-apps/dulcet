@@ -163,6 +163,7 @@ final class DulcetMacLyricsAndQualityAppTest: XCTestCase {
             "The choices must be saved through the installed setting")
         XCTAssertEqual(app.streamingQuality.currentQuality, StreamingQuality.kbps96,
             "This Mac's network must be unmetered, so the Wi-Fi choice is the one the next resolve applies")
+        settings.orderOut(nil)
 
         try await app.play(query: track, track: track)
         var lines: [[String: String]] = []
@@ -343,6 +344,9 @@ private final class HostedApp {
             (fieldElement as? NSTextField) ?? (fieldElement as? NSCell)?.controlView as? NSTextField,
             "dulcet.search.field must resolve to NSTextField; observed \(type(of: fieldElement))"
         )
+        // Typed keys go to the key window; a Settings window an earlier step made key would take them.
+        window.makeKeyAndOrderFront(nil)
+        print("OBSERVED play: app window key=\(window.isKeyWindow) keyWindow=\(NSApp.keyWindow?.title ?? "nil")")
         XCTAssertTrue(window.makeFirstResponder(field), "The search field must take focus")
         // A query an earlier step typed is selected, so the typing replaces it.
         field.currentEditor()?.selectAll(nil)
