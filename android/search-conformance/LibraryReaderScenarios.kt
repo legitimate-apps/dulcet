@@ -1079,6 +1079,141 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     }
 
     /**
+     * CONF-90 through the phone's playlist page (§18.6): a removal tapped on a view that another client
+     * has since changed on the server is refused — nothing written, no song removed, the page saying
+     * so and showing the server's version — and the same removal on the now-current view (the
+     * control) removes exactly the song intended.
+     */
+    fun conf90ARemovalOnAViewChangedElsewhereIsRefusedUnwrittenAndTheControlRemovesTheIntendedSong() {
+        val songs = albumSongs(OPENED_ALBUM)
+        assertTrue(songs.size >= 4, "setup: the album needs four songs")
+        val made = songs.take(4)
+        val id = server.createPlaylist(PLAYLIST_STALE, made)
+        ui.openLibrary()
+        awaitHomeLive()
+        openPlaylist(PLAYLIST_STALE)
+        await("the page live with every entry") { frames("playlist:$id").lastOrNull()?.let { it.freshness == AndroidLibraryFreshness.Live && it.itemRawIds == made } == true }
+        compose.onNodeWithTag("playlist.edit").performClick()
+        compose.waitForIdle()
+
+        // Another client removes the first song. The page still shows four entries; the third of them
+        // is the song meant, and the third of the server's list is now a different one.
+        val elsewhere = made.drop(1)
+        server.replacePlaylistEntries(id, elsewhere)
+        assertEquals(elsewhere, server.playlistEntries(id), "setup: the other client's change is on the server")
+        assertEquals(made, frames("playlist:$id").last().itemRawIds, "setup: the page still shows the view as it was")
+        val meant = made[2]
+        assertTrue(elsewhere[2] != meant, "setup: the stale position names a different song on the server")
+        val mark = proxy.size()
+        removeEntry(2)
+        await("the change refused as made elsewhere") {
+            observed().playlistOutcomes.any { it is AndroidPlaylistOutcome.ChangedElsewhere && it.playlistId == id }
+        }
+        await("the page showing the server's version") { frames("playlist:$id").lastOrNull()?.itemRawIds == elsewhere }
+        awaitQuiet()
+        val refusedWrites = readerRequests(mark).filter { it.endpoint in PLAYLIST_WRITES }
+        assertEquals(emptyList(), refusedWrites.map { it.endpoint }, "nothing was written over the changed list")
+        assertEquals(elsewhere, server.playlistEntries(id), "no song was removed")
+        await("the page saying why") { exists("playlist.outcome") }
+        compose.onNodeWithTag("playlist.outcome").assertTextEquals(CHANGED_ELSEWHERE_COPY)
+
+        // The control: the same song removed from the view the server now holds.
+        if (!exists("playlist.entry.0.remove")) {
+            compose.onNodeWithTag("playlist.edit").performClick()
+            compose.waitForIdle()
+        }
+        val controlMark = proxy.size()
+        val position = elsewhere.indexOf(meant)
+        removeEntry(position)
+        val expected = elsewhere.filterIndexed { index, _ -> index != position }
+        await("the removal on the server") { server.playlistEntries(id) == expected }
+        await("the page showing it") { frames("playlist:$id").lastOrNull()?.itemRawIds == expected }
+        awaitQuiet()
+        assertEquals(1, observed().playlistOutcomes.count { it is AndroidPlaylistOutcome.ChangedElsewhere && it.playlistId == id },
+            "the control was not refused: ${observed().playlistOutcomes}")
+        assertTrue(observed().playlistOutcomes.any { it is AndroidPlaylistOutcome.Saved && it.playlistId == id },
+            "the control was saved: ${observed().playlistOutcomes}")
+        val controlWrites = readerRequests(controlMark).filter { it.endpoint in PLAYLIST_WRITES }
+        assertTrue(controlWrites.isNotEmpty(), "control: the removal was sent")
+        assertNoCredentialLeak()
+        println("CONF-90 OBSERVED $platform view=${made.size} server-after-other-client=${elsewhere.size} refused-writes=0 " +
+            "server-unchanged=true outcome=ChangedElsewhere control-writes=${controlWrites.map { it.endpoint }} " +
+            "control-removed=meant-song-only")
+    }
+
+    /**
+     * CONF-91 through the phone (§18.6, §10.4): another user's public playlist, seen by this
+     * account — the fixture's admin, which the server would let edit it — opens read-only: the page
+     * names its owner, offers no edit, rename or delete, and the add-to-playlist sheet does not list
+     * it; nothing is written and the server's playlist is unchanged. The account's own playlist is
+     * the control: its page offers editing and the sheet lists it.
+     */
+    fun conf91AnotherUsersPlaylistIsReadOnlyInTheAppAndTheOwnPlaylistIsTheControl() {
+        val songs = albumSongs(OPENED_ALBUM)
+        val other = environment.otherUser()
+        val othersId = other.createPlaylist(PLAYLIST_OTHERS, songs.take(2))
+        other.makePublic(othersId)
+        assertEquals(ProductionLibraryEnvironment.OTHER_USERNAME to true, server.playlistOwnership(othersId),
+            "setup: this account sees the other user's playlist as theirs, and public")
+        val ownId = server.createPlaylist(PLAYLIST_OWN, songs.take(1))
+        val mark = proxy.size()
+        ui.openLibrary()
+        awaitHomeLive()
+
+        openPlaylist(PLAYLIST_OTHERS)
+        await("the other user's page live") {
+            frames("playlist:$othersId").lastOrNull()?.let { it.freshness == AndroidLibraryFreshness.Live && it.itemRawIds == songs.take(2) } == true
+        }
+        compose.onNodeWithTag("playlist.owner").assertTextEquals("${ProductionLibraryEnvironment.OTHER_USERNAME}'s playlist · read-only")
+        for (control in listOf("playlist.edit", "playlist.menu", "playlist.entry.0.remove", "playlist.entry.0.down")) {
+            assertTrue(!exists(control), "another user's playlist offers $control")
+        }
+        compose.onNodeWithTag("playlist.back").performClick()
+        compose.waitForIdle()
+
+        // The control: this account's own playlist offers editing.
+        openPlaylist(PLAYLIST_OWN)
+        await("the own page live") { frames("playlist:$ownId").lastOrNull()?.freshness == AndroidLibraryFreshness.Live && exists("playlist.title") }
+        assertTrue(exists("playlist.edit") && exists("playlist.menu"), "control: the account's own playlist offers editing")
+        assertTrue(!exists("playlist.owner"), "control: the account's own playlist names no other owner")
+        compose.onNodeWithTag("playlist.back").performClick()
+        compose.waitForIdle()
+
+        // The add-to-playlist sheet lists only playlists this account may change.
+        ui.activate(compose.onNodeWithTag("library.view.home"))
+        openHomeAlbum(OPENED_ALBUM)
+        await("the album live") { exists("album.addToPlaylist") }
+        compose.onNodeWithTag("album.addToPlaylist").performClick()
+        await("the sheet lists the own playlist") { listed("playlists.add.item", PLAYLIST_OWN) != null }
+        assertEquals(null, listed("playlists.add.item", PLAYLIST_OTHERS), "the sheet offers another user's playlist")
+        awaitQuiet()
+        assertEquals(emptyList(), readerRequests(mark).filter { it.endpoint in PLAYLIST_WRITES }.map { it.endpoint },
+            "nothing was written")
+        assertEquals(songs.take(2), other.playlistEntries(othersId), "the other user's playlist is unchanged")
+        assertNoCredentialLeak()
+        println("CONF-91 OBSERVED $platform others-public-readonly-page=true owner-line=true edit-controls=0 " +
+            "sheet-lists-others=false own-control-editable=true writes=0 server-unchanged=true")
+    }
+
+    private fun albumSongs(title: String): List<String> {
+        val album = server.get("getAlbum", mapOf("id" to server.albumId(title))).getJSONObject("album").getJSONArray("song")
+        return (0 until album.length()).map { album.getJSONObject(it).getString("id") }
+    }
+
+    private fun openPlaylist(name: String) {
+        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        await("$name listed") { listed("library.playlists.item", name) != null }
+        ui.activate(compose.onNodeWithTag(listed("library.playlists.item", name)!!))
+    }
+
+    private fun removeEntry(position: Int) {
+        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries"))
+            .performScrollToNode(hasTestTag("playlist.entry.$position.remove"))
+        compose.onNodeWithTag("playlist.entry.$position.remove").performClick()
+        compose.waitForIdle()
+    }
+
+    /**
      * A track with synced lyrics in three languages plays, and Now Playing's lyrics show the
      * server's English layer — the core's choice for this device — synced, read live through the
      * endpoint the server advertises; a track with none says so.
@@ -1400,6 +1535,11 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         const val PLAYLIST_ORDER = "Dulcet test order"
         const val PLAYLIST_EDIT = "Dulcet test edits"
         const val PLAYLIST_RENAMED = "Dulcet test edits renamed"
+        const val PLAYLIST_STALE = "Dulcet test stale view"
+        const val PLAYLIST_OTHERS = "Dulcet test another user's"
+        const val PLAYLIST_OWN = "Dulcet test own"
+        const val CHANGED_ELSEWHERE_COPY =
+            "This playlist changed on another device, so your change wasn't sent. Showing your server's version."
         val PLAYLIST_WRITES = setOf("createPlaylist", "updatePlaylist", "deletePlaylist")
         /** Embedded synced lyrics in three languages (the CONF-42 fixture). */
         const val LYRICS_TRACK = "Twenty Nine Seconds"

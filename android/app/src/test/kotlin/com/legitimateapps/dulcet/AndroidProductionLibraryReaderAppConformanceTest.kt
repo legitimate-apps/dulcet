@@ -118,6 +118,12 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     @Test fun aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer() =
         scenarios.aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer()
 
+    @Test fun conf90ARemovalOnAViewChangedElsewhereIsRefusedUnwrittenAndTheControlRemovesTheIntendedSong() =
+        scenarios.conf90ARemovalOnAViewChangedElsewhereIsRefusedUnwrittenAndTheControlRemovesTheIntendedSong()
+
+    @Test fun conf91AnotherUsersPlaylistIsReadOnlyInTheAppAndTheOwnPlaylistIsTheControl() =
+        scenarios.conf91AnotherUsersPlaylistIsReadOnlyInTheAppAndTheOwnPlaylistIsTheControl()
+
     @Test fun aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntryTapped() =
         scenarios.aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected {}
 
