@@ -417,6 +417,7 @@ private final class HostedApp {
             var offered: [String] = []
             var performed = false
             var opened = false
+            var ended = false
             var menu: NSMenu?
         }
         let tracking = Tracking()
@@ -439,47 +440,38 @@ private final class HostedApp {
                 }
             }
         }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let endObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil
+        ) { notification in
+            if tracking.menu != nil, notification.object as? NSMenu === tracking.menu { tracking.ended = true }
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+            NotificationCenter.default.removeObserver(endObserver)
+        }
         // AXPress returns before the menu opens: SwiftUI opens it on a later turn of the main run
         // loop (OBSERVED on macOS 26), which the wait below spins.
-        try press(picker, named: identifier)
-        let opened = await poll(for: .seconds(5)) { tracking.opened }
-        if opened {
-            print("OBSERVED \(identifier): chosen through its menu opened by AXPress")
-            XCTAssertTrue(tracking.offered.contains(option), "\(identifier) must offer \(option); offers \(tracking.offered)")
-        } else {
-            // A host whose window server does not track menus for this process (OBSERVED on the CI
-            // macOS host: AXPress returned and no menu began tracking). The same control is then
-            // driven directly: the picker's own pop-up button selects the item and sends its action,
-            // which is what a click on the item does.
-            let button = try XCTUnwrap(popUpButton(in: picker, root: root),
-                "\(identifier) opened no menu on AXPress and has no pop-up button to drive")
-            let titles = button.itemTitles
-            XCTAssertTrue(titles.contains(option), "\(identifier) must offer \(option); offers \(titles)")
-            button.selectItem(withTitle: option)
-            _ = button.sendAction(button.action, to: button.target)
-            tracking.performed = true
-            print("OBSERVED \(identifier): no menu tracked on AXPress; chosen through its NSPopUpButton")
+        // On the CI macOS host a press can be dropped (OBSERVED: the second picker's AXPress opened
+        // no menu while the first picker's had), so the press is repeated, up to three times, until a
+        // menu begins tracking. Every choice goes through the opened menu; there is no other path.
+        var presses = 0
+        while presses < 3 {
+            presses += 1
+            try press(picker, named: identifier)
+            if await poll(for: .seconds(5), { tracking.opened }) { break }
         }
+        try await waitUntil(timeout: .seconds(1), "\(identifier) opens its menu on AXPress (\(presses) presses)") {
+            tracking.opened
+        }
+        print("OBSERVED \(identifier): menu opened on press \(presses)")
+        XCTAssertTrue(tracking.offered.contains(option), "\(identifier) must offer \(option); offers \(tracking.offered)")
+        // The menu must have finished closing before anything else is pressed.
+        try await waitUntil(timeout: .seconds(5), "\(identifier)'s menu ends tracking") { tracking.ended }
         try await waitUntil(timeout: .seconds(5), "\(identifier) shows \(option); reads \(self.label(picker) ?? "nil")") {
             root.layoutSubtreeIfNeeded()
             return tracking.performed && ((self.label(picker) ?? "").contains(option)
                 || (self.value("accessibilityValue", of: picker) as? String)?.contains(option) == true)
         }
-    }
-
-    /// The NSPopUpButton behind a SwiftUI menu picker: the element itself, or the one in `root`
-    /// whose accessibility identifier is the picker's.
-    private func popUpButton(in picker: Any, root: NSView) -> NSPopUpButton? {
-        if let button = picker as? NSPopUpButton { return button }
-        if let cell = picker as? NSCell, let button = cell.controlView as? NSPopUpButton { return button }
-        let wanted = identifier(picker)
-        var stack: [NSView] = [root]
-        while let view = stack.popLast() {
-            if let button = view as? NSPopUpButton, wanted == nil || identifier(button) == wanted { return button }
-            stack.append(contentsOf: view.subviews)
-        }
-        return nil
     }
 
     private func poll(for timeout: Duration, _ condition: () -> Bool) async -> Bool {
