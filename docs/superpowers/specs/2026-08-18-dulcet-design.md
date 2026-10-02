@@ -3834,7 +3834,8 @@ under an unchanged epoch.
    viewport (for a single-response list, the response; for a detail screen, the detail read), under
    §16.12's rules. It happens when a screen opens online, when the epoch changes while it is visible,
    and on an explicit refresh — unless those pages were read live under the current epoch within the
-   last **60 seconds** (ASSUMED). It is stale-while-revalidate: the cached pages are already on
+   last **60 seconds** (ASSUMED). A server with no epoch has no current epoch, so this rule never
+   spares its screens: two no-epoch readings are never "unchanged". It is stale-while-revalidate: the cached pages are already on
    screen and are replaced in place when the read lands. **No spinner replaces content.**
 4. **Nothing off screen is revalidated speculatively**, with two bounded exceptions: detail
    look-ahead (§16.13), and the albums that contain downloaded tracks, which are re-read at
