@@ -72,7 +72,135 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         let removed = try await awaitRating(0, of: songID, on: server)
         XCTAssertEqual(removed, 0, "The click on the star shown must remove the rating on the server")
         print("DULCET MAC STARS PROOF PASS track=\(track.debugDescription) server-before=\(before) clicked=\(rating)"
-            + " other-client=\(elsewhere) shown-after-reopen=\(elsewhere) removed=0 frame=\(try reopened.frame(reread))")
+            + " other-client=\(elsewhere) shown-after-reopen=\(elsewhere) removed=0 frame=\(try reopened.frame(reread)) window-width=\(reopened.hostingView.bounds.width)")
+    }
+
+    /// Every playlist edit the Mac offers, made through the rendered views and read back from the
+    /// disposable server after each step:
+    ///
+    /// 1. New Playlist… in the Playlists list and its name alert create an empty playlist;
+    /// 2. an album tile's context menu, Add to Playlist… and the chooser append the album's tracks
+    ///    in album order;
+    /// 3. a track row's context menu adds one track, though the playlist already holds it;
+    /// 4. the edit list's remove button on the fourth entry removes that entry alone;
+    /// 5. the third entry's Move Up accessibility action, twice, brings it to the top (the Mac's
+    ///    list reorders by drag or by these actions; the actions are what VoiceOver and a test can
+    ///    reach without a synthesized drag);
+    /// 6. the page's menu renames it, and 7. deletes it after the confirmation alert;
+    /// 8. a rename of a playlist another client deleted is said on its page as a problem, and no
+    ///    playlist of the new name reaches the server.
+    ///
+    /// The window's width is whatever the host's screen allows, so nothing here depends on it.
+    func everyPlaylistEditReachesTheServerThroughTheHostedMacApp() async throws {
+        let server = try disposableServer()
+        let album = "Threshold Boundary"
+        let albumOrder = Self.albumOrder
+        let run = String(UUID().uuidString.prefix(8))
+        let name = "Dulcet Mac Edit Proof " + run
+        let renamed = name + " Renamed"
+        let doomed = "Dulcet Mac Failed Edit Proof " + run
+        let doomedRenamed = doomed + " Renamed"
+        addTeardownBlock {
+            for playlist in (try? await server.playlists()) ?? [] where playlist.name.contains(run) {
+                try? await server.deletePlaylist(playlist.id)
+            }
+        }
+        let canaryID = try await server.songID(albumOrder[2], album: album)
+        let doomedID = try await server.createPlaylist(doomed, songID: canaryID)
+
+        let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, toolbar: true)
+        defer { app.close() }
+
+        // 1. Create.
+        try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.playlists")
+        let new = try await app.element(identifiedBy: "dulcet.playlists.new", timeout: .seconds(15))
+        try app.press(new, named: "dulcet.playlists.new")
+        try await app.answerAlert(typing: name, pressing: "Create", described: "New Playlist")
+        let playlistID = try await awaitPlaylist(named: name, on: server)
+        let created = try await server.playlistEntries(playlistID)
+        XCTAssertEqual(created, [], "A new playlist starts empty")
+
+        // 2. Add an album from its tile's context menu.
+        try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.albums")
+        let tile = try await app.element(timeout: .seconds(30), described: "the \(album) tile") {
+            app.identifier($0) == "dulcet.library.album" && (app.label($0) ?? "").hasPrefix(album)
+        }
+        try await addToPlaylist(name, fromContextMenuOf: tile, in: app)
+        let withAlbum = try await awaitEntries(albumOrder, of: playlistID, on: server)
+        XCTAssertEqual(withAlbum, albumOrder, "Adding the album must append its tracks in album order")
+
+        // 3. Add a track from its row's context menu.
+        try app.press(tile, named: "the \(album) tile")
+        let row = try await app.element(timeout: .seconds(15), described: "the \(albumOrder[0]) row") {
+            app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(albumOrder[0])
+        }
+        try await addToPlaylist(name, fromContextMenuOf: row, in: app)
+        let withTrack = albumOrder + [albumOrder[0]]
+        let added = try await awaitEntries(withTrack, of: playlistID, on: server)
+        XCTAssertEqual(added, withTrack, "Adding a track must append it, even when the playlist already holds it")
+
+        // 4-5. Remove by position, then reorder, in the edit list.
+        try await openPlaylist(name, in: app)
+        let edit = try await app.element(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
+        try await waitUntil(timeout: .seconds(15), "Edit must be enabled once the entries are read") {
+            (edit as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
+        }
+        try app.press(edit, named: "dulcet.playlist.edit")
+        let removes = try await removeButtons(count: 4, in: app)
+        try app.press(removes[3], named: "the fourth entry's remove button")
+        let afterRemove = try await awaitEntries(albumOrder, of: playlistID, on: server)
+        XCTAssertEqual(afterRemove, albumOrder, "Removing the fourth entry must remove that entry alone, not the first of the same track")
+        _ = try await removeButtons(count: 3, in: app)
+        let offered = try app.performCustomAction("Move Up", on: try await entry(albumOrder[2], in: app), described: "the third entry")
+        let once = [albumOrder[0], albumOrder[2], albumOrder[1]]
+        let movedOnce = try await awaitEntries(once, of: playlistID, on: server)
+        XCTAssertEqual(movedOnce, once, "Move Up on the third entry must swap it with the second on the server")
+        try await waitUntil(timeout: .seconds(10), "the edit list must redraw the canary second") {
+            self.entryTitles(in: app).firstIndex(of: albumOrder[2]) == 1
+        }
+        try app.performCustomAction("Move Up", on: try await entry(albumOrder[2], in: app), described: "the second entry")
+        let reordered = [albumOrder[2], albumOrder[0], albumOrder[1]]
+        let movedTwice = try await awaitEntries(reordered, of: playlistID, on: server)
+        XCTAssertEqual(movedTwice, reordered, "Move Up again must bring the canary to the top on the server")
+        let done = try await app.windowElement(identifiedBy: "dulcet.playlist.done", timeout: .seconds(5))
+        try app.press(done, named: "dulcet.playlist.done")
+
+        // 6. Rename.
+        try await renamePlaylist(to: renamed, in: app)
+        try await waitUntil(timeout: .seconds(10), "the page must show the new name") {
+            app.firstElement(where: { app.identifier($0) == "dulcet.playlist.title" }).flatMap(app.label) == renamed
+        }
+        let serverName = try await awaitName(renamed, of: playlistID, on: server)
+        XCTAssertEqual(serverName, renamed, "The rename must reach the server")
+
+        // 7. Delete.
+        try await choosePlaylistMenuItem("Delete Playlist", in: app)
+        let confirmation = try await app.answerAlert(pressing: "Delete Playlist", described: "the delete confirmation")
+        let absent = try await awaitAbsent(playlistID, on: server)
+        XCTAssertTrue(absent, "The deleted playlist must be gone from the server")
+        try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.playlists")
+        try await waitUntil(timeout: .seconds(10), "the list must no longer show the deleted playlist") {
+            app.firstElement(where: { app.identifier($0) == "dulcet.library.playlist" && (app.label($0) ?? "").hasPrefix(renamed) }) == nil
+        }
+
+        // 8. A failed edit: the playlist is deleted elsewhere while its page is open.
+        try await openPlaylist(doomed, in: app)
+        try await server.deletePlaylist(doomedID)
+        let doomedAbsent = try await awaitAbsent(doomedID, on: server)
+        XCTAssertTrue(doomedAbsent, "The other client's delete must reach the server first")
+        XCTAssertNil(app.firstElement(where: { app.identifier($0) == "dulcet.playlist.problem" }),
+            "No problem may be said before the rename")
+        try await renamePlaylist(to: doomedRenamed, in: app)
+        let problem = try await app.element(identifiedBy: "dulcet.playlist.problem", timeout: .seconds(30))
+        let problemText = ((app.value("accessibilityChildren", of: problem) as? [Any]) ?? [])
+            .compactMap(app.label).filter { !$0.isEmpty }.joined(separator: " | ")
+        XCTAssertTrue(problemText.contains("no longer has this"),
+            "The problem must say the server no longer has the playlist; says \(problemText.debugDescription)")
+        let leaked = try await server.playlists().contains { $0.name == doomedRenamed }
+        XCTAssertFalse(leaked, "The failed rename must not reach the server under any id")
+        print("DULCET MAC PLAYLIST EDITS PROOF PASS window-width=\(app.hostingView.bounds.width) created=\(name.debugDescription)"
+            + " album-added=\(albumOrder.count) track-added=1 removed-index=3 move-up-offered=\(offered) reordered=\(reordered)"
+            + " renamed=true deleted=true confirmation=\(confirmation) failed-rename-problem=\(problemText.debugDescription)")
     }
 
     // MARK: - Helpers
@@ -134,7 +262,11 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     private func clickStar(_ star: Int, in app: HostedApp) async throws {
         let button = try await app.windowElement(identifiedBy: "dulcet.now-playing.rating.star.\(star)", timeout: .seconds(5))
         let frame = try app.frame(button)
-        XCTAssertGreaterThan(frame.width, 0, "Star \(star) must be drawn; frame=\(frame)")
+        // The window's width is whatever the host's screen allowed (a CI Mac fits the window to a
+        // narrower screen), so it is reported, never assumed; the stars live in the toolbar in
+        // either Now Playing layout.
+        XCTAssertGreaterThan(frame.width, 0, "Star \(star) must be drawn in the toolbar, not overflowed;"
+            + " frame=\(frame) window-width=\(app.hostingView.bounds.width)")
         try app.click(atScreenPoint: NSPoint(x: frame.midX, y: frame.midY))
     }
 
@@ -146,5 +278,130 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             observed = try await server.rating(songID)
         }
         return observed
+    }
+
+    // MARK: Playlist helpers
+
+    private static let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
+
+    /// A context menu's Add to Playlist…, then the named playlist in the chooser sheet.
+    private func addToPlaylist(_ name: String, fromContextMenuOf element: Any, in app: HostedApp) async throws {
+        try await app.chooseMenuItem("Add to Playlist\u{2026}", described: "the context menu") {
+            try app.rightClick(element)
+        }
+        let choice = try await app.sheetElement(timeout: .seconds(15), described: "\(name) in the chooser") {
+            app.identifier($0) == "dulcet.addToPlaylist.playlist" && (app.label($0) ?? "").hasPrefix(name)
+        }
+        try app.press(choice, named: "\(name) in the chooser")
+        try await waitUntil(timeout: .seconds(10), "the chooser must close after a choice") { !app.showsSheet }
+    }
+
+    private func openPlaylist(_ name: String, in app: HostedApp) async throws {
+        try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.playlists")
+        let row = try await app.element(timeout: .seconds(30), described: "the \(name) row") {
+            app.identifier($0) == "dulcet.library.playlist" && (app.label($0) ?? "").hasPrefix(name)
+        }
+        try app.press(row, named: "the \(name) row")
+        try await waitUntil(timeout: .seconds(15), "the page must open on \(name)") {
+            app.firstElement(where: { app.identifier($0) == "dulcet.playlist.title" }).flatMap(app.label) == name
+        }
+    }
+
+    private func renamePlaylist(to name: String, in app: HostedApp) async throws {
+        try await choosePlaylistMenuItem("Rename\u{2026}", in: app)
+        try await app.answerAlert(typing: name, pressing: "Rename", described: "Rename")
+    }
+
+    /// The page's menu of playlist edits opened by a click where it is drawn, the item `title`
+    /// performed from it. The menu is drawn -- its focus ring sits right of Edit -- but reaches
+    /// accessibility as no element at all: not among the window's elements, and a hit test at
+    /// its centre returns the scroll area (OBSERVED, macOS 26). So it is found by its focus
+    /// ring and clicked, the way a pointer reaches it.
+    private func choosePlaylistMenuItem(_ title: String, in app: HostedApp) async throws {
+        let edit = try await app.element(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
+        let editFrame = try app.frame(edit)
+        let rings = app.windowElements(where: { element in
+            guard String(describing: type(of: element)) == "_FocusRingView", let view = element as? NSView,
+                  let window = view.window else { return false }
+            let frame = window.convertToScreen(view.convert(view.bounds, to: nil))
+            return frame.minX > editFrame.maxX && abs(frame.midY - editFrame.midY) < 4
+        }).compactMap { element -> NSRect? in
+            guard let view = element as? NSView, let window = view.window else { return nil }
+            return window.convertToScreen(view.convert(view.bounds, to: nil))
+        }.sorted { $0.minX < $1.minX }
+        let ring = try XCTUnwrap(rings.first, "The playlist's menu must be drawn right of Edit (\(editFrame))")
+        XCTAssertNil(app.firstElement(where: { app.identifier($0) == "dulcet.playlist.more" }),
+            "dulcet.playlist.more reached accessibility; find it by its identifier instead")
+        try await app.chooseMenuItem(title, described: "the playlist's menu at \(ring)") {
+            try app.click(atScreenPoint: NSPoint(x: ring.midX, y: ring.midY))
+        }
+    }
+
+    /// The edit list's remove buttons, top first, once exactly `count` are drawn. Each is found
+    /// by its label inside an entry: the entry's identifier reaches the button too, over the
+    /// button's own `dulcet.playlist.entry.remove` (OBSERVED, macOS 26).
+    private func removeButtons(count: Int, in app: HostedApp) async throws -> [Any] {
+        var found: [Any] = []
+        try await waitUntil(timeout: .seconds(15), "the edit list must draw \(count) remove buttons; draws \(found.count);"
+            + " window holds \(app.windowElements(where: { (app.identifier($0) ?? "").hasPrefix("dulcet.") }).map { "\(app.identifier($0)!)=\(app.label($0) ?? "nil")" })") {
+            found = app.windowElements(where: {
+                (app.identifier($0) ?? "").hasPrefix("dulcet.playlist.entry") && app.label($0) == "Remove from Playlist"
+                    && (app.value("accessibilityRole", of: $0) as? String) == NSAccessibility.Role.button.rawValue
+            })
+                .sorted { ((try? app.frame($0).maxY) ?? 0) > ((try? app.frame($1).maxY) ?? 0) }
+            return found.count == count
+        }
+        return found
+    }
+
+    private func hasCustomActions(_ element: Any, in app: HostedApp) -> Bool {
+        !((app.value("accessibilityCustomActions", of: element) as? [NSAccessibilityCustomAction]) ?? []).isEmpty
+    }
+
+    /// The edit list's entry titled `title`: the element that carries the entry's actions.
+    private func entry(_ title: String, in app: HostedApp) async throws -> Any {
+        try await app.element(timeout: .seconds(10), described: "the \(title) entry with actions") {
+            app.identifier($0) == "dulcet.playlist.entry" && (app.label($0) ?? "").hasPrefix(title)
+                && self.hasCustomActions($0, in: app)
+        }
+    }
+
+    /// The edit list's entries' titles, top first.
+    private func entryTitles(in app: HostedApp) -> [String] {
+        app.windowElements(where: { app.identifier($0) == "dulcet.playlist.entry" && self.hasCustomActions($0, in: app) })
+            .sorted { ((try? app.frame($0).maxY) ?? 0) > ((try? app.frame($1).maxY) ?? 0) }
+            .compactMap { element in
+                let label = app.label(element) ?? ""
+                return Self.albumOrder.first { label.hasPrefix($0) }
+            }
+    }
+
+    /// Polls the server once a second for up to 30 s until `read` returns `done`; the last read.
+    private func poll<T>(_ read: () async throws -> T, until done: (T) -> Bool) async throws -> T {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        var observed = try await read()
+        while !done(observed), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .seconds(1))
+            observed = try await read()
+        }
+        return observed
+    }
+
+    private func awaitPlaylist(named name: String, on server: LiveServer) async throws -> String {
+        let matches = try await poll({ try await server.playlists().filter { $0.name == name } }, until: { !$0.isEmpty })
+        XCTAssertEqual(matches.count, 1, "The server must hold exactly one playlist named \(name.debugDescription)")
+        return try XCTUnwrap(matches.first?.id, "The new playlist must reach the server")
+    }
+
+    private func awaitEntries(_ expected: [String], of id: String, on server: LiveServer) async throws -> [String]? {
+        try await poll({ try await server.playlistEntries(id) }, until: { $0 == expected })
+    }
+
+    private func awaitName(_ expected: String, of id: String, on server: LiveServer) async throws -> String? {
+        try await poll({ try await server.playlists().first { $0.id == id }?.name }, until: { $0 == expected })
+    }
+
+    private func awaitAbsent(_ id: String, on server: LiveServer) async throws -> Bool {
+        try await poll({ try await server.playlists().allSatisfy { $0.id != id } }, until: { $0 })
     }
 }

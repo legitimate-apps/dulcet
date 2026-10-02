@@ -26,7 +26,7 @@ final class HostedApp {
     private let session: DulcetLibrarySession
     private let controller: DulcetCorePlaybackController
     private let window: NSWindow
-    private let hostingView: NSView
+    let hostingView: NSView
     private let defaultsSuite: String
     private let previousEnhancedUI: Any
 
@@ -226,6 +226,131 @@ final class HostedApp {
         }
     }
 
+    // MARK: The sidebar, menus and alerts
+
+    /// Selects the identified sidebar row the way a click does: the row the window's table draws
+    /// at that element's centre.
+    func selectSidebarRow(identifiedBy identifier: String) async throws {
+        let row = try await element(identifiedBy: identifier, timeout: .seconds(10))
+        _ = try selectTableRow(row)
+    }
+
+    /// A secondary click at the element's centre, sent to the window as a mouse's, so the context
+    /// menu of whatever the window hit-tests there opens.
+    func rightClick(_ element: Any) throws {
+        let screenFrame = try frame(element)
+        let location = window.convertPoint(fromScreen: NSPoint(x: screenFrame.midX, y: screenFrame.midY))
+        for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .rightMouseDown ? 1 : 0
+            ))
+            window.sendEvent(event)
+        }
+    }
+
+    /// Opens a menu with `open` -- a secondary click, or AXPress on a menu button -- and performs
+    /// the item titled `title` from inside the menu's tracking, which then ends. Returns what the
+    /// menu offered. A context menu tracks inside the click's `sendEvent`; a SwiftUI menu button
+    /// opens on a later turn of the run loop; the block below runs in either.
+    @discardableResult
+    func chooseMenuItem(_ title: String, described description: String, opening open: () throws -> Void) async throws -> [String] {
+        final class Tracking: @unchecked Sendable {
+            var offered: [String] = []
+            var performed = false
+            var opened = false
+            var menu: NSMenu?
+        }
+        let tracking = Tracking()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil
+        ) { notification in
+            guard !tracking.opened, let menu = notification.object as? NSMenu else { return }
+            tracking.opened = true
+            tracking.offered = menu.items.map(\.title)
+            tracking.menu = menu
+            RunLoop.main.perform(inModes: [.eventTracking, .common]) {
+                MainActor.assumeIsolated {
+                    guard let menu = tracking.menu else { return }
+                    if let index = menu.items.firstIndex(where: { $0.title == title && $0.isEnabled }) {
+                        menu.performActionForItem(at: index)
+                        tracking.performed = true
+                    }
+                    menu.cancelTracking()
+                }
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try open()
+        try await waitUntil(timeout: .seconds(5), "\(description) opens a menu") { tracking.opened }
+        try await waitUntil(timeout: .seconds(5), "\(description) performs \(title.debugDescription); offers \(tracking.offered)") {
+            tracking.performed
+        }
+        return tracking.offered
+    }
+
+    /// The alert the window shows as a sheet: `text` typed into its field when given, then the
+    /// button titled `button` pressed; waits for the sheet to go. Returns the alert's static texts.
+    @discardableResult
+    func answerAlert(typing text: String? = nil, pressing button: String, described description: String) async throws -> [String] {
+        try await waitUntil(timeout: .seconds(10), "\(description): the window must show an alert sheet") {
+            self.window.attachedSheet != nil
+        }
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let root = try XCTUnwrap(sheet.contentView?.superview ?? sheet.contentView)
+        root.layoutSubtreeIfNeeded()
+        let views = descendants(of: root).compactMap { $0 as? NSView }
+        let texts = views.compactMap { ($0 as? NSTextField).flatMap { $0.isEditable ? nil : $0.stringValue } }.filter { !$0.isEmpty }
+        if let text {
+            let field = try XCTUnwrap(views.compactMap { $0 as? NSTextField }.first { $0.isEditable },
+                "\(description): the alert must hold a text field; texts \(texts)")
+            XCTAssertTrue(sheet.makeFirstResponder(field), "\(description): the alert's field must take focus")
+            field.currentEditor()?.selectAll(nil)
+            try sendText(text, to: sheet)
+        }
+        let buttons = views.compactMap { $0 as? NSButton }
+        let target = try XCTUnwrap(buttons.first { $0.title == button },
+            "\(description): the alert must offer \(button.debugDescription); offers \(buttons.map(\.title)) texts \(texts)")
+        XCTAssertTrue(target.isEnabled, "\(description): \(button.debugDescription) must be enabled")
+        target.performClick(nil)
+        try await waitUntil(timeout: .seconds(10), "\(description): the alert must close") { self.window.attachedSheet == nil }
+        return texts
+    }
+
+    /// The sheet the window shows -- a chooser, not an alert -- searched like the window.
+    func sheetElement(timeout: Duration, described description: String, where matches: @escaping (Any) -> Bool) async throws -> Any {
+        try await waitUntil(timeout: timeout, "\(description): the window must show a sheet") { self.window.attachedSheet != nil }
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let root = try XCTUnwrap(sheet.contentView?.superview ?? sheet.contentView)
+        return try await element(timeout: timeout, described: description, in: root, where: matches)
+    }
+
+    /// Whether the window shows a sheet.
+    var showsSheet: Bool { window.attachedSheet != nil }
+
+    /// Performs the element's accessibility custom action named `name`, as VoiceOver's Actions
+    /// menu does. Returns the names the element offered.
+    @discardableResult
+    func performCustomAction(_ name: String, on element: Any, described description: String) throws -> [String] {
+        let actions = (value("accessibilityCustomActions", of: element) as? [NSAccessibilityCustomAction]) ?? []
+        let action = try XCTUnwrap(actions.first { $0.name == name },
+            "\(description) must offer the action \(name.debugDescription); offers \(actions.map(\.name))")
+        if let handler = action.handler {
+            XCTAssertTrue(handler(), "\(description): \(name.debugDescription) must succeed")
+        } else {
+            let target = try XCTUnwrap(action.target as? NSObject, "\(description): \(name.debugDescription) has no handler or target")
+            _ = target.perform(try XCTUnwrap(action.selector), with: action)
+        }
+        return actions.map(\.name)
+    }
+
+    /// Every element anywhere in the window, its toolbar included, that matches.
+    func windowElements(where matches: (Any) -> Bool) -> [Any] {
+        guard let frameView = window.contentView?.superview else { return [] }
+        frameView.layoutSubtreeIfNeeded()
+        return descendants(of: frameView).filter(matches)
+    }
+
     // MARK: Accessibility
 
     func element(identifiedBy identifier: String, timeout: Duration) async throws -> Any {
@@ -318,13 +443,14 @@ final class HostedApp {
         return table
     }
 
-    private func sendText(_ text: String) throws {
+    private func sendText(_ text: String, to target: NSWindow? = nil) throws {
+        let target = target ?? window
         for character in text {
             let value = String(character)
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 let event = try XCTUnwrap(NSEvent.keyEvent(
                     with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber, context: nil, characters: value,
+                    windowNumber: target.windowNumber, context: nil, characters: value,
                     charactersIgnoringModifiers: value, isARepeat: false, keyCode: 0
                 ))
                 NSApp.sendEvent(event)
@@ -438,6 +564,37 @@ struct LiveServer {
     /// Writes a rating as another client would.
     func setRating(_ songID: String, _ rating: Int) async throws {
         _ = try await call("setRating", [URLQueryItem(name: "id", value: songID), URLQueryItem(name: "rating", value: String(rating))])
+    }
+
+    struct Playlist {
+        let id: String
+        let name: String
+    }
+
+    func playlists() async throws -> [Playlist] {
+        let list = try await call("getPlaylists", [])["playlists"] as? [String: Any]
+        return (list?["playlist"] as? [[String: Any]] ?? []).compactMap { entry in
+            guard let id = entry["id"] as? String, let name = entry["name"] as? String else { return nil }
+            return Playlist(id: id, name: name)
+        }
+    }
+
+    /// The playlist's entries' titles, in order; nil when the server holds no such playlist.
+    func playlistEntries(_ id: String) async throws -> [String]? {
+        guard let playlist = try? await call("getPlaylist", [URLQueryItem(name: "id", value: id)])["playlist"] as? [String: Any] else {
+            return nil
+        }
+        return (playlist["entry"] as? [[String: Any]] ?? []).compactMap { $0["title"] as? String }
+    }
+
+    /// Makes a playlist as another client would.
+    func createPlaylist(_ name: String, songID: String) async throws -> String {
+        let playlist = try await call("createPlaylist", [URLQueryItem(name: "name", value: name), URLQueryItem(name: "songId", value: songID)])["playlist"] as? [String: Any]
+        return try XCTUnwrap(playlist?["id"] as? String, "createPlaylist must return the playlist's id")
+    }
+
+    func deletePlaylist(_ id: String) async throws {
+        _ = try await call("deletePlaylist", [URLQueryItem(name: "id", value: id)])
     }
 
     func bitRate(_ songID: String) async throws -> Int {
