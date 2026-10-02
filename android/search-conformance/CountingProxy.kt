@@ -9,12 +9,14 @@ import java.net.URLDecoder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPInputStream
 
 /**
  * A loopback forwarder between the production app and the disposable server: every request the
  * reader issues passes through it unchanged, and it records WHICH endpoint was asked, in arrival
  * order, so tests can assert request counts (never wall time). It is not a fixture: every answer is
- * the disposable server's own, except where a test explicitly holds or fails an endpoint.
+ * the disposable server's own, except where a test explicitly holds, fails, drops or rewrites an
+ * endpoint's answer.
  *
  * Credentials never reach its log: only the endpoint name and the non-credential parameters are kept.
  */
@@ -26,6 +28,8 @@ class CountingProxy(private val target: String) : AutoCloseable {
         @Volatile var answered: Boolean = false,
         /** The HTTP status the app received; 0 until answered, and for a dropped connection. */
         @Volatile var status: Int = 0,
+        /** The server's answer reached the app changed by a [rewrite] rule. */
+        @Volatile var rewritten: Boolean = false,
     ) {
         override fun toString(): String = "$endpoint${parameters["type"]?.let { "[$it]" } ?: ""}:$status"
     }
@@ -35,6 +39,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
     private var holdRule: ((Seen) -> Boolean)? = null
     private var failRule: ((Seen) -> Boolean)? = null
     private var dropRule: ((Seen) -> Boolean)? = null
+    private var rewriteRule: Pair<(Seen) -> Boolean, (ByteArray) -> ByteArray>? = null
     private var gate = CountDownLatch(1)
     private val executor = Executors.newFixedThreadPool(16)
     private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 64).apply {
@@ -82,6 +87,15 @@ class CountingProxy(private val target: String) : AutoCloseable {
      */
     fun drop(rule: ((Seen) -> Boolean)?) = synchronized(lock) { dropRule = rule }
 
+    /**
+     * Passes every matching request to the server as usual and hands the app [transform] of the
+     * server's answer body instead of the body itself: a server presented as one that answers
+     * differently, the rest of its answer (status, headers) unchanged. Null stops rewriting.
+     */
+    fun rewrite(rule: ((Seen) -> Boolean)?, transform: (ByteArray) -> ByteArray = { it }) = synchronized(lock) {
+        rewriteRule = rule?.let { it to transform }
+    }
+
     private fun forward(exchange: HttpExchange) {
         val uri = exchange.requestURI
         val body = exchange.requestBody.readBytes()
@@ -118,9 +132,16 @@ class CountingProxy(private val target: String) : AutoCloseable {
                 connection.outputStream.use { it.write(body) }
             }
             val status = connection.responseCode
-            val answer = (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+            val served = (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+            val rewriting = synchronized(lock) { rewriteRule?.takeIf { (rule, _) -> rule(entry) } }
+            // A rewrite reads the body as the server meant it, so a compressed answer is passed on decoded.
+            val gzipped = rewriting != null && connection.contentEncoding.equals("gzip", ignoreCase = true)
+            val answer = rewriting?.second?.invoke(if (gzipped) GZIPInputStream(served.inputStream()).readBytes() else served)
+                ?.also { entry.rewritten = true } ?: served
             connection.headerFields.forEach { (name, values) ->
-                if (name != null && name.lowercase() !in HOP_HEADERS) values.forEach { exchange.responseHeaders.add(name, it) }
+                if (name != null && name.lowercase() !in HOP_HEADERS && !(gzipped && name.equals("content-encoding", true))) {
+                    values.forEach { exchange.responseHeaders.add(name, it) }
+                }
             }
             entry.status = status
             exchange.sendResponseHeaders(status, if (answer.isEmpty()) -1 else answer.size.toLong())

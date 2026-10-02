@@ -72,6 +72,10 @@ class ProductionLibraryEnvironment : ExternalResource() {
         private set
     lateinit var server: DisposableServer
         private set
+
+    /** The disposable server as its second, non-admin user. */
+    fun otherUser(): DisposableServer = server.asUser(OTHER_USERNAME, OTHER_PASSWORD)
+
     val network: PlatformNetwork by lazy { PlatformNetwork(RuntimeEnvironment.getApplication()) }
 
     override fun before() {
@@ -85,6 +89,7 @@ class ProductionLibraryEnvironment : ExternalResource() {
         server.unstarEverything()
         // So are playlists: a run starts with none of the ones these tests make.
         server.deletePlaylistsNamed(TEST_PLAYLIST_PREFIX)
+        runCatching { otherUser().deleteOwnPlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         proxy = CountingProxy(target)
         AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
     }
@@ -96,6 +101,7 @@ class ProductionLibraryEnvironment : ExternalResource() {
         proxy.close()
         runCatching { server.unstarEverything() }
         runCatching { server.deletePlaylistsNamed(TEST_PLAYLIST_PREFIX) }
+        runCatching { otherUser().deleteOwnPlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         AndroidAccountCredentialStore(app).delete()
         app.deleteDatabase("dulcet.db")
     }
@@ -103,6 +109,10 @@ class ProductionLibraryEnvironment : ExternalResource() {
     companion object {
         const val USERNAME = "dulcet-admin"
         const val PASSWORD = "dulcet-ci-canary-password"
+
+        /** The fixture's second, non-admin user (tools/conformance-env/health-check makes it). */
+        const val OTHER_USERNAME = "dulcet-restricted"
+        const val OTHER_PASSWORD = "dulcet-ci-restricted-password"
 
         /** Every playlist a test makes is named with this, and only those are ever deleted. */
         const val TEST_PLAYLIST_PREFIX = "Dulcet test "
@@ -157,6 +167,20 @@ class PlatformNetwork(app: Application) {
 
     private var switches = 0
 
+    /**
+     * The platform's report that the default network is [constrained] (metered) or not, as Android
+     * gives it: the network's capabilities change, and every default-network callback hears it.
+     */
+    fun constrain(constrained: Boolean) {
+        check(!lost) { "setup: a constraint is reported for a network the device has" }
+        val network = checkNotNull(reported ?: manager.activeNetwork) { "setup: the host must start with a network" }
+        check(shadow.networkCallbacks.isNotEmpty()) { "setup: the session registered no network callback" }
+        val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        if (!constrained) shadowOf(capabilities).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        shadow.setNetworkCapabilities(network, capabilities)
+        shadow.networkCallbacks.toList().forEach { it.onCapabilitiesChanged(network, capabilities) }
+    }
+
     internal fun restoreIfLost() {
         if (lost) {
             shadow.setActiveNetworkInfo(saved)
@@ -169,15 +193,22 @@ class PlatformNetwork(app: Application) {
  * Direct reads of the disposable server, bypassing the app entirely: the independent instrument
  * for per-user state the app claims to have changed.
  */
-class DisposableServer(private val baseUrl: String) {
+class DisposableServer(
+    private val baseUrl: String,
+    private val username: String = ProductionLibraryEnvironment.USERNAME,
+    private val password: String = ProductionLibraryEnvironment.PASSWORD,
+) {
+    /** The same server read and written as another of its users: another client, another account. */
+    fun asUser(username: String, password: String) = DisposableServer(baseUrl, username, password)
+
     fun get(endpoint: String, parameters: Map<String, String> = emptyMap()): JSONObject = get(endpoint, parameters.toList())
 
     /** [parameters] in order, a name repeated as often as it appears (`songId`, `songIdToAdd`). */
     fun get(endpoint: String, parameters: List<Pair<String, String>>): JSONObject {
         val salt = ByteArray(16).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
-        val token = MessageDigest.getInstance("MD5").digest((ProductionLibraryEnvironment.PASSWORD + salt).toByteArray())
+        val token = MessageDigest.getInstance("MD5").digest((password + salt).toByteArray())
             .joinToString("") { "%02x".format(it) }
-        val query = mapOf("u" to ProductionLibraryEnvironment.USERNAME, "t" to token, "s" to salt, "v" to "1.16.1",
+        val query = mapOf("u" to username, "t" to token, "s" to salt, "v" to "1.16.1",
             "c" to "dulcet-conformance", "f" to "json")
             .toList().let { it + parameters }
             .joinToString("&") { (key, value) -> "$key=${URLEncoder.encode(value, "UTF-8")}" }
@@ -219,6 +250,31 @@ class DisposableServer(private val baseUrl: String) {
 
     fun deletePlaylistsNamed(prefix: String) {
         for ((id, name) in playlists()) if (name.startsWith(prefix)) get("deletePlaylist", mapOf("id" to id))
+    }
+
+    /** Replaces a playlist's entries directly on the server, as another client would. */
+    fun replacePlaylistEntries(id: String, songIds: List<String>) {
+        get("createPlaylist", listOf("playlistId" to id) + songIds.map { "songId" to it })
+    }
+
+    /** Makes one of this account's playlists public, so other users can see it. */
+    fun makePublic(id: String) {
+        get("updatePlaylist", mapOf("playlistId" to id, "public" to "true"))
+    }
+
+    /** One playlist's owner and whether it is public, as the server reports them. */
+    fun playlistOwnership(id: String): Pair<String, Boolean> =
+        get("getPlaylist", mapOf("id" to id)).getJSONObject("playlist").let { it.getString("owner") to it.optBoolean("public") }
+
+    /** Deletes this account's own test playlists only, whatever other users have made public. */
+    fun deleteOwnPlaylistsNamed(prefix: String) {
+        val list = get("getPlaylists").optJSONObject("playlists")?.optJSONArray("playlist") ?: JSONArray()
+        for (index in 0 until list.length()) {
+            val playlist = list.getJSONObject(index)
+            if (playlist.getString("name").startsWith(prefix) && playlist.optString("owner") == username) {
+                get("deletePlaylist", mapOf("id" to playlist.getString("id")))
+            }
+        }
     }
 
     fun unstarEverything() {

@@ -52,6 +52,11 @@ class AndroidProductionLibraryReaderAppConformanceTest {
                 compose.onNodeWithTag(tag).performClick()
                 compose.waitForIdle()
             }
+
+            override fun leaveBrowseView() {
+                compose.onNodeWithTag("library.view.home").performClick()
+                compose.waitForIdle()
+            }
         }, platform = "android")
     }
 
@@ -91,6 +96,9 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     @Test fun conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive() =
         scenarios.conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLive()
 
+    @Test fun conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest() =
+        scenarios.conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest()
+
     @Test fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() =
         scenarios.aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline()
 
@@ -109,6 +117,12 @@ class AndroidProductionLibraryReaderAppConformanceTest {
 
     @Test fun aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer() =
         scenarios.aPlaylistIsMadeFilledReorderedTrimmedRenamedAndDeletedOnTheServer()
+
+    @Test fun conf90ARemovalOnAViewChangedElsewhereIsRefusedUnwrittenAndTheControlRemovesTheIntendedSong() =
+        scenarios.conf90ARemovalOnAViewChangedElsewhereIsRefusedUnwrittenAndTheControlRemovesTheIntendedSong()
+
+    @Test fun conf91AnotherUsersPlaylistIsReadOnlyInTheAppAndTheOwnPlaylistIsTheControl() =
+        scenarios.conf91AnotherUsersPlaylistIsReadOnlyInTheAppAndTheOwnPlaylistIsTheControl()
 
     @Test fun aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntryTapped() =
         scenarios.aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected {}
