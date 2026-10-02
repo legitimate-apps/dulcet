@@ -391,6 +391,18 @@ public struct DulcetLibraryWindow: Sendable, Hashable {
         self.anchorIndex = anchorIndex
     }
 
+    /// Whether the list may still grow at its end, so a screen near its end asks for the next page:
+    /// an open window, and one read while the server scans or reports no stamp, which append
+    /// unguarded and say so (§16.12: refusing to append would freeze scrolling for as long as a scan
+    /// runs). Not a complete window, and not one whose stamp kept moving, which waits for the next
+    /// epoch reading to rebase it. The reader decides whether a page is read at all (never offline).
+    public var growsAtEnd: Bool {
+        switch coverage {
+        case .open, .unverifiedScanning, .unverifiedNoEpoch: true
+        case .complete, .unverifiedChanging, nil: false
+        }
+    }
+
     /// Whether the screen has anything of its own to draw.
     public var hasContent: Bool { header != nil || !items.isEmpty }
 
