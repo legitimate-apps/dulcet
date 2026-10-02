@@ -1,0 +1,156 @@
+#!/bin/bash
+# Run the Apple rating and playlist-editing UI proofs (spec §16.20, §18.6; CONF-84, CONF-88..91)
+# against the disposable server and turn each result bundle into cited evidence.
+#
+# A file rather than inline YAML for the reason tools/ci/run-app-host-reader-proof gives: the
+# "Assert Darwin conformance preconditions" step is the largest `run:` block in apple-ci, and it
+# must run INSIDE that step, because the disposable server's lifetime is that step's shell.
+#
+# Usage:
+#   run-ratings-playlists-proofs macos
+#   run-ratings-playlists-proofs iphone
+#   run-ratings-playlists-proofs ipados <ipad-simulator-destination>
+#
+# One mode per call, so each keeps its own position in the calling step. Each proof plays or edits
+# through the app and reads the server back; each puts back what it changed (the track's rating;
+# every playlist named for its run). They stream, so on a device they run BEFORE the
+# streaming-quality proof, which must be the last to stream there (tools/ci/run-lyrics-quality-proofs).
+# They open no lyrics, so they leave the lyrics proofs' never-stored track alone.
+#
+# Each simulator proof is its own test method that fails on the other device class, so an iPhone
+# run cannot stand as iPad evidence.
+#
+# Each proof runs under XCTest's own execution-time allowance, so a proof that hangs fails by name
+# after 15 minutes instead of holding the composite step to its cap. The longest proof took 273 s
+# locally; 15 minutes is over twice its projection on the hosted runner.
+
+set -euo pipefail
+
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
+allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
+iphone='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+
+mode="${1:-}"
+case "$mode" in
+    macos|iphone)
+        [ "$#" -eq 1 ] || { echo "run-ratings-playlists-proofs $mode: takes no further arguments" >&2; exit 2; }
+        ;;
+    ipados)
+        [ "$#" -eq 2 ] || { echo "run-ratings-playlists-proofs ipados: needs the iPad destination" >&2; exit 2; }
+        ipad_destination="$2"
+        ;;
+    *)
+        echo "run-ratings-playlists-proofs: mode must be macos, iphone or ipados, got '${mode}'" >&2
+        exit 2
+        ;;
+esac
+
+# Every invocation below is written out with its literal -only-testing selector, its execution
+# guard and then its JUnit emission, in that order: tools/verify_ci_policy.py pairs each cited test
+# with the selector its emission follows, and a selector built from a variable pairs with nothing.
+# The guard comes BEFORE the JUnit: `swift-testing-junit` writes a well-formed tests="0" file for
+# an empty bundle, so a renamed test would otherwise ship green. The account reaches the test
+# runner as TEST_RUNNER_-prefixed variables; a trailing KEY=value would be parsed as a build
+# setting.
+export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533
+export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
+export TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password
+# A macOS host test does not inherit xcodebuild's environment, so the Mac proofs get the server as
+# build settings, which the DulcetMac scheme hands the test host. They reuse the product the first
+# macOS app-host proof built, and sign ad hoc without entitlements as the other hosted proofs do.
+mac=(
+    -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug -destination 'platform=macOS'
+    -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" -parallel-testing-enabled NO "${allowance[@]}"
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+    DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_TEST_CONFORMANCE_DISPOSABLE=true
+)
+ios=(-project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug -parallel-testing-enabled NO "${allowance[@]}")
+
+case "$mode" in
+macos)
+    export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-ratings.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-ratings.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-ratings.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-ratings.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-ratings-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
+        DulcetMacRatingsAndPlaylistsAppTest
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-playlist-edits.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        everyPlaylistEditReachesTheServerThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-playlist-edits-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
+        DulcetMacRatingsAndPlaylistsAppTest
+    ;;
+iphone)
+    python3 tools/ci/isolate-simulator --phase ratings-playlists-iphone --keep-name "iPhone 17 Pro"
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-ratings.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testNowPlayingStarsRateTheTrackOnTheServerOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-ratings.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-ratings.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testNowPlayingStarsRateTheTrackOnTheServerOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-ratings.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-ratings-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist-edits.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-playlist-edits.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-playlist-edits.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testEveryPlaylistEditReachesTheServerOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-playlist-edits.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+ipados)
+    python3 tools/ci/isolate-simulator --phase ratings-playlists-ipad --keep "${ipad_destination##*id=}"
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ratings.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-ratings.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-ratings.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-ratings.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-ratings-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playlist-edits.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-playlist-edits.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-edits.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testEveryPlaylistEditReachesTheServerOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-edits.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+esac
