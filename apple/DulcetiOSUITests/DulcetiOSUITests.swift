@@ -630,7 +630,15 @@ final class DulcetiOSUITests: XCTestCase {
         if !compact, !openSidebarLibrarySection("albums", in: app) { return false }
         let tile = app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
-        guard tile.waitForExistence(timeout: 30), scrollIntoView(tile, in: app) else {
+        // A phone's Recently Added grid is extended as it scrolls, newest first, so an older album
+        // is reached by scrolling down to it (OBSERVED on CI: eight newer fixture albums filled the
+        // first window and the oldest, Dulcet Conformance, was not yet in the grid).
+        var swipes = 0
+        while compact, !tile.waitForExistence(timeout: swipes == 0 ? 30 : 3), swipes < 12 {
+            app.swipeUp()
+            swipes += 1
+        }
+        guard tile.waitForExistence(timeout: 1), scrollIntoView(tile, in: app) else {
             XCTFail("The library must show the \(album) tile: " + app.debugDescription)
             return false
         }
