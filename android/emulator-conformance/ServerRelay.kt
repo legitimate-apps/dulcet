@@ -18,6 +18,10 @@ import kotlin.concurrent.thread
  * airplane mode does not remove. After the cut the relay still accepts connections, and closes
  * each one at once without forwarding it. It counts them, so a test can show both that the app's
  * path is closed and how often the app tried it.
+ *
+ * Every forwarded connection's bytes are also kept, up to [TAP_LIMIT] in each direction, so a test
+ * can read what the server actually answered ([connections]). They stay in this process's memory
+ * and carry credentials in their request lines: a test reads them and never prints them whole.
  */
 class ServerRelay(target: String) : AutoCloseable {
     private val targetUri = URI(target)
@@ -38,6 +42,19 @@ class ServerRelay(target: String) : AutoCloseable {
     /** Connections accepted after [cut], each closed at once and never forwarded. */
     val refusedConnections = AtomicInteger()
 
+    /** One forwarded connection's bytes: what the app sent, and what the server answered. */
+    class Tapped internal constructor() {
+        internal val sent = java.io.ByteArrayOutputStream()
+        internal val answered = java.io.ByteArrayOutputStream()
+        fun sent(): ByteArray = synchronized(this) { sent.toByteArray() }
+        fun answered(): ByteArray = synchronized(this) { answered.toByteArray() }
+    }
+
+    private val tapped = mutableListOf<Tapped>()
+
+    /** Every connection forwarded, in the order accepted. */
+    fun connections(): List<Tapped> = synchronized(lock) { tapped.toList() }
+
     init {
         thread(name = "server-relay-accept", isDaemon = true) {
             while (!listener.isClosed) {
@@ -53,6 +70,7 @@ class ServerRelay(target: String) : AutoCloseable {
                     continue
                 }
                 forwardedConnections.incrementAndGet()
+                val tap = Tapped().also { synchronized(lock) { tapped += it } }
                 val finished = AtomicInteger()
                 val release = {
                     if (finished.incrementAndGet() == 2) {
@@ -60,8 +78,8 @@ class ServerRelay(target: String) : AutoCloseable {
                         synchronized(lock) { open -= client; open -= upstream }
                     }
                 }
-                pump(client, upstream, release)
-                pump(upstream, client, release)
+                pump(client, upstream, release) { bytes, count -> keep(tap, tap.sent, bytes, count) }
+                pump(upstream, client, release) { bytes, count -> keep(tap, tap.answered, bytes, count) }
             }
         }
     }
@@ -77,7 +95,12 @@ class ServerRelay(target: String) : AutoCloseable {
         runCatching { listener.close() }
     }
 
-    private fun pump(from: Socket, to: Socket, release: () -> Unit) = thread(name = "server-relay-pump", isDaemon = true) {
+    private fun keep(tap: Tapped, sink: java.io.ByteArrayOutputStream, bytes: ByteArray, count: Int) = synchronized(tap) {
+        val room = TAP_LIMIT - sink.size()
+        if (room > 0) sink.write(bytes, 0, minOf(room, count))
+    }
+
+    private fun pump(from: Socket, to: Socket, release: () -> Unit, tap: (ByteArray, Int) -> Unit) = thread(name = "server-relay-pump", isDaemon = true) {
         val buffer = ByteArray(16 * 1024)
         try {
             val input = from.getInputStream()
@@ -87,6 +110,7 @@ class ServerRelay(target: String) : AutoCloseable {
                 if (count < 0) break
                 // Checked per chunk, so a chunk read across the cut is never delivered.
                 if (synchronized(lock) { isCut }) break
+                tap(buffer, count)
                 output.write(buffer, 0, count)
                 output.flush()
                 forwardedBytes.addAndGet(count.toLong())
@@ -97,5 +121,10 @@ class ServerRelay(target: String) : AutoCloseable {
             if (synchronized(lock) { isCut }) { runCatching { from.close() }; runCatching { to.close() } }
             release()
         }
+    }
+
+    private companion object {
+        /** Bytes kept per direction per connection: the head of every answer, not whole songs. */
+        const val TAP_LIMIT = 4 * 1024 * 1024
     }
 }
