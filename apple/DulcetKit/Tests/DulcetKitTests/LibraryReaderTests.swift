@@ -304,14 +304,15 @@ private func window(
     coverage: String? = "complete",
     sequence: Int = 1,
     order: String = "server",
-    total: Int? = nil
+    total: Int? = nil,
+    leadingOffset: Int = 0
 ) -> DulcetLibraryWindow {
     DulcetLibraryWindow(
         sequence: sequence,
         freshness: freshness,
         coverage: coverage,
         total: total,
-        leadingOffset: 0,
+        leadingOffset: leadingOffset,
         header: nil,
         items: items,
         itemsState: "present",
@@ -831,6 +832,119 @@ func aWindowReportsItsViewportAndExtendsOncePerLength() async throws {
     await Task.yield()
     await Task.yield()
     #expect(subscription.events.filter { $0 == "loadMore" }.count == 1, "a complete list does not extend")
+}
+
+/// Lets the model's scheduled viewport report run.
+@MainActor
+private func settle() async {
+    await Task.yield()
+    await Task.yield()
+}
+
+@Test @MainActor
+func aListReadWhileTheServerScansOrReportsNoEpochStillGrowsAtItsEnd() async throws {
+    // §16.12: pages read while the server scans append unguarded, and a server with no stamp is
+    // read the same way; refusing to ask for them would freeze the list at its first pages.
+    for coverage in ["unverifiedScanning", "unverifiedNoEpoch"] {
+        let factory = RecordingReaderFactory()
+        let session = DulcetLibrarySession(factory: factory)
+        session.open(account: readerAccount, mode: .connected)
+        let reader = try #require(factory.made.first)
+        let model = DulcetLibraryWindowModel(query: .albums(.newest))
+        model.open(in: session)
+        let subscription = try #require(reader.windows.first)
+        let items = (0 ..< 10).map { item("album", "a\($0)") }
+        subscription.publish(window(items, coverage: coverage))
+        for index in 0 ..< 10 { model.rowAppeared(index) }
+        await settle()
+        #expect(subscription.events.filter { $0 == "loadMore" }.count == 1, "\(coverage) grows at its end")
+    }
+}
+
+@Test @MainActor
+func onlyAListThatCanStillGrowAsksForMore() async throws {
+    // The control: a complete list has nothing more, and one whose stamp kept moving waits for the
+    // next epoch reading to rebase it.
+    for coverage in ["complete", "unverifiedChanging"] {
+        let factory = RecordingReaderFactory()
+        let session = DulcetLibrarySession(factory: factory)
+        session.open(account: readerAccount, mode: .connected)
+        let reader = try #require(factory.made.first)
+        let model = DulcetLibraryWindowModel(query: .albums(.newest))
+        model.open(in: session)
+        let subscription = try #require(reader.windows.first)
+        let items = (0 ..< 10).map { item("album", "a\($0)") }
+        subscription.publish(window(items, coverage: coverage))
+        for index in 0 ..< 10 { model.rowAppeared(index) }
+        await settle()
+        #expect(!subscription.events.contains("loadMore"), "\(coverage) does not grow")
+    }
+}
+
+@Test @MainActor
+func aRebasedWindowOfTheSameLengthWhoseEndIsOnScreenAsksForMoreAgain() async throws {
+    // A rebase re-reads the viewport's pages: the new window can hold as many rows as the old one,
+    // starting deeper (§16.12). Its end is on screen and nothing is left to scroll, so it must ask
+    // for the next page even though the length did not change.
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let model = DulcetLibraryWindowModel(query: .albums(.newest))
+    model.open(in: session)
+    let subscription = try #require(reader.windows.first)
+    let first = (0 ..< 4).map { item("album", "a\($0)") }
+    subscription.publish(window(first, coverage: "open"))
+    for index in 0 ..< 4 { model.rowAppeared(index) }
+    await settle()
+    #expect(subscription.events.filter { $0 == "loadMore" }.count == 1)
+    // The check fired on that page: the window is rebased to the four rows on screen, deeper.
+    for index in 0 ..< 4 { model.rowDisappeared(index) }
+    let rebased = (4 ..< 8).map { item("album", "a\($0)") }
+    subscription.publish(window(rebased, coverage: "open", sequence: 2, leadingOffset: 4))
+    for index in 0 ..< 4 { model.rowAppeared(index) }
+    await settle()
+    #expect(subscription.events.filter { $0 == "loadMore" }.count == 2, "the rebased window grows")
+    // A publication that changes only freshness (a failed page) asks for nothing, or a failing page
+    // would be asked for in a loop.
+    subscription.publish(window(
+        rebased, freshness: .cached(.failed(.serverBusy), asOf: nil), coverage: "open",
+        sequence: 3, leadingOffset: 4))
+    await settle()
+    #expect(subscription.events.filter { $0 == "loadMore" }.count == 2, "freshness alone asks for nothing")
+}
+
+@Test @MainActor
+func aWindowGivenBackToWhatFitsTheScreenAsksForMore() async throws {
+    // The window shrinks to the rows on screen and its end is visible with nothing left to scroll
+    // (the Android TV grid stalled at 4 albums so). The length changed, which re-arms the ask.
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let model = DulcetLibraryWindowModel(query: .albums(.newest))
+    model.open(in: session)
+    let subscription = try #require(reader.windows.first)
+    let items = (0 ..< 30).map { item("album", "a\($0)") }
+    subscription.publish(window(items, coverage: "open"))
+    for index in 0 ..< 4 { model.rowAppeared(index) }
+    await settle()
+    #expect(!subscription.events.contains("loadMore"), "the end is not near")
+    // Rows 4... leave the screen as they leave the window.
+    subscription.publish(window(Array(items.prefix(4)), coverage: "open", sequence: 2))
+    await settle()
+    #expect(subscription.events.filter { $0 == "loadMore" }.count == 1, "the shrunken window grows")
+}
+
+@Test
+func aListGrowsAtItsEndWhileOpenScanningOrWithoutAnEpoch() {
+    let items = [item("album", "a1")]
+    #expect(window(items, coverage: "open").growsAtEnd)
+    #expect(window(items, coverage: "unverifiedScanning").growsAtEnd)
+    #expect(window(items, coverage: "unverifiedNoEpoch").growsAtEnd)
+    #expect(!window(items, coverage: "complete").growsAtEnd)
+    #expect(!window(items, coverage: "unverifiedChanging").growsAtEnd)
+    #expect(!window(items, coverage: nil).growsAtEnd)
 }
 
 // MARK: - Reader mode in the data source and the store

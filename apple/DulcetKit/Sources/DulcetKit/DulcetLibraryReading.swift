@@ -774,7 +774,8 @@ public final class DulcetLibraryWindowModel {
     @ObservationIgnored private var visible = Set<Int>()
     @ObservationIgnored private var viewportScheduled = false
     @ObservationIgnored private var lastViewport: (Int, Int)?
-    @ObservationIgnored private var requestedMoreAtCount: Int?
+    /// The window's shape -- its length and its start -- when the screen last asked for more.
+    @ObservationIgnored private var requestedMoreAtShape: WindowShape?
     @ObservationIgnored private var requestedBeforeAtOffset: Int?
 
     public init(query: DulcetLibraryQuery) {
@@ -810,7 +811,7 @@ public final class DulcetLibraryWindowModel {
         subscribedGeneration = nil
         visible = []
         lastViewport = nil
-        requestedMoreAtCount = nil
+        requestedMoreAtShape = nil
         requestedBeforeAtOffset = nil
     }
 
@@ -833,8 +834,8 @@ public final class DulcetLibraryWindowModel {
         } else if let index = window.anchorIndex, window.items.indices.contains(index) {
             anchorRequest = (window.items[index].id, window.sequence)
         }
-        // A publication that changes the list's length or start re-arms the extend triggers.
-        if window.items.count != self.window?.items.count { requestedMoreAtCount = nil }
+        // A publication that changes the list's start re-arms load before; load more re-arms on a
+        // change of length or start (`reportViewport`). Every publication re-checks the viewport.
         if window.leadingOffset != self.window?.leadingOffset { requestedBeforeAtOffset = nil }
         self.window = window
         scheduleViewport()
@@ -869,10 +870,15 @@ public final class DulcetLibraryWindowModel {
             subscription.setViewport(first: first, last: last)
         }
         // The window never loads more than a page beyond the viewport; the reader enforces it, and
-        // asking again for the same end before the list grows would only be refused.
+        // asking again for the same end before the list grows would only be refused. The ask re-arms
+        // when the window's length or start changes: a window rebased deeper at the same length, or
+        // given back to what fits the screen, can show its end with nothing left to scroll and must
+        // still grow. A publication changing only freshness or coverage (a failed page) re-arms
+        // nothing, or a failing page would be asked for in a loop.
         let nearEnd = last >= window.items.count - 8
-        if nearEnd, window.coverage == .open, requestedMoreAtCount != window.items.count {
-            requestedMoreAtCount = window.items.count
+        let shape = WindowShape(count: window.items.count, leadingOffset: window.leadingOffset)
+        if nearEnd, window.growsAtEnd, requestedMoreAtShape != shape {
+            requestedMoreAtShape = shape
             subscription.loadMore()
         }
         if first <= 4, window.leadingOffset > 0, requestedBeforeAtOffset != window.leadingOffset {
@@ -880,6 +886,12 @@ public final class DulcetLibraryWindowModel {
             subscription.loadBefore()
         }
     }
+}
+
+/// A window's length and start: what a load more was asked for at.
+private struct WindowShape: Equatable {
+    let count: Int
+    let leadingOffset: Int
 }
 
 // MARK: - Search
