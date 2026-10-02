@@ -2872,8 +2872,9 @@ and reconciliation against a changed server item. The platform owns the **execut
   the platform, causes a restart from zero rather than a stuck row.
   A row with saved resume data owns its partial file even when no platform task remains: a failed
   transfer waiting for its retry, or a lost task restarted at launch, must not lose its progress.
-  Reconciliation still deletes temporary files without an owner or resume data; the executor checks
-  resume-data age before reusing a retained prefix. A credential change clears the old resume data
+  Reconciliation deletes a temporary file when neither a retained platform task nor a pending row
+  with saved resume data owns it; the executor checks resume-data age before reusing a retained
+  prefix. A credential change clears the old resume data
   and partial file before the task is reissued.
 - **Credential change mid-flight** invalidates outstanding tasks; the reconciler re-issues them.
 - **Server-side change** (duration or size changed since download) is detected at the next sync and

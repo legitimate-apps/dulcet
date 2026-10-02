@@ -230,7 +230,6 @@ internal class DownloadPolicyEngine(
             ) {
                 if (row.downloadId in activeTaskIds) cancel += row.downloadId
                 store.requeueForCredentialChange(row, currentCredentialGeneration)
-                store.clearResumeData(row.downloadId)
                 interrupted += row.downloadId
                 return@forEach
             }
@@ -805,6 +804,9 @@ private class SqlDownloadStore(private val database: DulcetDatabase) {
 
     fun requeueForCredentialChange(row: DownloadRecord, generation: Long) {
         database.transaction {
+            // Advancing the generation and invalidating its old request must be atomic: after a
+            // crash, old opaque resume data must never appear to belong to the new credentials.
+            queries.clearDownloadResumeData(row.downloadId.value)
             queries.updateDownloadCredentialGeneration(
                 auth_generation = generation,
                 updated_at_wall_clock = row.updatedAtWallClock,
