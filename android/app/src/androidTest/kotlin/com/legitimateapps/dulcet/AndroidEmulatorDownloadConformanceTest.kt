@@ -25,7 +25,7 @@ class AndroidEmulatorDownloadConformanceTest {
 
     @Test fun conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable() {
         DownloadProof(context, DisposableServerProbe.fromInstrumentation()).conf52 { account, rawId ->
-            val intent = PlaybackIntents.playTrack(context, account.id, rawId, DisposableServerProbe.CANARY_TITLE)
+            val intent = PlaybackIntents.playTrack(context, account.id, rawId, "")
                 .setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(intent)
         }

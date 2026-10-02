@@ -75,6 +75,9 @@ public data class AndroidPlaybackState(
  */
 public fun interface AndroidLocalPlaybackSource {
     public suspend fun localPlan(rawId: String): LocalPlaybackPlan?
+
+    /** Pinned display metadata, available without a server read after a service/process restart. */
+    public suspend fun metadata(rawId: String): AndroidTrack? = null
 }
 
 /**
@@ -834,12 +837,26 @@ public class AndroidPlaybackController internal constructor(
         metadataLoads += missing
         metadataFill = scope.launch {
             for (id in missing) {
-                try { loadSong(id.rawId) }
+                try {
+                    val local = localMetadata(id.rawId)
+                    if (local != null) {
+                        remember(local)
+                    } else loadSong(id.rawId)
+                }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { continue }
                 publish()
             }
         }
+    }
+
+    private suspend fun localMetadata(rawId: String): AndroidTrack? = try {
+        localPlans?.metadata(rawId)?.takeIf { it.providerInstanceId == account.providerInstanceId && it.rawId == rawId }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        // Display metadata is optional for playback: an unreadable cache never strands valid audio.
+        null
     }
 
     private fun start(directive: PlaybackQueueStartDirective, knownSong: Song? = null) {
@@ -865,6 +882,9 @@ public class AndroidPlaybackController internal constructor(
                 }
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 if (local != null) {
+                    val track = localMetadata(directive.itemId.rawId)
+                    if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
+                    track?.let(::remember)
                     command(PlaybackCommand.Stop(id()))
                     val plan = AndroidLocalPlaybackPlan(session, directive.attemptId, directive.itemId, local)
                     activePlan = plan

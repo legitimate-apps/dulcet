@@ -95,6 +95,49 @@ class AndroidLibraryReaderTest {
         driver.close()
     }
 
+    @Test
+    fun downloadMetadataIsReadOnceAndSurvivesAReaderRelaunch() {
+        server.answerInstead = { endpoint ->
+            check(endpoint == "getSong")
+            LibraryEndpointResponse(200,
+                """{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"download-song","title":"Offline title","artist":"Offline artist","album":"Offline album","albumId":"album","duration":42,"suffix":"flac"}}}""",
+                "https://fixture.invalid/rest")
+        }
+        fun prepare(reader: AndroidLibraryReader): DomainError? {
+            val done = CountDownLatch(1)
+            val result = AtomicReference<DomainError?>()
+            reader.prepareDownloadMetadata("download-song") { result.set(it); done.countDown() }
+            assertTrue(done.await(30, TimeUnit.SECONDS), "metadata completion did not arrive")
+            return result.get()
+        }
+        val first = reader()
+        assertEquals(null, prepare(first))
+        first.closeAndWait()
+        assertEquals(null, prepare(reader()))
+        assertEquals(listOf("getSong"), server.log.map { it.endpoint }, "the second reader uses persisted metadata")
+        val row = database.database.seenCacheQueries.selectTrack(SessionEnv.BINDING.serverId, "download-song").executeAsOne()
+        assertEquals("Offline title", row.title)
+        assertEquals("Offline artist", row.artist_name)
+        assertEquals("Offline album", row.album_title)
+        assertEquals(42_000L, row.duration_milliseconds)
+    }
+
+    @Test
+    fun downloadMetadataRejectsAnotherSongsResponseWithoutCachingIt() {
+        server.answerInstead = {
+            LibraryEndpointResponse(200,
+                """{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"different-song","title":"Wrong title"}}}""",
+                "https://fixture.invalid/rest")
+        }
+        val done = CountDownLatch(1)
+        val result = AtomicReference<DomainError?>()
+        reader().prepareDownloadMetadata("download-song") { result.set(it); done.countDown() }
+        assertTrue(done.await(30, TimeUnit.SECONDS))
+        assertEquals(DomainError.Protocol.MalformedEnvelope, result.get())
+        assertEquals(null, database.database.seenCacheQueries.selectTrack(SessionEnv.BINDING.serverId, "download-song").executeAsOneOrNull())
+        assertEquals(null, database.database.seenCacheQueries.selectTrack(SessionEnv.BINDING.serverId, "different-song").executeAsOneOrNull())
+    }
+
     /** Every publication with the number of requests the server had received when it was delivered. */
     private class Seen {
         val all: MutableList<Pair<AndroidLibraryPublication, Int>> = Collections.synchronizedList(mutableListOf())

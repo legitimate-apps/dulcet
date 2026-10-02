@@ -29,7 +29,7 @@ class AndroidTvEmulatorDownloadConformanceTest {
             "This proof must run on an Android TV device or emulator"
         }
         DownloadProof(context, DisposableServerProbe.fromInstrumentation()).conf52 { account, rawId ->
-            val intent = PlaybackIntents.playTrack(context, account.id, rawId, DisposableServerProbe.CANARY_TITLE)
+            val intent = PlaybackIntents.playTrack(context, account.id, rawId, "")
                 .setClassName(context, TvPlaybackActivity::class.java.name)
             ActivityScenario.launch<TvPlaybackActivity>(intent)
         }

@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -126,6 +128,7 @@ public class AndroidDownloadController internal constructor(
     private val onDownloadedChanged: (Set<String>) -> Unit,
     /** The file system the download directory lives on; a test substitutes one that faults. */
     fileSystem: okio.FileSystem = okio.FileSystem.SYSTEM,
+    private val prepareMetadata: suspend (String) -> Unit = {},
 ) : AutoCloseable {
     public constructor(context: Context, account: PlaybackEndpointAccount, tasks: AndroidDownloadTasks) : this(
         account = account,
@@ -136,6 +139,17 @@ public class AndroidDownloadController internal constructor(
         diskBudgetBytes = { used -> productionDiskBudget(AndroidAccountData.downloadRootFor(context.applicationContext), used) },
         openTransfer = null,
         onDownloadedChanged = { rawIds -> AndroidLibraryReader.notifyDownloadsChanged(rawIds) },
+        prepareMetadata = { rawId ->
+            val reader = AndroidLibraryReader.forAccount(context.applicationContext,
+                AndroidLibraryReaderAccount(account.providerInstanceId, account.normalizedBaseUrl,
+                    account.username, account.password, account.allowLocalHttp), foreground = false)
+            val error = suspendCancellableCoroutine<DomainError?> { continuation ->
+                reader.prepareDownloadMetadata(rawId) { error ->
+                    if (continuation.isActive) continuation.resume(error)
+                }
+            }
+            if (error != null) throw AndroidDownloadTransferFailure(error)
+        },
     )
 
     public val providerInstanceId: String get() = account.providerInstanceId
@@ -332,6 +346,7 @@ public class AndroidDownloadController internal constructor(
             ?: return AndroidDownloadRunOutcome.NotRunnable
         val temporary = File(withContext(database) { engine.temporaryFilePath(id) })
         val outcome = try {
+            prepareMetadata(row.identity.rawId)
             val metadata = transfer(row, temporary)
             withContext(database) {
                 when (val promoted = engine.promote(id, metadata)) {
@@ -383,6 +398,19 @@ public class AndroidDownloadController internal constructor(
         if (!awaitReconciled()) return null
         return withContext(database) {
             (engine.offlinePlaybackPlan(identity(rawId)) as? OfflinePlaybackPlanResult.Available)?.plan
+        }
+    }
+
+    /** Display metadata pinned by a download, read locally even when the server removed the song. */
+    public suspend fun localMetadata(rawId: String): AndroidTrack? {
+        if (closed || !awaitReconciled()) return null
+        return withContext(database) {
+            if (engine.record(identity(rawId)) == null) return@withContext null
+            val track = store.database.seenCacheQueries.selectTrack(account.providerInstanceId, rawId)
+                .executeAsOneOrNull() ?: return@withContext null
+            val title = track.title ?: return@withContext null
+            AndroidTrack(account.providerInstanceId, rawId, title, track.artist_name, track.album_title,
+                track.duration_milliseconds, track.artwork_key)
         }
     }
 

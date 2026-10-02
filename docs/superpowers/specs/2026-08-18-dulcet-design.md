@@ -2926,7 +2926,11 @@ and reconciliation against a changed server item. The platform owns the **execut
   validators (§16.11), so a file changed on the server to the *same* length between two runs is not
   detected by the range check; the promoted file is still signature- and length-checked. A
   connection failure keeps the partial file for the retry; a refusal, a rejected body or an `Error`
-  discards it. A downloaded song plays through the same validating
+  discards it. Before the first transfer, the account's reader ensures the pinned track has display
+  metadata: it reuses a seen track, or writes a checked `getSong` response through the ordered
+  seen-cache. A song lookup never clears a known `gone` flag. Playback and restored queue rows read
+  this pinned metadata without a server request, including on Android TV and system playback.
+  A downloaded song plays through the same validating
   Media3 data source as a stream (§12.4), over the promoted file, so a file changed since promotion
   is refused rather than played. The playback controller asks for the local plan before any server
   read, including the queue's own song read, which offline would otherwise fail first. The library

@@ -6,6 +6,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidDownloadController
 import com.legitimateapps.dulcet.core.AndroidDownloadItem
 import com.legitimateapps.dulcet.core.AndroidDownloadState
@@ -64,6 +65,14 @@ class DownloadExecutorTest {
 
     @After fun tearDown() {
         runBlocking { AndroidDownloads.releaseForSignOut(context, account.id) }
+        val readerClosed = java.util.concurrent.CountDownLatch(1)
+        AndroidLibraryReader.closeCurrent { readerClosed.countDown() }
+        val deadline = System.currentTimeMillis() + 60_000
+        while (readerClosed.count > 0) {
+            shadowOf(Looper.getMainLooper()).idle()
+            check(System.currentTimeMillis() < deadline) { "The reader did not close" }
+            Thread.sleep(10)
+        }
         AndroidAccountCredentialStore(context).delete()
         server.close()
         root.deleteRecursively()
@@ -86,11 +95,35 @@ class DownloadExecutorTest {
         // returns, so the task may still be RUNNING here (OBSERVED on a CI host). Wait for it to
         // finish, then require that it SUCCEEDED: a failed or cancelled task still fails this.
         assertEquals(WorkInfo.State.SUCCEEDED, awaitFinished(task.id))
-        assertEquals(1, server.requests.size)
+        assertEquals(listOf("getSong", "stream"), server.requests.map {
+            it.substringAfter("/rest/").substringBefore(".view")
+        }, "metadata is persisted before the original file is transferred")
         val files = root.walkTopDown().filter { it.isFile }.toList()
         assertEquals(1, files.size, "exactly one promoted file: $files")
         assertContentEquals(AUDIO, files.single().readBytes())
         assertNotNull(controller.localPlan(RAW_ID))
+    }
+
+    @Test fun aNeverBrowsedDownloadKeepsItsMetadataAfterRelaunchWithoutTheServer(): Unit = runBlocking {
+        val first = assertNotNull(AndroidDownloads.controller(context))
+        first.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, 1_000)))
+        val task = awaitOneTask()
+        WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(task.id)
+        awaitDownloaded(first)
+        assertEquals(WorkInfo.State.SUCCEEDED, awaitFinished(task.id))
+        first.close()
+        server.close()
+
+        val again = relaunch(first)
+        val metadata = assertNotNull(again.localMetadata(RAW_ID))
+        assertEquals("Saved offline song", metadata.title)
+        assertEquals("Saved artist", metadata.artist)
+        assertEquals("Saved album", metadata.album)
+        assertEquals(1_000L, metadata.durationMilliseconds)
+        assertEquals("saved-art", metadata.artworkKey)
+        assertEquals(account.id, metadata.providerInstanceId)
+        assertNotNull(again.localPlan(RAW_ID))
+        assertEquals(2, server.requests.size, "relaunch and local metadata read perform no HTTP request")
     }
 
     @Test fun aRelaunchKeepsATaskWorkManagerStillHoldsAndRestartsOneItLost(): Unit = runBlocking {
@@ -187,6 +220,7 @@ class DownloadExecutorTest {
     private fun awaitDownloaded(controller: AndroidDownloadController) {
         val deadline = System.currentTimeMillis() + 15_000
         while (controller.statuses.value[RAW_ID]?.state != AndroidDownloadState.Downloaded) {
+            shadowOf(Looper.getMainLooper()).idle()
             check(System.currentTimeMillis() < deadline) { "Not downloaded: ${controller.statuses.value}" }
             Thread.sleep(50)
         }
@@ -206,9 +240,12 @@ class DownloadExecutorTest {
                             val line = reader.readLine() ?: return@use
                             generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
                             requests += line
-                            val header = "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: ${AUDIO.size}\r\n" +
+                            val song = line.contains("/rest/getSong.view?")
+                            val body = if (song) """{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"$RAW_ID","title":"Saved offline song","artist":"Saved artist","album":"Saved album","albumId":"saved-album","duration":1,"suffix":"wav","coverArt":"saved-art"}}}""".toByteArray() else AUDIO
+                            val type = if (song) "application/json" else "audio/wav"
+                            val header = "HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\n" +
                                 "Connection: close\r\n\r\n"
-                            client.getOutputStream().apply { write(header.toByteArray()); write(AUDIO); flush() }
+                            client.getOutputStream().apply { write(header.toByteArray()); write(body); flush() }
                         }
                     } catch (_: Exception) { }
                 }

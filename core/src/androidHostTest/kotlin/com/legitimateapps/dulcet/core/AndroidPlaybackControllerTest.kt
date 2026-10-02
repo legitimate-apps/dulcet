@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet.core
 
+import java.io.File
+
 import android.os.Looper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -592,6 +594,27 @@ class AndroidPlaybackControllerTest {
         } finally {
             file.delete()
         }
+    }
+
+    @Test fun aRestoredDownloadGetsItsTitleFromLocalMetadataWithoutAServerRead() {
+        val file = File.createTempFile("dulcet-restored-metadata", ".wav")
+        try {
+            val source = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = LocalPlaybackPlan(DownloadId("download:down"),
+                    DownloadIdentity(OWNER, rawId, DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path)
+                override suspend fun metadata(rawId: String) = AndroidTrack(OWNER, rawId,
+                    "Saved title", "Saved artist", "Saved album", 40_000, "saved-cover")
+            }
+            Fixture(savedOwner = OWNER, savedSongs = listOf("down"),
+                loadSong = { error("offline playback must not fetch its title") }, localPlans = source).use { f ->
+                assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                assertEquals("Saved title", f.controller.state.value.title)
+                assertEquals("Saved artist", f.controller.state.value.artist)
+                assertEquals("Saved album", f.controller.state.value.album)
+                assertEquals("Saved title", f.controller.state.value.queue.single().track.title)
+                assertTrue(f.prepared.isEmpty())
+            }
+        } finally { file.delete() }
     }
 
     @Test fun anEndedQueueReportsNoSessionAndNoStalePosition() {
