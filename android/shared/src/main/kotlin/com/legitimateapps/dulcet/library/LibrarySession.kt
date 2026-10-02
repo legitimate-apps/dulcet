@@ -815,6 +815,14 @@ public data class LibraryFrame(
     val itemsUnavailableReason: com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason? = null,
     /** Each row's rating, in [itemRawIds]' order, any pending change already in it; null for a row with none. */
     val itemRatings: List<Int?> = emptyList(),
+    /** A list's coverage (§16.12); null for a detail screen. */
+    val coverage: com.legitimateapps.dulcet.core.AndroidLibraryCoverage? = null,
+    /** The server's `X-Total-Count` for a list, when it sent one (§16.12); null when unknown. */
+    val total: Int? = null,
+    /** The server position of the first row: above zero, a rebased window starts below the top. */
+    val leadingOffset: Int = 0,
+    /** After a rebase, the item the core keeps first on screen (§16.12); null otherwise. */
+    val anchorRawId: String? = null,
 ) {
     internal companion object {
         fun of(publication: AndroidLibraryPublication) = LibraryFrame(
@@ -839,8 +847,26 @@ public data class LibraryFrame(
                     else -> null
                 }
             },
+            coverage = publication.coverage,
+            total = publication.total,
+            leadingOffset = publication.leadingOffset,
+            anchorRawId = publication.anchorRawId,
         )
     }
+}
+
+/**
+ * Whether a list may still grow at its end, so a screen near its end asks for the next page: an open
+ * window, and one read while the server scans or reports no stamp, which append unguarded and say so
+ * (§16.12: refusing to append would freeze scrolling for as long as a scan runs). Not a complete
+ * window, and not one whose stamp kept moving, which waits for the next epoch reading to rebase it.
+ * The reader decides whether a page is read at all (never offline).
+ */
+public fun AndroidLibraryPublication.growsAtEnd(): Boolean = when (coverage) {
+    com.legitimateapps.dulcet.core.AndroidLibraryCoverage.Open,
+    com.legitimateapps.dulcet.core.AndroidLibraryCoverage.UnverifiedScanning,
+    com.legitimateapps.dulcet.core.AndroidLibraryCoverage.UnverifiedNoEpoch -> true
+    else -> false
 }
 
 public fun SearchAccount.toReaderAccount(): AndroidLibraryReaderAccount =

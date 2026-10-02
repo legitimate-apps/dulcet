@@ -83,6 +83,42 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 check(exists("library.surface")) { "Back did not return to the library's home" }
             }
 
+            /** As a remote reaches the list's status lines: Up until focus leaves the cards for the grid's header. */
+            override fun showListStatus() {
+                repeat(64) {
+                    if (focusedAlbum() == null) return
+                    key(Key.DirectionUp)
+                }
+                error("The remote did not leave the album cards; focus is on ${focusedAlbum()}")
+            }
+
+            /**
+             * As a remote moves through a grid: from the card that has focus (or the first card drawn),
+             * Down a row a press and then Right along the row, until the card at [index] has focus;
+             * the grid scrolls to keep focus in view. A step that overshoots goes back Up.
+             */
+            override fun showAlbum(index: Int) {
+                if (focusedAlbum() == null) {
+                    val first = compose.onAllNodes(albumCard()).fetchSemanticsNodes()
+                        .minOf { it.config[SemanticsProperties.TestTag].removePrefix(ALBUM_CARD).toInt() }
+                    compose.onNodeWithTag("$ALBUM_CARD$first").performSemanticsAction(SemanticsActions.RequestFocus)
+                    compose.waitForIdle()
+                }
+                var downward = true
+                repeat(64) {
+                    val focused = checkNotNull(focusedAlbum()) { "no album card has focus" }
+                    if (focused == index) return
+                    val step = when {
+                        focused > index -> Key.DirectionUp.also { downward = false }
+                        downward -> Key.DirectionDown
+                        else -> Key.DirectionRight
+                    }
+                    key(step)
+                    if (step == Key.DirectionDown && focusedAlbum() == focused) downward = false
+                }
+                error("The remote did not reach album card $index; focus is on ${focusedAlbum()}")
+            }
+
             /** A TV has no touch: focus on the node, then the remote's centre key. */
             override fun activate(node: SemanticsNodeInteraction) {
                 node.performSemanticsAction(SemanticsActions.RequestFocus)
@@ -130,8 +166,18 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         }, platform = "androidtv")
     }
 
+    private fun albumCard() = SemanticsMatcher("an album card") {
+        it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith(ALBUM_CARD)
+    }
+
+    /** The album card that has focus, by its index, if one has. */
+    private fun focusedAlbum(): Int? = compose.onAllNodes(albumCard()).fetchSemanticsNodes()
+        .firstOrNull { it.config.getOrElse(SemanticsProperties.Focused) { false } }
+        ?.config?.get(SemanticsProperties.TestTag)?.removePrefix(ALBUM_CARD)?.toInt()
+
     private companion object {
         val TRACK_ROW = Regex("album\\.track\\.(\\d+)")
+        const val ALBUM_CARD = "library.albums.item."
     }
 
     @Test fun conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline() =
@@ -160,6 +206,19 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     @Test fun conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest() =
         scenarios.conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest()
+
+    @Test fun conf82AScanDuringAPageReadTearsTheWindowAndOnlyTheViewportPagesAreReRead() =
+        scenarios.conf82AScanDuringAPageReadTearsTheWindowAndOnlyTheViewportPagesAreReRead()
+    @Test fun conf82AWindowSeenUnderAnotherEpochIsRebasedAtItsFirstLiveReadAndNeverExtended() =
+        scenarios.conf82AWindowSeenUnderAnotherEpochIsRebasedAtItsFirstLiveReadAndNeverExtended()
+    @Test fun conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp() =
+        scenarios.conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp()
+    @Test fun conf82TheSentinelAndAnAbsentStampAreNoEpochWhateverScanningSaysAndNeverUnchanged() =
+        scenarios.conf82TheSentinelAndAnAbsentStampAreNoEpochWhateverScanningSaysAndNeverUnchanged()
+    @Test fun conf82AFailedStatusReadIsUnreadAndTheWindowKeepsItsPagesAndLabel() =
+        scenarios.conf82AFailedStatusReadIsUnreadAndTheWindowKeepsItsPagesAndLabel()
+    @Test fun conf82AWindowWithoutXTotalCountHasAnUnknownTotalAndConfirmsItsEnd() =
+        scenarios.conf82AWindowWithoutXTotalCountHasAnUnknownTotalAndConfirmsItsEnd()
 
     @Test fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() =
         scenarios.aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline()

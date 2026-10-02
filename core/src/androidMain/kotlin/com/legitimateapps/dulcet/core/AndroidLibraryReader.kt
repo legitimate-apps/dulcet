@@ -869,6 +869,22 @@ public class AndroidLibraryReader internal constructor(
             }
 
         /**
+         * For tests only, and null in the app: the rows asked for per window page (§16.12; the app
+         * asks for 100) by every reader [forAccount] creates while it is set, so an app-level test
+         * against a small disposable library can read a list as several pages and drive the window
+         * rules — tearing, rebasing the viewport's pages, scanning mode, the anchor — through the
+         * real screens. Everything else about the reader is the production one. Within the
+         * protocol's 1..500.
+         */
+        @Volatile
+        @JvmStatic
+        public var testPageSize: Int? = null
+            set(value) {
+                require(value == null || value in 1..500) { "a window page asks for 1 to 500 rows" }
+                field = value
+            }
+
+        /**
          * Each wait for a predecessor: before opening the database, and before counting as
          * terminated. The first starts no earlier than about when the predecessor's close begins
          * ([obtain] builds the new reader just before it closes the old one, and a [closeCurrent]
@@ -913,10 +929,11 @@ public class AndroidLibraryReader internal constructor(
         public fun forAccount(context: Context, account: AndroidLibraryReaderAccount, foreground: Boolean): AndroidLibraryReader {
             val application = context.applicationContext
             val epochInterval = testEpochIntervalMillis
+            val pageSize = testPageSize
             return obtain(account) { previous ->
                 AndroidLibraryReader(
                     account,
-                    productionComposer(application, account, epochInterval),
+                    productionComposer(application, account, epochInterval, pageSize),
                     newLibraryReaderDispatcher(),
                     Dispatchers.Main,
                     predecessor = previous,
@@ -1043,6 +1060,7 @@ private fun productionComposer(
     context: Context,
     account: AndroidLibraryReaderAccount,
     epochIntervalMillis: Long?,
+    pageSize: Int?,
 ): (CoroutineScope, Boolean) -> AndroidLibraryReaderComposition = { scope, foreground ->
     var store: DulcetDatabaseStore? = null
     var transport: KtorLibraryEndpointTransport? = null
@@ -1072,7 +1090,12 @@ private fun productionComposer(
             // want of it.
             session = LibraryReaderSession(
                 opened.database, cache, live, scope,
-                epochIntervalMillis?.let { LibraryReaderConfig(epochIntervalMillis = it) } ?: LibraryReaderConfig(),
+                LibraryReaderConfig().let { config ->
+                    config.copy(
+                        epochIntervalMillis = epochIntervalMillis ?: config.epochIntervalMillis,
+                        pageSize = pageSize ?: config.pageSize,
+                    )
+                },
                 downloads = DownloadedTrackSource { serverId ->
                     opened.database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
                         .filter { it.state == "complete" || it.state == "stale" }

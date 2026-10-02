@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
 import com.legitimateapps.dulcet.search.conformance.LibraryReaderScenarios
@@ -57,6 +58,17 @@ class AndroidProductionLibraryReaderAppConformanceTest {
                 compose.onNodeWithTag("library.view.home").performClick()
                 compose.waitForIdle()
             }
+
+            override fun showListStatus() {
+        compose.onNodeWithTag("library.albums").performScrollToIndex(0)
+        compose.waitForIdle()
+    }
+
+    override fun showAlbum(index: Int) {
+                // A finger's scroll: the grid's first item is its header, so card [index] is item index + 1.
+                compose.onNodeWithTag("library.albums").performScrollToIndex(index + 1)
+                compose.waitForIdle()
+            }
         }, platform = "android")
     }
 
@@ -98,6 +110,19 @@ class AndroidProductionLibraryReaderAppConformanceTest {
 
     @Test fun conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest() =
         scenarios.conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest()
+
+    @Test fun conf82AScanDuringAPageReadTearsTheWindowAndOnlyTheViewportPagesAreReRead() =
+        scenarios.conf82AScanDuringAPageReadTearsTheWindowAndOnlyTheViewportPagesAreReRead()
+    @Test fun conf82AWindowSeenUnderAnotherEpochIsRebasedAtItsFirstLiveReadAndNeverExtended() =
+        scenarios.conf82AWindowSeenUnderAnotherEpochIsRebasedAtItsFirstLiveReadAndNeverExtended()
+    @Test fun conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp() =
+        scenarios.conf82WhileTheServerScansPagesAppendUnguardedAndTheScanEndRebasesUnderAnUnchangedStamp()
+    @Test fun conf82TheSentinelAndAnAbsentStampAreNoEpochWhateverScanningSaysAndNeverUnchanged() =
+        scenarios.conf82TheSentinelAndAnAbsentStampAreNoEpochWhateverScanningSaysAndNeverUnchanged()
+    @Test fun conf82AFailedStatusReadIsUnreadAndTheWindowKeepsItsPagesAndLabel() =
+        scenarios.conf82AFailedStatusReadIsUnreadAndTheWindowKeepsItsPagesAndLabel()
+    @Test fun conf82AWindowWithoutXTotalCountHasAnUnknownTotalAndConfirmsItsEnd() =
+        scenarios.conf82AWindowWithoutXTotalCountHasAnUnknownTotalAndConfirmsItsEnd()
 
     @Test fun aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline() =
         scenarios.aReconnectAnsweredAfterTheNetworkWentAwayLeavesTheLibraryOffline()
