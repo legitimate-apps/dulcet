@@ -1672,13 +1672,28 @@ jobs:
           --cache-folder "$ROOT/cache"
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      # Pays each device's FIRST boot here, before any proof's clock. In the single job, earlier
+      # phases had already booted the iPhone and iPad, and the composite paid only re-boots. OBSERVED
+      # in run 37125098942 attempt 2: the iPhone's first boot took 218.6 s, and the search proof that
+      # followed it ran at load1 up to 845. Its existence checks took 30 s each and the keyboard did
+      # not dismiss in time. Attempt 1's iPad proof ran after the iPad's first boot at load1 up to
+      # 497 with 2.1 GB swapped out. Its scrobble never arrived. 15 bounds two first boots (158 to
+      # 219 s each, OBSERVED) plus the tool's own 120 s shutdown bound.
+      - name: First-boot the iPadOS and iPhone simulators before the timed proofs
+        timeout-minutes: 15
+        env:
+          IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
+        run: |
+          python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
+          python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert iPadOS and iPhone conformance proofs
         # 90 = ceil(1.5 x 59.6 / 5) x 5, rule 5's leg formula applied to this step. 59.6 minutes is
         # what these phases took inside the single composite of run 37105472578 -- the canary and
         # iPadOS proofs 27.8, the iPhone proofs from the playlist proof on 27.8, the server start and
-        # preconditions 0.6 -- plus 1.7 each for the iPad's and the iPhone's FIRST boot here, the
-        # difference between a first boot (161 and 158 s in that run) and the re-boots those phases
-        # paid there (61 and 58 s). A PROJECTION until this job has run.
+        # preconditions 0.6. The iPad's and the iPhone's FIRST boots are paid in the step above, so
+        # these phases pay re-boots as they did there (61 and 58 s). Run 37125098942, which paid
+        # both first boots inside this step, finished the iPad proofs and the iPhone search in 43 m.
         timeout-minutes: 90
         id: darwin_conformance
         env:

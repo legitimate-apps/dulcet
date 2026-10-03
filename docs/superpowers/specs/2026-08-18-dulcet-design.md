@@ -6492,9 +6492,12 @@ because the median is above 75 minutes. Either reading adopts the split.
    conformance figures are projections from green run 37105472578, whose single conformance job took
    123 minutes with a 103-minute composite, divided by phase: the core job's setup 19.6 and composite
    47.4 (step cap 75), 67.9 in all; the iPadOS-and-iPhone job's setup 12.7, with its iOS-simulator
-   framework link ASSUMED at 2.5, and composite 59.6 (step cap 90), which includes 1.7 minutes for
-   each of the iPad's and the iPhone's first boot over the re-boots those phases paid in the single
-   job, 72.3 in all. Each job cap exceeds its composite cap plus the rest of the job (95.5 and 102.7).
+   framework link ASSUMED at 2.5, and composite 59.6 (step cap 90), 72.3 in all. The iPad's and the
+   iPhone's first boots are paid in a step of their own before the composite (158 to 219 s each,
+   OBSERVED), so the composite pays re-boots as the single job did. Paid inside the composite, the
+   iPhone's first boot ran the search proof that followed it at load1 up to 845, and it failed (run
+   37125098942 attempt 2). Each job cap exceeds its composite cap plus the rest of the job (95.5 and
+   109.0, the latter with 6.3 minutes of first boots).
    Re-size both from their own history once they have run. *As of 2026-10-02, superseded:* 255 for
    `apple-conformance`. That conformance figure was a projection until it was re-measured: its
    measured maximum, 113.5 (run 36896866024), plus 27 minutes for the lyrics-state and
