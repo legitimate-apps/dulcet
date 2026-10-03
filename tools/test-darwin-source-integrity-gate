@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+
+"""Negative control: a tampered Darwin ffmpeg source tarball is rejected before anything is extracted.
+
+Drives the installer's own fetch-and-verify and build entry points against an in-memory server, so no
+network is used. Cases:
+
+  authentic       the pinned bytes are accepted, and the file hashed is the file handed to extraction
+  fallback        a tampered first url is rejected and the second url's authentic bytes are accepted
+  tampered        tampered bytes at every url fail the run, leave no archive behind, and reach no
+                  extraction or build command -- even when the other sources are authentic
+"""
+
+from contextlib import contextmanager
+import hashlib
+from importlib.machinery import SourceFileLoader
+import io
+from pathlib import Path
+import tarfile
+import tempfile
+
+
+TOOLS = Path(__file__).parent
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg", str(TOOLS / "conformance-env" / "install-darwin-ffmpeg")
+).load_module()
+
+
+def tarball(name: str, payload: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as bundle:
+        member = tarfile.TarInfo(f"{name}/README")
+        member.size = len(payload)
+        bundle.addfile(member, io.BytesIO(payload))
+    return buffer.getvalue()
+
+
+class Server:
+    """Maps url -> bytes and records every request."""
+
+    def __init__(self, content: dict[str, bytes]) -> None:
+        self.content = content
+        self.requests: list[str] = []
+
+    def __call__(self, request, timeout):
+        url = request.full_url
+        self.requests.append(url)
+        return io.BytesIO(self.content[url])
+
+
+@contextmanager
+def patched(**replacements):
+    saved = {name: getattr(installer, name) for name in replacements}
+    for name, value in replacements.items():
+        setattr(installer, name, value)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(installer, name, value)
+
+
+def synthetic_sources() -> tuple[list[dict], dict[str, bytes]]:
+    sources, content = [], {}
+    for name in installer.SOURCE_ORDER:
+        data = tarball(f"{name}-1", f"authentic {name}\n".encode())
+        urls = [f"https://primary.invalid/{name}-1.tar.gz", f"https://mirror.invalid/{name}-1.tar.gz"]
+        sources.append({
+            "name": name, "version": "1", "archive": f"{name}-1.tar.gz",
+            "sha256": hashlib.sha256(data).hexdigest(), "urls": urls,
+        })
+        content[urls[0]] = data
+        content[urls[1]] = data
+    return sources, content
+
+
+def tampered(data: bytes) -> bytes:
+    return data[:-1] + bytes([data[-1] ^ 0x01])
+
+
+def main() -> None:
+    sources, content = synthetic_sources()
+    lame = sources[0]
+
+    # authentic: accepted, and the returned path is the file whose bytes equal the pin.
+    with tempfile.TemporaryDirectory() as directory:
+        server = Server(content)
+        path = installer.fetch_verified(lame, Path(directory), opener=server)
+        observed = hashlib.sha256(path.read_bytes()).hexdigest()
+        if observed != lame["sha256"] or server.requests != [lame["urls"][0]]:
+            raise SystemExit(f"authentic case: observed_sha256={observed} requests={server.requests}")
+        tree = installer.extract(path, Path(directory))
+        if not (tree / "README").is_file():
+            raise SystemExit("authentic case: verified archive did not extract")
+        print(f"CONTROL PASS source_integrity case=authentic observed_sha256={observed} requests=1")
+
+    # fallback: the first url serves tampered bytes, the mirror serves the pin.
+    with tempfile.TemporaryDirectory() as directory:
+        served = dict(content)
+        served[lame["urls"][0]] = tampered(content[lame["urls"][0]])
+        server = Server(served)
+        path = installer.fetch_verified(lame, Path(directory), opener=server)
+        observed = hashlib.sha256(path.read_bytes()).hexdigest()
+        if observed != lame["sha256"] or server.requests != lame["urls"]:
+            raise SystemExit(f"fallback case: observed_sha256={observed} requests={server.requests}")
+        print(f"CONTROL PASS source_integrity case=fallback rejected_first_url=true observed_sha256={observed}")
+
+    # tampered: every url for opus serves altered bytes; lame and ffmpeg are authentic. The build
+    # entry point must fail before extracting anything or running any build command.
+    with tempfile.TemporaryDirectory() as directory:
+        served = dict(content)
+        opus = sources[1]
+        for url in opus["urls"]:
+            served[url] = tampered(content[url])
+        server = Server(served)
+        extracted: list[str] = []
+        commands: list[list[str]] = []
+
+        def opener_from_server(request, timeout):
+            return server(request, timeout)
+
+        def recording_extract(archive, target):
+            extracted.append(archive.name)
+            raise AssertionError("extraction reached after a failed source hash")
+
+        def recording_run(command, cwd, env, log):
+            commands.append(command)
+            raise AssertionError("build command reached after a failed source hash")
+
+        observed_detail = None
+        original_urlopen = installer.urllib.request.urlopen
+        installer.urllib.request.urlopen = opener_from_server
+        try:
+            with patched(extract=recording_extract, run=recording_run):
+                installer.build(
+                    {"prefix": "/nonexistent/dulcet-ffmpeg-control"}, sources, Path(directory) / "work",
+                    1, "0" * 64, "control-toolchain",
+                )
+        except SystemExit as error:
+            observed_detail = str(error)
+        finally:
+            installer.urllib.request.urlopen = original_urlopen
+        expected_detail = "source opus 1 failed verification at every url; nothing extracted"
+        if observed_detail is None:
+            raise SystemExit("tampered source failed open")
+        if not observed_detail.startswith(expected_detail):
+            raise SystemExit(
+                f"tampered source rejected for the wrong reason: expected_detail={expected_detail!r} "
+                f"observed_detail={observed_detail!r}"
+            )
+        for url in opus["urls"]:
+            if f"observed_sha256={hashlib.sha256(served[url]).hexdigest()}" not in observed_detail:
+                raise SystemExit(f"tampered source detail omits the observed hash for {url}")
+        left_behind = list((Path(directory) / "work" / "downloads").glob("opus*"))
+        if extracted or commands or left_behind:
+            raise SystemExit(
+                f"tampered source reached extracted={extracted} commands={commands} left_behind={left_behind}"
+            )
+        print(
+            "NEGATIVE CONTROL PASS source_integrity case=tampered expected_rejected=true observed_rejected=true "
+            f"extractions=0 build_commands=0 archives_left=0 urls_tried={len(opus['urls'])}"
+        )
+
+
+if __name__ == "__main__":
+    main()

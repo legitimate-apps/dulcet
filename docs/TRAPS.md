@@ -145,24 +145,31 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     *occlusion* from *unreachability* — an assertion naming reachability can be reporting a dialog
     on top, with the accessibility tree looking entirely normal underneath.
 
-36. **A pinned Homebrew formula drifting upstream fails 100% of Apple CI, and presents as an unrelated
-    red on whatever pull request runs next.** The Darwin conformance closure resolves through `brew`,
-    so `brew update` + `brew fetch` install the *live* formula — a pin that disagrees with live
-    verifies nothing, and the check is right to fail closed. Four drifts so far (openssl, x265, an
-    ffmpeg revision, sdl3). Refresh the pin from `https://formulae.brew.sh/api/formula/<name>.json`,
-    not from the CI error text, and update both the url digest and the `sha256`. ➡️ **Check this
-    first when several unrelated pull requests go red together** — it looks like flakiness and is
-    deterministic. `pins.json` already records each bottle's ghcr blob digest, and fetching that blob
-    directly does retire pin drift — but **installing from the fetched path is a different thing and
-    reintroduces a worse failure**. A package-path install makes Homebrew parse the formula embedded in
-    the bottle, which fails on any Homebrew generation that rejects a keyword argument appearing in it.
-    OBSERVED 2026-09-05: the pinned `openssl@3` 3.6.4 bottle embeds
-    `symlink "…", "…", overwrite: true`; a package-path install failed with
-    `openssl@3: unknown keyword: :overwrite` and then a misleading
-    `Cellar/openssl@3/<older version> is not a directory` on 4 of 4 runs on one runner-image generation,
-    while a by-name install succeeded on that same image. **The digest fetch is not the problem; the
-    package-path install is.** Retiring this class therefore needs a way to pour a digest-fetched bottle
-    *without* routing through Homebrew's own formula parse — not simply fetching by digest.
+36. **Homebrew pin drift used to fail 100% of Apple CI; since 2026-10-03 the Darwin ffmpeg is built
+    from pinned source instead, and its failure modes are different.** History: the Darwin closure
+    (ffmpeg plus 14 Homebrew formulae) resolved through `brew`, so any upstream movement of one formula
+    failed every conformance run closed until someone refreshed `pins.json` — about ten refreshes,
+    two on 2026-10-03 alone. Pouring the digest-pinned bottles by package path was tried and reverted:
+    it makes Homebrew parse the formula embedded in the bottle, which failed on 4 of 4 runs on one
+    image generation with `openssl@3: unknown keyword: :overwrite` and then a misleading
+    `Cellar/openssl@3/<version> is not a directory` (OBSERVED 2026-09-05). Now
+    `tools/conformance-env/install-darwin-ffmpeg` compiles LAME, Opus and FFmpeg from SHA-256-pinned
+    tarballs and `actions/cache` keeps the result (design spec §28, 2026-10-03). What can still go
+    wrong, and what it looks like:
+    - **Every listed URL for a source stops serving the pinned bytes** → `source <name> <version>
+      failed verification at every url; nothing extracted`, with each URL's error or observed hash.
+      Add a byte-identical mirror; never change the `sha256` without re-deriving it from the upstream
+      release (and, for FFmpeg, its release signature).
+    - **A cache miss costs the compile**: 151 s with 3 jobs on an M2 Max (OBSERVED 2026-10-03), estimated at 4 to 8 minutes on the 3-core hosted macos-26 runner until a CI miss measures it. The key changes when the pin, the installer or the
+      selected Xcode's clang/SDK changes, so an Xcode pin bump rebuilds once.
+    - **Building outside CI**: autoconf scripts try `gcc` first, which on a Mac whose Command Line
+      Tools SDK is newer than the selected Xcode's linker fails as `C compiler cannot create
+      executables` (`ld: tapi error: malformed file`); the installer names `/usr/bin/clang` and the
+      selected SDK for that reason. libtool's install step and autoconf's pkg-config call do not quote
+      paths, so the installer copies the static libraries out of their build trees and keeps its
+      pkg-config stand-in in a space-free temporary directory; a work directory with a space works.
+    - **A version or encoder failure** after a build means the source is not what the pin says it is
+      — read the `DARWIN FFMPEG` lines, do not refresh the pin to match.
 37. **The capture step runs BEFORE the iPadOS steps, so a capture divergence SKIPS them.** Measured:
     capture at step 25 `failure`, iPadOS boot and layout at 31-32 `skipped`. A ~20%-per-pair capture
     flake therefore gates every later step in the job, and an iPadOS fix cannot be validated at all

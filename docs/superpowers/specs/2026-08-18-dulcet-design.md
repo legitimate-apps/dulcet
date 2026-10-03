@@ -6043,7 +6043,7 @@ It is strictly worse than having no transcode test, because it manufactures conf
 | leg | transcoder | how it is pinned |
 |---|---|---|
 | Linux (`ubuntu-latest`) | the one **bundled in the Navidrome container** | **by the container's image digest.** A digest pins the exact filesystem, so it pins that ffmpeg build exactly. The resolved ffmpeg version is recorded in `docs/TOOLCHAIN.md` alongside the digest |
-| Darwin (`macos-latest`) | an **explicitly installed** ffmpeg | the complete Homebrew runtime closure is locked: formula version/revision, dependency edges, bottle rebuild, URL, and SHA-256 for the root and every dependency. CI compares both live and resolver metadata to the lock, hashes every fetched bottle, and verifies active kegs plus the installed runtime closure. Never "whatever `brew install ffmpeg` gives today" |
+| Darwin (`macos-latest`) | an **explicitly built** ffmpeg | **by the SHA-256 of its upstream source.** CI compiles LAME, Opus and FFmpeg from three source tarballs whose SHA-256 sums are pinned, with every autodetected external library disabled and a PATH of system directories only, then verifies the exact version of `ffmpeg` and `ffprobe`, the required encoders, system-only dynamic linkage, and an encode through each required encoder. A cached build is reused only when it was built from the same pins, installer and compiler, and is verified in full like a fresh one. No package index is consulted, so upstream index movement cannot change it. Never "whatever `brew install ffmpeg` gives today" |
 
 ⚠️ **We disagree with one line of the premise audit here, and the difference is load-bearing.** The
 audit states the container's ffmpeg "floats with the Alpine base and is not part of the pin." That is
@@ -6274,7 +6274,7 @@ concurrency:
 ```
 
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
-2026-09-06, then per leg since the split — 80 `apple-platform`, 105 `apple-conformance-core`, 110
+2026-09-06, then per leg since the split — 80 `apple-platform`, 105 `apple-conformance-core`, 115
 `apple-conformance-ipad-iphone`, 5 for the aggregator — with per-step caps on the heavy steps; see
 §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
@@ -6399,9 +6399,10 @@ freshly booted simulator (SUPPORTED, n=23).
 
 **Normative, and each rule names the failure it answers:**
 
-1. **Deterministic environment checks run before any build.** The Homebrew closure install and its
-   drift check run immediately after Xcode selection. A pin drift fails every run by construction
-   (§20, docs/TRAPS.md trap 36) and used to be discovered after ~55 minutes of builds.
+1. **Deterministic environment checks run before any build.** The pinned Navidrome install and the
+   Darwin ffmpeg build-or-verify run immediately after Xcode selection. A broken pin fails every run
+   by construction (§20, docs/TRAPS.md trap 36), and the old Homebrew closure's drift used to be
+   discovered after ~55 minutes of builds.
 2. **At most one simulator is booted while a phase talks to the loopback fixtures, and it is fully
    booted (`simctl bootstatus -b`) before the phase starts its clocks.** `tools/ci/isolate-simulator`
    does this and prints `SIMULATOR ISOLATION … isolated=true|false`; a new simulator phase in the
@@ -6488,7 +6489,7 @@ because the median is above 75 minutes. Either reading adopts the split.
    `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
 5. **Each leg's timeout is 1.5 times its measured maximum, rounded up to a multiple of 5:** 80
    minutes for `apple-platform` (measured maximum 51.5, run 36196670168), 105 for
-   `apple-conformance-core` and 110 for `apple-conformance-ipad-iphone`. *Since 2026-10-03* the two
+   `apple-conformance-core` and 115 for `apple-conformance-ipad-iphone`. *Since 2026-10-03* the two
    conformance figures are projections from green run 37105472578, whose single conformance job took
    123 minutes with a 103-minute composite, divided by phase: the core job's setup 19.6 and composite
    47.4 (step cap 75), 67.9 in all; the iPadOS-and-iPhone job's setup 12.7, with its iOS-simulator
@@ -6497,7 +6498,9 @@ because the median is above 75 minutes. Either reading adopts the split.
    OBSERVED), so the composite pays re-boots as the single job did. Paid inside the composite, the
    iPhone's first boot ran the search proof that followed it at load1 up to 845, and it failed (run
    37125098942 attempt 2). Each job cap exceeds its composite cap plus the rest of the job (95.5 and
-   109.0, the latter with 6.3 minutes of first boots).
+   109.0, the latter with 6.3 minutes of first boots). A Darwin ffmpeg cache miss (§20.2.1) builds in
+   each job, estimated at 8 minutes in place of the old closure install's 4.0. The second job's cap
+   rose from 110 to 115 to keep that margin (113.0).
    Re-size both from their own history once they have run. *As of 2026-10-02, superseded:* 255 for
    `apple-conformance`. That conformance figure was a projection until it was re-measured: its
    measured maximum, 113.5 (run 36896866024), plus 27 minutes for the lyrics-state and
@@ -7396,6 +7399,29 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-03 — The Darwin conformance ffmpeg is built from pinned source, not poured from Homebrew
+(§20.2.1).** The Darwin leg installed Homebrew's ffmpeg bottle and its 14-formula runtime closure, and
+failed closed whenever Homebrew's index moved any one of the 15 formulae past its pin
+(docs/TRAPS.md trap 36): about ten hand refreshes of `pins.json`, two of them on 2026-10-03 alone
+(sdl3 #213, sdl2-compat #215), each turning every conformance run red until someone refreshed the pin.
+`tools/conformance-env/install-darwin-ffmpeg` now compiles LAME 4.0, Opus 1.6.1 and FFmpeg 9.0.2 from
+upstream source tarballs pinned by SHA-256 under `ffmpeg.darwin.sources` (the same sums Homebrew's
+formulae record; the FFmpeg tarball's release signature also verified, OBSERVED locally), statically,
+with autodetection off and a system-only PATH, and verifies version, encoders, system-only linkage and
+a real encode on every run. `actions/cache` keeps the build, keyed on the pin, the installer and the
+selected compiler and SDK; a restored build is reused only when its manifest matches, and is verified
+like a fresh one. The installed binary is no longer at Homebrew's path: `ffmpeg.darwin.path` is
+`/Users/Shared/dulcet-conformance/ffmpeg-9.0.2/bin/ffmpeg`, and every consumer reads it through
+`read-pin`. The binary differs from the old bottle (no video encoders, no SDL, no TLS, no network
+protocols); the Darwin leg asserts transport and protocol behaviour, never transcoded bytes, so it
+needs only the native audio codecs plus `libmp3lame` and `libopus`. Rejected: pouring the
+digest-pinned bottles without Homebrew (re-implements Homebrew's relocation and signing for 15 kegs, 12
+of them libraries conformance never uses, and depends on GHCR keeping superseded blobs — ASSUMED, not
+observed either way); a third-party static binary (no way to tie its bytes to source). The negative
+controls for the retired mechanisms (fresh pour, bottle integrity, resolver drift, embedded formula,
+live-shape advisory) are removed; source integrity, pin prevalidation, version, missing encoder,
+foreign linkage and tampered-cache controls replace them.
 
 **2026-10-03 — `apple-conformance` divided into two parallel conformance jobs (§21.1, §21.5, §21.6).**
 Green run 37105472578's conformance job took 123 minutes, 103 of them in the one composite step that

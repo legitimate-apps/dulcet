@@ -1,71 +1,101 @@
 #!/usr/bin/env python3
 
-"""Install and prove the complete checksum-pinned Darwin ffmpeg closure."""
+"""Build, or reuse a verified build of, the pinned Darwin conformance ffmpeg.
 
+The Darwin leg's ffmpeg is compiled from three SHA-256-pinned upstream source tarballs (LAME, Opus,
+FFmpeg) listed under `ffmpeg.darwin.sources` in pins.json. Nothing is resolved through a package
+index, so upstream index movement cannot change or break it (docs/TRAPS.md trap 36).
+
+    install-darwin-ffmpeg cache-key           print the key a CI cache entry is stored under
+    install-darwin-ffmpeg [install]           reuse a matching install, else build; then verify
+    install-darwin-ffmpeg verify              verify an existing install; never builds
+
+Every pin is validated before any download. Each tarball is hashed after download and before it is
+extracted, and the file that is hashed is the file that is extracted: there is one copy. The build runs
+with a PATH of system directories only and with every autodetected external library disabled, so no
+library installed on the host can leak in; the linkage check then requires every dynamic library the
+binaries load to be a system one. Verification is the same whether the install was built now or
+restored from a cache: exact version token for ffmpeg and ffprobe, every required encoder present,
+system-only linkage, and a real encode through each required encoder.
+
+A restored install is reused only when its build manifest names this exact build digest and every
+file it lists hashes to the recorded value. Otherwise it is discarded and rebuilt from source. The
+manifest detects a corrupt or partial restore; it is not an adversarial provenance check, because the
+manifest travels with the cache entry it describes.
+"""
+
+import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import re
-import stat
+import shutil
 import subprocess
 import sys
 import tarfile
-import urllib.parse
+import tempfile
+import time
 import urllib.request
 
-from ffmpeg_version import require_ffmpeg_version
+
+sys.path.insert(0, str(Path(__file__).parent))
+from ffmpeg_version import require_ffmpeg_version  # noqa: E402
 
 
-def run(arguments: list[str], *, capture: bool = False) -> str:
-    process = subprocess.run(
-        arguments,
-        text=True,
-        capture_output=capture,
-        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
-    )
-    if process.returncode != 0:
-        detail = ((process.stdout or "") + (process.stderr or "")).strip()
-        raise SystemExit(f"{' '.join(arguments)} failed ({process.returncode}): {detail}")
-    return process.stdout.strip() if capture else ""
+PINS = Path(__file__).parent / "pins.json"
+MANIFEST_NAME = "DULCET-BUILD.json"
+INSTALLED_FILES = ("bin/ffmpeg", "bin/ffprobe")
+SOURCE_ORDER = ("lame", "opus", "ffmpeg")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+# The only directories a pinned binary may load a dynamic library from.
+SYSTEM_LIBRARY_PREFIXES = ("/usr/lib/", "/System/Library/")
+# A build environment with no Homebrew, no /usr/local and no inherited compiler flags.
+BUILD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+INHERITED_BUILD_VARIABLES = (
+    "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CPATH", "C_INCLUDE_PATH", "LIBRARY_PATH",
+    "SDKROOT", "PKG_CONFIG", "PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH",
+)
+
+# FFmpeg's configure needs pkg-config only for libopus, and LAME's configure refuses to run without
+# one. This answers for the Opus build in the work directory and nothing else, so no host .pc file is
+# ever consulted and LAME's optional mpg123 probe finds nothing. Paths are relative to the FFmpeg
+# source directory, where configure and make both run, so a work directory whose path holds a space
+# still builds. The shim itself lives in a space-free temporary directory, because autoconf invokes
+# it by absolute path without quoting.
+PKG_CONFIG_SHIM = """#!@PYTHON@
+import os, sys
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("0.29.2")
+    raise SystemExit(0)
+if args and args[0] == "--atleast-pkgconfig-version":
+    raise SystemExit(0)
+packages = [a for a in args if not a.startswith("-")]
+if packages != ["opus"]:
+    if "--print-errors" in args:
+        print(f"dulcet pkg-config shim: no package {' '.join(packages)}", file=sys.stderr)
+    raise SystemExit(1)
+deps = os.path.relpath(os.environ["DULCET_FFMPEG_DEPS"])
+if "--exists" in args:
+    raise SystemExit(0)
+out = []
+if "--cflags" in args or "--cflags-only-I" in args:
+    out.append(f"-I{deps}/include/opus")
+if "--libs" in args:
+    out.extend([f"-L{deps}/lib", "-lopus"])
+if "--variable=includedir" in args:
+    out.append(f"{deps}/include")
+print(" ".join(out))
+"""
 
 
-FORMULA_INDEX_ACCESSES = 0
+class PinError(SystemExit):
+    pass
 
 
-def count_formula_index_access() -> None:
-    """Record one Homebrew invocation that reads or refreshes Homebrew's formula index.
-
-    Pouring a bottle by formula name asks Homebrew to resolve that name itself, so this installer
-    does reach the formula index and must not claim otherwise. This is the only place the reported
-    total is incremented, which keeps that total an observation of what ran rather than a constant.
-    """
-    global FORMULA_INDEX_ACCESSES
-    FORMULA_INDEX_ACCESSES += 1
-
-
-def run_formula_index_command(arguments: list[str], *, capture: bool = False) -> str:
-    """Run one Homebrew command that resolves a formula name or refreshes the formula index."""
-    count_formula_index_access()
-    return run(arguments, capture=capture)
-
-
-def installed_formula_versions(name: str) -> list[str]:
-    count_formula_index_access()
-    process = subprocess.run(
-        ["brew", "list", "--versions", name],
-        text=True,
-        capture_output=True,
-        env={**os.environ, "HOMEBREW_NO_AUTO_UPDATE": "1"},
-    )
-    if process.returncode != 0:
-        return []
-    fields = process.stdout.split()
-    return fields[1:] if fields and fields[0] == name else []
-
-
-def file_sha256(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -73,1039 +103,410 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def pinned_ghcr_repository(entry: dict) -> str:
-    """Validate one immutable GHCR blob pin and return its repository name."""
-    expected_sha256 = entry.get("sha256")
-    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
-        raise SystemExit(f"invalid bottle sha256 pin for {entry.get('formula', '<unknown>')}")
+def load_pin() -> dict:
+    return json.loads(PINS.read_text())["ffmpeg"]["darwin"]
 
-    url = entry.get("url")
-    if not isinstance(url, str):
-        raise SystemExit(f"missing bottle URL pin for {entry.get('formula', '<unknown>')}")
-    parsed = urllib.parse.urlsplit(url)
-    match = re.fullmatch(r"/v2/(homebrew/core/.+)/blobs/sha256:([0-9a-f]{64})", parsed.path)
-    if (
-        parsed.scheme != "https"
-        or parsed.netloc != "ghcr.io"
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or match is None
-    ):
-        raise SystemExit(
-            f"bottle URL is not an immutable Homebrew GHCR blob for "
-            f"{entry.get('formula', '<unknown>')}: {url!r}"
+
+def validate_pin(pin: dict) -> list[dict]:
+    """Reject a malformed pin before any network request. Returns the sources in build order."""
+    errors: list[str] = []
+    version = pin.get("version")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(\.[0-9]+)+", version or ""):
+        errors.append(f"version must be a dotted release number, observed {version!r}")
+    prefix = pin.get("prefix")
+    if not isinstance(prefix, str) or not prefix.startswith("/") or " " in prefix:
+        errors.append(f"prefix must be an absolute path without spaces, observed {prefix!r}")
+    elif pin.get("path") != f"{prefix}/bin/ffmpeg":
+        errors.append(f"path must be {prefix}/bin/ffmpeg, observed {pin.get('path')!r}")
+    encoders = pin.get("required_encoders")
+    if not isinstance(encoders, list) or not encoders or not all(isinstance(e, str) for e in encoders):
+        errors.append("required_encoders must be a non-empty list of names")
+    sources = pin.get("sources")
+    by_name: dict[str, dict] = {}
+    if not isinstance(sources, list):
+        errors.append("sources must be a list")
+        sources = []
+    for index, source in enumerate(sources):
+        label = f"sources[{index}]"
+        if not isinstance(source, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        name = source.get("name")
+        label = f"source {name!r}"
+        if name not in SOURCE_ORDER:
+            errors.append(f"{label}: name must be one of {', '.join(SOURCE_ORDER)}")
+            continue
+        if name in by_name:
+            errors.append(f"{label}: duplicate")
+        by_name[name] = source
+        if not isinstance(source.get("version"), str) or not source["version"]:
+            errors.append(f"{label}: version missing")
+        if not SHA256.fullmatch(str(source.get("sha256", ""))):
+            errors.append(f"{label}: sha256 must be 64 lowercase hex digits")
+        archive = source.get("archive")
+        if not isinstance(archive, str) or "/" in archive or not archive.endswith((".tar.gz", ".tar.xz")):
+            errors.append(f"{label}: archive must be a bare .tar.gz or .tar.xz file name")
+        urls = source.get("urls")
+        if not isinstance(urls, list) or not urls:
+            errors.append(f"{label}: urls must be a non-empty list")
+        else:
+            for url in urls:
+                if not isinstance(url, str) or not url.startswith("https://"):
+                    errors.append(f"{label}: url {url!r} is not https")
+    for name in SOURCE_ORDER:
+        if name not in by_name:
+            errors.append(f"source {name!r} missing")
+    if "ffmpeg" in by_name and by_name["ffmpeg"].get("version") != version:
+        errors.append(
+            f"source 'ffmpeg' version {by_name['ffmpeg'].get('version')!r} differs from pinned version {version!r}"
         )
-    repository, url_digest = match.groups()
-    if url_digest != expected_sha256:
-        raise SystemExit(
-            f"bottle digest pin disagreement for {entry['formula']}: "
-            f"url={url_digest} sha256={expected_sha256}"
-        )
-    return repository
+    if errors:
+        raise PinError("Darwin ffmpeg pin invalid; nothing downloaded:\n  " + "\n  ".join(errors))
+    return [by_name[name] for name in SOURCE_ORDER]
 
 
-def validate_pinned_bottle_closure(closure: list[dict]) -> None:
-    """Validate every immutable URL/checksum pair before any closure member is fetched."""
-    for entry in closure:
-        pinned_ghcr_repository(entry)
+def build_environment() -> dict:
+    """The inherited environment minus compiler and pkg-config overrides, pinned to the selected Xcode.
 
-
-def verify_bottle_checksum(path: Path, entry: dict) -> str:
-    """Reject any archive whose bytes do not match the immutable digest pin."""
-    pinned_ghcr_repository(entry)
-    observed_sha256 = file_sha256(path)
-    if observed_sha256 != entry["sha256"]:
-        raise SystemExit(
-            f"pinned bottle checksum mismatch for {entry['formula']}: "
-            f"expected {entry['sha256']}, observed {observed_sha256}"
-        )
-    return observed_sha256
-
-
-def fetch_pinned_bottle(entry: dict) -> Path:
-    """Populate Homebrew's own download cache and return the file its next install will pour.
-
-    The returned path is the one Homebrew reports for this formula and bottle tag, so it is the
-    file a by-name install of the same formula consumes. Nothing else in this installer downloads
-    a bottle: there is exactly one copy of each artifact, and it is Homebrew's.
+    The compiler and SDK are named explicitly: an autoconf script left to itself tries `gcc` first, and
+    on a host whose Command Line Tools SDK is newer than the selected Xcode's linker understands, that
+    resolves to an SDK the linker rejects (OBSERVED on a development Mac: `ld: tapi error: malformed
+    file ... unknown architecture`).
     """
-    name = entry["formula"]
-    run_formula_index_command(["brew", "fetch", "--force", "--force-bottle", name])
-    bottle_path = Path(
-        run_formula_index_command(
-            ["brew", "--cache", f"--bottle-tag={entry['bottle_tag']}", name],
-            capture=True,
-        )
+    environment = {key: value for key, value in os.environ.items() if key not in INHERITED_BUILD_VARIABLES}
+    environment["PATH"] = BUILD_PATH
+    sdk = subprocess.run(
+        ["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True, capture_output=True, check=True,
+        env=environment,
     )
-    if not bottle_path.is_file():
-        raise SystemExit(f"Homebrew did not fetch the pinned bottle for {name}: {bottle_path}")
-    return bottle_path
+    environment.update(SDKROOT=sdk.stdout.strip(), CC="/usr/bin/clang", CXX="/usr/bin/clang++")
+    return environment
 
 
-def pour_pinned_bottle(entry: dict) -> tuple[str, int]:
-    """Verify one pinned bottle and pour the artifact that was verified.
-
-    Locating the artifact, hashing it and pouring it are one operation on purpose. The hash is
-    taken from the path Homebrew names for this formula and bottle tag, and the install that
-    immediately follows names the same formula, so no step in between can substitute a different
-    file and no separate copy exists for the checksum to drift onto.
-    """
-    name = entry["formula"]
-    bottle_path = fetch_pinned_bottle(entry)
-    archive_reader_index_accesses = assert_bottle_archive_shape(bottle_path, entry)
-    observed_sha256 = verify_bottle_checksum(bottle_path, entry)
-    print(
-        f"DARWIN BOTTLE VERIFIED formula={name} sha256={observed_sha256} "
-        f"bottle_file={bottle_path.name} "
-        "authenticated_archive_metadata_matches_pin=true "
-        f"authenticated_archive_reader_index_accesses={archive_reader_index_accesses}"
+def toolchain_identity() -> str:
+    clang = subprocess.run(
+        ["/usr/bin/clang", "--version"], text=True, capture_output=True, check=True, env=build_environment(),
     )
-    run_formula_index_command(["brew", "install", "--force-bottle", name])
-    return observed_sha256, archive_reader_index_accesses
+    sdk = subprocess.run(
+        ["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True, capture_output=True, check=True,
+        env=build_environment(),
+    )
+    return f"{clang.stdout.splitlines()[0].strip()} sdk={sdk.stdout.strip()} arch={platform.machine()}"
 
 
-def keg_payload_sha256(root: Path) -> tuple[str, int]:
-    """Hash every installed payload path except Homebrew's mutable pour receipt."""
+def build_digest(pin: dict, toolchain: str) -> str:
+    """What a reusable install must have been built from: the pin, this script, and the compiler."""
     digest = hashlib.sha256()
-    entries = 0
-    for path in sorted(root.rglob("*"), key=lambda candidate: candidate.relative_to(root).as_posix()):
-        relative = path.relative_to(root).as_posix()
-        if relative == "INSTALL_RECEIPT.json":
-            continue
-        mode = path.lstat().st_mode
-        if stat.S_ISDIR(mode):
-            kind = b"directory"
-            payload = b""
-        elif stat.S_ISLNK(mode):
-            kind = b"symlink"
-            payload = os.readlink(path).encode()
-        elif stat.S_ISREG(mode):
-            kind = b"file"
-            payload = bytes.fromhex(file_sha256(path))
-        else:
-            raise SystemExit(f"unsupported installed keg entry: {path}")
-        digest.update(kind + b"\0" + relative.encode() + b"\0")
-        digest.update(f"{stat.S_IMODE(mode):04o}".encode() + b"\0" + payload + b"\0")
-        entries += 1
-    if entries == 0:
-        raise SystemExit(f"installed keg has no payload entries: {root}")
-    return digest.hexdigest(), entries
+    digest.update(json.dumps(pin, sort_keys=True, separators=(",", ":")).encode())
+    digest.update(b"\0")
+    digest.update(Path(__file__).read_bytes())
+    digest.update(b"\0")
+    digest.update(toolchain.encode())
+    return digest.hexdigest()
 
 
-def observe_keg(root: Path) -> dict[str, int | str] | None:
-    """Retain the filesystem and receipt evidence that identifies one poured keg."""
-    if not root.exists():
-        return None
-    if not root.is_dir():
-        raise SystemExit(f"Homebrew keg path is not a directory: {root}")
-    receipt_path = root / "INSTALL_RECEIPT.json"
-    try:
-        receipt = json.loads(receipt_path.read_text())
-        receipt_time = int(receipt["time"])
-        root_stat = root.stat()
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise SystemExit(f"invalid Homebrew pour receipt: {receipt_path}") from error
-    return {
-        "root_device": root_stat.st_dev,
-        "root_inode": root_stat.st_ino,
-        "receipt_sha256": file_sha256(receipt_path),
-        "receipt_time": receipt_time,
-    }
-
-
-def assert_fresh_pour(
-    name: str,
-    preinstall: dict[str, int | str] | None,
-    before_pour: dict[str, int | str] | None,
-    after_pour: dict[str, int | str] | None,
-) -> dict[str, bool]:
-    """Require an observed absence checkpoint and a new post-install keg observation."""
-    observed_absent_before_pour = before_pour is None
-    observed_present_after_pour = after_pour is not None
-    observed_changed = preinstall != after_pour
-    if not observed_absent_before_pour:
-        raise SystemExit(
-            f"fresh-pour gate rejected retained keg {name}: "
-            "expected_absent_before_pour=true observed_absent_before_pour=false"
-        )
-    if not observed_present_after_pour:
-        raise SystemExit(
-            f"fresh-pour gate rejected missing keg {name}: "
-            "expected_present_after_pour=true observed_present_after_pour=false"
-        )
-    if not observed_changed:
-        raise SystemExit(
-            f"fresh-pour gate rejected unchanged keg {name}: "
-            "expected_observation_changed=true observed_observation_changed=false"
-        )
-    return {
-        "preinstall_present": preinstall is not None,
-        "absent_before_pour": observed_absent_before_pour,
-        "present_after_pour": observed_present_after_pour,
-        "postinstall_receipt_observed": observed_present_after_pour,
-        "postinstall_observation_differs_from_preinstall": observed_changed,
-    }
-
-
-def formula_shape(formula: dict, bottle_tag: str) -> dict:
-    try:
-        bottle = formula["bottle"]["stable"]
-        artifact = bottle["files"][bottle_tag]
-    except (KeyError, TypeError) as error:
-        raise ValueError(
-            f"formula {formula.get('name', '<unknown>')} has no stable {bottle_tag} bottle"
-        ) from error
-    return {
-        "formula": formula["name"],
-        "version": formula["versions"]["stable"],
-        "revision": formula["revision"],
-        "version_scheme": formula["version_scheme"],
-        "dependencies": formula["dependencies"],
-        "bottle_tag": bottle_tag,
-        "bottle_rebuild": bottle["rebuild"],
-        "url": artifact["url"],
-        "sha256": artifact["sha256"],
-    }
-
-
-def keg_version(entry: dict) -> str:
-    """Homebrew's on-disk keg name for a pinned entry.
-
-    Homebrew appends the formula revision to the keg directory and to the version it reports in
-    `brew info --json`, so a revision-1 build of 9.0.1 installs as "9.0.1_1" while the upstream
-    version stays "9.0.1". Everything that names a KEG must use this; anything comparing the
-    version the built binary reports about itself must not.
-    """
-    return entry["version"] if entry["revision"] == 0 else f"{entry['version']}_{entry['revision']}"
-
-
-def assert_resolver_shape(entry: dict, resolved_by_name: dict[str, dict]) -> dict:
-    """Require Homebrew's own resolution of a pinned formula name to be exactly the pinned shape.
-
-    A by-name pour asks Homebrew which artifact a name means, so the answer has to be constrained
-    before the name is used. Every pinned field is compared: version, revision, version scheme,
-    runtime dependency list, bottle tag, bottle rebuild, bottle URL and bottle sha256. Comparing
-    the bottle digest establishes that the formula Homebrew pours from declares the pinned digest.
-    What Homebrew then does with its own declared checksum is Homebrew's behaviour, not a guarantee
-    this installer owns; the guarantee here is the digest hashed immediately before each install.
-    """
-    name = entry["formula"]
-    try:
-        observed = formula_shape(resolved_by_name.get(name, {}), entry["bottle_tag"])
-    except (ValueError, KeyError, TypeError) as error:
-        raise SystemExit(
-            f"Homebrew resolver drift for {name}: unusable resolution: "
-            f"{type(error).__name__}: {error}"
-        ) from error
-    if observed != entry:
-        raise SystemExit(
-            f"Homebrew resolver drift for {name}: expected {entry}, observed {observed}"
-        )
-    return observed
-
-
-def assert_resolver_shapes(
-    closure: list[dict], resolved_by_name: dict[str, dict]
-) -> dict[str, dict]:
-    """Assert every pinned name resolves to its pinned shape, reporting all drift in one pass.
-
-    Exiting on the first drifted formula names one formula while hiding the rest, and whoever
-    refreshes the pin from that message refreshes only what it printed, then spends another full
-    CI run discovering the next one. Every entry is checked; the check still fails closed.
-    """
-    shapes: dict[str, dict] = {}
-    drift: list[str] = []
-    for entry in closure:
+def fetch_verified(source: dict, directory: Path, opener=None) -> Path:
+    """Download one source, hash it, and return that same file only if it equals the pin."""
+    target = directory / source["archive"]
+    failures: list[str] = []
+    for url in source["urls"]:
+        target.unlink(missing_ok=True)
         try:
-            shapes[entry["formula"]] = assert_resolver_shape(entry, resolved_by_name)
-        except SystemExit as error:
-            drift.append(str(error))
-    if drift:
-        raise SystemExit("\n".join(drift))
-    return shapes
-
-
-def assert_locked_graph(closure: list[dict], root_formula: str) -> None:
-    by_name = {entry["formula"]: entry for entry in closure}
-    if len(by_name) != len(closure):
-        raise SystemExit("Darwin ffmpeg closure contains duplicate formula names")
-    if root_formula not in by_name:
-        raise SystemExit(f"Darwin ffmpeg closure omits root formula {root_formula}")
-
-    indexes = {entry["formula"]: index for index, entry in enumerate(closure)}
-    for entry in closure:
-        missing = set(entry["dependencies"]) - set(by_name)
-        if missing:
-            raise SystemExit(f"closure omits dependencies of {entry['formula']}: {sorted(missing)}")
-        if any(indexes[dependency] >= indexes[entry["formula"]] for dependency in entry["dependencies"]):
-            raise SystemExit(f"closure is not topologically ordered at {entry['formula']}")
-
-    reachable: set[str] = set()
-    pending = [root_formula]
-    while pending:
-        name = pending.pop()
-        if name in reachable:
+            request = urllib.request.Request(url, headers={"User-Agent": "curl/8"})
+            with (opener or urllib.request.urlopen)(request, timeout=120) as response, target.open("wb") as handle:
+                while block := response.read(1024 * 1024):
+                    handle.write(block)
+        except OSError as error:
+            failures.append(f"{url}: {error}")
             continue
-        reachable.add(name)
-        pending.extend(by_name[name]["dependencies"])
-    if reachable != set(by_name):
-        raise SystemExit(
-            f"closure is not exact: reachable={sorted(reachable)} locked={sorted(by_name)}"
-        )
+        observed = sha256_file(target)
+        if observed == source["sha256"]:
+            print(
+                f"DARWIN FFMPEG SOURCE PASS name={source['name']} version={source['version']} "
+                f"expected_sha256={source['sha256']} observed_sha256={observed} url={url}"
+            )
+            return target
+        failures.append(f"{url}: expected_sha256={source['sha256']} observed_sha256={observed}")
+    target.unlink(missing_ok=True)
+    raise SystemExit(
+        f"source {source['name']} {source['version']} failed verification at every url; nothing extracted:\n  "
+        + "\n  ".join(failures)
+    )
 
 
-def expected_runtime_dependencies(entry: dict, by_name: dict[str, dict]) -> dict[str, dict]:
-    reachable: set[str] = set()
-    pending = list(entry["dependencies"])
-    while pending:
-        name = pending.pop()
-        if name in reachable:
-            continue
-        reachable.add(name)
-        pending.extend(by_name[name]["dependencies"])
-    direct = set(entry["dependencies"])
-    return {
-        name: {
-            "version": by_name[name]["version"],
-            "revision": by_name[name]["revision"],
-            "bottle_rebuild": by_name[name]["bottle_rebuild"],
-            "pkg_version": keg_version(by_name[name]),
-            "declared_directly": name in direct,
-        }
-        for name in sorted(reachable)
+def extract(archive: Path, directory: Path) -> Path:
+    with tarfile.open(archive) as bundle:
+        names = bundle.getnames()
+        roots = {name.split("/", 1)[0] for name in names}
+        if len(roots) != 1:
+            raise SystemExit(f"{archive.name}: expected one top-level directory, observed {sorted(roots)}")
+        bundle.extractall(directory, filter="data")
+    return directory / roots.pop()
+
+
+def run(command: list[str], cwd: Path, env: dict, log: Path) -> None:
+    with log.open("a") as handle:
+        handle.write(f"\n$ {' '.join(command)}\n")
+        handle.flush()
+        result = subprocess.run(command, cwd=cwd, env=env, stdout=handle, stderr=subprocess.STDOUT)
+    if result.returncode != 0:
+        tail = log.read_text(errors="replace").splitlines()[-40:]
+        raise SystemExit(f"build step failed ({result.returncode}): {' '.join(command)}\n" + "\n".join(tail))
+
+
+def build(pin: dict, sources: list[dict], work: Path, jobs: int, digest: str, toolchain: str) -> Path:
+    """Build into work/stage and return the staged prefix; never touches the install prefix."""
+    downloads = work / "downloads"
+    trees = work / "src"
+    shim_dir = Path(tempfile.mkdtemp(prefix="dulcet-pkg-config-"))
+    deps = work / "deps"
+    stage = work / "stage"
+    for directory in (downloads, trees, deps, stage):
+        directory.mkdir(parents=True)
+    shim = shim_dir / "pkg-config"
+    if " " in str(shim_dir) or " " in sys.executable:
+        raise SystemExit(f"pkg-config shim path must not contain a space: {shim_dir} {sys.executable}")
+    shim.write_text(PKG_CONFIG_SHIM.replace("@PYTHON@", sys.executable))
+    shim.chmod(0o755)
+    environment = build_environment()
+    environment.update(
+        PATH=f"{shim_dir}:{BUILD_PATH}",
+        DULCET_FFMPEG_DEPS=str(deps),
+        LC_ALL="C",
+        TZ="UTC",
+        SOURCE_DATE_EPOCH="0",
+        ZERO_AR_DATE="1",
+    )
+    log = work / "build.log"
+
+    verified = {source["name"]: fetch_verified(source, downloads) for source in sources}
+    tree = {name: extract(archive, trees) for name, archive in verified.items()}
+
+    started = time.monotonic()
+    # The two static libraries and their public headers are copied out of the build trees rather than
+    # `make install`ed: libtool's install step does not quote paths, so it fails in a work directory
+    # whose path holds a space. The placeholder prefix is never used.
+    library_configure = ["--prefix=/dulcet-unused", "--disable-shared", "--enable-static"]
+    run(["./configure", *library_configure, "--disable-frontend", "--disable-decoder"], tree["lame"], environment, log)
+    run(["make", f"-j{jobs}"], tree["lame"], environment, log)
+    run(["./configure", *library_configure, "--disable-doc", "--disable-extra-programs"], tree["opus"], environment, log)
+    run(["make", f"-j{jobs}"], tree["opus"], environment, log)
+    (deps / "lib").mkdir()
+    (deps / "include" / "lame").mkdir(parents=True)
+    (deps / "include" / "opus").mkdir()
+    shutil.copy2(tree["lame"] / "libmp3lame" / ".libs" / "libmp3lame.a", deps / "lib")
+    shutil.copy2(tree["lame"] / "include" / "lame.h", deps / "include" / "lame")
+    shutil.copy2(tree["opus"] / ".libs" / "libopus.a", deps / "lib")
+    for header in sorted((tree["opus"] / "include").glob("opus*.h")):
+        shutil.copy2(header, deps / "include" / "opus")
+
+    relative_deps = os.path.relpath(deps, tree["ffmpeg"])
+    run(
+        [
+            "./configure",
+            f"--prefix={pin['prefix']}",
+            "--cc=clang",
+            "--pkg-config=pkg-config",
+            "--disable-autodetect",
+            "--disable-debug",
+            "--disable-doc",
+            "--disable-ffplay",
+            "--disable-network",
+            "--enable-zlib",
+            "--enable-libmp3lame",
+            "--enable-libopus",
+            f"--extra-cflags=-I{relative_deps}/include",
+            f"--extra-ldflags=-L{relative_deps}/lib",
+        ],
+        tree["ffmpeg"], environment, log,
+    )
+    run(["make", f"-j{jobs}", "ffmpeg", "ffprobe"], tree["ffmpeg"], environment, log)
+    elapsed = time.monotonic() - started
+    shutil.rmtree(shim_dir)
+
+    (stage / "bin").mkdir()
+    for relative in INSTALLED_FILES:
+        shutil.copy2(tree["ffmpeg"] / Path(relative).name, stage / relative)
+    write_manifest(stage, digest, toolchain, sources, elapsed, jobs)
+    print(f"DARWIN FFMPEG BUILD elapsed_seconds={elapsed:.0f} jobs={jobs} toolchain={toolchain!r}")
+    return stage
+
+
+def write_manifest(prefix: Path, digest: str, toolchain: str, sources: list[dict], elapsed: float, jobs: int) -> None:
+    manifest = {
+        "build_digest": digest,
+        "toolchain": toolchain,
+        "sources": {source["name"]: source["sha256"] for source in sources},
+        "build_seconds": round(elapsed),
+        "build_jobs": jobs,
+        "files": {relative: sha256_file(prefix / relative) for relative in INSTALLED_FILES},
     }
+    (prefix / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
-MAX_BOTTLE_METADATA_BYTES = 2 * 1024 * 1024
-
-
-class BottleMetadataError(ValueError):
-    """The authenticated archive cannot supply an unambiguous metadata shape."""
-
-
-def _read_bottle_metadata_member(
-    archive: tarfile.TarFile,
-    member: tarfile.TarInfo,
-    *,
-    label: str,
-) -> bytes:
-    if not member.isfile():
-        raise BottleMetadataError(f"{label} is not a regular file: {member.name}")
-    if member.size > MAX_BOTTLE_METADATA_BYTES:
-        raise BottleMetadataError(
-            f"{label} exceeds {MAX_BOTTLE_METADATA_BYTES} bytes: {member.name}"
-        )
-    extracted = archive.extractfile(member)
-    if extracted is None:
-        raise BottleMetadataError(f"cannot read {label}: {member.name}")
-    payload = extracted.read(MAX_BOTTLE_METADATA_BYTES + 1)
-    if len(payload) != member.size:
-        raise BottleMetadataError(f"truncated {label}: {member.name}")
-    return payload
-
-
-def _strip_ruby_comment(line: str) -> str:
-    """Remove a Ruby comment without treating # inside a quoted string as a comment."""
-    quote: str | None = None
-    escaped = False
-    for index, character in enumerate(line):
-        if escaped:
-            escaped = False
-            continue
-        if quote is not None and character == "\\":
-            escaped = True
-            continue
-        if character in {'"', "'"}:
-            if quote == character:
-                quote = None
-            elif quote is None:
-                quote = character
-            continue
-        if character == "#" and quote is None:
-            return line[:index].rstrip()
-    return line.rstrip()
-
-
-def _dependency_condition_applies(condition: str, bottle_tag: str) -> bool:
-    """Evaluate the small platform predicate subset used by authenticated declarations."""
-    fixed_predicates = {
-        "OS.mac?": True,
-        "OS.linux?": False,
-        "Hardware::CPU.arm?": True,
-        "Hardware::CPU.intel?": False,
-    }
-    if condition in fixed_predicates:
-        return fixed_predicates[condition]
-
-    # The x264 formula retains a compiler fallback for pre-Xcode-10 hosts. An arm64 Tahoe bottle
-    # cannot have been authored for that toolchain. Keep this narrow and fail closed if the formula
-    # changes the predicate or if a different bottle platform ever needs it.
-    if (
-        condition == "DevelopmentTools.clang_build_version <= 902"
-        and bottle_tag == "arm64_tahoe"
-    ):
-        return False
-    raise BottleMetadataError(f"unsupported conditional dependency predicate: {condition!r}")
-
-
-def _formula_declarations(source: str, bottle_tag: str) -> dict:
-    """Statically read declarative formula facts without evaluating Ruby or loading Homebrew."""
-    revision: int | None = None
-    version_scheme: int | None = None
-    explicit_version: str | None = None
-    dependencies: set[str] = set()
-    class_scope: str | None = None
-    formula_class_open = False
-    formula_class_closed = False
-
-    for line_number, original_line in enumerate(source.splitlines(), start=1):
-        line = _strip_ruby_comment(original_line)
-        stripped = line.strip()
-        if not stripped:
-            continue
-        indentation = len(line) - len(line.lstrip(" "))
-        if original_line.startswith("\t"):
-            raise BottleMetadataError(f"tab-indented formula declaration at line {line_number}")
-
-        formula_class = re.fullmatch(
-            r"class\s+[A-Z][A-Za-z0-9]*(?:::[A-Z][A-Za-z0-9]*)*\s*<\s*Formula",
-            stripped,
-        )
-        if indentation == 0 and formula_class is not None:
-            if formula_class_open or formula_class_closed:
-                raise BottleMetadataError("formula source has multiple Formula classes")
-            formula_class_open = True
-            continue
-        if indentation == 0 and stripped == "end" and formula_class_open:
-            formula_class_open = False
-            formula_class_closed = True
-            class_scope = None
-            continue
-
-        if indentation == 2 and stripped == "end":
-            class_scope = None
-            continue
-        if indentation == 2:
-            block = re.fullmatch(
-                r"([a-z_][a-z0-9_!?]*)(?:\s+.*?)?\s+do(?:\s+\|.*\|)?",
-                stripped,
-            )
-            if block is not None:
-                class_scope = block.group(1)
-
-        if indentation == 2 and stripped.startswith("revision "):
-            if not formula_class_open:
-                raise BottleMetadataError(f"revision outside Formula class at line {line_number}")
-            match = re.fullmatch(r"revision\s+([0-9]+)", stripped)
-            if match is None or revision is not None:
-                raise BottleMetadataError(f"ambiguous revision declaration at line {line_number}")
-            revision = int(match.group(1))
-            continue
-        if indentation == 2 and stripped.startswith("version_scheme "):
-            if not formula_class_open:
-                raise BottleMetadataError(
-                    f"version_scheme outside Formula class at line {line_number}"
-                )
-            match = re.fullmatch(r"version_scheme\s+([0-9]+)", stripped)
-            if match is None or version_scheme is not None:
-                raise BottleMetadataError(
-                    f"ambiguous version_scheme declaration at line {line_number}"
-                )
-            version_scheme = int(match.group(1))
-            continue
-        if indentation == 2 and stripped.startswith("version "):
-            if not formula_class_open:
-                raise BottleMetadataError(f"version outside Formula class at line {line_number}")
-            match = re.fullmatch(r'version\s+(["\'])([^"\']+)\1', stripped)
-            if match is None or explicit_version is not None:
-                raise BottleMetadataError(f"ambiguous version declaration at line {line_number}")
-            explicit_version = match.group(2)
-            continue
-
-        if "depends_on" not in stripped:
-            continue
-        if not stripped.startswith("depends_on"):
-            raise BottleMetadataError(
-                f"unsupported dependency expression at line {line_number}: {stripped!r}"
-            )
-        if not formula_class_open:
-            raise BottleMetadataError(f"dependency outside Formula class at line {line_number}")
-        match = re.fullmatch(r'depends_on\s+(["\'])([^"\']+)\1(.*)', stripped)
-        if match is None:
-            raise BottleMetadataError(
-                f"unsupported dependency declaration at line {line_number}: {stripped!r}"
-            )
-        name = match.group(2)
-        remainder = match.group(3).strip()
-
-        if indentation == 2:
-            if class_scope is not None:
-                raise BottleMetadataError(
-                    f"dependency declaration has ambiguous scope at line {line_number}: "
-                    f"{class_scope}"
-                )
-            scope_applies = True
-        elif indentation == 4 and class_scope in {
-            "head",
-            "on_arm",
-            "on_intel",
-            "on_linux",
-            "on_macos",
-        }:
-            scope_applies = class_scope in {"on_arm", "on_macos"}
-        else:
-            raise BottleMetadataError(
-                f"dependency declaration has unsupported scope at line {line_number}: "
-                f"{class_scope!r}"
-            )
-
-        condition_applies = True
-        conditional = re.fullmatch(r"(?:(.*?)\s+)?(if|unless)\s+(.+)", remainder)
-        if conditional is not None:
-            remainder, keyword, expression = conditional.groups()
-            remainder = (remainder or "").strip()
-            condition_applies = _dependency_condition_applies(expression, bottle_tag)
-            if keyword == "unless":
-                condition_applies = not condition_applies
-
-        tags: set[str] = set()
-        if remainder:
-            tag_match = re.fullmatch(r"=>\s*:(build|test|no_linkage)", remainder)
-            tag_list_match = re.fullmatch(
-                r"=>\s*\[\s*((?::(?:build|test|no_linkage)\s*,?\s*)+)\]",
-                remainder,
-            )
-            if tag_match is not None:
-                tags = {tag_match.group(1)}
-            elif tag_list_match is not None:
-                tags = set(re.findall(r":(build|test|no_linkage)", tag_list_match.group(1)))
-            else:
-                raise BottleMetadataError(
-                    f"unsupported dependency tags at line {line_number}: {remainder!r}"
-                )
-
-        if scope_applies and condition_applies and not tags.intersection({"build", "test"}):
-            if name in dependencies:
-                raise BottleMetadataError(
-                    f"duplicate runtime dependency at line {line_number}: {name}"
-                )
-            dependencies.add(name)
-
-    if formula_class_open or not formula_class_closed:
-        raise BottleMetadataError("formula source has no complete Formula class")
-
-    return {
-        "revision": revision or 0,
-        "version_scheme": version_scheme or 0,
-        "explicit_version": explicit_version,
-        "dependencies": sorted(dependencies),
-    }
-
-
-def bottle_archive_shape(path: Path, entry: dict) -> tuple[dict, int]:
-    """Read identity and graph facts only from authenticated bottle archive members."""
-    formula_index_accesses = 0
+def reusable_install(prefix: Path, digest: str) -> tuple[bool, str]:
+    """Whether the install at prefix is exactly the build this digest names, untouched."""
+    manifest_path = prefix / MANIFEST_NAME
+    if not manifest_path.is_file():
+        return False, "no build manifest"
     try:
-        with tarfile.open(path, "r:gz") as archive:
-            members = archive.getmembers()
-            if not members:
-                raise BottleMetadataError("archive is empty")
-            member_paths: list[tuple[str, ...]] = []
-            for member in members:
-                if member.name.startswith("/") or "\\" in member.name:
-                    raise BottleMetadataError(f"unsafe archive member path: {member.name!r}")
-                parts = tuple(part for part in member.name.rstrip("/").split("/") if part)
-                if len(parts) < 2 or any(part in {".", ".."} for part in parts):
-                    raise BottleMetadataError(f"invalid archive member path: {member.name!r}")
-                member_paths.append(parts)
+        manifest = json.loads(manifest_path.read_text())
+    except ValueError as error:
+        return False, f"unreadable build manifest: {error}"
+    if manifest.get("build_digest") != digest:
+        return False, f"build digest {manifest.get('build_digest')!r} is not {digest}"
+    files = manifest.get("files")
+    if not isinstance(files, dict) or sorted(files) != sorted(INSTALLED_FILES):
+        return False, f"manifest lists {sorted(files) if isinstance(files, dict) else files!r}"
+    present = sorted(
+        str(path.relative_to(prefix)) for path in prefix.rglob("*")
+        if not path.is_dir() and path.name != MANIFEST_NAME
+    )
+    if present != sorted(INSTALLED_FILES):
+        return False, f"install holds {present}, expected {sorted(INSTALLED_FILES)}"
+    for relative, expected in files.items():
+        path = prefix / relative
+        if path.is_symlink() or not path.is_file():
+            return False, f"{relative} is not a regular file"
+        observed = sha256_file(path)
+        if observed != expected:
+            return False, f"{relative} expected_sha256={expected} observed_sha256={observed}"
+    return True, "manifest matches"
 
-            keg_roots = {(parts[0], parts[1]) for parts in member_paths}
-            if len(keg_roots) != 1:
-                raise BottleMetadataError(f"archive has ambiguous keg roots: {sorted(keg_roots)!r}")
-            archive_formula, archive_keg_version = next(iter(keg_roots))
-            metadata_root = f"{archive_formula}/{archive_keg_version}"
-            expected_members = {
-                "SPDX metadata": f"{metadata_root}/sbom.spdx.json",
-                "formula declarations": (
-                    f"{metadata_root}/.brew/{archive_formula}.rb"
-                ),
-            }
-            selected: dict[str, tarfile.TarInfo] = {}
-            for label, member_name in expected_members.items():
-                matches = [member for member in members if member.name == member_name]
-                if len(matches) != 1:
-                    raise BottleMetadataError(
-                        f"archive requires exactly one {label} member {member_name!r}; "
-                        f"observed={len(matches)}"
-                    )
-                selected[label] = matches[0]
 
-            sbom = json.loads(
-                _read_bottle_metadata_member(
-                    archive, selected["SPDX metadata"], label="SPDX metadata"
-                ).decode("utf-8")
-            )
-            if not isinstance(sbom, dict) or sbom.get("spdxVersion") != "SPDX-2.3":
-                raise BottleMetadataError("archive has no SPDX-2.3 document")
-            packages = sbom.get("packages")
-            document_describes = sbom.get("documentDescribes")
-            if not isinstance(packages, list) or not isinstance(document_describes, list):
-                raise BottleMetadataError("SPDX document omits packages or documentDescribes")
-            described = [
-                package
-                for package in packages
-                if isinstance(package, dict) and package.get("SPDXID") in document_describes
-            ]
-            if len(described) != 1:
-                raise BottleMetadataError(
-                    f"SPDX document must describe exactly one source package; observed={len(described)}"
-                )
-            package_name = described[0].get("name")
-            package_version = described[0].get("versionInfo")
-            if not isinstance(package_name, str) or not package_name:
-                raise BottleMetadataError("SPDX source package has no name")
-            if not isinstance(package_version, str) or not package_version:
-                raise BottleMetadataError("SPDX source package has no versionInfo")
-            if package_name != archive_formula:
-                raise BottleMetadataError(
-                    f"SPDX/path formula disagreement: spdx={package_name!r} "
-                    f"path={archive_formula!r}"
-                )
+def system_linkage_errors(binary: str, otool_output: str) -> list[str]:
+    """Every library `otool -L` reports must be a system library."""
+    errors: list[str] = []
+    lines = otool_output.splitlines()[1:]
+    if not lines:
+        errors.append(f"{binary}: otool reported no libraries")
+    for line in lines:
+        library = line.strip().split(" (compatibility", 1)[0].strip()
+        if not library.startswith(SYSTEM_LIBRARY_PREFIXES):
+            errors.append(f"{binary}: links non-system library {library}")
+    return errors
 
-            if archive_keg_version == package_version:
-                archive_revision = 0
-            else:
-                revised = re.fullmatch(
-                    re.escape(package_version) + r"_([1-9][0-9]*)",
-                    archive_keg_version,
-                )
-                if revised is None:
-                    raise BottleMetadataError(
-                        f"SPDX/path version disagreement: spdx={package_version!r} "
-                        f"path={archive_keg_version!r}"
-                    )
-                archive_revision = int(revised.group(1))
 
-            formula_source = _read_bottle_metadata_member(
-                archive,
-                selected["formula declarations"],
-                label="formula declarations",
-            ).decode("utf-8")
-            declarations = _formula_declarations(formula_source, entry["bottle_tag"])
-            if (
-                declarations["explicit_version"] is not None
-                and declarations["explicit_version"] != package_version
-            ):
-                raise BottleMetadataError(
-                    f"SPDX/formula version disagreement: spdx={package_version!r} "
-                    f"formula={declarations['explicit_version']!r}"
-                )
-            if declarations["revision"] != archive_revision:
-                raise BottleMetadataError(
-                    f"path/formula revision disagreement: path={archive_revision} "
-                    f"formula={declarations['revision']}"
-                )
-    except (
-        BottleMetadataError,
-        KeyError,
-        OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        tarfile.TarError,
-    ) as error:
+def encoder_names(encoders_output: str) -> set[str]:
+    names: set[str] = set()
+    past_legend = False
+    for line in encoders_output.splitlines():
+        if line.strip().startswith("------"):
+            past_legend = True
+            continue
+        fields = line.split()
+        if past_legend and len(fields) >= 2:
+            names.add(fields[1])
+    return names
+
+
+def verify(prefix: Path, pin: dict, check_linkage: bool = True, encode: bool = True) -> str:
+    """Fail closed unless prefix holds the pinned ffmpeg. Returns a one-line attestation."""
+    ffmpeg = prefix / "bin" / "ffmpeg"
+    ffprobe = prefix / "bin" / "ffprobe"
+    for binary in (ffmpeg, ffprobe):
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise SystemExit(f"pinned binary missing or not executable: {binary.name}")
+    observed_versions = []
+    for binary in (ffmpeg, ffprobe):
+        result = subprocess.run([str(binary), "-version"], text=True, capture_output=True, timeout=30)
+        if result.returncode != 0:
+            raise SystemExit(f"{binary.name} -version failed ({result.returncode}): {result.stderr.strip()}")
+        banner = result.stdout.splitlines()[0] if result.stdout else ""
+        banner = banner.replace("ffprobe version", "ffmpeg version", 1) if binary == ffprobe else banner
+        try:
+            observed_versions.append(require_ffmpeg_version(banner, pin["version"]))
+        except ValueError as error:
+            raise SystemExit(f"{binary.name}: {error}") from error
+
+    listing = subprocess.run([str(ffmpeg), "-hide_banner", "-encoders"], text=True, capture_output=True, timeout=30)
+    if listing.returncode != 0:
+        raise SystemExit(f"ffmpeg -encoders failed ({listing.returncode}): {listing.stderr.strip()}")
+    available = encoder_names(listing.stdout)
+    missing = [name for name in pin["required_encoders"] if name not in available]
+    if missing:
         raise SystemExit(
-            f"unusable authenticated metadata in pinned bottle {entry['formula']}: "
-            f"{type(error).__name__}: {error}; "
-            f"authenticated_archive_reader_index_accesses={formula_index_accesses}"
-        ) from error
+            f"pinned ffmpeg lacks required encoders: missing={missing} "
+            f"required={pin['required_encoders']} observed_count={len(available)}"
+        )
+
+    if check_linkage:
+        errors: list[str] = []
+        for binary in (ffmpeg, ffprobe):
+            otool = subprocess.run(["/usr/bin/otool", "-L", str(binary)], text=True, capture_output=True, check=True)
+            errors.extend(system_linkage_errors(binary.name, otool.stdout))
+        if errors:
+            raise SystemExit("pinned ffmpeg links outside the system:\n  " + "\n  ".join(errors))
+
+    encoded: list[str] = []
+    if encode:
+        with tempfile.TemporaryDirectory(prefix="dulcet-ffmpeg-verify-") as temporary:
+            for encoder, suffix in (("libmp3lame", "mp3"), ("libopus", "ogg")):
+                if encoder not in pin["required_encoders"]:
+                    continue
+                output = Path(temporary) / f"probe.{suffix}"
+                result = subprocess.run(
+                    [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "lavfi",
+                     "-i", "sine=frequency=440:sample_rate=48000:duration=1", "-c:a", encoder, str(output)],
+                    text=True, capture_output=True, timeout=60,
+                )
+                if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+                    raise SystemExit(f"encode through {encoder} failed ({result.returncode}): {result.stderr.strip()}")
+                encoded.append(f"{encoder}:{output.stat().st_size}")
 
     return (
-        {
-            "formula": package_name,
-            "version": package_version,
-            "revision": archive_revision,
-            "version_scheme": declarations["version_scheme"],
-            "dependencies": declarations["dependencies"],
-        },
-        formula_index_accesses,
+        f"DARWIN FFMPEG PASS expected_version={pin['version']} observed_ffmpeg={observed_versions[0]} "
+        f"observed_ffprobe={observed_versions[1]} required_encoders={','.join(pin['required_encoders'])} "
+        f"observed_encoders={len(available)} linkage={'system-only' if check_linkage else 'unchecked'} "
+        f"encoded={','.join(encoded) or 'none'} "
+        f"ffmpeg_sha256={sha256_file(ffmpeg)} ffprobe_sha256={sha256_file(ffprobe)}"
     )
 
 
-def assert_bottle_archive_shape(path: Path, entry: dict) -> int:
-    expected = {
-        "formula": entry["formula"],
-        "version": entry["version"],
-        "revision": entry["revision"],
-        "version_scheme": entry["version_scheme"],
-        "dependencies": sorted(entry["dependencies"]),
-    }
-    observed, formula_index_accesses = bottle_archive_shape(path, entry)
-    if observed != expected:
-        raise SystemExit(
-            f"authenticated archive metadata drift in pinned bottle {entry['formula']}: "
-            f"expected {expected}, observed {observed}"
-        )
-    return formula_index_accesses
-
-
-def observed_runtime_dependencies(receipt: dict, context: str) -> dict[str, dict]:
-    records = receipt.get("runtime_dependencies")
-    if not isinstance(records, list):
-        raise SystemExit(f"{context} has no runtime dependency receipt")
-    observed: dict[str, dict] = {}
-    for record in records:
-        try:
-            name = record["full_name"]
-            shape = {
-                "version": record["version"],
-                "revision": record["revision"],
-                "bottle_rebuild": record["bottle_rebuild"],
-                "pkg_version": record["pkg_version"],
-                "declared_directly": record["declared_directly"],
-            }
-        except (KeyError, TypeError) as error:
-            raise SystemExit(f"invalid runtime dependency in {context}: {record!r}") from error
-        if name in observed:
-            raise SystemExit(f"duplicate runtime dependency {name} in {context}")
-        observed[name] = shape
-    return observed
-
-
-def assert_receipt_identity(
-    receipt: dict,
-    entry: dict,
-    *,
-    context: str,
-    require_poured: bool,
-) -> None:
-    try:
-        source_versions = receipt["source"]["versions"]
-        observed_source = {
-            "version": source_versions["stable"],
-            "version_scheme": source_versions["version_scheme"],
-        }
-    except (KeyError, TypeError) as error:
-        raise SystemExit(f"invalid source metadata in {context}") from error
-    expected_source = {
-        "version": entry["version"],
-        "version_scheme": entry["version_scheme"],
-    }
-    if observed_source != expected_source:
-        raise SystemExit(
-            f"source metadata drift in {context}: expected {expected_source}, "
-            f"observed {observed_source}"
-        )
-    if receipt.get("built_as_bottle") is not True:
-        raise SystemExit(f"{context} is not recorded as built as a bottle")
-    if require_poured and receipt.get("poured_from_bottle") is not True:
-        raise SystemExit(f"{context} is not recorded as poured from a bottle")
-
-
-def assert_receipt_shape(
-    receipt: dict,
-    entry: dict,
-    by_name: dict[str, dict],
-    *,
-    context: str,
-    require_poured: bool,
-) -> None:
-    assert_receipt_identity(
-        receipt,
-        entry,
-        context=context,
-        require_poured=require_poured,
-    )
-
-    expected_runtime = expected_runtime_dependencies(entry, by_name)
-    observed_runtime = observed_runtime_dependencies(receipt, context)
-    if observed_runtime != expected_runtime:
-        raise SystemExit(
-            f"runtime closure drift in {context}: expected {expected_runtime}, "
-            f"observed {observed_runtime}"
-        )
-
-
-def normalize_runtime_receipt(path: Path, entry: dict, by_name: dict[str, dict]) -> dict:
-    """Replace Homebrew's live-index-derived mutable dependency receipt with the pinned graph."""
-    try:
-        receipt = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise SystemExit(f"invalid installed Homebrew receipt for {entry['formula']}: {path}") from error
-    assert_receipt_identity(
-        receipt,
-        entry,
-        context=f"installed keg {entry['formula']}",
-        require_poured=True,
-    )
-    receipt["runtime_dependencies"] = [
-        {"full_name": name, **shape}
-        for name, shape in expected_runtime_dependencies(entry, by_name).items()
-    ]
-    temporary = path.with_name(f".{path.name}.dulcet-{os.getpid()}")
-    try:
-        temporary.write_text(json.dumps(receipt, indent=2) + "\n")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return receipt
-
-
-def advise_live_shape(closure: list[dict]) -> tuple[str, list[dict]]:
-    """Report refresh availability without making the live resolver part of installation."""
-    observed_live_closure: list[dict] = []
-    drift: list[tuple[str, dict, dict]] = []
-    try:
-        for expected in closure:
-            name = expected["formula"]
-            quoted_name = urllib.parse.quote(name, safe="")
-            request = urllib.request.Request(
-                f"https://formulae.brew.sh/api/formula/{quoted_name}.json",
-                headers={"User-Agent": "dulcet-darwin-conformance/1"},
-            )
-            with urllib.request.urlopen(request, timeout=10) as response:
-                live_formula = json.load(response)
-            live = formula_shape(live_formula, expected["bottle_tag"])
-            if live != expected:
-                drift.append((name, expected, live))
-            observed_live_closure.append(live)
-    except Exception as error:
-        print(
-            "DARWIN FFMPEG PIN ADVISORY advisory_status=unavailable "
-            f"detail={str(error)!r}",
-            file=sys.stderr,
-        )
-        return "unavailable", []
-
-    if drift:
-        print(
-            f"DARWIN FFMPEG PIN REFRESH AVAILABLE formulas={len(drift)}/{len(closure)} "
-            "advisory_status=refresh-available",
-            file=sys.stderr,
-        )
-        for name, expected, live in drift:
-            fields = sorted(
-                key for key in set(expected) | set(live) if expected.get(key) != live.get(key)
-            )
-            print(
-                f"  {name}: "
-                + ", ".join(
-                    f"{key} {expected.get(key)!r} -> {live.get(key)!r}" for key in fields
-                ),
-                file=sys.stderr,
-            )
-        return "refresh-available", observed_live_closure
-
-    print(
-        f"DARWIN FFMPEG PIN ADVISORY advisory_status=matches formulas={len(closure)}",
-        file=sys.stderr,
-    )
-    return "matches", observed_live_closure
-
-
-def main(pins_path: Path | None = None) -> None:
-    pins_path = pins_path or Path(__file__).parent / "pins.json"
-    pins = json.loads(pins_path.read_text())
-    ffmpeg = pins["ffmpeg"]["darwin"]
-    closure = ffmpeg["closure"]
+def require_host(pin: dict) -> None:
     if platform.system() != "Darwin" or platform.machine() != "arm64":
-        raise SystemExit(
-            f"Darwin ffmpeg pin requires Darwin/arm64, observed "
-            f"{platform.system()}/{platform.machine()}"
-        )
-    assert_locked_graph(closure, ffmpeg["formula"])
-    validate_pinned_bottle_closure(closure)
+        raise SystemExit(f"Darwin ffmpeg requires Darwin/arm64, observed {platform.system()}/{platform.machine()}")
 
-    names = [entry["formula"] for entry in closure]
-    by_name = {entry["formula"]: entry for entry in closure}
-    observed_keg_hashes: dict[str, str] = {}
-    observed_bottle_sha256s: dict[str, str] = {}
-    observed_archive_reader_index_accesses = 0
 
-    # Bottles are poured by formula name, so Homebrew resolves each name itself and the resolution
-    # is what has to be constrained. Refresh the index first: a runner image baked before the pin
-    # was last refreshed carries an older index generation, which resolves the pinned names to
-    # older artifacts. Then require every resolution to equal the pin, reporting all drift at once
-    # rather than the first name, so a pin refresh is one pass instead of one CI run per formula.
-    run_formula_index_command(["brew", "update"])
-    resolved = json.loads(
-        run_formula_index_command(["brew", "info", "--json=v2", *names], capture=True)
-    )
-    resolved_by_name = {
-        formula["name"]: formula for formula in resolved.get("formulae", [])
-    }
-    resolver_shapes = assert_resolver_shapes(closure, resolved_by_name)
+def install(pin: dict, sources: list[dict], prefix: Path, work_parent: Path | None, jobs: int) -> None:
+    toolchain = toolchain_identity()
+    digest = build_digest(pin, toolchain)
+    reusable, reason = reusable_install(prefix, digest) if prefix.exists() else (False, "no install")
+    if reusable:
+        print(f"DARWIN FFMPEG REUSE prefix_build_digest={digest} reason={reason!r}")
+    else:
+        print(f"DARWIN FFMPEG BUILD REQUIRED reason={reason!r} build_digest={digest}")
+        work = Path(tempfile.mkdtemp(prefix="dulcet-ffmpeg-build-", dir=work_parent))
+        stage = build(pin, sources, work, jobs, digest, toolchain)
+        if prefix.exists():
+            shutil.rmtree(prefix)
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(stage, prefix)
+        shutil.rmtree(work)
+        reusable, reason = reusable_install(prefix, digest)
+        if not reusable:
+            raise SystemExit(f"fresh install does not match its own manifest: {reason}")
+    print(verify(prefix, pin))
 
-    live_shape_status, observed_live_closure = advise_live_shape(closure)
 
-    cellar = Path(run(["brew", "--cellar"], capture=True))
-    homebrew_prefix = Path(run(["brew", "--prefix"], capture=True))
-    keg_paths = {
-        expected["formula"]: cellar / expected["formula"] / keg_version(expected)
-        for expected in closure
-    }
-    preinstall_kegs = {name: observe_keg(path) for name, path in keg_paths.items()}
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("command", nargs="?", default="install", choices=("install", "verify", "cache-key"))
+    parser.add_argument("--prefix", help="install location; defaults to the pinned prefix")
+    parser.add_argument("--work-dir", help="parent of the temporary build directory")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
+    args = parser.parse_args()
 
-    # Remove every installed member first, in reverse dependency order. The absence checkpoint
-    # below observes each formula's PINNED keg path only, so it fails closed on a keg retained at
-    # the pinned version. A keg retained at any OTHER version is not observed here and does not
-    # fail closed - stating otherwise would claim a property this code does not have.
-    for name in reversed(names):
-        if installed_formula_versions(name):
-            run_formula_index_command(
-                ["brew", "uninstall", "--force", "--ignore-dependencies", name]
-            )
-    absent_before_pour = {name: observe_keg(path) for name, path in keg_paths.items()}
-    retained = [name for name, observation in absent_before_pour.items() if observation is not None]
-    if retained:
-        raise SystemExit(
-            f"fresh-pour absence checkpoint retained locked kegs: {','.join(retained)}"
-        )
-
-    # Fetch, verify and pour each bottle in the validated dependency order, one formula per
-    # iteration. The fail-closed archive metadata check rejects missing, ambiguous or inconsistent
-    # SPDX/path/formula declaration data; the hash that follows it binds the exact checked archive
-    # to the immediately following install attempt, and that archive is Homebrew's own cached
-    # download rather than a second copy the install would ignore.
-    for name in names:
-        observed_sha256, archive_reader_index_accesses = pour_pinned_bottle(by_name[name])
-        observed_bottle_sha256s[name] = observed_sha256
-        observed_archive_reader_index_accesses += archive_reader_index_accesses
-
-    observed_install_observations: dict[str, dict[str, bool]] = {}
-    installed_receipts: dict[str, dict] = {}
-    for expected in closure:
-        name = expected["formula"]
-        active_link = homebrew_prefix / "opt" / name
-        try:
-            active_prefix = active_link.resolve(strict=True)
-        except OSError as error:
-            raise SystemExit(f"locked Homebrew formula has no active prefix: {active_link}") from error
-        expected_prefix = keg_paths[name].resolve(strict=True)
-        if active_prefix != expected_prefix:
-            raise SystemExit(
-                f"active Homebrew keg drift for {name}: expected {expected_prefix}, "
-                f"observed {active_prefix}"
-            )
-        receipt = normalize_runtime_receipt(
-            active_prefix / "INSTALL_RECEIPT.json", expected, by_name
-        )
-        assert_receipt_shape(
-            receipt,
-            expected,
-            by_name,
-            context=f"installed keg {name}",
-            require_poured=True,
-        )
-        installed_receipts[name] = receipt
-        postinstall_keg = observe_keg(active_prefix)
-        attestation = assert_fresh_pour(
-            name,
-            preinstall_kegs[name],
-            absent_before_pour[name],
-            postinstall_keg,
-        )
-        observed_install_observations[name] = attestation
-        keg_sha256, keg_entries = keg_payload_sha256(active_prefix)
-        observed_keg_hashes[name] = keg_sha256
-        print(
-            f"DARWIN KEG PAYLOAD formula={name} sha256={keg_sha256} entries={keg_entries} "
-            f"preinstall_present={str(attestation['preinstall_present']).lower()} "
-            f"absent_after_uninstall={str(attestation['absent_before_pour']).lower()} "
-            f"present_after_install={str(attestation['present_after_pour']).lower()} "
-            f"postinstall_receipt_observed={str(attestation['postinstall_receipt_observed']).lower()} "
-            "postinstall_observation_differs_from_preinstall="
-            f"{str(attestation['postinstall_observation_differs_from_preinstall']).lower()} "
-            f"receipt_time={postinstall_keg['receipt_time']}"
-        )
-
-    # Hashing the poured trees a second time detects a tree that changed while this run measured
-    # it. It is not provenance: no pinned keg payload hash exists to compare against, so a matching
-    # pair proves stability during the run and says nothing about which artifact was poured. The
-    # pinned-artifact guarantee is the bottle digest verified immediately before each install.
-    rehashed_kegs = {name: keg_payload_sha256(keg_paths[name])[0] for name in names}
-    if rehashed_kegs != observed_keg_hashes:
-        raise SystemExit(
-            f"installed Homebrew keg payload changed during verification: "
-            f"first={observed_keg_hashes}, second={rehashed_kegs}"
-        )
-    installed_digest = hashlib.sha256(
-        json.dumps(observed_keg_hashes, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    all_absent_after_uninstall = all(
-        observation["absent_before_pour"]
-        for observation in observed_install_observations.values()
-    )
-    all_present_after_install = all(
-        observation["present_after_pour"]
-        for observation in observed_install_observations.values()
-    )
-    all_postinstall_receipts_observed = all(
-        observation["postinstall_receipt_observed"]
-        for observation in observed_install_observations.values()
-    )
-    all_postinstall_observations_differ = all(
-        observation["postinstall_observation_differs_from_preinstall"]
-        for observation in observed_install_observations.values()
-    )
-    print(
-        f"DARWIN KEG OBSERVATIONS PASS formulas={len(observed_install_observations)} "
-        f"absent_after_uninstall={str(all_absent_after_uninstall).lower()} "
-        f"present_after_install={str(all_present_after_install).lower()} "
-        f"postinstall_receipts_observed={str(all_postinstall_receipts_observed).lower()} "
-        "postinstall_observations_differ_from_preinstall="
-        f"{str(all_postinstall_observations_differ).lower()} "
-        f"payload_hashes_match_second_in_run=true aggregate_sha256={installed_digest}"
-    )
-
-    version_line = run([ffmpeg["path"], "-version"], capture=True).splitlines()[0]
-    try:
-        observed_version = require_ffmpeg_version(version_line, ffmpeg["version"])
-    except ValueError as error:
-        raise SystemExit(f"installed {error}") from error
-    encoders = run([ffmpeg["path"], "-hide_banner", "-encoders"], capture=True)
-    observed_encoder_names = {
-        fields[1]
-        for line in encoders.splitlines()
-        if len(fields := line.split()) >= 2
-    }
-    observed_required_encoders = sorted(
-        set(ffmpeg["required_encoders"]) & observed_encoder_names
-    )
-    missing_encoders = sorted(set(ffmpeg["required_encoders"]) - observed_encoder_names)
-    if missing_encoders:
-        raise SystemExit(f"locked ffmpeg omits required corpus encoders: {missing_encoders}")
-
-    expected_closure_digest = hashlib.sha256(
-        json.dumps(closure, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    observed_live_closure_digest = (
-        hashlib.sha256(
-            json.dumps(observed_live_closure, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if observed_live_closure
-        else "unavailable"
-    )
-    observed_bottle_digest = hashlib.sha256(
-        json.dumps(observed_bottle_sha256s, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    print(
-        f"DARWIN FFMPEG CLOSURE PASS expected_root={ffmpeg['version']} "
-        f"observed_root={observed_version} expected_formulas={len(closure)} "
-        f"observed_formulas={len(observed_keg_hashes)} "
-        f"expected_encoders={','.join(sorted(ffmpeg['required_encoders']))} "
-        f"observed_encoders={','.join(observed_required_encoders)} "
-        f"expected_closure_sha256={expected_closure_digest} "
-        f"authenticated_archive_metadata_matching_pin={len(observed_bottle_sha256s)} "
-        f"authenticated_archive_reader_index_accesses={observed_archive_reader_index_accesses} "
-        f"formula_index_accesses={FORMULA_INDEX_ACCESSES} "
-        f"formula_index_resolutions_asserted_against_pin={len(resolver_shapes)} "
-        f"installed_receipts_matching_pin={len(installed_receipts)} "
-        f"live_shape_status={live_shape_status} "
-        f"observed_live_closure_sha256={observed_live_closure_digest} "
-        f"observed_bottle_sha256={observed_bottle_digest}"
-    )
+    pin = load_pin()
+    sources = validate_pin(pin)
+    require_host(pin)
+    prefix = Path(args.prefix or pin["prefix"])
+    if args.command == "cache-key":
+        print(f"darwin-ffmpeg-{pin['version']}-{build_digest(pin, toolchain_identity())[:32]}")
+    elif args.command == "verify":
+        print(verify(prefix, pin))
+    else:
+        install(pin, sources, prefix, Path(args.work_dir) if args.work_dir else None, args.jobs)
 
 
 if __name__ == "__main__":

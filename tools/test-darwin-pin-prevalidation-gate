@@ -1,135 +1,100 @@
 #!/usr/bin/env python3
 
-"""Prove a late pin mismatch stops main before any closure download begins."""
+"""Negative control: every Darwin ffmpeg source pin is validated before any download or build.
 
+Each case mutates one field of the real pin and drives the installer's own entry point with the
+network and every subprocess replaced by traps. A case passes only when the run is rejected, the
+rejection names the mutated defect, and no trap fired. The authentic pin must validate.
+"""
+
+import copy
 from importlib.machinery import SourceFileLoader
-import json
 from pathlib import Path
 import sys
-import tempfile
 
 
-sys.path.insert(0, str(Path(__file__).parent / "conformance-env"))
+TOOLS = Path(__file__).parent
 installer = SourceFileLoader(
-    "install_darwin_ffmpeg_pin_prevalidation_gate",
-    str(Path(__file__).parent / "conformance-env" / "install-darwin-ffmpeg"),
+    "install_darwin_ffmpeg", str(TOOLS / "conformance-env" / "install-darwin-ffmpeg")
 ).load_module()
 
 
-class NetworkObserved(Exception):
-    """Stop immediately if main reaches any network entry point."""
+class Trap:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __call__(self, name: str):
+        def trapped(*args, **kwargs):
+            self.calls.append(name)
+            raise AssertionError(f"{name} reached before pin validation")
+        return trapped
 
 
-def entry(
-    name: str, digest: str, *, url_digest: str | None = None, dependencies=None
-) -> dict:
-    url_digest = url_digest or digest
-    return {
-        "formula": name,
-        "version": "1.0",
-        "revision": 0,
-        "version_scheme": 0,
-        "dependencies": dependencies or [],
-        "bottle_tag": "arm64_tahoe",
-        "bottle_rebuild": 0,
-        "url": f"https://ghcr.io/v2/homebrew/core/{name}/blobs/sha256:{url_digest}",
-        "sha256": digest,
-    }
+def source(pin: dict, name: str) -> dict:
+    return next(entry for entry in pin["sources"] if entry["name"] == name)
+
+
+def mutations(pin: dict):
+    def case(label, detail, mutate):
+        mutated = copy.deepcopy(pin)
+        mutate(mutated)
+        return label, detail, mutated
+
+    yield case("short sha256", "source 'lame': sha256 must be 64 lowercase hex digits",
+               lambda p: source(p, "lame").update(sha256=source(p, "lame")["sha256"][:-1]))
+    yield case("uppercase sha256", "source 'opus': sha256 must be 64 lowercase hex digits",
+               lambda p: source(p, "opus").update(sha256=source(p, "opus")["sha256"].upper()))
+    yield case("plain http url", "source 'ffmpeg': url 'http://ffmpeg.org/releases/x.tar.xz' is not https",
+               lambda p: source(p, "ffmpeg")["urls"].append("http://ffmpeg.org/releases/x.tar.xz"))
+    yield case("no urls", "source 'opus': urls must be a non-empty list",
+               lambda p: source(p, "opus").update(urls=[]))
+    yield case("archive path escape", "source 'lame': archive must be a bare .tar.gz or .tar.xz file name",
+               lambda p: source(p, "lame").update(archive="../lame.tar.gz"))
+    yield case("missing source", "source 'opus' missing",
+               lambda p: p.update(sources=[entry for entry in p["sources"] if entry["name"] != "opus"]))
+    yield case("duplicate source", "source 'lame': duplicate",
+               lambda p: p["sources"].append(copy.deepcopy(source(p, "lame"))))
+    yield case("ffmpeg source/version disagree", "source 'ffmpeg' version '9.0.1' differs from pinned version",
+               lambda p: source(p, "ffmpeg").update(version="9.0.1"))
+    yield case("path outside prefix", "path must be",
+               lambda p: p.update(path="/opt/homebrew/bin/ffmpeg"))
+    yield case("no required encoders", "required_encoders must be a non-empty list",
+               lambda p: p.update(required_encoders=[]))
 
 
 def main() -> None:
-    first = entry("valid-first", "1" * 64)
-    late = entry(
-        "late-mismatch",
-        "2" * 64,
-        url_digest="3" * 64,
-        dependencies=[first["formula"]],
-    )
-    with tempfile.TemporaryDirectory() as temporary_directory:
-        root = Path(temporary_directory)
-        pins_path = root / "pins.json"
-        pins_path.write_text(
-            json.dumps(
-                {
-                    "ffmpeg": {
-                        "darwin": {
-                            "formula": late["formula"],
-                            "version": late["version"],
-                            "path": "/stub/ffmpeg",
-                            "required_encoders": [],
-                            "closure": [first, late],
-                        }
-                    }
-                }
-            )
-        )
+    authentic = installer.load_pin()
+    observed_sources = [entry["name"] for entry in installer.validate_pin(authentic)]
+    if observed_sources != list(installer.SOURCE_ORDER):
+        raise SystemExit(f"authentic pin did not validate in build order: {observed_sources}")
 
-        network_calls: list[str] = []
-        homebrew_calls: list[list[str]] = []
-        originals = {
-            "run": installer.run,
-            "urlopen": installer.urllib.request.urlopen,
-            "platform_system": installer.platform.system,
-            "platform_machine": installer.platform.machine,
-        }
-
-        def stub_run(arguments: list[str], **_kwargs) -> str:
-            homebrew_calls.append(arguments)
-            raise AssertionError(
-                f"unexpected command before pin rejection: {arguments}"
-            )
-
-        def network_observed(label: str):
-            def observe(*_args, **_kwargs):
-                network_calls.append(label)
-                raise NetworkObserved(label)
-
-            return observe
-
-        installer.run = stub_run
-        installer.urllib.request.urlopen = network_observed("urlopen")
-        installer.platform.system = lambda: "Darwin"
-        installer.platform.machine = lambda: "arm64"
-        observed_detail = ""
+    passed = 0
+    for label, expected_detail, mutated in mutations(authentic):
+        trap = Trap()
+        saved = (installer.load_pin, installer.urllib.request.urlopen, installer.subprocess.run, sys.argv)
+        installer.load_pin = lambda mutated=mutated: mutated
+        installer.urllib.request.urlopen = trap("network")
+        installer.subprocess.run = trap("subprocess")
+        sys.argv = ["install-darwin-ffmpeg", "install"]
+        observed_detail = None
         try:
-            try:
-                installer.main(pins_path)
-            except SystemExit as error:
-                observed_detail = str(error)
-            except NetworkObserved as error:
-                observed_detail = f"network reached before late mismatch: {error}"
-            else:
-                raise SystemExit("late pin mismatch was accepted")
+            installer.main()
+        except installer.PinError as error:
+            observed_detail = str(error)
         finally:
-            installer.run = originals["run"]
-            installer.urllib.request.urlopen = originals["urlopen"]
-            installer.platform.system = originals["platform_system"]
-            installer.platform.machine = originals["platform_machine"]
-
-        expected_detail = (
-            f"bottle digest pin disagreement for {late['formula']}: "
-            f"url={late['url'].rsplit(':', 1)[1]} sha256={late['sha256']}"
-        )
-        if observed_detail != expected_detail:
+            installer.load_pin, installer.urllib.request.urlopen, installer.subprocess.run, sys.argv = saved
+        if observed_detail is None:
+            raise SystemExit(f"pin prevalidation failed open for {label}")
+        if expected_detail not in observed_detail:
             raise SystemExit(
-                "late pin mismatch was not rejected for the expected reason: "
-                f"expected={expected_detail!r} observed={observed_detail!r}"
+                f"pin prevalidation rejected {label} for the wrong reason: "
+                f"expected_detail={expected_detail!r} observed_detail={observed_detail!r}"
             )
-        if network_calls:
-            raise SystemExit(
-                f"late pin mismatch followed network calls: {network_calls}"
-            )
-        if homebrew_calls:
-            raise SystemExit(
-                f"late pin mismatch followed Homebrew invocations: {homebrew_calls}"
-            )
-
-        print(
-            "NEGATIVE CONTROL PASS darwin_pin_prevalidation "
-            f"closure_entries={len([first, late])} network_calls={len(network_calls)} "
-            f"homebrew_calls={len(homebrew_calls)} "
-            f"detail={observed_detail}"
-        )
+        if trap.calls:
+            raise SystemExit(f"{label}: {trap.calls} ran before the pin was rejected")
+        passed += 1
+        print(f"NEGATIVE CONTROL PASS pin_prevalidation case={label!r} trapped_calls=0")
+    print(f"PIN PREVALIDATION PASS authentic=valid rejected_cases={passed}")
 
 
 if __name__ == "__main__":
