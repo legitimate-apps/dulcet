@@ -297,7 +297,9 @@ final class DulcetTVUITests: XCTestCase {
         let initialValue = try XCTUnwrap(progress.value as? String)
         XCTAssertTrue(initialValue.hasSuffix(" of 0:31"), initialValue)
         let advances = NSPredicate { _, _ in
-            guard progress.exists, let value = progress.value as? String else { return false }
+            // One snapshot: an element redrawn between `exists` and `value` fails the test with
+            // "Failed to get matching snapshot" instead of reading again.
+            guard let value = (try? progress.snapshot())?.value as? String else { return false }
             return value.hasSuffix(" of 0:31") && value != initialValue
         }
         XCTAssertEqual(
@@ -502,15 +504,46 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
         XCTAssertEqual(title.label, track, "Now Playing must show the track this proof stars")
 
-        // The heart: Down from the transport to the row under it, then Left if Down landed on
-        // the stars or Lyrics to its right. Bounded and re-checked after every press, so a heart
-        // the remote cannot reach fails here, with the presses it took in the pass line when it
-        // does not.
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
         XCTAssertTrue(heart.waitForExistence(timeout: 10), "Now Playing must offer the heart: " + app.debugDescription)
         XCTAssertTrue(stars.allSatisfy(\.exists), "Now Playing must offer five stars beside the heart: " + app.debugDescription)
+        // Lyrics first, while the 29-second track is still early: the heart's and stars' server
+        // round trips can outlast it, and an ended track lights no line. Lyrics sit after the
+        // stars, beside the heart's group: Down from the transport to that row, then Right across
+        // it, bounded and re-checked after every press.
+        XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
+        var lyricsPresses = 0
+        while !lyrics.hasFocus, lyricsPresses < 12 {
+            let inRow = (heart.exists && heart.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
+            XCUIRemote.shared.press(inRow ? .right : .down)
+            lyricsPresses += 1
+        }
+        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus after the stars: " + app.debugDescription)
+        XCTAssertEqual(lyrics.label, "Show Lyrics")
+        XCUIRemote.shared.press(.select)
+        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "The lyrics panel must open: " + app.debugDescription)
+        let shown = app.staticTexts.matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
+        XCTAssertTrue(shown.waitForExistence(timeout: 20), "The panel must show the English layer: " + app.debugDescription)
+        // The control: a lit line proves the cursor follows media time, not only that text was drawn.
+        let current = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
+        let lit = current.exists ? current.label : "<none>"
+        XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
+        let toggleKeptFocus = ContinuousClock.now.advanced(by: .seconds(3))
+        while !(lyrics.exists && lyrics.hasFocus), ContinuousClock.now < toggleKeptFocus {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertTrue(lyrics.hasFocus, "Showing lyrics must leave focus on the toggle: " + app.debugDescription)
+        XCTAssertEqual(lyrics.label, "Hide Lyrics")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "The same press must hide the lyrics")
+
+        // The heart: Left from Lyrics across the stars, or Down first if focus left the row. Bounded and re-checked after every press, so a heart
+        // the remote cannot reach fails here, with the presses it took in the pass line when it
+        // does not.
         var heartPresses: [String] = []
         while !heart.hasFocus, heartPresses.count < 12 {
             let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
@@ -567,33 +600,8 @@ final class DulcetTVUITests: XCTestCase {
         }
         print("DULCET TV rating presses=\(starPresses) rated=\(rating) before=\(ratingBefore)")
 
-        // Lyrics: after the stars, beside the heart's group.
-        XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
-        for _ in 0..<3 where !lyrics.hasFocus {
-            XCUIRemote.shared.press(.right)
-        }
-        XCTAssertTrue(lyrics.hasFocus, "Lyrics must take remote focus after the stars: " + app.debugDescription)
-        XCTAssertEqual(lyrics.label, "Show Lyrics")
-        XCUIRemote.shared.press(.select)
-        let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
-        XCTAssertTrue(panel.waitForExistence(timeout: 10), "The lyrics panel must open: " + app.debugDescription)
-        let shown = app.staticTexts.matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
-        XCTAssertTrue(shown.waitForExistence(timeout: 20), "The panel must show the English layer: " + app.debugDescription)
-        // The control: a lit line proves the cursor follows media time, not only that text was drawn.
-        let current = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
-        XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
-        let lit = current.exists ? current.label : "<none>"
-        XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
-        let toggleKeptFocus = ContinuousClock.now.advanced(by: .seconds(3))
-        while !(lyrics.exists && lyrics.hasFocus), ContinuousClock.now < toggleKeptFocus {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        XCTAssertTrue(lyrics.hasFocus, "Showing lyrics must leave focus on the toggle: " + app.debugDescription)
-        XCTAssertEqual(lyrics.label, "Hide Lyrics")
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "The same press must hide the lyrics")
         print("DULCET TV NOW PLAYING PASS track=\(track.debugDescription) heart-presses=\(heartPresses.joined(separator: ","))"
-            + " heart=remote-select starred=true->false lyrics=remote-select lit=\(lit.debugDescription)"
+            + " heart=remote-select starred=true->false lyrics=remote-select lyrics-presses=\(lyricsPresses) lit=\(lit.debugDescription)"
             + " setup=debug-account-only")
     }
 

@@ -248,7 +248,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func progressAdvanced(_ app: XCUIApplication) -> Bool {
         let progress = app.progressIndicators["Now Playing"].firstMatch
-        guard progress.exists, let value = progress.value as? String else { return false }
+        // One snapshot, so a redraw between reads means "not yet" rather than a failed test.
+        guard let value = (try? progress.snapshot())?.value as? String else { return false }
         return !value.hasPrefix("0:00 ")
     }
 
