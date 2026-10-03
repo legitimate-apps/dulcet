@@ -297,7 +297,9 @@ final class DulcetTVUITests: XCTestCase {
         let initialValue = try XCTUnwrap(progress.value as? String)
         XCTAssertTrue(initialValue.hasSuffix(" of 0:31"), initialValue)
         let advances = NSPredicate { _, _ in
-            guard progress.exists, let value = progress.value as? String else { return false }
+            // One snapshot: an element redrawn between `exists` and `value` fails the test with
+            // "Failed to get matching snapshot" instead of reading again.
+            guard let value = (try? progress.snapshot())?.value as? String else { return false }
             return value.hasSuffix(" of 0:31") && value != initialValue
         }
         XCTAssertEqual(
