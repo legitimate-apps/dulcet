@@ -307,7 +307,12 @@ final class HostedApp {
     /// menu offered. A context menu tracks inside the click's `sendEvent`; a SwiftUI menu button
     /// opens on a later turn of the run loop; the block below runs in either.
     @discardableResult
-    func chooseMenuItem(_ title: String, described description: String, opening open: () throws -> Void) async throws -> [String] {
+    /// `attempts` above 1 opens again when no menu began tracking within two seconds: a press on an
+    /// element the view replaced reaches nothing and opens no menu, so pressing again is harmless.
+    func chooseMenuItem(
+        _ title: String, described description: String, attempts: Int = 1,
+        opening open: () async throws -> Void
+    ) async throws -> [String] {
         final class Tracking: @unchecked Sendable {
             var offered: [String] = []
             var performed = false
@@ -334,9 +339,17 @@ final class HostedApp {
             }
         }
         defer { NotificationCenter.default.removeObserver(observer) }
-        try open()
         do {
-            try await waitUntil(timeout: .seconds(5), "\(description) opens a menu") { tracking.opened }
+            for attempt in 1...attempts {
+                try await open()
+                let last = attempt == attempts
+                do {
+                    try await waitUntil(timeout: .seconds(last ? 5 : 2), "\(description) opens a menu") { tracking.opened }
+                    break
+                } catch where !last {
+                    print("DULCET MAC MENU RETRY \(description) attempt=\(attempt) opened=false")
+                }
+            }
         } catch {
             attachWindowImage(named: "\(description) did not open a menu")
             throw error
