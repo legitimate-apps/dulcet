@@ -2456,8 +2456,10 @@ final class DulcetiOSUITests: XCTestCase {
         repeat {
             if failure.exists { failed = "failure shown: \(failure.label)"; break }
             if skipNotice.exists { failed = "skip notice: \(skipNotice.label)"; break }
-            let progress = sliderProgress.exists ? sliderProgress : barProgress
-            if progress.exists, let value = progress.value as? String {
+            // One snapshot per poll: a progress view redrawn between `exists` and `value` fails the
+            // test with "Failed to get matching snapshot" instead of reading again.
+            let progress = (try? sliderProgress.snapshot()) ?? (try? barProgress.snapshot())
+            if let value = progress?.value as? String {
                 lastValue = value
                 if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
                     started = "media-time \(value)"
