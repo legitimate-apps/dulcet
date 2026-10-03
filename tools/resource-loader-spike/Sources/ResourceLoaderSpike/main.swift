@@ -583,9 +583,15 @@ private enum ResourceLoaderSpike {
     private static func createFixtures(at root: URL) throws {
         let progressiveWAV = root.appendingPathComponent("progressive.wav")
         try makeWAV(duration: 2.0, frequency: 440.0).write(to: progressiveWAV)
-        try run("/opt/homebrew/bin/lame", [
-            "--silent", "--cbr", "-b", "128",
-            progressiveWAV.path,
+        // The conformance environment's pinned ffmpeg (`ffmpeg.darwin.path`), which carries
+        // libmp3lame; the workflow passes its path. CBR 128 kb/s, as the lame encode it replaces.
+        guard let ffmpeg = ProcessInfo.processInfo.environment["DULCET_SPIKE_FFMPEG"], !ffmpeg.isEmpty else {
+            throw SpikeError.unexpectedArgument("DULCET_SPIKE_FFMPEG is not set to the pinned ffmpeg")
+        }
+        try run(ffmpeg, [
+            "-nostdin", "-loglevel", "error", "-y",
+            "-i", progressiveWAV.path,
+            "-codec:a", "libmp3lame", "-b:a", "128k",
             root.appendingPathComponent("progressive.mp3").path,
         ])
 

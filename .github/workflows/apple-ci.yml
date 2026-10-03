@@ -852,6 +852,8 @@ jobs:
         run: python3 tools/test-redirect-credential-detector
       - name: Prove the measurement rejects the observed first-only state
         run: |
+          DULCET_SPIKE_FFMPEG="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          export DULCET_SPIKE_FFMPEG
           set +e
           output="$(swift run --package-path tools/resource-loader-spike resource-loader-spike \
             --expect-hls-segments all-routed 2>&1)"
@@ -873,11 +875,10 @@ jobs:
           if grep -q 'REQUEST path=segment1.aac' <<< "$output"; then exit 1; fi
           echo "NEGATIVE CONTROL PASS expected=all-routed observed_first_only=$observed_first_only observed_rejected=$observed_rejected observed_segment0_requests=$observed_segment0_requests observed_segment1_requests=$observed_segment1_requests"
       - name: Record progressive routing and Apple HLS fallback
-        run: >-
-          swift run
-          --package-path tools/resource-loader-spike
-          resource-loader-spike
-          --expect-hls-segments first-only-playback-failed
+        run: |
+          DULCET_SPIKE_FFMPEG="$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+            swift run --package-path tools/resource-loader-spike resource-loader-spike \
+            --expect-hls-segments first-only-playback-failed
       - name: Generate deterministic Darwin corpus
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
