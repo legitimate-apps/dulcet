@@ -3012,7 +3012,12 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertTrue(waitForValue(ratingValue(elsewhere), of: reread, timeout: 30),
             "After a relaunch the stars must show the server's rating, \(elsewhere), not the tap's \(rating); value=\(String(describing: reread.value))")
 
-        // 3. A tap on the star shown removes the rating.
+        // 3. A tap on the star shown removes the rating -- on this track. Paused first, and brought
+        // back to the track if the queue moved on: the fixture tracks are about thirty seconds
+        // long. OBSERVED on iPad in CI run 37133427531: XCUITest held this tap 60 s waiting for
+        // the app to idle. The track ended, the queue reached "UI Playback Canary", and the tap
+        // landed on that track's stars.
+        guard bringPausedNowPlaying(to: track, in: relaunched) else { return }
         tapStar(elsewhere, of: reread)
         XCTAssertTrue(waitForValuePrefix(ratingValue(0), of: reread, timeout: 3),
             "A tap on the star shown must clear the stars at once; value=\(String(describing: reread.value))")
@@ -3041,6 +3046,37 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         return stars
+    }
+
+    /// Pauses Now Playing, then steps back with Previous until `track` is in front, so a later tap
+    /// cannot reach a track the queue advanced to on its own. Four presses: the first may only
+    /// restart the track in front, and the fixture album has three tracks.
+    @MainActor
+    private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
+        // By label, re-queried each time: an element bound to "Pause" stops resolving once it reads Play.
+        func playerButton(_ label: String) -> XCUIElement? {
+            app.buttons.matching(NSPredicate(format: "label == %@", label))
+                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+        }
+        playerButton("Pause")?.tap()
+        let pauseDeadline = Date().addingTimeInterval(10)
+        while playerButton("Play") == nil, Date() < pauseDeadline {
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        guard playerButton("Play") != nil else {
+            XCTFail("Now Playing must pause before its stars are tapped: " + app.debugDescription)
+            return false
+        }
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        for _ in 0..<4 where title.label != track {
+            playerButton("Previous")?.tap()
+            _ = waitForLabel(track, of: title, timeout: 5)
+        }
+        guard title.label == track else {
+            XCTFail("Now Playing must be back on \(track) before its stars are tapped; title=\(title.label)")
+            return false
+        }
+        return true
     }
 
     /// Taps star `star` of a five-star row where it is drawn.
