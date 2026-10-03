@@ -168,17 +168,33 @@ private struct DulcetPlaylistPageContent: View {
                             .buttonStyle(.bordered)
                             .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
                             .accessibilityIdentifier("dulcet.playlist.edit")
+#if os(macOS)
+                        // Built from a title: a menu with a custom label reached the Mac's
+                        // accessibility as no element at all. This one is a menu button.
+                        Menu(DulcetStrings.more, systemImage: "ellipsis.circle") {
+                            Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
+                            Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
+                        }
+                        .labelStyle(.iconOnly)
+                        .menuStyle(.button)
+                        .buttonStyle(.bordered)
+                        .fixedSize()
+                        // Icon-only, the menu's title reaches accessibility only through this.
+                        .accessibilityLabel(DulcetStrings.more)
+                        .accessibilityIdentifier("dulcet.playlist.more")
+#else
                         Menu {
                             Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
                             Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
                         } label: {
-                            Image(systemName: "ellipsis.circle")
+                            Label(DulcetStrings.more, systemImage: "ellipsis.circle")
+                                .labelStyle(.iconOnly)
                                 .font(.title3)
                                 .frame(minWidth: 44, minHeight: 44)
                                 .contentShape(Rectangle())
                         }
-                        .accessibilityLabel(DulcetStrings.playlistEdit)
                         .accessibilityIdentifier("dulcet.playlist.more")
+#endif
                     }
 #endif
                 }

@@ -82,10 +82,18 @@ macos)
         "$RUNNER_TEMP/dulcet-mac-ratings.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-ratings-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
         DulcetMacRatingsAndPlaylistsAppTest
-    # everyPlaylistEditReachesTheServerThroughTheHostedMacApp is held out here for now: it passes
-    # locally but failed on the CI host three ways in a row (a sidebar header hit, then a context
-    # menu that never opened), each only where the hosted window is key. It returns once it
-    # passes against a key window.
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-playlist-edits.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        everyPlaylistEditReachesTheServerThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-playlist-edits-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
+        DulcetMacRatingsAndPlaylistsAppTest
     ;;
 iphone)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-iphone --keep-name "iPhone 17 Pro"

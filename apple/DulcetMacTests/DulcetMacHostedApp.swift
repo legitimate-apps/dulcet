@@ -290,11 +290,15 @@ final class HostedApp {
         let screenFrame = try frame(element)
         let location = window.convertPoint(fromScreen: NSPoint(x: screenFrame.midX, y: screenFrame.midY))
         for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
-            let event = try XCTUnwrap(NSEvent.mouseEvent(
+            let made = try XCTUnwrap(NSEvent.mouseEvent(
                 with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .rightMouseDown ? 1 : 0
             ))
-            window.sendEvent(event)
+            // A made event says button 0, the primary, whatever its type; macOS 26 then takes it
+            // as a click and opens the tile. A real secondary click says button 1.
+            let secondary = try XCTUnwrap(made.cgEvent)
+            secondary.setIntegerValueField(.mouseEventButtonNumber, value: 1)
+            window.sendEvent(try XCTUnwrap(NSEvent(cgEvent: secondary)))
         }
     }
 
@@ -331,11 +335,27 @@ final class HostedApp {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         try open()
-        try await waitUntil(timeout: .seconds(5), "\(description) opens a menu") { tracking.opened }
+        do {
+            try await waitUntil(timeout: .seconds(5), "\(description) opens a menu") { tracking.opened }
+        } catch {
+            attachWindowImage(named: "\(description) did not open a menu")
+            throw error
+        }
         try await waitUntil(timeout: .seconds(5), "\(description) performs \(title.debugDescription); offers \(tracking.offered)") {
             tracking.performed
         }
         return tracking.offered
+    }
+
+    /// The window's content as a PNG attached to the running test, for a failure that only CI shows.
+    func attachWindowImage(named name: String) {
+        guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return }
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        XCTContext.runActivity(named: name) { $0.add(attachment) }
     }
 
     /// The alert the window shows as a sheet: `text` typed into its field when given, then the
@@ -461,10 +481,12 @@ final class HostedApp {
         value("accessibilityIdentifier", of: element) as? String
     }
 
+    /// A menu button's title arrives as an attributed string, not a string.
     func label(_ element: Any) -> String? {
-        value("accessibilityLabel", of: element) as? String
-            ?? value("accessibilityTitle", of: element) as? String
-            ?? value("accessibilityValue", of: element) as? String
+        ["accessibilityLabel", "accessibilityTitle", "accessibilityValue"].lazy.compactMap { name -> String? in
+            let found = self.value(name, of: element)
+            return found as? String ?? (found as? NSAttributedString)?.string
+        }.first
     }
 
     func value(_ name: String, of element: Any) -> Any? {

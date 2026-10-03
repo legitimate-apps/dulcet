@@ -312,28 +312,13 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         try await app.answerAlert(typing: name, pressing: "Rename", described: "Rename")
     }
 
-    /// The page's menu of playlist edits opened by a click where it is drawn, the item `title`
-    /// performed from it. The menu is drawn -- its focus ring sits right of Edit -- but reaches
-    /// accessibility as no element at all: not among the window's elements, and a hit test at
-    /// its centre returns the scroll area (OBSERVED, macOS 26). So it is found by its focus
-    /// ring and clicked, the way a pointer reaches it.
+    /// The page's More menu of playlist edits, opened by AXPress as VoiceOver opens it, and the
+    /// item `title` performed from it.
     private func choosePlaylistMenuItem(_ title: String, in app: HostedApp) async throws {
-        let edit = try await app.element(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
-        let editFrame = try app.frame(edit)
-        let rings = app.windowElements(where: { element in
-            guard String(describing: type(of: element)) == "_FocusRingView", let view = element as? NSView,
-                  let window = view.window else { return false }
-            let frame = window.convertToScreen(view.convert(view.bounds, to: nil))
-            return frame.minX > editFrame.maxX && abs(frame.midY - editFrame.midY) < 4
-        }).compactMap { element -> NSRect? in
-            guard let view = element as? NSView, let window = view.window else { return nil }
-            return window.convertToScreen(view.convert(view.bounds, to: nil))
-        }.sorted { $0.minX < $1.minX }
-        let ring = try XCTUnwrap(rings.first, "The playlist's menu must be drawn right of Edit (\(editFrame))")
-        XCTAssertNil(app.firstElement(where: { app.identifier($0) == "dulcet.playlist.more" }),
-            "dulcet.playlist.more reached accessibility; find it by its identifier instead")
-        try await app.chooseMenuItem(title, described: "the playlist's menu at \(ring)") {
-            try app.click(atScreenPoint: NSPoint(x: ring.midX, y: ring.midY))
+        let more = try await app.element(identifiedBy: "dulcet.playlist.more", timeout: .seconds(10))
+        XCTAssertEqual(app.label(more), "More", "The playlist's menu must say what it is to accessibility")
+        try await app.chooseMenuItem(title, described: "the playlist's More menu") {
+            try app.press(more, named: "dulcet.playlist.more")
         }
     }
 
