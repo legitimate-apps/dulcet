@@ -101,41 +101,39 @@ macos)
     # build settings, which the DulcetMac scheme hands the test host. It reuses the product the
     # first macOS app-host proof built, and signs ad hoc without entitlements as the other
     # hosted proofs do, so the host can read the server's log.
-    for test_method in \
-        lyricsPanelShowsEveryStateThroughTheHostedMacApp \
-        streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp; do
-        result_bundle="$RUNNER_TEMP/dulcet-mac-$test_method.xcresult"
-        DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-            DULCET_CONFORMANCE_DISPOSABLE=true \
-            xcodebuild test-without-building \
-                -project apple/Dulcet.xcodeproj \
-                -scheme DulcetMac \
-                -configuration Debug \
-                -destination 'platform=macOS' \
-                -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
-                -resultBundlePath "$result_bundle" \
-                -parallel-testing-enabled NO \
-                "${allowance[@]}" \
-                -only-testing:"DulcetMacTests/DulcetMacLyricsAndQualityAppTest/$test_method" \
-                CODE_SIGN_STYLE=Manual \
-                CODE_SIGN_IDENTITY=- \
-                CODE_SIGN_ENTITLEMENTS= \
-                DEVELOPMENT_TEAM= \
-                PROVISIONING_PROFILE_SPECIFIER= \
-                DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 \
-                DULCET_TEST_CONFORMANCE_DISPOSABLE=true \
-                DULCET_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url" \
-                DULCET_TEST_SERVER_LOG="$server_log" 2>&1 |
-            tee "$RUNNER_TEMP/dulcet-mac-$test_method.log"
-        python3 tools/verify-xcode-test-execution \
-            "$result_bundle" \
-            DulcetMacTests.DulcetMacLyricsAndQualityAppTest \
-            "$test_method"
-    done
+    #
+    # Each invocation is written out with its literal -only-testing selector, its execution guard
+    # and then its JUnit emission, in that order: tools/verify_ci_policy.py pairs each cited test
+    # with the selector its emission follows, and a selector built from a variable pairs with
+    # nothing (tools/ci/run-ratings-playlists-proofs does the same).
+    mac=(
+        -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug -destination 'platform=macOS'
+        -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" -parallel-testing-enabled NO "${allowance[@]}"
+        CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+        DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_TEST_CONFORMANCE_DISPOSABLE=true
+        DULCET_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url" DULCET_TEST_SERVER_LOG="$server_log"
+    )
+    export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-lyricsPanelShowsEveryStateThroughTheHostedMacApp.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacLyricsAndQualityAppTest/lyricsPanelShowsEveryStateThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-lyricsPanelShowsEveryStateThroughTheHostedMacApp.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-lyricsPanelShowsEveryStateThroughTheHostedMacApp.xcresult" \
+        DulcetMacTests.DulcetMacLyricsAndQualityAppTest \
+        lyricsPanelShowsEveryStateThroughTheHostedMacApp
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-mac-lyricsPanelShowsEveryStateThroughTheHostedMacApp.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-lyrics-states-junit/TEST-DulcetMacLyricsAndQualityAppTest.xml" \
         DulcetMacLyricsAndQualityAppTest
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacLyricsAndQualityAppTest/streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp.xcresult" \
+        DulcetMacTests.DulcetMacLyricsAndQualityAppTest \
+        streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-mac-streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-streaming-quality-junit/TEST-DulcetMacLyricsAndQualityAppTest.xml" \
