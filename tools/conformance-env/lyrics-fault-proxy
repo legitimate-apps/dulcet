@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """A forwarding proxy in front of the disposable server that can fail one song's lyrics read.
 
+It can also hold one playlist's reads -- see "Holding a playlist read" below.
+
 The Apple lyrics proofs need a lyrics read that fails, then succeeds when the person presses Try
 Again (spec §18.4). The disposable server answers every lyrics read, and nothing about the corpus
 can make one fail on demand, so this proxy sits in front of it for those proofs alone: every
@@ -19,6 +21,21 @@ from zero, so each of several proofs sharing one proxy sees only its own reads. 
 show it met the failure it handles and that its retry sent a new read -- not only that the screen
 ended up right.
 
+Holding a playlist read: the Apple playlist proofs need a playlist page whose own read lands at a
+moment the test chooses -- after the playlist was deleted elsewhere and while the person is typing a
+new name -- because the order of those two events decides which path reports the failed rename
+(spec §18.6). A held `getPlaylist` for the armed id is kept waiting, unanswered and not yet sent
+upstream, until the test releases it; then it is forwarded unchanged and the server answers it.
+Every other request passes straight through, and a hold never outlives HOLD_LIMIT_SECONDS.
+
+    POST /__dulcet/playlist-hold?playlist=<id>&state=on|off
+    GET  /__dulcet/playlist-observations?playlist=<id>
+         {"holding": bool, "held": n, "released": n, "timedOut": n}
+
+`held` counts the reads that arrived while the hold was on, `released` those forwarded because the
+test released them, and `timedOut` those forwarded only because the limit passed. Arming starts all
+three from zero.
+
 Requests carry credentials in their query strings, so nothing here ever prints a request line,
 a query or a header: the base handler's request log is silenced, and the only output is the
 listening line and the names of the endpoints that were failed.
@@ -35,6 +52,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 LYRICS_ENDPOINTS = {"getLyricsBySongId", "getLyricsBySongId.view"}
+PLAYLIST_ENDPOINTS = {"getPlaylist", "getPlaylist.view"}
+# Longer than any proof keeps a read waiting, shorter than the app's own request timeout.
+HOLD_LIMIT_SECONDS = 45
 # Hop-by-hop headers (RFC 9110 §7.6.1) are this connection's, never forwarded.
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
@@ -49,6 +69,44 @@ class FaultState:
         self.armed: set[str] = set()
         self.failed: dict[str, int] = {}
         self.forwarded_after_disarm: dict[str, int] = {}
+        self.holds: dict[str, threading.Event] = {}
+        self.held: dict[str, int] = {}
+        self.released: dict[str, int] = {}
+        self.timed_out: dict[str, int] = {}
+
+    def hold(self, playlist: str, on: bool) -> None:
+        with self.lock:
+            if on:
+                self.holds[playlist] = threading.Event()
+                self.held[playlist] = 0
+                self.released[playlist] = 0
+                self.timed_out[playlist] = 0
+            else:
+                gate = self.holds.pop(playlist, None)
+                if gate is not None:
+                    gate.set()
+
+    def gate(self, playlist: str | None) -> threading.Event | None:
+        """The hold a read must wait on, counted as held; None when it is not held."""
+        with self.lock:
+            gate = self.holds.get(playlist) if playlist is not None else None
+            if gate is not None:
+                self.held[playlist] = self.held.get(playlist, 0) + 1
+            return gate
+
+    def passed(self, playlist: str, released: bool) -> None:
+        with self.lock:
+            counts = self.released if released else self.timed_out
+            counts[playlist] = counts.get(playlist, 0) + 1
+
+    def playlist_observations(self, playlist: str) -> dict[str, object]:
+        with self.lock:
+            return {
+                "holding": playlist in self.holds,
+                "held": self.held.get(playlist, 0),
+                "released": self.released.get(playlist, 0),
+                "timedOut": self.timed_out.get(playlist, 0),
+            }
 
     def arm(self, song: str, on: bool) -> None:
         with self.lock:
@@ -81,7 +139,16 @@ class FaultState:
 
 def lyrics_song(path: str, query: str, body: bytes, content_type: str) -> str | None:
     """The song id of a `getLyricsBySongId` request, from its query or its form body; else None."""
-    if not path.startswith("/rest/") or path[len("/rest/"):] not in LYRICS_ENDPOINTS:
+    return request_id(LYRICS_ENDPOINTS, path, query, body, content_type)
+
+
+def playlist_read(path: str, query: str, body: bytes, content_type: str) -> str | None:
+    """The playlist id of a `getPlaylist` request, from its query or its form body; else None."""
+    return request_id(PLAYLIST_ENDPOINTS, path, query, body, content_type)
+
+
+def request_id(endpoints: set[str], path: str, query: str, body: bytes, content_type: str) -> str | None:
+    if not path.startswith("/rest/") or path[len("/rest/"):] not in endpoints:
         return None
     fields = parse_qs(query)
     if content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded":
@@ -120,11 +187,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             print(f"LYRICS FAULT PROXY failed {parts.path}", flush=True)
             self._send_json(500, {"error": "lyrics read failed by the fault proxy"})
             return
+        playlist = playlist_read(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
+        gate = self.server.state.gate(playlist)
+        if gate is not None:
+            released = gate.wait(HOLD_LIMIT_SECONDS)
+            self.server.state.passed(playlist, released)
+            print(f"LYRICS FAULT PROXY held {parts.path} until {'released' if released else 'the limit'}", flush=True)
         self._forward(body)
 
     def _control(self, path: str, query: dict[str, list[str]]) -> None:
         if path == "/__dulcet/health":
             self._send_json(200, {"ok": True})
+            return
+        if path in {"/__dulcet/playlist-hold", "/__dulcet/playlist-observations"}:
+            self._playlist_control(path, query)
             return
         song = (query.get("song") or [""])[0]
         if not song:
@@ -142,6 +218,22 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._send_json(200, self.server.state.observations(song))
             return
         self._send_json(404, {"error": "unknown control"})
+
+    def _playlist_control(self, path: str, query: dict[str, list[str]]) -> None:
+        playlist = (query.get("playlist") or [""])[0]
+        if not playlist:
+            self._send_json(400, {"error": "playlist is required"})
+            return
+        if path == "/__dulcet/playlist-hold":
+            if self.command != "POST":
+                self._send_json(404, {"error": "unknown control"})
+                return
+            state = (query.get("state") or [""])[0]
+            if state not in {"on", "off"}:
+                self._send_json(400, {"error": "state must be on or off"})
+                return
+            self.server.state.hold(playlist, state == "on")
+        self._send_json(200, self.server.state.playlist_observations(playlist))
 
     def _forward(self, body: bytes) -> None:
         upstream = http.client.HTTPConnection(self.server.upstream_host, self.server.upstream_port, timeout=60)
