@@ -55,13 +55,38 @@ jobs:
         run: >-
           echo "path=$(tools/conformance-env/new-class-root
           --parent "$RUNNER_TEMP" --label darwin-soak)" >> "$GITHUB_OUTPUT"
-      - name: Install and verify checksum-pinned Darwin conformance closure
-        timeout-minutes: 9
+      # The Darwin ffmpeg is built from SHA-256-pinned upstream source (docs/TRAPS.md trap 36; spec
+      # §20.2.1). The key covers the pin, the installer and the selected compiler and SDK, so it is
+      # computed after Xcode selection. A restored build is re-verified in full before use; the save
+      # step runs only on a miss, and only after that verification passed.
+      - name: Compute the pinned Darwin ffmpeg cache key
+        id: ffmpeg_key
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pinned Darwin ffmpeg build
+        id: ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - name: Install the pinned Navidrome and build or verify the pinned Darwin ffmpeg
+        # A cache hit verifies in seconds. A miss compiles LAME, Opus and FFmpeg: 151 s with 3 jobs on
+        # an M2 Max (OBSERVED 2026-10-03), estimated at 4 to 8 minutes on the 3-core hosted macos-26
+        # runner until a CI miss measures it. 30 leaves room for a slow runner without hiding a hung
+        # build.
+        timeout-minutes: 30
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
           tools/conformance-env/prepare-darwin --output "$ROOT/bin"
           tools/conformance-env/install-darwin-ffmpeg
+      - name: Save the pinned Darwin ffmpeg build
+        if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
       - name: Generate deterministic Darwin corpus
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}

@@ -673,11 +673,11 @@ jobs:
 
   # The conformance half, in two jobs since 2026-10-03 (spec §21.5): the composite that talks to the
   # disposable server took 103 minutes alone in green run 37105472578, and every push to `main`
-  # and every release gate waits for a full run. Each job installs the checksum-pinned Darwin closure and starts its OWN native Navidrome
+  # and every release gate waits for a full run. Each job installs the source-pinned Darwin ffmpeg and starts its OWN native Navidrome
   # and the fixtures its phases use; nothing is shared between them, so neither job's server state
   # can reach the other's assertions.
   #
-  # apple-conformance-core: the Darwin closure, all five frameworks with `:core:macosArm64Test`, the
+  # apple-conformance-core: the Darwin ffmpeg, all five frameworks with `:core:macosArm64Test`, the
   # §12.4 measurement, and a composite running the macOS app-host proofs, the app-host library-sync
   # proofs on iPhone, iPadOS and tvOS, the playback-integration and download proofs, the
   # `core-conformance` suites on macOS, iOS and tvOS with their three cold restarts, and the tvOS UI
@@ -731,37 +731,55 @@ jobs:
         run: python3 tools/test-ffmpeg-version-gate
       - name: Prove corpus probes reject mislabeled containers and empty tags
         run: python3 tools/test-seed-corpus-gates
-      - name: Prove fresh-pour gate rejects a retained keg
-        run: python3 tools/test-darwin-fresh-pour-gate
-      - name: Prove Darwin bottle integrity gate rejects a tampered blob
-        run: python3 tools/test-darwin-bottle-integrity-gate
-      - name: Prove Homebrew name resolution is asserted against the pin before any pour
-        run: python3 tools/test-darwin-resolver-drift-gate
-      - name: Prove every Darwin bottle pin is validated before any download
+      - name: Prove every Darwin ffmpeg source pin is validated before any download
         run: python3 tools/test-darwin-pin-prevalidation-gate
-      - name: Prove authenticated bottle metadata fails closed without formula-index access
-        run: python3 tools/test-darwin-embedded-formula-gate
-      - name: Prove Darwin live-shape drift and outage remain advisory
-        run: python3 tools/test-darwin-live-shape-advisory
+      - name: Prove a tampered Darwin ffmpeg source tarball is rejected before extraction
+        run: python3 tools/test-darwin-source-integrity-gate
+      - name: Prove Darwin ffmpeg verification rejects a wrong version, a missing encoder and a tampered cache
+        run: python3 tools/test-darwin-ffmpeg-verification-gate
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
-      # FIRST, before any build. Homebrew pin drift is deterministic and fails 100% of runs (docs/TRAPS.md
-      # trap 36), and this step used to sit behind ~55 minutes of platform builds and UI tests: run
-      # 35796413810 on main (2026-09-22) spent 55.6 minutes of a hosted macOS slot before this
-      # step reported six drifted formulae in 49 seconds. Nothing between Xcode selection and the
-      # old position reads Homebrew, the conformance root, or the pinned ffmpeg.
+      # FIRST, before any build: a broken environment should fail in minutes, not after ~55 minutes of
+      # platform builds and UI tests (run 35796413810 on main, 2026-09-22, spent 55.6 minutes of a
+      # hosted macOS slot before the old Homebrew closure step reported drift in 49 seconds). Nothing
+      # between Xcode selection and the old position reads the conformance root or the pinned ffmpeg.
       - name: Create isolated Darwin conformance root
         id: conformance_root
         run: >-
           echo "path=$(tools/conformance-env/new-class-root
           --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
-      - name: Install and verify checksum-pinned Darwin conformance closure
-        timeout-minutes: 9
+      # The Darwin ffmpeg is built from SHA-256-pinned upstream source (docs/TRAPS.md trap 36; spec
+      # §20.2.1). The key covers the pin, the installer and the selected compiler and SDK, so it is
+      # computed after Xcode selection. A restored build is re-verified in full before use; the save
+      # step runs only on a miss, and only after that verification passed.
+      - name: Compute the pinned Darwin ffmpeg cache key
+        id: ffmpeg_key
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pinned Darwin ffmpeg build
+        id: ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - name: Install the pinned Navidrome and build or verify the pinned Darwin ffmpeg
+        # A cache hit verifies in seconds. A miss compiles LAME, Opus and FFmpeg: 151 s with 3 jobs on
+        # an M2 Max (OBSERVED 2026-10-03), estimated at 4 to 8 minutes on the 3-core hosted macos-26
+        # runner until a CI miss measures it. 30 leaves room for a slow runner without hiding a hung
+        # build; a miss stays inside the job cap's margin (75 + 20.5 + 8 < 105).
+        timeout-minutes: 30
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
           tools/conformance-env/prepare-darwin --output "$ROOT/bin"
           tools/conformance-env/install-darwin-ffmpeg
+      - name: Save the pinned Darwin ffmpeg build
+        if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -834,6 +852,8 @@ jobs:
         run: python3 tools/test-redirect-credential-detector
       - name: Prove the measurement rejects the observed first-only state
         run: |
+          DULCET_SPIKE_FFMPEG="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          export DULCET_SPIKE_FFMPEG
           set +e
           output="$(swift run --package-path tools/resource-loader-spike resource-loader-spike \
             --expect-hls-segments all-routed 2>&1)"
@@ -855,11 +875,10 @@ jobs:
           if grep -q 'REQUEST path=segment1.aac' <<< "$output"; then exit 1; fi
           echo "NEGATIVE CONTROL PASS expected=all-routed observed_first_only=$observed_first_only observed_rejected=$observed_rejected observed_segment0_requests=$observed_segment0_requests observed_segment1_requests=$observed_segment1_requests"
       - name: Record progressive routing and Apple HLS fallback
-        run: >-
-          swift run
-          --package-path tools/resource-loader-spike
-          resource-loader-spike
-          --expect-hls-segments first-only-playback-failed
+        run: |
+          DULCET_SPIKE_FFMPEG="$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+            swift run --package-path tools/resource-loader-spike resource-loader-spike \
+            --expect-hls-segments first-only-playback-failed
       - name: Generate deterministic Darwin corpus
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -1556,20 +1575,22 @@ jobs:
           retention-days: 14
 
   # The second conformance job (see apple-conformance-core above for the cut). It repeats only the
-  # setup a server-owning macOS job needs -- the Darwin closure, the iOS-simulator framework, the
+  # setup a server-owning macOS job needs -- the Darwin ffmpeg, the iOS-simulator framework, the
   # iPhone and iPadOS builds its `test-without-building` proofs reuse, the corpus and the
   # configuration -- and then runs the iPadOS and iPhone proof chain against its own server.
   #
   # 110 = ceil(1.5 x 72.3 / 5) x 5. 72.3 minutes is a PROJECTION from run 37105472578: the
   # composite's 59.6 (see its cap) plus 12.7 for the setup, where the closure install took 4.0, the
   # iPhone and iPadOS builds 3.1 and 1.7, and the iOS-simulator framework link is ASSUMED at 2.5. The
-  # job cap stays above the composite's 90 plus the rest of the job, 90 + 12.7 = 102.7.
+  # job cap stays above the composite's 90 plus the rest of the job: 12.7 of setup, 6.3 for the
+  # devices' first boots, and 4 more when an ffmpeg cache miss (estimated at 8) replaces the old
+  # closure install's 4.0 -- 90 + 12.7 + 6.3 + 4 = 113.0, under 115.
   apple-conformance-ipad-iphone:
     name: apple-conformance-ipad-iphone
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 110
+    timeout-minutes: 115
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -1598,13 +1619,33 @@ jobs:
         run: >-
           echo "path=$(tools/conformance-env/new-class-root
           --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
-      - name: Install and verify checksum-pinned Darwin conformance closure
-        timeout-minutes: 9
+      # The same cache key, restore and save as apple-conformance-core. Both jobs start together, so
+      # on a miss both build, and the second save finds the key taken and only warns.
+      - name: Compute the pinned Darwin ffmpeg cache key
+        id: ffmpeg_key
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pinned Darwin ffmpeg build
+        id: ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - name: Install the pinned Navidrome and build or verify the pinned Darwin ffmpeg
+        # 30 as in apple-conformance-core; a miss stays inside this job's cap (see the job's comment).
+        timeout-minutes: 30
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
         run: |
           tools/conformance-env/prepare-darwin --output "$ROOT/bin"
           tools/conformance-env/install-darwin-ffmpeg
+      - name: Save the pinned Darwin ffmpeg build
+        if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin

@@ -29,7 +29,7 @@ CI checks the Apple values duplicated in Xcode's native project format.
 | macOS / iOS / tvOS deployment | 14.0 / 17.0 / 17.0 | Kotlin framework flags and Xcode targets are checked together in CI |
 | Navidrome | 0.63.2 | OCI index `sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40`; Linux amd64 manifest `sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce`; upstream Darwin arm64 asset `sha256:f621f1b730af93d200d3400e549f60b34dd796d27801ebf9b6ab219df6ac7048` |
 | Linux ffmpeg | 6.1.1 | observed inside the pinned Navidrome Linux amd64 image; the image digest pins the full build |
-| Darwin ffmpeg | 9.0.2 | Homebrew arm64 Tahoe bottle `sha256:1c3f1b92bece4e10027a022be15a87e8544a54ab0df16b05f098e9abef8abdd6`; `tools/conformance-env/pins.json` locks the complete 15-formula closure (root plus 14 dependencies), including each version, revision, dependency list, bottle rebuild, immutable GHCR blob URL, and archive SHA-256; CI validates every URL/SHA pair before any Homebrew command runs, requires Homebrew's own resolution of all 15 names to equal the pin field for field before anything is fetched, reads and cross-checks each bottle's authenticated SPDX/path/static-declaration metadata without evaluating Ruby or reading the formula index, hashes the file Homebrew holds that bottle at immediately before pouring that same formula by name, then freshly pours and hashes every installed keg before use |
+| Darwin ffmpeg | 9.0.2 | built in CI from SHA-256-pinned upstream source: LAME 4.0 `sha256:3df5124d5ad3a98312ffd7ba6a9b36230e4f8a3e66d3ce0f425e336c32d216eb`, Opus 1.6.1 `sha256:6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1`, FFmpeg 9.0.2 `sha256:8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e` (`tools/conformance-env/pins.json`, `ffmpeg.darwin.sources`); static, autodetection off, system-only linkage verified; see `docs/CONFORMANCE-ENVIRONMENT.md` |
 
 The Darwin and Linux ffmpeg builds deliberately differ. Byte-level transcode assertions belong only
 to the Linux reference leg. Darwin uses its pinned build for Darwin-specific transport and loader
@@ -43,6 +43,7 @@ behavior, not byte identity.
 | `actions/setup-java` | 5.7.0 · `b6effb05e454b25005698d916606bdc6ffcbf961` |
 | `android-actions/setup-android` | 4.0.1 · `40fd30fb8d7440372e1316f5d1809ec01dcd3699` |
 | `gradle/actions/setup-gradle` | 6.3.0 · `9c971963bec38e04b3d30dcc455b5382be2fdbfb` |
+| `actions/cache` (restore, save) | 6.1.0 · `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` |
 
 ## Hosted CI calibration
 

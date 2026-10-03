@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "navidrome": {
     "version": "0.63.2",
     "linux": {
@@ -23,115 +23,41 @@
     },
     "darwin": {
       "version": "9.0.2",
-      "formula": "ffmpeg",
-      "path": "/opt/homebrew/bin/ffmpeg",
-      "required_encoders": ["libmp3lame", "libopus"],
-      "closure": [
+      "prefix": "/Users/Shared/dulcet-conformance/ffmpeg-9.0.2",
+      "path": "/Users/Shared/dulcet-conformance/ffmpeg-9.0.2/bin/ffmpeg",
+      "required_encoders": [
+        "libmp3lame",
+        "libopus"
+      ],
+      "sources": [
         {
-          "formula": "dav1d", "version": "1.5.4", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/dav1d/blobs/sha256:d30ff747564febd643ec4b279c5adc74f708b8d6eb8e172f914b9fcdec26c464",
-          "sha256": "d30ff747564febd643ec4b279c5adc74f708b8d6eb8e172f914b9fcdec26c464"
+          "name": "lame",
+          "version": "4.0",
+          "archive": "lame-4.0.tar.gz",
+          "sha256": "3df5124d5ad3a98312ffd7ba6a9b36230e4f8a3e66d3ce0f425e336c32d216eb",
+          "urls": [
+            "https://downloads.sourceforge.net/project/lame/lame/4.0/lame-4.0.tar.gz",
+            "https://deb.debian.org/debian/pool/main/l/lame/lame_4.0.orig.tar.gz"
+          ]
         },
         {
-          "formula": "mpg123", "version": "1.33.7", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 1,
-          "url": "https://ghcr.io/v2/homebrew/core/mpg123/blobs/sha256:5fcd87caeb9b6e6730d7de5c7738e785c84814c641d1ba9ac578a142d2b033f5",
-          "sha256": "5fcd87caeb9b6e6730d7de5c7738e785c84814c641d1ba9ac578a142d2b033f5"
+          "name": "opus",
+          "version": "1.6.1",
+          "archive": "opus-1.6.1.tar.gz",
+          "sha256": "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1",
+          "urls": [
+            "https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz",
+            "https://ftp.osuosl.org/pub/xiph/releases/opus/opus-1.6.1.tar.gz"
+          ]
         },
         {
-          "formula": "lame", "version": "4.0", "revision": 0,
-          "version_scheme": 0, "dependencies": ["mpg123"], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/lame/blobs/sha256:b0fe0cfb39c74a53b7635833fe3293a62c886b084bc5ccc8ed7cd177803182e4",
-          "sha256": "b0fe0cfb39c74a53b7635833fe3293a62c886b084bc5ccc8ed7cd177803182e4"
-        },
-        {
-          "formula": "libvmaf", "version": "3.2.1", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/libvmaf/blobs/sha256:703f56cd94ba6bb86ee1463bec792d8ad6f9841f67152fa6e93040b966bbf82f",
-          "sha256": "703f56cd94ba6bb86ee1463bec792d8ad6f9841f67152fa6e93040b966bbf82f"
-        },
-        {
-          "formula": "libvpx", "version": "1.17.0", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 1,
-          "url": "https://ghcr.io/v2/homebrew/core/libvpx/blobs/sha256:f98fa074f8eef7b2de3346fb83d4da15e7e6284fd13bf65210d855043f78f8c1",
-          "sha256": "f98fa074f8eef7b2de3346fb83d4da15e7e6284fd13bf65210d855043f78f8c1"
-        },
-        {
-          "formula": "ca-certificates", "version": "2026-09-25", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "all",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/ca-certificates/blobs/sha256:81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a",
-          "sha256": "81804ad8a70a7a8d2a0a964d106765ff88716b310decaeffb4b4895a3252186a"
-        },
-        {
-          "formula": "openssl@3", "version": "3.6.5", "revision": 0,
-          "version_scheme": 0, "dependencies": ["ca-certificates"], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:a1ef3283ad41feaedac5d41dafc4c2a71db6492c3a45a4d1755cfb19d02afc7b",
-          "sha256": "a1ef3283ad41feaedac5d41dafc4c2a71db6492c3a45a4d1755cfb19d02afc7b"
-        },
-        {
-          "formula": "opus", "version": "1.6.1", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/opus/blobs/sha256:5e8146a64fab2683ea447aaa7d0de0b1d717539b4cdabd1fedd4a510e4be0d1e",
-          "sha256": "5e8146a64fab2683ea447aaa7d0de0b1d717539b4cdabd1fedd4a510e4be0d1e"
-        },
-        {
-          "formula": "sdl3", "version": "3.4.18", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/sdl3/blobs/sha256:0040e2deb33adb677f9ab1a0309e4a645a4bfdfb37e59bd6c3d4ed3ab4d0c814",
-          "sha256": "0040e2deb33adb677f9ab1a0309e4a645a4bfdfb37e59bd6c3d4ed3ab4d0c814"
-        },
-        {
-          "formula": "sdl2-compat", "version": "2.32.74", "revision": 0,
-          "version_scheme": 0, "dependencies": ["sdl3"], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/sdl2-compat/blobs/sha256:32ef73fe92e17d21856399165bc902f74f3c0e87d03021e3e945dfc4dd2d771c",
-          "sha256": "32ef73fe92e17d21856399165bc902f74f3c0e87d03021e3e945dfc4dd2d771c"
-        },
-        {
-          "formula": "svt-av1", "version": "4.2.0", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/svt-av1/blobs/sha256:bd6186cc963d1980f0d81d59ecef58c8fa6263eb1124211dd3537b224e04c9e0",
-          "sha256": "bd6186cc963d1980f0d81d59ecef58c8fa6263eb1124211dd3537b224e04c9e0"
-        },
-        {
-          "formula": "x264", "version": "r3222", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/x264/blobs/sha256:b631667b5ad55c6c3ae383484f658c5b4ba14da8a2fbb1d537975695852529ca",
-          "sha256": "b631667b5ad55c6c3ae383484f658c5b4ba14da8a2fbb1d537975695852529ca"
-        },
-        {
-          "formula": "x265", "version": "4.3", "revision": 0,
-          "version_scheme": 0, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 1,
-          "url": "https://ghcr.io/v2/homebrew/core/x265/blobs/sha256:46dd2b3656ec8e99438a789b627e41a25e3a24407dc76a3a6b88cf159b447858",
-          "sha256": "46dd2b3656ec8e99438a789b627e41a25e3a24407dc76a3a6b88cf159b447858"
-        },
-        {
-          "formula": "xz", "version": "5.8.4", "revision": 0,
-          "version_scheme": 1, "dependencies": [], "bottle_tag": "arm64_tahoe",
-          "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:d291ad2277682238329b0e4d249e5e2c948c4b10cd64dba1963d897330ad88dd",
-          "sha256": "d291ad2277682238329b0e4d249e5e2c948c4b10cd64dba1963d897330ad88dd"
-        },
-        {
-          "formula": "ffmpeg", "version": "9.0.2", "revision": 0,
-          "version_scheme": 0,
-          "dependencies": ["dav1d", "lame", "libvmaf", "libvpx", "openssl@3", "opus", "sdl2-compat", "svt-av1", "x264", "x265", "xz"],
-          "bottle_tag": "arm64_tahoe", "bottle_rebuild": 0,
-          "url": "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:1c3f1b92bece4e10027a022be15a87e8544a54ab0df16b05f098e9abef8abdd6",
-          "sha256": "1c3f1b92bece4e10027a022be15a87e8544a54ab0df16b05f098e9abef8abdd6"
+          "name": "ffmpeg",
+          "version": "9.0.2",
+          "archive": "ffmpeg-9.0.2.tar.xz",
+          "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+          "urls": [
+            "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz"
+          ]
         }
       ]
     }

@@ -10,100 +10,66 @@ Both legs run Navidrome 0.63.2 and the same generated corpus:
 | leg | Navidrome pin | ffmpeg pin |
 |---|---|---|
 | Linux/amd64 | `deluan/navidrome` manifest digest in `tools/conformance-env/pins.json` | ffmpeg 6.1.1 inside that immutable image filesystem |
-| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | Homebrew arm64 Tahoe ffmpeg 9.0.2 plus its complete 14-formula runtime dependency closure; every formula version, revision, dependency edge, bottle rebuild, immutable GHCR blob URL, and SHA-256 is locked |
+| Darwin/arm64 | upstream release asset and SHA-256 in `tools/conformance-env/pins.json` | ffmpeg 9.0.2 built in CI from the SHA-256-pinned upstream source of LAME 4.0, Opus 1.6.1 and FFmpeg 9.0.2 |
 
-Before any closure member is fetched, the Darwin installer validates the complete closure: every URL
-must be an immutable `ghcr.io/v2/homebrew/core/.../blobs/sha256:<digest>` reference and its digest
-must equal the separate SHA-256 pin. That check runs on the pin file itself and fails before any
-Homebrew command or network request is issued.
+### The Darwin ffmpeg is built from pinned source
 
-**Bottles are then poured by formula name, and the resolution that name gets is asserted against the
-pin.** Homebrew is deliberately never asked to install a bottle by package path, because that makes
-it parse the formula source embedded in the bottle, and a Homebrew generation that rejects a keyword
-argument used by one of the pinned formulae fails there with a message about that keyword and then a
-missing Cellar directory — a toolchain incompatibility that presents as a corrupt install. Installing
-by name makes Homebrew read the formula from its own index instead, which it can always parse.
+`tools/conformance-env/install-darwin-ffmpeg` compiles the Darwin leg's ffmpeg from three upstream
+source tarballs listed under `ffmpeg.darwin.sources`: LAME, Opus and FFmpeg, each with its version,
+archive name, SHA-256 and one or more https URLs. No package index is consulted, so nothing upstream
+can move the pin; the only upstream dependency left is that some listed URL still serves the pinned
+bytes, and LAME and Opus each list a byte-identical mirror.
 
-Resolution is therefore the thing that has to be constrained. The installer refreshes Homebrew's
-index, asks Homebrew to resolve all 15 pinned names at once, and requires every resolved formula to
-equal its pin field for field: version, revision, version scheme, runtime dependency list, bottle
-tag, bottle rebuild, bottle URL and bottle SHA-256. Every drifted formula is reported in one pass, so
-a pin refresh is a single edit rather than one CI run per formula. Nothing is fetched or poured until
-all 15 resolutions match, and an index generation that no longer carries the pinned versions fails
-closed here rather than pouring something else.
+What a run does, in order:
 
-Each bottle is then fetched, verified and poured in one step per formula. `brew fetch` populates
-Homebrew's own download cache; the installer asks Homebrew for the path it holds that formula's
-bottle at, hashes **that** file against the pin, and immediately pours the same formula by name. The
-artifact that is verified and the artifact that is poured are the same file because there is only one
-copy: the installer keeps no bottle cache of its own, so no second copy exists for the checksum to
-drift onto while the pour reads a different one.
+1. **Every pin is validated before any download**: three sources present once each, 64-digit
+   lowercase SHA-256, bare archive names, https URLs only, the FFmpeg source version equal to the
+   pinned version, and `path` equal to `prefix/bin/ffmpeg`.
+2. **Reuse or build.** If the pinned prefix holds a build whose manifest (`DULCET-BUILD.json`) names
+   the current build digest and every listed file hashes to its recorded value, with no other file
+   present, it is reused. The digest covers the pin, the installer itself, and the selected Apple
+   clang and macOS SDK. Otherwise the prefix is discarded and rebuilt.
+3. **Build.** Each tarball is downloaded, hashed, and extracted only if it equals the pin; the file
+   hashed is the file extracted, and a mismatch at every URL fails the run before any extraction or
+   build command. LAME and Opus are built as static libraries; FFmpeg is configured with
+   `--disable-autodetect` (only zlib from the SDK, `libmp3lame` and `libopus` are enabled), without
+   ffplay, documentation or network protocols, and only `ffmpeg` and `ffprobe` are installed. The
+   build's PATH is `/usr/bin:/bin:/usr/sbin:/sbin` plus a pkg-config stand-in that answers for the
+   work directory's Opus and nothing else, so no host library or `.pc` file can leak in. The compiler
+   and SDK are those of the selected Xcode.
+4. **Verify, always**, whether the build is fresh or reused: the exact version token of both `ffmpeg
+   -version` and `ffprobe -version` equals the pin; `-encoders` lists every `required_encoders` entry;
+   `otool -L` shows only `/usr/lib/` and `/System/Library/` libraries; and a one-second encode through
+   each of `libmp3lame` and `libopus` produces output. The run prints `DARWIN FFMPEG PASS` with the
+   observed values and both binaries' SHA-256.
 
-The 15 pinned Homebrew bottles do not embed an `INSTALL_RECEIPT.json`. They do embed an SPDX 2.3
-document, a single formula/version keg directory, and the formula source. The SPDX document supplies
-source identity but not dependency edges, revision, or version scheme. GHCR's tagged OCI index also
-publishes `sh.brew.tab` runtime metadata, but that index is outside the checksum-pinned layer bytes and
-is not used as an integrity oracle. The installer reads the archive members directly with Python's
-standard archive and JSON libraries; it does not invoke Homebrew or evaluate
-the formula Ruby. Name and stable version come from the SPDX-described source package and must agree
-with the keg path. Revision comes from the keg-version suffix and must agree with the formula's static
-`revision` declaration (both default to zero). Version scheme and the direct Darwin/arm64 runtime
-dependency declarations are read by a deliberately narrow, non-executing declaration parser. It
-understands the dependency forms and platform scopes present in the authenticated closure and fails
-closed on ambiguous or unsupported dependency syntax; unrelated formula DSL such as install methods
-and post-install keywords is never interpreted.
+`seed-corpus` resolves `ffprobe` as the sibling of the pinned `ffmpeg`, and every consumer reads the
+binary's location through `read-pin ffmpeg.darwin.path`.
 
-Every derived fact is checked against the pin. Missing, duplicate, non-regular, oversized, malformed,
-or mutually inconsistent metadata fails before `brew install` is attempted. **This reader** cannot
-access the formula index by construction, and its mutation control replaces both command and network
-entry points with traps while asserting `authenticated_archive_reader_index_accesses=0` on successful
-and failing reads. That number is scoped to the reader and is not a claim about the run: the run
-resolves formula names through Homebrew and reports its own `formula_index_accesses` total, counted
-from the invocations that actually ran, alongside the number of resolutions asserted against the pin.
-The live formula API comparison remains an advisory refresh signal: the main-path controls observe
-that both drift and an API outage still reach pinned install preparation.
+**Caching.** `apple-ci`'s conformance job and the contention soak compute the key with
+`install-darwin-ffmpeg cache-key` after Xcode selection, restore the prefix with
+`actions/cache/restore`, run the installer, and save the prefix with `actions/cache/save` only on a
+miss and only after verification passed. A cache miss costs the compile: 151 s with 3 jobs on an M2 Max (OBSERVED 2026-10-03), estimated at 4 to 8 minutes on the 3-core hosted macos-26 runner until a CI miss measures it.
 
-Homebrew remains responsible for resolving each pinned name against its own index, pouring the
-bottle, relocating its paths and Mach-O install names, running applicable post-install handling,
-creating receipts, and linking active `opt` prefixes. It is not allowed to choose *which* artifact a
-name means: all 15 resolutions are asserted equal to the pin first, and the closure is poured in
-pinned topological order so each dependency is already installed at its pinned version before its
-dependent. Each bottle is hashed immediately before its own pour. Homebrew derives mutable runtime
-receipt fields from its local formula metadata, which may itself have moved ahead; after the pour,
-the installer replaces only that dependency list with the graph already proven from the immutable
-bottles and then verifies the complete receipt.
+**Limits.** The manifest detects a corrupt or partial restore; it is not adversarial provenance,
+because it travels in the same cache entry as the binaries. A cache entry is written only by a
+workflow run of this repository, and pull requests from forks cannot write to the base branch's
+cache scope; the same standard ephemeral hosted runner trust as before applies. With one toolchain
+the build is reproducible: two builds in different work directories produced byte-identical `ffmpeg`
+and `ffprobe` (OBSERVED locally, 2026-10-03, once `ZERO_AR_DATE=1` stopped archive timestamps from
+reaching the linker's UUID; without it the two differed in 48 bytes). Across compilers it is not
+claimed to be, which is why the compiler and SDK are part of the key. The
+binary is deliberately smaller than Homebrew's (no video encoders, SDL, TLS or network protocols);
+the Darwin leg asserts transport and protocol behaviour, not transcoded bytes (design spec §20.2.1).
 
-The installer records every locked keg's pre-install filesystem and receipt observation, removes the
-complete closure in reverse dependency order, and requires an observed absence checkpoint for every
-locked keg. It records the post-install observation, verifies every active keg and bottle receipt, and
-checks the `libmp3lame` and `libopus` encoders used by the corpus. It also computes a hash of every
-installed keg payload and re-hashes the payloads before reporting one aggregate. Installed payload
-hashes are deliberately not treated as cross-run pins: Homebrew's post-pour relocation and signing
-made all 15 payload hashes differ across two fresh standard hosted runners while their
-checksum-verified source archives remained identical.
-
-**Limit — the post-pour observations do not establish byte-for-byte bottle-to-installed-payload
-provenance.** They say that the keg was absent after uninstall, present after a local-bottle pour with
-a readable pinned-graph receipt, different from the retained pre-install filesystem/receipt
-observation, and unchanged across two payload hashes in this run. A copied keg can preserve its
-receipt and payload while changing its inode, so placing one after the absence checkpoint can satisfy
-those observations without tying its bytes to the checksum-verified bottle. Homebrew's relocation
-means the installed bytes also cannot be compared soundly with the archive or pinned across runners.
-The fresh-pour negative control proves only that an untouched retained keg is rejected. The separate
-bottle-integrity control drives the installer main path, changes a blob after its archive-metadata
-check, and observes a final failed hash with zero install attempts; its authentic case observes the
-ordered final-hash-success then `brew install` events, and asserts that the path hashed is the path
-Homebrew reported and that the install names that same formula. A third case corrupts only the file
-Homebrew would pour while leaving a pristine copy of the pinned bytes in a directory Homebrew never
-reads, and requires the run to fail: that case passes only while the checksum follows the artifact
-Homebrew consumes, so it goes red if verification is ever re-pointed at a separate copy. A fourth
-control resolves a pinned name to a different artifact and requires the run to stop before it fetches
-or pours anything, and requires every drifted formula to be named. This narrower post-pour result is
-sufficient for a standard ephemeral hosted runner, whose job state is discarded rather than carried
-forward as an adversarial keg cache; no stronger provenance claim is made. The checks run before
-either the resource-loader fixture encoder or the corpus encoder, so both use the same installed
-closure that passed the archive checksum, authenticated metadata graph, version, receipt, encoder, and
-two-read payload checks.
+**Negative controls**, all run in `apple-conformance` before the install:
+`test-darwin-pin-prevalidation-gate` (ten malformed pins rejected with zero downloads or
+subprocesses), `test-darwin-source-integrity-gate` (a tampered tarball at every URL is rejected with
+no extraction and no build command; a tampered first URL falls back to an authentic mirror), and
+`test-darwin-ffmpeg-verification-gate` (a wrong `ffprobe` version, a missing `libopus`, an encode
+that produces nothing, a Homebrew library in the linkage, and a restored install with a tampered
+binary, an extra file or another build digest are each rejected). `test-ffmpeg-version-gate` keeps
+the exact-token comparison honest against a prefix collision.
 
 The checked-in `navidrome.toml.template` is rendered only into the hosted runner's temporary
 directory. It fixes the scanner, transcoder concurrency, UTC time zone, disabled similarity/external

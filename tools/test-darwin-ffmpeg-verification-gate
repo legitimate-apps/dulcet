@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+
+"""Negative controls for the Darwin ffmpeg install's verification and cache-reuse gates.
+
+The installer verifies the same way whether it built the binaries or restored them from a CI cache.
+Each case below builds a stand-in prefix whose ffmpeg and ffprobe are small scripts, drives the
+installer's own `verify` and `reusable_install`, and requires the authentic case to pass and every
+defective case to be rejected for its own reason:
+
+  wrong version     ffprobe reports 9.0.20 while ffmpeg reports 9.0.2
+  missing encoder   `-encoders` lacks libopus
+  failed encode     an encode through a required encoder produces nothing
+  foreign linkage   `otool -L` names a library outside the system (a Homebrew keg)
+  tampered cache    a restored install whose binary, file set or build digest differs from its manifest
+"""
+
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+import tempfile
+
+
+TOOLS = Path(__file__).parent
+installer = SourceFileLoader(
+    "install_darwin_ffmpeg", str(TOOLS / "conformance-env" / "install-darwin-ffmpeg")
+).load_module()
+
+ENCODERS = """Encoders:
+ V..... = Video
+ A..... = Audio
+ ------
+ A....D aac                  AAC (Advanced Audio Coding)
+ A....D flac                 FLAC (Free Lossless Audio Codec)
+{extra}"""
+LAME = " A....D libmp3lame           libmp3lame MP3 (MPEG audio layer 3) (codec mp3)"
+OPUS = " A....D libopus              libopus Opus (codec opus)"
+
+
+def stand_in(prefix: Path, ffmpeg_version="9.0.2", ffprobe_version="9.0.2", encoders=(LAME, OPUS),
+             encode_writes=True) -> None:
+    (prefix / "bin").mkdir(parents=True)
+    listing = ENCODERS.format(extra="\n".join(encoders))
+    write = 'printf x > "${@: -1}"' if encode_writes else ":"
+    (prefix / "bin" / "ffmpeg").write_text(
+        "#!/bin/bash\n"
+        f'case " $* " in *" -version "*) echo "ffmpeg version {ffmpeg_version} Copyright (c) stand-in";;\n'
+        f"  *\" -encoders \"*) cat <<'EOF'\n{listing}\nEOF\n;;\n"
+        f'  *" -c:a "*) {write};;\nesac\n'
+    )
+    (prefix / "bin" / "ffprobe").write_text(
+        f'#!/bin/bash\necho "ffprobe version {ffprobe_version} Copyright (c) stand-in"\n'
+    )
+    for name in ("ffmpeg", "ffprobe"):
+        (prefix / "bin" / name).chmod(0o755)
+
+
+def expect_rejected(label: str, expected_detail: str, action) -> None:
+    observed_detail = None
+    try:
+        action()
+    except SystemExit as error:
+        observed_detail = str(error)
+    if observed_detail is None:
+        raise SystemExit(f"{label} failed open")
+    if expected_detail not in observed_detail:
+        raise SystemExit(
+            f"{label} rejected for the wrong reason: expected_detail={expected_detail!r} "
+            f"observed_detail={observed_detail!r}"
+        )
+    print(f"NEGATIVE CONTROL PASS ffmpeg_verification case={label!r} detail={observed_detail.splitlines()[0]!r}")
+
+
+def main() -> None:
+    pin = installer.load_pin()
+    if pin["version"] != "9.0.2" or pin["required_encoders"] != ["libmp3lame", "libopus"]:
+        raise SystemExit(f"control expects the 9.0.2 libmp3lame/libopus pin, observed {pin['version']} {pin['required_encoders']}")
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+
+        authentic = root / "authentic"
+        stand_in(authentic)
+        attestation = installer.verify(authentic, pin, check_linkage=False)
+        if "observed_ffmpeg=9.0.2 observed_ffprobe=9.0.2" not in attestation or "libopus:1" not in attestation:
+            raise SystemExit(f"authentic stand-in attestation unexpected: {attestation}")
+        print(f"CONTROL PASS ffmpeg_verification case=authentic {attestation.split(' ffmpeg_sha256=')[0]}")
+
+        wrong = root / "wrong-version"
+        stand_in(wrong, ffprobe_version="9.0.20")
+        expect_rejected("wrong version", "ffprobe: ffmpeg version mismatch: expected 9.0.2, observed 9.0.20",
+                        lambda: installer.verify(wrong, pin, check_linkage=False))
+
+        missing = root / "missing-encoder"
+        stand_in(missing, encoders=(LAME,))
+        expect_rejected("missing encoder", "lacks required encoders: missing=['libopus']",
+                        lambda: installer.verify(missing, pin, check_linkage=False))
+
+        silent = root / "failed-encode"
+        stand_in(silent, encode_writes=False)
+        expect_rejected("failed encode", "encode through libmp3lame failed",
+                        lambda: installer.verify(silent, pin, check_linkage=False))
+
+    system_only = (
+        "/x/bin/ffmpeg:\n"
+        "\t/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)\n"
+        "\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0)\n"
+        "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n"
+    )
+    if installer.system_linkage_errors("ffmpeg", system_only):
+        raise SystemExit("system-only linkage was rejected")
+    foreign = system_only + "\t/opt/homebrew/opt/lame/lib/libmp3lame.0.dylib (compatibility version 1.0.0)\n"
+    errors = installer.system_linkage_errors("ffmpeg", foreign)
+    if errors != ["ffmpeg: links non-system library /opt/homebrew/opt/lame/lib/libmp3lame.0.dylib"]:
+        raise SystemExit(f"foreign linkage not rejected precisely: {errors}")
+    print(f"NEGATIVE CONTROL PASS ffmpeg_verification case='foreign linkage' detail={errors[0]!r}")
+
+    with tempfile.TemporaryDirectory() as directory:
+        prefix = Path(directory) / "restored"
+        stand_in(prefix)
+        digest = "a" * 64
+        installer.write_manifest(prefix, digest, "control-toolchain", installer.validate_pin(pin), 0, 1)
+        reusable, reason = installer.reusable_install(prefix, digest)
+        if not reusable:
+            raise SystemExit(f"untouched restored install was not reusable: {reason}")
+        print("CONTROL PASS cache_reuse case=untouched reusable=true")
+
+        cases = []
+        reusable, reason = installer.reusable_install(prefix, "b" * 64)
+        cases.append(("other build digest", reusable, reason, f"build digest '{digest}' is not {'b' * 64}"))
+
+        extra = prefix / "bin" / "ffplay"
+        extra.write_text("#!/bin/sh\n")
+        reusable, reason = installer.reusable_install(prefix, digest)
+        cases.append(("extra file", reusable, reason, "install holds ['bin/ffmpeg', 'bin/ffplay', 'bin/ffprobe']"))
+        extra.unlink()
+
+        binary = prefix / "bin" / "ffmpeg"
+        original = binary.read_bytes()
+        binary.write_bytes(original + b"\n# tampered\n")
+        reusable, reason = installer.reusable_install(prefix, digest)
+        cases.append(("tampered binary", reusable, reason, "bin/ffmpeg expected_sha256="))
+        binary.write_bytes(original)
+
+        for label, observed_reusable, observed_reason, expected_reason in cases:
+            if observed_reusable or expected_reason not in observed_reason:
+                raise SystemExit(
+                    f"cache reuse {label}: expected rejection {expected_reason!r}, "
+                    f"observed reusable={observed_reusable} reason={observed_reason!r}"
+                )
+            print(f"NEGATIVE CONTROL PASS cache_reuse case={label!r} reusable=false reason={observed_reason!r}")
+
+        if not installer.reusable_install(prefix, digest)[0]:
+            raise SystemExit("restored install not reusable after undoing every mutation")
+
+
+if __name__ == "__main__":
+    main()
