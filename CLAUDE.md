@@ -93,8 +93,9 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - `main` requires `core-ci`, `parity-gate`, `apple-ci`, with `strict` up-to-date and **no required
   review**. Merging one PR invalidates the others; land in dependency order. Detail: `docs/MERGING.md`.
 - `apple-ci` on a PR runs only `apple-platform`, and only when the PR changes an Apple input
-  (`tools/ci/plan-apple-legs`); `apple-conformance` runs on push to `main` and on dispatch. A release
-  build requires both legs and every required check green on its commit (spec §21.6).
+  (`tools/ci/plan-apple-legs`); the two parallel conformance jobs, `apple-conformance-core` and
+  `apple-conformance-ipad-iphone`, run on push to `main` and on dispatch. A release build requires
+  every leg and every required check green on its commit (spec §21.6).
 - When several unrelated PRs go red together, check Homebrew pin drift first (`docs/TRAPS.md` 36).
 - **Soak Android host tests on Linux before the PR.** A pull request that adds or changes Android
   host (Robolectric/JVM) tests first dispatches `android-test-soak` with the changed classes as the

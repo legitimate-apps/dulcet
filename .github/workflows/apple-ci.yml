@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
-  # something an Apple build reads, and never runs apple-conformance; a push to main and a manual
-  # dispatch run both. The legs are skipped by a job condition, never by a workflow `paths:` filter:
+  # something an Apple build reads, and never runs the two conformance jobs (`conformance=true`
+  # plans both); a push to main and a manual dispatch run every leg. The legs are skipped by a job condition, never by a workflow `paths:` filter:
   # a workflow that does not run leaves its required check pending forever, while a job skipped by
   # a condition reports, and the required apple-ci job below always runs and decides. Anything the
   # planner cannot establish plans MORE work (tools/ci/plan-apple-legs).
@@ -114,7 +114,7 @@ jobs:
       # The frameworks this job reads: macOS for the restoration check and the captures, and the
       # macOS, iOS-simulator and tvOS-simulator ones for the OS-floor assertion. Jobs share no files,
       # so this job links its own. `Build all Apple frameworks` -- the two device links and
-      # `:core:macosArm64Test` -- runs once, in apple-conformance. 10, the cap that step carried
+      # `:core:macosArm64Test` -- runs once, in apple-conformance-core. 10, the cap that step carried
       # before its measured tail reached it; this step links three of its five frameworks and runs
       # no tests, and has not been re-measured since.
       - name: Build the Apple frameworks the platform legs read
@@ -671,29 +671,36 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  # The conformance half: the checksum-pinned Darwin closure and the native Navidrome fixtures,
-  # `:core:macosArm64Test`, the macOS, iOS and tvOS conformance suites, and every app-host and UI
-  # proof that talks to the disposable server. It builds the app schemes its
-  # `test-without-building` legs reuse, so it is the longer leg and the run's critical path.
+  # The conformance half, in two jobs since 2026-10-03 (spec §21.5): the composite that talks to the
+  # disposable server took 103 minutes alone in green run 37105472578, and every merge waits for a
+  # full run. Each job installs the checksum-pinned Darwin closure and starts its OWN native Navidrome
+  # and the fixtures its phases use; nothing is shared between them, so neither job's server state
+  # can reach the other's assertions.
   #
-  # 255 = ceil(1.5 x 168.5 / 5) x 5. 168.5 minutes is a PROJECTION, not a measurement: this leg's
-  # measured maximum, 113.5 (run 36896866024; its last five green runs took 75.8 to 113.5), plus
-  # 27 minutes for the lyrics-state and streaming-quality proofs (tools/ci/run-lyrics-quality-proofs),
-  # which took 10.2 minutes of test time locally and are projected at 2.2x on this runner -- the
-  # ratio tvOS Now Playing's proof showed between a local run (26 s) and this leg (37 to 57 s) --
-  # plus half a minute for each of their nine xcodebuild invocations; plus 28 minutes for the
-  # rating and playlist-edit proofs (tools/ci/run-ratings-playlists-proofs), 11.1 minutes of test
-  # time locally at the same 2.2x, plus half a minute for each of their six invocations. It must
-  # stay above the composite's own 190-minute cap plus the rest of the leg, or a slow-but-healthy
-  # composite would be killed by the job and reported against whichever step was active: the rest
-  # has measured up to 29.8 minutes, so 190 + 29.8 = 219.8. Re-size from measurement once the
-  # proofs have run.
-  apple-conformance:
-    name: apple-conformance
+  # apple-conformance-core: the Darwin closure, all five frameworks with `:core:macosArm64Test`, the
+  # §12.4 measurement, and a composite running the macOS app-host proofs, the app-host library-sync
+  # proofs on iPhone, iPadOS and tvOS, the playback-integration and download proofs, the
+  # `core-conformance` suites on macOS, iOS and tvOS with their three cold restarts, the iPhone search
+  # proof and the tvOS UI proofs. The restart arms stay in one job and in their measured order; the
+  # iPhone search proof keeps its place between the suites and tvOS search, where it ran before the
+  # split, and moved here only to even the two jobs out.
+  #
+  # apple-conformance-ipad-iphone (below): the play-count canary and the iPadOS proofs, then the
+  # iPhone proofs ending in the skip probe and the iPhone streaming-quality cap -- one chain, because
+  # the canary must read 0 before anything streams on that server and the skip probe must come after
+  # everything that counts the corpus.
+  #
+  # 105 = ceil(1.5 x 67.9 / 5) x 5. 67.9 minutes is a PROJECTION from run 37105472578: this job's
+  # setup before the composite took 19.6 there and its uploads under a minute, and its composite
+  # phases took 47.4 (see the composite's cap). The job cap must stay above the composite's own
+  # 75-minute cap plus the rest of the job, 75 + 20.5 = 95.5, or a slow-but-healthy composite would
+  # be killed by the job and reported against whichever step was active. Re-size from measurement.
+  apple-conformance-core:
+    name: apple-conformance-core
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 255
+    timeout-minutes: 105
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -875,13 +882,12 @@ jobs:
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
       - name: Assert Darwin conformance preconditions
-        # 190, raised from 85: a set value, 1.37x this step's projected maximum, the ratio the 85 had
-        # to the 62.2 it was set from. The projection is the measured maximum, 83.7 minutes (run
-        # 36896866024; its last five green runs took 60.0 to 83.7), plus 27 minutes for the
-        # lyrics-state and streaming-quality proofs and 28 for the rating and playlist-edit proofs
-        # (see the leg's cap), so 138.7. The leg cap above is checked against it. Re-size from
-        # measurement once the proofs have run.
-        timeout-minutes: 190
+        # 75 = ceil(1.5 x 47.4 / 5) x 5, rule 5's leg formula applied to this step. 47.4 minutes is
+        # what this composite's phases took inside the single composite of run 37105472578: the
+        # server start and preconditions 0.6, the macOS app-host, library-sync, playback-integration
+        # and download phases 26.6, the three core-conformance suites with their restarts 11.1, the
+        # iPhone search proof 2.9 and the tvOS UI proofs 6.1. A PROJECTION until this job has run.
+        timeout-minutes: 75
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -1404,146 +1410,20 @@ jobs:
             -Pdulcet.tvosSimulatorUdid="$tvos_conformance_sim"
           xcrun simctl shutdown "$tvos_conformance_sim" || true
           xcrun simctl delete "$tvos_conformance_sim" || true
-          # ---- iPadOS playback + scrobble evidence -------------------------------------------
+          # ---- iPhone search-activation evidence ---------------------------------------------
           # INSIDE this step because Navidrome's lifetime IS this step's shell: `trap cleanup EXIT`
-          # kills it, so a later step finds nothing on 127.0.0.1:4533.
+          # kills it, so a later step finds nothing on 127.0.0.1:4533. AFTER the core-conformance
+          # suites, deliberately: these UI tests and the tvOS ones below launch the app, and this file
+          # records an unexplained, still-live launch flake (runs 33420584120, 33457633113). Under
+          # `set -e` an upstream position would mean one flaked launch destroys every conformance
+          # suite's evidence too.
           #
-          # LAST, deliberately. The UI tests in this step are the job's only app-launching tests,
-          # and this file records an unexplained, still-live launch flake (runs 33420584120,
-          # 33457633113). Under `set -e` an upstream position would mean one flaked launch destroys
-          # every conformance suite's evidence too. The canary's count survives
-          # `restart_navidrome_cold` (it is in the DB), and CONF-22/23 target the 29s and 31s
-          # tracks, never this one, so running last costs the assertion nothing.
-          #
-          # The XCUITest deliberately never reads a play count -- a test that could call
-          # /rest/scrobble itself cannot evidence that the APP scrobbled. The server-side half is
-          # asserted here, either side of the run. BOTH are required: progressing media time alone
-          # does not show a scrobble was delivered, and a count change alone does not show our app
-          # caused it.
-          #
-          # The XCUITest returns only after the app's DEBUG delivery marker reports the server
-          # acknowledged `scrobble submission=true` (delivered=1), never on the threshold alone.
-          # Twice (6f20917 on 2026-09-06, run 34626315446 on 2026-09-11) it returned on the
-          # displayed threshold while the app's accumulator, counted from its first sampled
-          # position, had not crossed; XCUITest's teardown then killed the app before its next
-          # sample, nothing was persisted, and this AFTER read found 0 with the test green.
-          #
-          # `--await-seconds` on the AFTER read is therefore only the gap between the app seeing
-          # its `ok` envelope and the count being readable through the API, plus a loaded host;
-          # it is no longer the race window. The repo's own conformance client polls for the same
-          # reason (`awaitPlayCount`, 20 x 50ms). The BEFORE read has no wait -- a baseline must
-          # hold immediately, and waiting for it would mask a canary another actor had already moved.
-          #
-          # TEST_RUNNER_-prefixed variables must be in XCODEBUILD's OWN environment; the prefix is
-          # stripped on the way into the runner. A trailing `KEY=value` on the xcodebuild line is
-          # parsed as a BUILD SETTING and never arrives, which presents as a ~2s failure with three
-          # "Missing ..." assertions and reads like a product defect rather than a config one.
-          python3 tools/read-play-count \
-            --base-url http://127.0.0.1:4533 \
-            --title "UI Playback Canary" \
-            --expect 0
-          IPAD_PLAYBACK_DESTINATION="$(python3 tools/resolve-ipad-destination)"
-          echo "iPadOS playback destination: $IPAD_PLAYBACK_DESTINATION"
-          python3 tools/ci/isolate-simulator --phase playback-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
-          # test-without-building: `Build the iOS shell for the iPadOS conformance legs` already
-          # built this scheme into this same derived-data tree. Rebuilding re-enters the Gradle
-          # run-script phase while Navidrome and three python servers are live, consuming the
-          # conformance step budget.
-          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
-            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
-            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
-            xcodebuild test-without-building \
-              -project apple/Dulcet.xcodeproj \
-              -scheme DulcetiOS \
-              -configuration Debug \
-              -destination "$IPAD_PLAYBACK_DESTINATION" \
-              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
-              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
-              -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
-            tee "$RUNNER_TEMP/dulcet-ipados-playback.log"
-          # The evidence assertion comes BEFORE junit generation: under `set -e` a junit failure
-          # would otherwise abort with the evidence question unanswered.
-          python3 tools/read-play-count \
-            --base-url http://127.0.0.1:4533 \
-            --title "UI Playback Canary" \
-            --expect 1 \
-            --await-seconds 15
-          # Named-test execution guard, as the three macOS invocations above use. `swift-testing-junit`
-          # cannot substitute: it writes a well-formed `tests="0"` JUnit for an empty bundle, so a
-          # renamed test or a silently-matching-nothing `-only-testing` would ship green.
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
-            DulcetiOSUITests.DulcetiOSUITests \
-            testSimulatorPlaybackAdvancesPastScrobbleThreshold
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
-            "$RUNNER_TEMP/dulcet-ipados-playback-junit/TEST-DulcetiOSUITests.xml" \
-            DulcetiOSUITests
-          # ---- iOS + iPadOS search-activation evidence --------------------------------------
-          # Same shape as the playback proof above and inside this step for the same reason:
-          # Navidrome's lifetime is this step's shell. The typed query, the ranked render and
-          # the activation-to-Now-Playing assertions all live in the UI test; this file supplies
-          # only the disposable fixture coordinates. The iPhone run evidences the ios cell, the
-          # iPad run the ipados cell -- the test itself fails on the wrong window class, so one
-          # destination's evidence cannot be mistaken for the other's.
-          # iPad first: the iPad playback proof above already has it booted, so this order costs one
-          # simulator boot fewer than iPhone-then-iPad.
-          python3 tools/ci/isolate-simulator --phase search-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
-          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
-            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
-            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
-            xcodebuild test-without-building \
-              -project apple/Dulcet.xcodeproj \
-              -scheme DulcetiOS \
-              -configuration Debug \
-              -destination "$IPAD_PLAYBACK_DESTINATION" \
-              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
-              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
-              -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS 2>&1 | \
-            tee "$RUNNER_TEMP/dulcet-ipados-search.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
-            DulcetiOSUITests.DulcetiOSUITests \
-            testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
-            "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
-            DulcetiOSUITests
-          # Now Playing's heart on iPad (spec §16.20), while the iPad is still booted: the heart
-          # fills with the tap and the star reaches the server for the playing track, then is taken
-          # off again. Favourites are not media, so the counted corpus later phases read is unchanged.
-          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
-            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
-            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
-            xcodebuild test-without-building \
-              -project apple/Dulcet.xcodeproj \
-              -scheme DulcetiOS \
-              -configuration Debug \
-              -destination "$IPAD_PLAYBACK_DESTINATION" \
-              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
-              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
-              -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS 2>&1 | \
-            tee "$RUNNER_TEMP/dulcet-ipados-np-heart.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
-            DulcetiOSUITests.DulcetiOSUITests \
-            testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
-            "$RUNNER_TEMP/dulcet-ipados-np-heart-junit/TEST-DulcetiOSUITests.xml" \
-            DulcetiOSUITests
-          # The iPad library on the reader (spec §16.14), while the iPad is still booted: a saved
-          # account reopens into what this device saw, then Reconnect in place.
-          tools/ci/run-app-host-reader-proof ipados "$IPAD_PLAYBACK_DESTINATION"
-          # Now Playing's stars and every playlist edit on the iPad, each read back from the
-          # server; before the streaming-quality cap, which is last to stream on the iPad.
-          tools/ci/run-ratings-playlists-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
-          # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
-          # the iPad (see the script header).
-          tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
+          # The typed query, the ranked render and the activation-to-Now-Playing assertions all live
+          # in the UI test; this file supplies only the disposable fixture coordinates. This run
+          # evidences the ios cell and the iPad run in apple-conformance-ipad-iphone the ipados cell
+          # -- the test itself fails on the wrong window class, so one destination's evidence cannot
+          # be mistaken for the other's. It sat between the iPad proofs and tvOS search before the
+          # split; it keeps its place after the suites and before tvOS search here.
           python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -1621,6 +1501,396 @@ jobs:
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote, last on this device (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
+      # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
+      # machine, so every JUnit directory this job wrote travels as one artifact named per job and
+      # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
+      # leg that did not succeed, and the failure diagnostics below carry the same directories.
+      - name: Upload Apple parity evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-parity-evidence-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-*-junit
+          if-no-files-found: error
+          retention-days: 14
+      # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
+      # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
+      - name: Summarise host pressure by phase
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
+          || echo "host-pressure record unavailable; see the summary line above"
+      # Every Apple test step here writes an .xcresult and discards it with the runner -- including
+      # the platform download and Keychain runs -- along with the JUnit directories
+      # `verify-parity-evidence` consumes
+      # and the reference server's own log. Runs 33420584120 and 33457633113 (the latter on main)
+      # failed with "Timed out while launching application via Xcode" and left ~58 seconds of silence
+      # between `t = 1.05s Launch` and the failure; the evidence that would explain it was deleted.
+      # This does not attempt to fix that flake -- two proposed causes have already been refuted.
+      #
+      # `!success()` covers BOTH failure and cancellation. A `timeout-minutes` expiry cancels the job
+      # rather than failing it (observed in the 2026-08-30 sample of 12 runs).
+      # A `failure()`-only condition would therefore miss the long-hang case, which is the one
+      # worth the most here. `concurrency.cancel-in-progress` supersessions also land in this branch,
+      # but they are killed early and so have little on disk for the globs to match.
+      #
+      # NOTE these globs are duplicated in the inventory step below. Keep the two lists in step.
+      - name: Inventory the Apple failure diagnostics
+        if: ${{ !success() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          # Sizes, not just names: a killed `tee` leaves a partial .log and a killed xcodebuild an
+          # unfinalized .xcresult, and a name-only listing renders both exactly like healthy ones.
+          # Globs are collected into one array rather than passed to a single `ls`: `ls a/*.x b/*.y`
+          # exits non-zero when EITHER pattern fails to expand, which printed the files it found and
+          # then reported "NONE" underneath them.
+          shopt -s nullglob
+          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log)
+          echo "APPLE FAILURE DIAGNOSTICS count=${#found[@]}"
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "  NONE - nothing was written before the job stopped"
+          else
+            du -sk "${found[@]}" | sed 's/^/  /'
+          fi
+      - name: Upload Apple failure diagnostics
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/*/logs/*.log
+          if-no-files-found: warn
+          # .xcresult payload is already-compressed media; the three sibling binary uploads in this
+          # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
+          compression-level: 0
+          retention-days: 14
+      - name: Upload macosArm64 core-conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/macosArm64Test
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload iosSimulatorArm64 core-conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/iosSimulatorArm64Test
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload tvosSimulatorArm64 core-conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: core-conformance/build/test-results/tvosSimulatorArm64Test
+          if-no-files-found: error
+          retention-days: 14
+
+  # The second conformance job (see apple-conformance-core above for the cut). It repeats only the
+  # setup a server-owning macOS job needs -- the Darwin closure, the iOS-simulator framework, the
+  # iPhone and iPadOS builds its `test-without-building` proofs reuse, the corpus and the
+  # configuration -- and then runs the iPadOS and iPhone proof chain against its own server.
+  #
+  # 110 = ceil(1.5 x 72.3 / 5) x 5. 72.3 minutes is a PROJECTION from run 37105472578: the
+  # composite's 59.6 (see its cap) plus 12.7 for the setup, where the closure install took 4.0, the
+  # iPhone and iPadOS builds 3.1 and 1.7, and the iOS-simulator framework link is ASSUMED at 2.5. The
+  # job cap stays above the composite's 90 plus the rest of the job, 90 + 12.7 = 102.7.
+  apple-conformance-ipad-iphone:
+    name: apple-conformance-ipad-iphone
+    needs: [apple-plan]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 110
+    outputs:
+      attempt: ${{ github.run_attempt }}
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      # Samples vm_stat, swap and load every 5 s for the rest of the job. The file ends in .log so the
+      # failure upload's `$RUNNER_TEMP/*.log` glob carries it; the summary step prints it per phase.
+      - name: Start host-pressure sampling
+        run: |
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample \
+            --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+          python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # FIRST, before any build (spec §21.5 rule 1): a Homebrew pin drift fails every run, and this
+      # job finds it in minutes rather than after its builds. The gates' own controls run once, in
+      # apple-conformance-core; the gates themselves run inside these scripts in both jobs.
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      - name: Install and verify checksum-pinned Darwin conformance closure
+        timeout-minutes: 9
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      # The one framework the iPhone and iPadOS shells link. The device links and
+      # `:core:macosArm64Test` run once, in apple-conformance-core. 10, the cap the platform leg's
+      # three-framework link carries; this links one and runs no tests.
+      - name: Build the Apple framework the iPhone and iPadOS conformance legs read
+        timeout-minutes: 10
+        run: >-
+          ./gradlew --no-daemon
+          :core:linkDebugFrameworkIosSimulatorArm64
+      # The resolver gives destination discovery its own 120-second deadline and reports the
+      # attempts it made when that expires. It is this job's first, cold xcodebuild call, so the step
+      # cap is the 6 minutes of the platform step that hosts the same call.
+      - name: Resolve the iPadOS simulator the conformance legs use
+        id: ipados_conformance_destination
+        timeout-minutes: 6
+        run: |
+          set -o pipefail
+          IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
+          echo "iPadOS conformance destination: udid=$IPAD_UDID"
+          echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
+      # The products the composite's `test-without-building` proofs reuse, into the derived-data
+      # roots it names. Nothing is tested by these steps and a build boots no simulator. 10 bounds a
+      # hang; the same builds took 3.1 and 1.7 minutes in run 37105472578.
+      - name: Build the iOS shell for the iPhone conformance legs
+        timeout-minutes: 10
+        run: >-
+          xcodebuild build-for-testing
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetiOS
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+          -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
+      - name: Build the iOS shell for the iPadOS conformance legs
+        timeout-minutes: 10
+        env:
+          IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
+        run: >-
+          xcodebuild build-for-testing
+          -project apple/Dulcet.xcodeproj
+          -scheme DulcetiOS
+          -configuration Debug
+          -destination "platform=iOS Simulator,id=$IPAD_UDID"
+          -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData"
+      - name: Generate deterministic Darwin corpus
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/seed-corpus
+          --output "$ROOT/music"
+          --runtime native
+          --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Render Darwin Navidrome configuration
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: >-
+          tools/conformance-env/render-config
+          --output "$ROOT/config/navidrome.toml"
+          --music-folder "$ROOT/music"
+          --data-folder "$ROOT/data"
+          --cache-folder "$ROOT/cache"
+          --address 127.0.0.1
+          --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      - name: Assert iPadOS and iPhone conformance proofs
+        # 90 = ceil(1.5 x 59.6 / 5) x 5, rule 5's leg formula applied to this step. 59.6 minutes is
+        # what these phases took inside the single composite of run 37105472578 -- the canary and
+        # iPadOS proofs 27.8, the iPhone proofs from the playlist proof on 27.8, the server start and
+        # preconditions 0.6 -- plus 1.7 each for the iPad's and the iPhone's FIRST boot here, the
+        # difference between a first boot (161 and 158 s in that run) and the re-boots those phases
+        # paid there (61 and 58 s). A PROJECTION until this job has run.
+        timeout-minutes: 90
+        id: darwin_conformance
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+          DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
+          DULCET_CONFORMANCE_DISPOSABLE: "true"
+        run: |
+          set -o pipefail
+          # This job's own disposable server and the one fixture its phases use: the Apple lyrics
+          # proofs' fault proxy (tools/ci/run-lyrics-quality-proofs), which forwards every request to
+          # this server unchanged except a lyrics read a proof arms it to fail. The redirect, TLS and
+          # forward-proxy fixtures serve only the core-conformance suites, which run in
+          # apple-conformance-core. Both write their logs where the failure upload below finds them.
+          "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
+          navidrome_pid=$!
+          python3 tools/conformance-env/lyrics-fault-proxy --port 4544 --upstream http://127.0.0.1:4533 &
+          lyrics_proxy_pid=$!
+          cleanup() {
+            kill "$lyrics_proxy_pid" >/dev/null 2>&1 || true
+            wait "$lyrics_proxy_pid" 2>/dev/null || true
+            kill "$navidrome_pid" >/dev/null 2>&1 || true
+            wait "$navidrome_pid" 2>/dev/null || true
+            tail -200 "$ROOT/logs/navidrome.log" || true
+          }
+          trap cleanup EXIT
+          for _ in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4544/__dulcet/health >/dev/null; then break; fi
+            sleep 0.1
+          done
+          curl --fail --silent http://127.0.0.1:4544/__dulcet/health >/dev/null
+          tools/conformance-env/health-check \
+            --base-url http://127.0.0.1:4533 \
+            --runtime darwin/arm64 \
+            --expected-server-version "$(tools/conformance-env/read-pin navidrome.version)" \
+            --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
+            --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
+            --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          # ---- iPadOS playback + scrobble evidence -------------------------------------------
+          # INSIDE this step because Navidrome's lifetime IS this step's shell: `trap cleanup EXIT`
+          # kills it, so a later step finds nothing on 127.0.0.1:4533.
+          #
+          # FIRST, deliberately: nothing has streamed from this job's server before the BEFORE read
+          # below, and nothing in this job restarts it. Later phases here play the canary track (the
+          # iPhone playlist proof plays its playlist from "UI Playback Canary"), so the canary's 0 ->
+          # 1 must be read before any of them. CONF-22/23 target the 29s and 31s tracks, never this
+          # one, and run on another job's server.
+          #
+          # The XCUITest deliberately never reads a play count -- a test that could call
+          # /rest/scrobble itself cannot evidence that the APP scrobbled. The server-side half is
+          # asserted here, either side of the run. BOTH are required: progressing media time alone
+          # does not show a scrobble was delivered, and a count change alone does not show our app
+          # caused it.
+          #
+          # The XCUITest returns only after the app's DEBUG delivery marker reports the server
+          # acknowledged `scrobble submission=true` (delivered=1), never on the threshold alone.
+          # Twice (6f20917 on 2026-09-06, run 34626315446 on 2026-09-11) it returned on the
+          # displayed threshold while the app's accumulator, counted from its first sampled
+          # position, had not crossed; XCUITest's teardown then killed the app before its next
+          # sample, nothing was persisted, and this AFTER read found 0 with the test green.
+          #
+          # `--await-seconds` on the AFTER read is therefore only the gap between the app seeing
+          # its `ok` envelope and the count being readable through the API, plus a loaded host;
+          # it is no longer the race window. The repo's own conformance client polls for the same
+          # reason (`awaitPlayCount`, 20 x 50ms). The BEFORE read has no wait -- a baseline must
+          # hold immediately, and waiting for it would mask a canary another actor had already moved.
+          #
+          # TEST_RUNNER_-prefixed variables must be in XCODEBUILD's OWN environment; the prefix is
+          # stripped on the way into the runner. A trailing `KEY=value` on the xcodebuild line is
+          # parsed as a BUILD SETTING and never arrives, which presents as a ~2s failure with three
+          # "Missing ..." assertions and reads like a product defect rather than a config one.
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --expect 0
+          IPAD_PLAYBACK_DESTINATION="$(python3 tools/resolve-ipad-destination)"
+          echo "iPadOS playback destination: $IPAD_PLAYBACK_DESTINATION"
+          python3 tools/ci/isolate-simulator --phase playback-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
+          # test-without-building: `Build the iOS shell for the iPadOS conformance legs` already
+          # built this scheme into this same derived-data tree. Rebuilding re-enters the Gradle
+          # run-script phase while Navidrome and three python servers are live, consuming the
+          # conformance step budget.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_PLAYBACK_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-playback.log"
+          # The evidence assertion comes BEFORE junit generation: under `set -e` a junit failure
+          # would otherwise abort with the evidence question unanswered.
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --expect 1 \
+            --await-seconds 15
+          # Named-test execution guard, as the three macOS invocations above use. `swift-testing-junit`
+          # cannot substitute: it writes a well-formed `tests="0"` JUnit for an empty bundle, so a
+          # renamed test or a silently-matching-nothing `-only-testing` would ship green.
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-playback-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          # ---- iPadOS search-activation evidence ---------------------------------------------
+          # Same shape as the playback proof above and inside this step for the same reason:
+          # Navidrome's lifetime is this step's shell. The typed query, the ranked render and
+          # the activation-to-Now-Playing assertions all live in the UI test; this file supplies
+          # only the disposable fixture coordinates. This run evidences the ipados cell and the
+          # iPhone run in apple-conformance-core the ios cell -- the test itself fails on the wrong
+          # window class, so one destination's evidence cannot be mistaken for the other's.
+          # The iPad playback proof above already has the iPad booted.
+          python3 tools/ci/isolate-simulator --phase search-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_PLAYBACK_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-search.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-search-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          # Now Playing's heart on iPad (spec §16.20), while the iPad is still booted: the heart
+          # fills with the tap and the star reaches the server for the playing track, then is taken
+          # off again. Favourites are not media, so the counted corpus later phases read is unchanged.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination "$IPAD_PLAYBACK_DESTINATION" \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ipados-np-heart.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart.xcresult" \
+            "$RUNNER_TEMP/dulcet-ipados-np-heart-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
+          # The iPad library on the reader (spec §16.14), while the iPad is still booted: a saved
+          # account reopens into what this device saw, then Reconnect in place.
+          tools/ci/run-app-host-reader-proof ipados "$IPAD_PLAYBACK_DESTINATION"
+          # Now Playing's stars and every playlist edit on the iPad, each read back from the
+          # server; before the streaming-quality cap, which is last to stream on the iPad.
+          tools/ci/run-ratings-playlists-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
+          # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
+          # the iPad (see the script header).
+          tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
           # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
           # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
           # renames it from its page and reads the new name back from the server, then deletes it:
@@ -1845,43 +2115,21 @@ jobs:
           # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
           compression-level: 0
           retention-days: 14
-      - name: Upload macosArm64 core-conformance JUnit results
-        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: core-conformance/build/test-results/macosArm64Test
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload iosSimulatorArm64 core-conformance JUnit results
-        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: core-conformance/build/test-results/iosSimulatorArm64Test
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload tvosSimulatorArm64 core-conformance JUnit results
-        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: core-conformance/build/test-results/tvosSimulatorArm64Test
-          if-no-files-found: error
-          retention-days: 14
 
   # The required status check. Branch protection matches it by NAME and FEATURES.yml cites it by job
   # id, so both are `apple-ci`. It needs the plan and every leg and runs `if: always()`: without
   # that, a failed leg SKIPS this job, and a skipped required check does not block a merge. The
   # plan must succeed; a leg the plan asked for must report `success` -- `failure`, `cancelled` (a
   # timeout reports as cancelled) and `skipped` all fail it -- and a leg the plan did not ask for
-  # must report `skipped` (spec §21.6). On a run that planned both legs it then resolves every
-  # apple-ci evidence row against the JUnit the legs uploaded, as `core-ci` does for Android. It
-  # runs no Apple tooling, so it takes no macOS runner.
+  # must report `skipped` (spec §21.6). The plan's one `conformance` output plans BOTH conformance
+  # jobs, so each is checked against it: on a pull request both must be skipped, and on main or a
+  # dispatch both must succeed. On a run that planned every leg it then resolves every apple-ci
+  # evidence row against the JUnit the legs uploaded, as `core-ci` does for Android. It runs no
+  # Apple tooling, so it takes no macOS runner.
   apple-ci:
     name: apple-ci
     if: ${{ always() }}
-    needs: [apple-plan, apple-platform, apple-conformance]
+    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -1889,7 +2137,8 @@ jobs:
       RUN_APPLE_PLATFORM: ${{ needs.apple-plan.outputs.platform }}
       RUN_APPLE_CONFORMANCE: ${{ needs.apple-plan.outputs.conformance }}
       APPLE_PLATFORM_RESULT: ${{ needs.apple-platform.result }}
-      APPLE_CONFORMANCE_RESULT: ${{ needs.apple-conformance.result }}
+      APPLE_CONFORMANCE_CORE_RESULT: ${{ needs.apple-conformance-core.result }}
+      APPLE_CONFORMANCE_IPAD_IPHONE_RESULT: ${{ needs.apple-conformance-ipad-iphone.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # A planned leg must succeed and an unplanned one must be skipped; anything else fails,
@@ -1898,14 +2147,16 @@ jobs:
         run: |
           echo "apple-plan=$APPLE_PLAN_RESULT platform=$RUN_APPLE_PLATFORM conformance=$RUN_APPLE_CONFORMANCE"
           echo "apple-platform=$APPLE_PLATFORM_RESULT"
-          echo "apple-conformance=$APPLE_CONFORMANCE_RESULT"
+          echo "apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT"
+          echo "apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
           test "$APPLE_PLAN_RESULT" = success
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_PLATFORM" "$APPLE_PLATFORM_RESULT"
-          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_RESULT"
-          echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance=$APPLE_CONFORMANCE_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_CORE_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
+          echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
       # Evidence is resolved only on a run that planned every leg: push to main, a manual dispatch,
       # and so before any release (release.yml requires this run green on the commit it ships). A
-      # pull request runs no conformance leg, so its FEATURES.yml citations are resolved after merge.
+      # pull request runs no conformance job, so its FEATURES.yml citations are resolved after merge.
       - name: Report whether this run resolves evidence
         run: |
           if [ "$RUN_APPLE_PLATFORM" = true ] && [ "$RUN_APPLE_CONFORMANCE" = true ]; then
@@ -1929,29 +2180,35 @@ jobs:
         with:
           name: dulcet-apple-parity-evidence-apple-platform-${{ github.run_id }}-${{ needs.apple-platform.outputs.attempt }}
           path: ${{ runner.temp }}
-      - name: Download conformance parity evidence
+      - name: Download core conformance parity evidence
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: dulcet-apple-parity-evidence-apple-conformance-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          name: dulcet-apple-parity-evidence-apple-conformance-core-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
+          path: ${{ runner.temp }}
+      - name: Download iPadOS and iPhone conformance parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-apple-conformance-ipad-iphone-${{ github.run_id }}-${{ needs.apple-conformance-ipad-iphone.outputs.attempt }}
           path: ${{ runner.temp }}
       - name: Download macosArm64 core-conformance JUnit results
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          name: dulcet-core-conformance-macosArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
           path: core-conformance/build/test-results/macosArm64Test
       - name: Download iosSimulatorArm64 core-conformance JUnit results
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
           path: core-conformance/build/test-results/iosSimulatorArm64Test
       - name: Download tvosSimulatorArm64 core-conformance JUnit results
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance.outputs.attempt }}
+          name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
           path: core-conformance/build/test-results/tvosSimulatorArm64Test
       - name: Verify Apple parity evidence executed and passed
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}

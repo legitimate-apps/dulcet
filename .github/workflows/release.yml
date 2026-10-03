@@ -84,7 +84,7 @@ jobs:
         run: python3 tools/release_plan.py >> "$GITHUB_OUTPUT"
 
       # spec §21.6: pull requests do not run the live-server conformance leg, so this is where it
-      # becomes a precondition. Every required check and both apple-ci legs must be green on this
+      # becomes a precondition. Every required check and every apple-ci leg must be green on this
       # exact commit (a push to main runs them all). Unconditional, and before any secret is read or
       # anything is archived; only a dry run may waive it, and only by the explicit input.
       - name: Require a green full CI run on this commit

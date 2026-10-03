@@ -2,7 +2,8 @@
 """Decide which apple-ci legs a run needs, and check afterwards that each did what was planned.
 
 spec §21.6. A pull request runs `apple-platform` only when it changes something an Apple build can
-read, and never runs `apple-conformance`; a push to `main` and a manual dispatch run both legs. The
+read, and never runs the two conformance jobs, `apple-conformance-core` and
+`apple-conformance-ipad-iphone`; a push to `main` and a manual dispatch run every leg. The
 required `apple-ci` job always runs, because a check that never reports blocks a merge forever.
 
   plan-apple-legs plan --event EVENT [--changed-files FILE]

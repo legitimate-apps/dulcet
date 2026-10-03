@@ -639,6 +639,59 @@ def run_transitive_invocation_case() -> None:
     print(f"PASS: {label}")
 
 
+MODE_SCRIPT = """#!/bin/bash
+set -euo pipefail
+case "$1" in
+  a)
+    python3 tools/swift-testing-junit x \\
+      "$RUNNER_TEMP/dulcet-example-junit/TEST-Example.xml" Example
+    ;;
+  b)
+    python3 tools/swift-testing-junit x \\
+      "$RUNNER_TEMP/%(b_directory)s/TEST-Example.xml" Example
+    ;;
+esac
+"""
+
+
+def run_shared_mode_script_case(name: str, mode_b: str, b_directory: str, expected: str) -> None:
+    """Two legs run one mode-dispatched script, as apple-ci's two conformance jobs share the
+    tools/ci/run-* scripts: each leg owns the directory its own mode writes.
+
+    Different modes writing different directories are accepted. The same mode in both legs, or a
+    directory the script names in more than one place, is a write both legs may make and stays
+    rejected -- otherwise one artifact download overwrites the other in the aggregator.
+    """
+    text = APPLE_WORKFLOW % {"invocation": "tools/ci/run-modes MODE_A"}
+    text = with_second_leg(text, "dulcet-other-junit")
+    first = text.index("tools/ci/run-modes MODE_A")
+    second = text.index("tools/ci/run-modes MODE_A", first + 1)
+    text = (text[:second] + f"tools/ci/run-modes {mode_b}"
+            + text[second + len("tools/ci/run-modes MODE_A"):]).replace("MODE_A", "a")
+    with tempfile.TemporaryDirectory(prefix="dulcet-mode-script-policy-") as temporary_directory:
+        root = Path(temporary_directory)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "apple-ci.yml").write_text(text)
+        (workflows / "core-ci.yml").write_text(
+            workflow_for(next(case for case in CASES if case.accepted)),
+        )
+        scripts = root / "tools" / "ci"
+        scripts.mkdir(parents=True)
+        (scripts / "run-modes").write_text(MODE_SCRIPT % {"b_directory": b_directory})
+        result = subprocess.run(
+            [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
+        )
+    if not expected and result.returncode != 0:
+        raise AssertionError(f"{name}: expected exit 0, got {result.returncode}\n"
+                             f"stderr:\n{result.stderr}")
+    if expected and (result.returncode != 1 or expected not in result.stderr):
+        raise AssertionError(f"{name}: expected exit 1 with {expected!r}, got "
+                             f"{result.returncode}\nstderr:\n{result.stderr}")
+    EXTRA_PASSES.append(name)
+    print(f"PASS: {name}")
+
+
 def run_orphan_control_case(variants=None) -> None:
     """A control in tools/ that no workflow names must be rejected, and a wired one accepted.
 
@@ -808,6 +861,17 @@ def with_second_leg(text: str, directory: str) -> str:
         f'            "$RUNNER_TEMP/{directory}"\n')
 
 
+# Run here: the cases build on with_second_leg.
+run_shared_mode_script_case("two legs running different modes of one script are accepted",
+                            "b", "dulcet-other-junit", "")
+run_shared_mode_script_case("two legs running the same mode of one script are rejected",
+                            "a", "dulcet-other-junit",
+                            "is written by ['apple-leg', 'apple-leg-b']")
+run_shared_mode_script_case("a directory a script names in two modes is rejected",
+                            "b", "dulcet-example-junit",
+                            "is written by ['apple-leg', 'apple-leg-b']")
+
+
 def edit(old: str, new: str, count: int = 1):
     def apply(text: str) -> str:
         if text.count(old) != count:
@@ -817,7 +881,7 @@ def edit(old: str, new: str, count: int = 1):
 
 
 def extra_macos_legs(text: str) -> str:
-    for name in ("apple-leg-2", "apple-leg-3"):
+    for name in ("apple-leg-2", "apple-leg-3", "apple-leg-4"):
         text = text.replace(AGGREGATOR_START, f"  {name}:\n    runs-on: macos-latest\n"
                             "    timeout-minutes: 5\n    steps:\n      - run: true\n"
                             + AGGREGATOR_START)
@@ -924,7 +988,7 @@ SHAPE_CASES = (
          "    timeout-minutes: 10\n",
          "    timeout-minutes: 10\n    concurrency:\n      group: leg\n      cancel-in-progress: true\n"),
      "missing cancel-in-progress: true in a top-level concurrency block"),
-    ("a third macOS leg is rejected", extra_macos_legs, "3 macOS jobs"),
+    ("a fourth macOS leg is rejected", extra_macos_legs, "4 macOS jobs"),
     ("a leg that writes evidence and uploads none is rejected",
      lambda t: t.replace(t[t.index("      - name: Upload Apple parity evidence\n"):
                            t.index(AGGREGATOR_START)], ""),
