@@ -2001,7 +2001,6 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-lyrics-states-junit" \
             "$RUNNER_TEMP/dulcet-tvos-streaming-quality-junit" \
             "$RUNNER_TEMP/dulcet-mac-ratings-junit" \
-            "$RUNNER_TEMP/dulcet-mac-playlist-edits-junit" \
             "$RUNNER_TEMP/dulcet-ios-ratings-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ratings-junit" \

@@ -794,18 +794,22 @@ final class DulcetiOSUITests: XCTestCase {
     /// Playing leaves the person where they were; the full player is one tap on the bar away.
     /// Asserting the bar first separates "playback never started" from "the bar never opened".
     @MainActor
-    private func openNowPlayingFromBar(in app: XCUIApplication, expectingTitle title: String) -> Bool {
+    /// `expectingTitle` nil skips the title check: a track shorter than the wait (the 2-second
+    /// health probe) can end, and the album's next track take the bar, before it is read.
+    private func openNowPlayingFromBar(in app: XCUIApplication, expectingTitle title: String?) -> Bool {
         let bar = app.buttons["dulcet.mini-player.open"].firstMatch
         guard bar.waitForExistence(timeout: 15) else {
             XCTFail("Activation must bring up the now-playing bar: " + app.debugDescription)
             return false
         }
-        // Preparing shows a placeholder title; wait for the playing track's own name.
-        let deadline = Date().addingTimeInterval(20)
-        while !bar.label.contains(title), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.25)
+        if let title {
+            // Preparing shows a placeholder title; wait for the playing track's own name.
+            let deadline = Date().addingTimeInterval(20)
+            while !bar.label.contains(title), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
         }
-        XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
         bar.tap()
         return true
     }
@@ -2430,7 +2434,9 @@ final class DulcetiOSUITests: XCTestCase {
         attachScreenshot(named: "streaming-quality-chosen", app: app)
         guard openLibraryAlbum(album, containing: track, in: app, compact: expectedCompact),
               playAlbumTrack(track, in: app),
-              openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
+              // The server's log, read below, names the track; the 2-second probe can be over
+              // before the bar is read.
+              openNowPlayingFromBar(in: app, expectingTitle: nil) else { return }
 
         // The capped play must start, not only reach the server: a first play that failed after
         // its stream request still leaves the transcode in the log. Media time moving in Now
