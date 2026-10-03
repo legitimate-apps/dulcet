@@ -6440,7 +6440,7 @@ because the median is above 75 minutes. Either reading adopts the split.
    presentation and registered-pair contrast tests, the deterministic capture and the shipping
    reference; the iPhone, iPadOS and tvOS shells with their DulcetKit and Keychain tests; the compact
    shell; and the OS-floor assertion. The conformance composite is divided between two jobs, each
-   installing the Darwin closure and starting its **own** disposable Navidrome and the fixtures its
+   installing the Darwin ffmpeg and starting its **own** disposable Navidrome and the fixtures its
    phases use, so no server state crosses between them. `apple-conformance-core` runs all five
    frameworks with `macosArm64Test`, the §12.4 measurement, and the half of the composite that holds
    the macOS app-host proofs, the library-sync, playback-integration and download proofs on every
@@ -6455,7 +6455,7 @@ because the median is above 75 minutes. Either reading adopts the split.
    downloads each leg's parity evidence and the `core-conformance` JUnit, then runs
    `tools/verify-parity-evidence`, which resolves citations to the job it runs in. This is
    `core-ci`'s aggregator pattern, so no `FEATURES.yml` citation changes.
-2. **Rules 1–4 hold per leg.** Rule 1: in the conformance leg, the Darwin closure install and its
+2. **Rules 1–4 hold per leg.** Rule 1: in the conformance leg, the Darwin ffmpeg install and its
    drift check still run immediately after Xcode selection, before any build. The platform leg
    installs no environment, and its source-policy controls keep their original positions. Rule 2:
    in the conformance leg, `tools/ci/isolate-simulator` precedes every simulator phase that talks
@@ -6476,7 +6476,7 @@ because the median is above 75 minutes. Either reading adopts the split.
    its contents: the multisets of `-only-testing` identifiers, `tools/ci/run-*` invocations, JUnit
    directories written and read, execution guards and play-count reads are identical before and
    after a change that moves proofs between the conformance jobs. The second conformance job also
-   repeats the setup a server-owning job needs: the closure install, the corpus, the configuration,
+   repeats the setup a server-owning job needs: the Darwin ffmpeg install, the corpus, the configuration,
    the iOS-simulator framework link, the iPadOS destination and the iPhone and iPadOS builds.
    Controls that test the gates themselves run once, in `apple-conformance-core`.
 4. **Artifacts carry the job id and the attempt, and the aggregator downloads each one by the

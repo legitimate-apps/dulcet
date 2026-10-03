@@ -677,7 +677,7 @@ jobs:
   # and the fixtures its phases use; nothing is shared between them, so neither job's server state
   # can reach the other's assertions.
   #
-  # apple-conformance-core: the Darwin closure, all five frameworks with `:core:macosArm64Test`, the
+  # apple-conformance-core: the Darwin ffmpeg, all five frameworks with `:core:macosArm64Test`, the
   # §12.4 measurement, and a composite running the macOS app-host proofs, the app-host library-sync
   # proofs on iPhone, iPadOS and tvOS, the playback-integration and download proofs, the
   # `core-conformance` suites on macOS, iOS and tvOS with their three cold restarts, and the tvOS UI
@@ -1574,7 +1574,7 @@ jobs:
           retention-days: 14
 
   # The second conformance job (see apple-conformance-core above for the cut). It repeats only the
-  # setup a server-owning macOS job needs -- the Darwin closure, the iOS-simulator framework, the
+  # setup a server-owning macOS job needs -- the Darwin ffmpeg, the iOS-simulator framework, the
   # iPhone and iPadOS builds its `test-without-building` proofs reuse, the corpus and the
   # configuration -- and then runs the iPadOS and iPhone proof chain against its own server.
   #
