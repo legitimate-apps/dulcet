@@ -277,13 +277,15 @@ passing, non-skipped testcase before checking the upstream results. It runs even
 failure or skip and passes only when the evidence verification succeeds and both `core-build` and
 `conformance-env-linux` report `success`. `.github/workflows/apple-ci.yml` has the same shape (spec
 §21.5): the Darwin preconditions and the macOS, iOS simulator, and tvOS simulator native conformance
-tasks run serially in hosted-macOS job `apple-conformance`, in parallel with the platform legs in
-`apple-platform`, and the required `apple-ci` context is a Linux aggregator. Since spec §21.6 the
-conformance job runs on pushes to `main` and manual dispatches, not on pull requests, and the platform
-job runs on a pull request only when it changes an Apple input; the aggregator passes only when every
-leg the run planned reports `success` and every other leg reports `skipped`, and it resolves the Apple
-evidence identities on runs that planned both legs. A release build requires both legs green on the
-commit it archives. The conformance job restarts
+tasks run serially in hosted-macOS job `apple-conformance-core`; the play-count canary and the iPadOS
+and iPhone app proofs run in a second hosted-macOS job, `apple-conformance-ipad-iphone`, against its
+own disposable server; both run in parallel with the platform legs in `apple-platform`, and the
+required `apple-ci` context is a Linux aggregator. Since spec §21.6 the conformance jobs run on pushes
+to `main` and manual dispatches, not on pull requests, and the platform job runs on a pull request
+only when it changes an Apple input; the aggregator passes only when every leg the run planned
+reports `success` and every other leg reports `skipped`, and it resolves the Apple evidence
+identities on runs that planned every leg. A release build requires every leg green on the commit it
+archives. `apple-conformance-core` restarts
 the Darwin server against the same root after clearing its stopped transcode cache, then requires an
 observed `cached=false` record before every platform task. Both workflows use standard hosted
 runners, explicit job timeouts, and cancel-in-progress concurrency.

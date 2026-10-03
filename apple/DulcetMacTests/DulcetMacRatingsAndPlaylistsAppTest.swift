@@ -315,9 +315,11 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     /// The page's More menu of playlist edits, opened by AXPress as VoiceOver opens it, and the
     /// item `title` performed from it.
     private func choosePlaylistMenuItem(_ title: String, in app: HostedApp) async throws {
-        let more = try await app.element(identifiedBy: "dulcet.playlist.more", timeout: .seconds(10))
-        XCTAssertEqual(app.label(more), "More", "The playlist's menu must say what it is to accessibility")
-        try await app.chooseMenuItem(title, described: "the playlist's More menu") {
+        // Found afresh for each press: after a rename the page redraws, and a press on the element
+        // found before the redraw opened nothing (CI run 37117426402, after Rename… had worked).
+        try await app.chooseMenuItem(title, described: "the playlist's More menu", attempts: 3) {
+            let more = try await app.element(identifiedBy: "dulcet.playlist.more", timeout: .seconds(10))
+            XCTAssertEqual(app.label(more), "More", "The playlist's menu must say what it is to accessibility")
             try app.press(more, named: "dulcet.playlist.more")
         }
     }

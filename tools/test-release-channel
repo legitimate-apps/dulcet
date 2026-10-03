@@ -119,18 +119,23 @@ impostor = [dict(run, app="some-other-app") if run["name"] == "apple-ci" else ru
 refused(lambda: plan.prod_gate("0.1.0", ["v0.1.0"], impostor, required), "apple-ci=None",
         "a check run of the right name from another app")
 
-# Full-run gate (spec §21.6): every required check AND both apple-ci legs green, or a dry-run waiver.
+# Full-run gate (spec §21.6): every required check AND every apple-ci leg green, or a dry-run waiver.
+CONFORMANCE_JOBS = ("apple-conformance-core", "apple-conformance-ipad-iphone")
 full = green + [{"name": name, "conclusion": "success", "app": "github-actions"}
-                for name in ("apple-platform", "apple-conformance")]
+                for name in ("apple-platform", *CONFORMANCE_JOBS)]
 expect("passed" in plan.full_run_gate("true", "false", full, required), "a full green run passes")
 passed += 1
 expect("passed" in plan.full_run_gate("false", "false", full, required), "a dry run is gated too")
 refused(lambda: plan.full_run_gate("true", "false", green, required),
-        "apple-conformance=None", "a run without the conformance leg (a pull request's shape)")
-skipped = [dict(run, conclusion="skipped") if run["name"] == "apple-conformance" else run
-           for run in full]
-refused(lambda: plan.full_run_gate("true", "false", skipped, required),
-        "apple-conformance=skipped", "a planned-out conformance leg")
+        "apple-conformance-core=None", "a run without the conformance legs (a pull request's shape)")
+for job in CONFORMANCE_JOBS:
+    # Each conformance job on its own: green on one is not green on the other.
+    refused(lambda: plan.full_run_gate("true", "false", [r for r in full if r["name"] != job],
+                                       required),
+            f"{job}=None", f"a run without {job}")
+    skipped = [dict(run, conclusion="skipped") if run["name"] == job else run for run in full]
+    refused(lambda: plan.full_run_gate("true", "false", skipped, required),
+            f"{job}=skipped", f"a planned-out {job}")
 refused(lambda: plan.full_run_gate("false", "false", [r for r in full if r["name"] != "core-ci"], required),
         "core-ci=None", "a missing required check")
 refused(lambda: plan.full_run_gate("true", "false", [], required), "not green", "no check runs at all")

@@ -339,6 +339,14 @@ for line in apple_workflow.splitlines():
     if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line) or line.startswith("      - "):
         apple_step += 1
     apple_step_of.append(apple_step)
+# Each conformance job starts its own primary server, so the fixture launch occurs once per job.
+# The second server's lifetime is read inside the one step that prepares it; a line that moved to
+# another step is then absent from it and fails below as appearing 0 times.
+prepare_text = PURGE_DEFAULT_LIFETIME[0][1]
+prepare_hits = [index for index, line in enumerate(apple_code) if line.startswith(prepare_text)]
+if len(prepare_hits) != 1:
+    raise AssertionError(f"apple-ci second-server lifetime: prepare appears {len(prepare_hits)} times: {prepare_text!r}")
+lifetime_step = apple_step_of[prepare_hits[0]]
 lifetime_positions = []
 for event, text in PURGE_DEFAULT_LIFETIME:
     # A bare assignment must match whole lines, or it would also match `purge_default_pid=$!`.
@@ -346,7 +354,7 @@ for event, text in PURGE_DEFAULT_LIFETIME:
     hits = [
         index
         for index, line in enumerate(apple_code)
-        if (line == text if exact else line.startswith(text))
+        if apple_step_of[index] == lifetime_step and (line == text if exact else line.startswith(text))
     ]
     if len(hits) != 1:
         raise AssertionError(f"apple-ci second-server lifetime: {event} appears {len(hits)} times: {text!r}")

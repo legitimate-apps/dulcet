@@ -1232,10 +1232,11 @@ for missing in sorted(read - written):
 # thing branch protection sees. Every property below is one whose loss would let a red or absent
 # leg merge, or would break the evidence handoff only at the end of a 70-minute run.
 APPLE_AGGREGATOR = "apple-ci"
-# §21.5 adopts two legs. Hosted macOS concurrency is shared by every run on the account, and main's
-# post-merge run plus the head pull request's already take four slots; a third leg is a spec change
-# that lands in §21.5 first, then here.
-MAX_APPLE_MACOS_JOBS = 2
+# §21.5 adopts three macOS legs since 2026-10-03: the platform leg and the two conformance jobs the
+# composite was divided into. Hosted macOS concurrency is shared by every run on the account (5 on
+# the Free, Pro and Team plans): main's post-merge run takes three slots and a pull request's fast
+# check one. A fourth leg is a spec change that lands in §21.5 first, then here.
+MAX_APPLE_MACOS_JOBS = 3
 VERIFY_CALL = re.compile(r"(?m)^\s*(?:-\s+)?(?:run:\s*)?python3\s+tools/verify-parity-evidence\b")
 if apple_ci:
     apple_lines = apple_ci.splitlines()
@@ -1259,6 +1260,30 @@ if apple_ci:
         text = job_text(name)
         return text + "".join(script.read_text() for script in invoked_scripts(text)
                               if script.is_file())
+
+    # Where each JUnit directory a leg writes comes from: its own YAML ("inline"), or a
+    # `tools/ci/` script it invokes, keyed by (script, first argument). The proof scripts dispatch
+    # on that argument and spell each mode's directories out, which is what lets two legs share a
+    # script -- one running its macOS mode, the other its iPadOS mode -- without sharing a
+    # directory. A textual scan of the whole script cannot tell those modes apart, so the
+    # collision rule below reasons about invocations instead.
+    def script_scope(script: Path) -> str:
+        if not script.is_file():
+            return ""
+        text = script.read_text()
+        return text + "".join(inner.read_text() for inner in invoked_scripts(text)
+                              if inner != script and inner.is_file())
+
+    def junit_sources(name: str) -> set[tuple[str, object]]:
+        text = job_text(name)
+        found: set[tuple[str, object]] = {
+            (directory, "inline")
+            for directory in re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", text)}
+        for script, mode in re.findall(r"(tools/ci/[\w.-]+)(?:[ \t]+([^\s\\;|&]+))?", text):
+            for directory in re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/",
+                                        script_scope(Path(script))):
+                found.add((directory, (script, mode)))
+        return found
 
     if APPLE_AGGREGATOR not in apple_jobs:
         errors.append(
@@ -1290,7 +1315,7 @@ if apple_ci:
     download_names = {expression(str((step.get("with") or {}).get("name", ""))):
                       expression(str((step.get("with") or {}).get("path", "")))
                       for step in downloads}
-    writers: dict[str, list[str]] = {}
+    writers: dict[str, list[tuple[str, object]]] = {}
     produced: dict[str, str] = {}
     for leg in legs:
         start, end = apple_jobs[leg]
@@ -1304,8 +1329,8 @@ if apple_ci:
                 produced[name.replace("${{ github.run_attempt }}",
                                       f"${{{{ needs.{leg}.outputs.attempt }}}}")] = leg
         written_here = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", job_scope(leg)))
-        for directory in written_here:
-            writers.setdefault(directory, []).append(leg)
+        for directory, source in junit_sources(leg):
+            writers.setdefault(directory, []).append((leg, source))
         if not written_here:
             continue
         if attempt != "${{ github.run_attempt }}":
@@ -1337,10 +1362,29 @@ if apple_ci:
                 f"{apple_ci_path}: {APPLE_AGGREGATOR} must download {wanted} to "
                 "${{ runner.temp }}, where the verify call reads the JUnit directories",
             )
-    for directory, owners in sorted(writers.items()):
-        if len(owners) > 1:
+    # Two legs may reach one directory's text only through ONE shared script that they invoke
+    # with different first arguments, and only when that script spells the directory out exactly
+    # once, so a single mode writes it. Anything else -- the directory in a leg's own YAML, two
+    # scripts, the same mode in two legs, or the directory spelled twice -- is a collision. What
+    # this cannot see: a write in such a script that runs whatever the mode is. The scripts keep
+    # every write inside its mode's branch; verify-parity-evidence still proves what executed.
+    for directory, found in sorted(writers.items()):
+        owners = sorted({leg for leg, _ in found})
+        if len(owners) < 2:
+            continue
+        pairs = {source for _, source in found if source != "inline"}
+        scripts = {script for script, _ in pairs}
+        shared_mode = any(len({leg for leg, source in found if source == pair}) > 1
+                          for pair in pairs)
+        separated = (
+            all(source != "inline" for _, source in found)
+            and len(scripts) == 1
+            and not shared_mode
+            and script_scope(Path(next(iter(scripts)))).count(f"$RUNNER_TEMP/{directory}/") == 1
+        )
+        if not separated:
             errors.append(
-                f"{apple_ci_path}: JUnit directory {directory} is written by {sorted(owners)}; one "
+                f"{apple_ci_path}: JUnit directory {directory} is written by {owners}; one "
                 "download would overwrite the other",
             )
     for name, path in sorted(download_names.items()):
