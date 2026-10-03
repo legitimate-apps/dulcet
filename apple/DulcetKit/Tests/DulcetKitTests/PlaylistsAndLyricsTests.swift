@@ -375,6 +375,30 @@ func aWithdrawnChangeClearsItsProblemOnlyOnceTheCoreRecordedIt() {
 }
 
 @Test @MainActor
+func aRenameRefusedBecauseThePlaylistIsGoneIsSaidOnItsPage() {
+    // The page learned the playlist is gone while the rename prompt was open: the core refuses
+    // the rename before anything is sent, and the page must keep saying so after the notice.
+    let fake = RecordingPlaylists()
+    let editor = DulcetPlaylistEditor(editing: fake, session: nil)
+    editor.perform(.rename(playlistID: "p1", name: "New"))
+    #expect(editor.problems["p1"] == nil, "said before the core answered")
+    fake.complete(0, record: "deleted")
+    #expect(editor.problems["p1"] == DulcetPlaylistProblem(message: DulcetStrings.playlistDeleted, withdrawable: nil))
+
+    // Any other edit naming the playlist says it the same way; a refusal about the tap does not.
+    editor.perform(.append(playlistID: "p2", songs: ["t1"]))
+    fake.complete(1, record: "deleted")
+    #expect(editor.problems["p2"]?.message == DulcetStrings.playlistDeleted)
+    for (index, record) in ["staleView", "notCached", "notEditable", "invalid", "pending"].enumerated() {
+        editor.perform(.rename(playlistID: "p3", name: "New"))
+        fake.complete(2 + index, record: record)
+    }
+    editor.perform(.rename(playlistID: "p3", name: "New"))
+    fake.complete(7, record: nil, errorKind: "internalFailure")
+    #expect(editor.problems["p3"] == nil, "only a gone playlist is a state of the page")
+}
+
+@Test @MainActor
 func aNewPlaylistFromAnAlbumAddsTheAlbumUnderTheLocalIDOnlyOnceCreated() {
     let fake = RecordingPlaylists()
     let editor = DulcetPlaylistEditor(editing: fake, session: nil)

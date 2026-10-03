@@ -172,11 +172,52 @@ class LyricsFaultProxyTest(unittest.TestCase):
         _, rearmed = self.control("POST", "/__dulcet/lyrics-failure?song=song-1&state=on")
         self.assertEqual(rearmed, {"armed": True, "failed": 0, "forwardedAfterDisarm": 1})
 
+    def test_a_held_playlist_read_waits_for_its_release_and_others_pass(self):
+        status, armed = self.control("POST", "/__dulcet/playlist-hold?playlist=pl-1&state=on")
+        self.assertEqual((status, armed), (200, {"holding": True, "held": 0, "released": 0, "timedOut": 0}))
+        # Another playlist's read, and the held playlist's other endpoints, pass straight through.
+        self.assertEqual(self.request("GET", f"/rest/getPlaylist?t={CANARY}&id=pl-2")[0], 200)
+        self.assertEqual(self.request("GET", f"/rest/updatePlaylist?t={CANARY}&playlistId=pl-1")[0], 200)
+        answers = []
+        worker = threading.Thread(
+            target=lambda: answers.append(self.request("GET", f"/rest/getPlaylist.view?t={CANARY}&id=pl-1")))
+        worker.start()
+        deadline = 50
+        while self.control("GET", "/__dulcet/playlist-observations?playlist=pl-1")[1]["held"] < 1 and deadline:
+            deadline -= 1
+            threading.Event().wait(0.1)
+        worker.join(0.5)
+        self.assertTrue(worker.is_alive(), "a held read must not be answered before its release")
+        self.assertNotIn("/rest/getPlaylist.view", [seen["path"].split("?")[0] for seen in Upstream.seen],
+                         "a held read must not reach the server before its release")
+        _, released = self.control("POST", "/__dulcet/playlist-hold?playlist=pl-1&state=off")
+        self.assertFalse(released["holding"])
+        worker.join(10)
+        self.assertEqual([answer[0] for answer in answers], [200])
+        self.assertIn("/rest/getPlaylist.view", [seen["path"].split("?")[0] for seen in Upstream.seen])
+        _, observed = self.control("GET", "/__dulcet/playlist-observations?playlist=pl-1")
+        self.assertEqual(observed, {"holding": False, "held": 1, "released": 1, "timedOut": 0})
+        self.assertIn("LYRICS FAULT PROXY held /rest/getPlaylist.view until released", self.stdout.getvalue())
+        # After the release, reads pass unheld and uncounted.
+        self.assertEqual(self.request("GET", f"/rest/getPlaylist?t={CANARY}&id=pl-1")[0], 200)
+        self.assertEqual(self.control("GET", "/__dulcet/playlist-observations?playlist=pl-1")[1]["held"], 1)
+
+    def test_a_hold_never_outlives_its_limit(self):
+        self.control("POST", "/__dulcet/playlist-hold?playlist=pl-3&state=on")
+        with mock.patch.dict(self.module["ProxyHandler"]._handle.__globals__, {"HOLD_LIMIT_SECONDS": 0.2}):
+            status, _, _ = self.request("GET", f"/rest/getPlaylist?t={CANARY}&id=pl-3")
+        self.assertEqual(status, 200)
+        _, observed = self.control("GET", "/__dulcet/playlist-observations?playlist=pl-3")
+        self.assertEqual(observed, {"holding": True, "held": 1, "released": 0, "timedOut": 1})
+
     def test_malformed_controls_are_refused(self):
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?state=on")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?song=s&state=maybe")[0], 400)
         self.assertEqual(self.control("GET", "/__dulcet/lyrics-failure?song=s&state=on")[0], 404)
         self.assertEqual(self.control("GET", "/__dulcet/nothing?song=s")[0], 404)
+        self.assertEqual(self.control("POST", "/__dulcet/playlist-hold?state=on")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/playlist-hold?playlist=p&state=maybe")[0], 400)
+        self.assertEqual(self.control("GET", "/__dulcet/playlist-hold?playlist=p&state=on")[0], 404)
         self.assertEqual(self.control("GET", "/__dulcet/health"), (200, {"ok": True}))
         self.assertEqual(Upstream.seen, [], "control requests never reach the server")
 
