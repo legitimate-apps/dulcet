@@ -680,13 +680,11 @@ jobs:
   # apple-conformance-core: the Darwin closure, all five frameworks with `:core:macosArm64Test`, the
   # §12.4 measurement, and a composite running the macOS app-host proofs, the app-host library-sync
   # proofs on iPhone, iPadOS and tvOS, the playback-integration and download proofs, the
-  # `core-conformance` suites on macOS, iOS and tvOS with their three cold restarts, the iPhone search
-  # proof and the tvOS UI proofs. The restart arms stay in one job and in their measured order; the
-  # iPhone search proof keeps its place between the suites and tvOS search, where it ran before the
-  # split, and moved here only to even the two jobs out.
+  # `core-conformance` suites on macOS, iOS and tvOS with their three cold restarts, and the tvOS UI
+  # proofs. The restart arms stay in one job and in their measured order.
   #
   # apple-conformance-ipad-iphone (below): the play-count canary and the iPadOS proofs, then the
-  # iPhone proofs ending in the skip probe and the iPhone streaming-quality cap -- one chain, because
+  # iPhone search proof (the first iPhone launch, as before the split) and the iPhone proofs ending in the skip probe and the iPhone streaming-quality cap -- one chain, because
   # the canary must read 0 before anything streams on that server and the skip probe must come after
   # everything that counts the corpus.
   #
@@ -885,8 +883,9 @@ jobs:
         # 75 = ceil(1.5 x 47.4 / 5) x 5, rule 5's leg formula applied to this step. 47.4 minutes is
         # what this composite's phases took inside the single composite of run 37105472578: the
         # server start and preconditions 0.6, the macOS app-host, library-sync, playback-integration
-        # and download phases 26.6, the three core-conformance suites with their restarts 11.1, the
-        # iPhone search proof 2.9 and the tvOS UI proofs 6.1. A PROJECTION until this job has run.
+        # and download phases 26.6, the three core-conformance suites with their restarts 11.1, and
+        # the tvOS UI proofs 6.1 (it also held the iPhone search proof's 2.9 until that moved to the
+        # other job). A PROJECTION until this job has run.
         timeout-minutes: 75
         id: darwin_conformance
         env:
@@ -1410,42 +1409,6 @@ jobs:
             -Pdulcet.tvosSimulatorUdid="$tvos_conformance_sim"
           xcrun simctl shutdown "$tvos_conformance_sim" || true
           xcrun simctl delete "$tvos_conformance_sim" || true
-          # ---- iPhone search-activation evidence ---------------------------------------------
-          # INSIDE this step because Navidrome's lifetime IS this step's shell: `trap cleanup EXIT`
-          # kills it, so a later step finds nothing on 127.0.0.1:4533. AFTER the core-conformance
-          # suites, deliberately: these UI tests and the tvOS ones below launch the app, and this file
-          # records an unexplained, still-live launch flake (runs 33420584120, 33457633113). Under
-          # `set -e` an upstream position would mean one flaked launch destroys every conformance
-          # suite's evidence too.
-          #
-          # The typed query, the ranked render and the activation-to-Now-Playing assertions all live
-          # in the UI test; this file supplies only the disposable fixture coordinates. This run
-          # evidences the ios cell and the iPad run in apple-conformance-ipad-iphone the ipados cell
-          # -- the test itself fails on the wrong window class, so one destination's evidence cannot
-          # be mistaken for the other's. It sat between the iPad proofs and tvOS search before the
-          # split; it keeps its place after the suites and before tvOS search here.
-          python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
-          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
-            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
-            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
-            xcodebuild test-without-building \
-              -project apple/Dulcet.xcodeproj \
-              -scheme DulcetiOS \
-              -configuration Debug \
-              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
-              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
-              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
-              -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone 2>&1 | \
-            tee "$RUNNER_TEMP/dulcet-ios-search.log"
-          python3 tools/verify-xcode-test-execution \
-            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
-            DulcetiOSUITests.DulcetiOSUITests \
-            testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone
-          python3 tools/swift-testing-junit \
-            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
-            "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
-            DulcetiOSUITests
           # tvOS setup supplies an account and nothing else. The control reaches Search through
           # the section bar by remote, types into the real field, activates the focused result,
           # and returns to Library the same way, so it evidences reachability and not only that
@@ -1892,6 +1855,38 @@ jobs:
           # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
           # the iPad (see the script header).
           tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
+          # ---- iPhone search-activation evidence ---------------------------------------------
+          # The typed query, the ranked render and the activation-to-Now-Playing assertions all live
+          # in the UI test; this file supplies only the disposable fixture coordinates. This run
+          # evidences the ios cell and the iPad run above the ipados cell -- the test itself fails
+          # on the wrong window class, so one destination's evidence cannot be mistaken for the
+          # other's. It is the first iPhone launch on this runner, as it was before the split
+          # (between the iPad proofs and the iPhone proofs). With iPhone search in the core job, the
+          # playlist proof became the first launch on a fresh iPhone simulator and timed out
+          # launching the app (run 37121886722); this file also records an older launch flake
+          # (runs 33420584120, 33457633113).
+          python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-search.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
           # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
           # renames it from its page and reads the new name back from the server, then deletes it:
