@@ -676,21 +676,24 @@ jobs:
   # proof that talks to the disposable server. It builds the app schemes its
   # `test-without-building` legs reuse, so it is the longer leg and the run's critical path.
   #
-  # 215 = ceil(1.5 x 140.5 / 5) x 5. 140.5 minutes is a PROJECTION, not a measurement: this leg's
+  # 255 = ceil(1.5 x 168.5 / 5) x 5. 168.5 minutes is a PROJECTION, not a measurement: this leg's
   # measured maximum, 113.5 (run 36896866024; its last five green runs took 75.8 to 113.5), plus
   # 27 minutes for the lyrics-state and streaming-quality proofs (tools/ci/run-lyrics-quality-proofs),
   # which took 10.2 minutes of test time locally and are projected at 2.2x on this runner -- the
   # ratio tvOS Now Playing's proof showed between a local run (26 s) and this leg (37 to 57 s) --
-  # plus half a minute for each of their nine xcodebuild invocations. It must stay above the
-  # composite's own 150-minute cap plus the rest of the leg, or a slow-but-healthy composite would
-  # be killed by the job and reported against whichever step was active: the rest has measured
-  # up to 29.8 minutes, so 150 + 29.8 = 179.8. Re-size from measurement once the proofs have run.
+  # plus half a minute for each of their nine xcodebuild invocations; plus 28 minutes for the
+  # rating and playlist-edit proofs (tools/ci/run-ratings-playlists-proofs), 11.1 minutes of test
+  # time locally at the same 2.2x, plus half a minute for each of their six invocations. It must
+  # stay above the composite's own 190-minute cap plus the rest of the leg, or a slow-but-healthy
+  # composite would be killed by the job and reported against whichever step was active: the rest
+  # has measured up to 29.8 minutes, so 190 + 29.8 = 219.8. Re-size from measurement once the
+  # proofs have run.
   apple-conformance:
     name: apple-conformance
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 215
+    timeout-minutes: 255
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -872,12 +875,13 @@ jobs:
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
       - name: Assert Darwin conformance preconditions
-        # 150, raised from 85: a set value, 1.37x this step's projected maximum, the ratio the 85 had
+        # 190, raised from 85: a set value, 1.37x this step's projected maximum, the ratio the 85 had
         # to the 62.2 it was set from. The projection is the measured maximum, 83.7 minutes (run
         # 36896866024; its last five green runs took 60.0 to 83.7), plus 27 minutes for the
-        # lyrics-state and streaming-quality proofs (see the leg's cap), so 110.7. The leg cap
-        # above is checked against it. Re-size from measurement once the proofs have run.
-        timeout-minutes: 150
+        # lyrics-state and streaming-quality proofs and 28 for the rating and playlist-edit proofs
+        # (see the leg's cap), so 138.7. The leg cap above is checked against it. Re-size from
+        # measurement once the proofs have run.
+        timeout-minutes: 190
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
@@ -1066,6 +1070,9 @@ jobs:
           # The Mac lyrics panel's states and the Settings window's streaming-quality cap
           # (spec §18.4, §12.5), through the hosted app. In a file for the same reason.
           tools/ci/run-lyrics-quality-proofs macos
+          # The Mac's toolbar stars and every playlist edit, each read back from the server
+          # (spec §16.20, §18.6), through the hosted app. In a file for the same reason.
+          tools/ci/run-ratings-playlists-proofs macos
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
@@ -1531,6 +1538,9 @@ jobs:
           # The iPad library on the reader (spec §16.14), while the iPad is still booted: a saved
           # account reopens into what this device saw, then Reconnect in place.
           tools/ci/run-app-host-reader-proof ipados "$IPAD_PLAYBACK_DESTINATION"
+          # Now Playing's stars and every playlist edit on the iPad, each read back from the
+          # server; before the streaming-quality cap, which is last to stream on the iPad.
+          tools/ci/run-ratings-playlists-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
           # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
           # the iPad (see the script header).
           tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
@@ -1662,6 +1672,9 @@ jobs:
             DulcetiOSUITests
           # Every lyrics state on iPhone: synced, plain, none, and a failed read with Try Again.
           tools/ci/run-lyrics-quality-proofs iphone-lyrics
+          # Now Playing's stars and every playlist edit on iPhone, each read back from the server
+          # (spec §16.20, §18.6); they stream, so they stay before the streaming-quality cap.
+          tools/ci/run-ratings-playlists-proofs iphone
           # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -1986,4 +1999,10 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-lyrics-states-junit" \
             "$RUNNER_TEMP/dulcet-ipados-streaming-quality-junit" \
             "$RUNNER_TEMP/dulcet-tvos-lyrics-states-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-streaming-quality-junit"
+            "$RUNNER_TEMP/dulcet-tvos-streaming-quality-junit" \
+            "$RUNNER_TEMP/dulcet-mac-ratings-junit" \
+            "$RUNNER_TEMP/dulcet-mac-playlist-edits-junit" \
+            "$RUNNER_TEMP/dulcet-ios-ratings-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-ratings-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit"

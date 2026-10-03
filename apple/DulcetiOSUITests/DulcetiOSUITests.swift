@@ -794,18 +794,22 @@ final class DulcetiOSUITests: XCTestCase {
     /// Playing leaves the person where they were; the full player is one tap on the bar away.
     /// Asserting the bar first separates "playback never started" from "the bar never opened".
     @MainActor
-    private func openNowPlayingFromBar(in app: XCUIApplication, expectingTitle title: String) -> Bool {
+    /// `expectingTitle` nil skips the title check: a track shorter than the wait (the 2-second
+    /// health probe) can end, and the album's next track take the bar, before it is read.
+    private func openNowPlayingFromBar(in app: XCUIApplication, expectingTitle title: String?) -> Bool {
         let bar = app.buttons["dulcet.mini-player.open"].firstMatch
         guard bar.waitForExistence(timeout: 15) else {
             XCTFail("Activation must bring up the now-playing bar: " + app.debugDescription)
             return false
         }
-        // Preparing shows a placeholder title; wait for the playing track's own name.
-        let deadline = Date().addingTimeInterval(20)
-        while !bar.label.contains(title), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.25)
+        if let title {
+            // Preparing shows a placeholder title; wait for the playing track's own name.
+            let deadline = Date().addingTimeInterval(20)
+            while !bar.label.contains(title), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
         }
-        XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
         bar.tap()
         return true
     }
@@ -1760,6 +1764,409 @@ final class DulcetiOSUITests: XCTestCase {
             + " server-name=\((serverName ?? "<none>").debugDescription)")
     }
 
+    /// Every playlist edit through the iPhone app (spec §18.6, CONF-88..90).
+    @MainActor
+    func testEveryPlaylistEditReachesTheServerOnIPhone() {
+        provePlaylistEditsReachTheServer(compact: true)
+    }
+
+    /// Every playlist edit through the iPad app, in its regular-width window (spec §18.6,
+    /// CONF-88..90).
+    @MainActor
+    func testEveryPlaylistEditReachesTheServerOnIPadOS() {
+        provePlaylistEditsReachTheServer(compact: false)
+    }
+
+    /// Each playlist edit the app offers, made where a person makes it, and read back from the
+    /// disposable server after each one:
+    ///
+    /// 1. create: New Playlist… in Library > Playlists, named in its prompt;
+    /// 2. add an album: "Add to Playlist…" in the "Threshold Boundary" tile's context menu, then
+    ///    the playlist in the chooser -- the server holds the album's three tracks in its order;
+    /// 3. add a track: the same from the "Twenty Nine Seconds" row's context menu, which adds it a
+    ///    second time at the end;
+    /// 4. remove: the fourth entry -- the duplicate -- deleted in the playlist's edit list, by
+    ///    position, so the first "Twenty Nine Seconds" stays;
+    /// 5. reorder: "UI Playback Canary" dragged by its handle from third to first;
+    /// 6. rename: Rename… in the page's menu;
+    /// 7. delete: Delete Playlist in the page's menu, confirmed -- gone from the server and the list;
+    /// 8. a failed edit: a second playlist, made over `/rest` for this run, is opened, then deleted
+    ///    on the server as another client would; a rename made on its page cannot be saved, the
+    ///    page says so, and no playlist of the new name reaches the server.
+    ///
+    /// Every name carries this run's own suffix, and whatever the run made is deleted afterwards,
+    /// pass or fail. The test fails on the other device class, so an iPhone run cannot stand as
+    /// iPad evidence.
+    @MainActor
+    private func provePlaylistEditsReachTheServer(compact expectedCompact: Bool) {
+        guard requireSimulator(expectedCompact ? .phone : .pad,
+                               "The playlist edits proof on \(expectedCompact ? "iPhone" : "iPad")"),
+              let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
+        let run = String(UUID().uuidString.prefix(8))
+        let name = "Dulcet Edit Proof " + run
+        let renamed = name + " Renamed"
+        let doomed = "Dulcet Failed Edit Proof " + run
+        let doomedRenamed = doomed + " Renamed"
+        afterTest.append { [configuration] in
+            for playlist in self.serverPlaylists(configuration: configuration) ?? [] where playlist.name.contains(run) {
+                _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlist.id)], configuration: configuration)
+            }
+        }
+        guard let canaryID = serverSongID("UI Playback Canary", album: album, configuration: configuration),
+              let doomedID = (restCall("createPlaylist", [
+                  URLQueryItem(name: "name", value: doomed), URLQueryItem(name: "songId", value: canaryID),
+              ], configuration: configuration)?["playlist"] as? [String: Any])?["id"] as? String else {
+            XCTFail("The failed-edit playlist could not be made on the disposable server")
+            return
+        }
+        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
+              openLibraryPlaylists(in: app, compact: expectedCompact) else { return }
+
+        // 1. Create.
+        let new = app.buttons["dulcet.playlists.new"].firstMatch
+        guard new.waitForExistence(timeout: 15) else {
+            XCTFail("Playlists must offer New Playlist: " + app.debugDescription)
+            return
+        }
+        new.tap()
+        guard submitNamePrompt(name, confirm: "Create", in: app) else { return }
+        guard let playlistID = awaitServerPlaylist(named: name, configuration: configuration) else {
+            XCTFail("The new playlist must reach the server")
+            return
+        }
+        XCTAssertEqual(serverPlaylistEntries(playlistID, configuration: configuration), [], "A new playlist starts empty")
+
+        // 2. Add an album from its tile's context menu.
+        guard openLibraryDestinationForAlbums(in: app, compact: expectedCompact) else { return }
+        let tile = app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
+        guard tile.waitForExistence(timeout: 30), scrollIntoView(tile, in: app),
+              addToPlaylist(name, fromContextMenuOf: tile, in: app) else { return }
+        XCTAssertEqual(awaitServerPlaylistEntries(playlistID, albumOrder, configuration: configuration), albumOrder,
+            "Adding the album must append its tracks in album order")
+
+        // 3. Add a track from its row's context menu.
+        tile.tap()
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", albumOrder[0] + ", ")).firstMatch
+        guard row.waitForExistence(timeout: 15), scrollIntoView(row, in: app),
+              addToPlaylist(name, fromContextMenuOf: row, in: app) else { return }
+        let withTrack = albumOrder + [albumOrder[0]]
+        XCTAssertEqual(awaitServerPlaylistEntries(playlistID, withTrack, configuration: configuration), withTrack,
+            "Adding a track must append it, even when the playlist already holds it")
+
+        // 4-5. Remove by position, then reorder, in the edit list.
+        guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(name, in: app) else { return }
+        let edit = app.buttons["dulcet.playlist.edit"].firstMatch
+        guard edit.waitForExistence(timeout: 10), waitForEnabled(edit, timeout: 15) else {
+            XCTFail("The person's own playlist must offer Edit once its entries are read: " + app.debugDescription)
+            return
+        }
+        edit.tap()
+        guard let entries = playlistEditEntries(count: 4, in: app) else { return }
+        guard deleteEditEntry(entries[3], in: app) else { return }
+        XCTAssertEqual(awaitServerPlaylistEntries(playlistID, albumOrder, configuration: configuration), albumOrder,
+            "Removing the fourth entry must remove that entry alone, not the first of the same track")
+        guard let three = playlistEditEntries(count: 3, in: app) else { return }
+        let handle = three[2].buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Reorder")).firstMatch
+        guard handle.waitForExistence(timeout: 5) else {
+            XCTFail("The edit list must offer a reorder handle on each entry: " + app.debugDescription)
+            return
+        }
+        handle.press(forDuration: 0.6, thenDragTo: three[0])
+        let reordered = [albumOrder[2], albumOrder[0], albumOrder[1]]
+        XCTAssertEqual(awaitServerPlaylistEntries(playlistID, reordered, configuration: configuration), reordered,
+            "Dragging the third entry to the top must reorder the playlist on the server")
+        app.buttons["dulcet.playlist.done"].firstMatch.tap()
+
+        // 6. Rename.
+        let title = app.staticTexts["dulcet.playlist.title"].firstMatch
+        guard renamePlaylist(to: renamed, in: app) else { return }
+        XCTAssertTrue(waitForLabel(renamed, of: title, timeout: 5), "The page must show the new name; title=\(title.label)")
+        XCTAssertEqual(awaitServerPlaylistName(playlistID, renamed, configuration: configuration), renamed,
+            "The rename must reach the server")
+
+        // 7. Delete.
+        guard deletePlaylistFromItsPage(in: app) else { return }
+        XCTAssertTrue(awaitServerPlaylistAbsent(playlistID, configuration: configuration),
+            "The deleted playlist must be gone from the server")
+        let gone = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", renamed)).firstMatch
+        XCTAssertFalse(gone.waitForExistence(timeout: 3) && gone.isHittable, "The list must no longer show the deleted playlist")
+
+        // 8. A failed edit: the playlist is deleted elsewhere while its page is open.
+        guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(doomed, in: app) else { return }
+        guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: doomedID)], configuration: configuration) != nil,
+              awaitServerPlaylistAbsent(doomedID, configuration: configuration) else {
+            XCTFail("The other client's delete must reach the server first")
+            return
+        }
+        guard renamePlaylist(to: doomedRenamed, in: app) else { return }
+        let problem = app.descendants(matching: .any)["dulcet.playlist.problem"].firstMatch
+        XCTAssertTrue(problem.waitForExistence(timeout: 30),
+            "A rename the server cannot apply must be said on the playlist's page: " + app.debugDescription)
+        let problemText = problem.exists ? problem.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ") : "<none>"
+        XCTAssertFalse((serverPlaylists(configuration: configuration) ?? []).contains { $0.name == doomedRenamed },
+            "The failed rename must not reach the server under any id")
+        print("DULCET PLAYLIST EDITS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " window-width=\(Int(app.windows.firstMatch.frame.width)) created=\(name.debugDescription)"
+            + " album-added=\(albumOrder.count) track-added=1 removed-index=3 reordered=\(reordered) renamed=true deleted=true"
+            + " failed-rename-problem=\(problemText.debugDescription)")
+    }
+
+    /// The library place that shows album tiles: Library on a phone, Albums in the sidebar on a
+    /// regular width.
+    @MainActor
+    private func openLibraryDestinationForAlbums(in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
+            return false
+        }
+        if compact {
+            // The tab keeps its stack; back to its root, where the Recently Added tiles are.
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            var pops = 0
+            while back.exists, back.isHittable, pops < 4 {
+                back.tap()
+                pops += 1
+            }
+            return true
+        }
+        return openSidebarLibrarySection("albums", in: app)
+    }
+
+    /// Opens the named playlist from the Playlists list.
+    @MainActor
+    private func openPlaylistRow(_ name: String, in app: XCUIApplication) -> Bool {
+        let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else {
+            XCTFail("Playlists must list \(name): " + app.debugDescription)
+            return false
+        }
+        row.tap()
+        let title = app.staticTexts["dulcet.playlist.title"].firstMatch
+        guard title.waitForExistence(timeout: 10), waitForLabel(name, of: title, timeout: 10) else {
+            XCTFail("The row must open \(name): " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    /// "Add to Playlist…" from the element's context menu, then the named playlist in the chooser,
+    /// which closes once it is chosen.
+    @MainActor
+    private func addToPlaylist(_ name: String, fromContextMenuOf element: XCUIElement, in app: XCUIApplication) -> Bool {
+        element.press(forDuration: 1.2)
+        let add = app.buttons["Add to Playlist\u{2026}"].firstMatch
+        guard add.waitForExistence(timeout: 5) else {
+            XCTFail("The context menu must offer Add to Playlist…: " + app.debugDescription)
+            return false
+        }
+        add.tap()
+        let choice = app.buttons.matching(identifier: "dulcet.addToPlaylist.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        guard choice.waitForExistence(timeout: 15) else {
+            XCTFail("The chooser must offer \(name): " + app.debugDescription)
+            return false
+        }
+        choice.tap()
+        let sheetGone = NSPredicate(format: "exists == false")
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: sheetGone, object: choice)], timeout: 5) == .completed else {
+            XCTFail("The chooser must close once a playlist is chosen: " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    /// The edit list's entries, top first, once exactly `count` are shown.
+    @MainActor
+    private func playlistEditEntries(count: Int, in app: XCUIApplication) -> [XCUIElement]? {
+        // The identifier lands on the entry's texts, not on the List's cell that holds them.
+        let cells = app.cells.containing(.staticText, identifier: "dulcet.playlist.entry")
+        let deadline = Date().addingTimeInterval(15)
+        while cells.count != count, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        guard cells.count == count else {
+            XCTFail("The edit list must show \(count) entries; shows \(cells.count): " + app.debugDescription)
+            return nil
+        }
+        return (0..<count).map { cells.element(boundBy: $0) }
+    }
+
+    /// Deletes one entry of the edit list: its leading delete control, then the Delete it
+    /// reveals. The control is exposed as the cell's "remove" image, not as a button (OBSERVED on
+    /// iOS 26.5), and a swipe across an entry does nothing while the list is editing.
+    @MainActor
+    private func deleteEditEntry(_ entry: XCUIElement, in app: XCUIApplication) -> Bool {
+        let control = entry.images["minus.circle.fill"].firstMatch
+        guard control.waitForExistence(timeout: 5) else {
+            XCTFail("Each entry must offer its delete control in the edit list: " + app.debugDescription)
+            return false
+        }
+        control.tap()
+        // Drawn beside the cell it deletes, not inside it, and the only Delete on screen.
+        let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Delete"))
+        guard confirm.firstMatch.waitForExistence(timeout: 5), confirm.count == 1 else {
+            XCTFail("The delete control must reveal one Delete: " + app.debugDescription)
+            return false
+        }
+        confirm.firstMatch.tap()
+        return true
+    }
+
+    /// Types `name` into the open name prompt, replacing whatever it holds, and confirms it.
+    @MainActor
+    private func submitNamePrompt(_ name: String, confirm: String, in app: XCUIApplication) -> Bool {
+        let alert = app.alerts.firstMatch
+        let field = alert.textFields.firstMatch
+        guard alert.waitForExistence(timeout: 5), field.waitForExistence(timeout: 5) else {
+            XCTFail("The prompt must ask for a name: " + app.debugDescription)
+            return false
+        }
+        // Command-A is not reliable in an alert's field (it selected nothing on one run of two),
+        // so a held name is deleted character by character. A plain tap puts the cursor where it
+        // lands -- mid-name, OBSERVED 3 of 3 -- and deletes only take what is before it, so the
+        // tap is at the trailing edge, and the field is cleared until it reads empty (an empty
+        // field reports its placeholder as its value).
+        for _ in 0..<3 {
+            let current = field.value as? String ?? ""
+            if current.isEmpty || current == field.placeholderValue { break }
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+        if (field.value(forKey: "hasKeyboardFocus") as? Bool) != true { field.tap() }
+        field.typeText(name)
+        guard (field.value as? String) == name else {
+            XCTFail("The name field must hold exactly the new name; value=\(String(describing: field.value))")
+            return false
+        }
+        alert.buttons[confirm].firstMatch.tap()
+        return true
+    }
+
+    /// Rename… from the playlist page's menu, and the new name confirmed.
+    @MainActor
+    private func renamePlaylist(to name: String, in app: XCUIApplication) -> Bool {
+        let more = app.buttons["dulcet.playlist.more"].firstMatch
+        guard more.waitForExistence(timeout: 10) else {
+            XCTFail("The person's own playlist must offer its menu: " + app.debugDescription)
+            return false
+        }
+        more.tap()
+        let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rename")).firstMatch
+        guard rename.waitForExistence(timeout: 5) else {
+            XCTFail("The menu must offer Rename: " + app.debugDescription)
+            return false
+        }
+        rename.tap()
+        return submitNamePrompt(name, confirm: "Rename", in: app)
+    }
+
+    /// Delete Playlist from the page's menu, confirmed; the page closes.
+    @MainActor
+    private func deletePlaylistFromItsPage(in app: XCUIApplication) -> Bool {
+        let more = app.buttons["dulcet.playlist.more"].firstMatch
+        guard more.waitForExistence(timeout: 10) else {
+            XCTFail("The person's own playlist must offer its menu: " + app.debugDescription)
+            return false
+        }
+        more.tap()
+        let delete = app.buttons["Delete Playlist"].firstMatch
+        guard delete.waitForExistence(timeout: 5) else {
+            XCTFail("The menu must offer Delete Playlist: " + app.debugDescription)
+            return false
+        }
+        delete.tap()
+        let confirm = app.alerts.firstMatch.buttons["Delete Playlist"].firstMatch
+        guard confirm.waitForExistence(timeout: 5) else {
+            XCTFail("Deleting must be confirmed first: " + app.debugDescription)
+            return false
+        }
+        confirm.tap()
+        let title = app.staticTexts["dulcet.playlist.title"].firstMatch
+        let closed = NSPredicate(format: "exists == false")
+        guard XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: closed, object: title)], timeout: 10) == .completed else {
+            XCTFail("The deleted playlist's page must close: " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    private struct ServerPlaylist {
+        let id: String
+        let name: String
+    }
+
+    /// The account's playlists on the server, from `getPlaylists`.
+    private func serverPlaylists(configuration: LivePlaybackConfiguration) -> [ServerPlaylist]? {
+        guard let envelope = restCall("getPlaylists", [], configuration: configuration) else { return nil }
+        let rows = (envelope["playlists"] as? [String: Any])?["playlist"] as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let id = row["id"] as? String, let name = row["name"] as? String else { return nil }
+            return ServerPlaylist(id: id, name: name)
+        }
+    }
+
+    /// The id of the one server playlist named `name`, once there is one.
+    @MainActor
+    private func awaitServerPlaylist(named name: String, configuration: LivePlaybackConfiguration) -> String? {
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            let matches = (serverPlaylists(configuration: configuration) ?? []).filter { $0.name == name }
+            if matches.count == 1 { return matches[0].id }
+            XCTAssertLessThanOrEqual(matches.count, 1, "One create must make one playlist named \(name)")
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// The playlist's entries on the server, as titles in order; nil when it cannot be read.
+    private func serverPlaylistEntries(_ id: String, configuration: LivePlaybackConfiguration) -> [String]? {
+        guard let playlist = restCall("getPlaylist", [URLQueryItem(name: "id", value: id)], configuration: configuration)?[
+            "playlist"] as? [String: Any] else { return nil }
+        return (playlist["entry"] as? [[String: Any]] ?? []).compactMap { $0["title"] as? String }
+    }
+
+    @MainActor
+    private func awaitServerPlaylistEntries(_ id: String, _ expected: [String], configuration: LivePlaybackConfiguration) -> [String]? {
+        let deadline = Date().addingTimeInterval(30)
+        var observed = serverPlaylistEntries(id, configuration: configuration)
+        while observed != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            observed = serverPlaylistEntries(id, configuration: configuration)
+        }
+        return observed
+    }
+
+    @MainActor
+    private func awaitServerPlaylistName(_ id: String, _ expected: String, configuration: LivePlaybackConfiguration) -> String? {
+        let deadline = Date().addingTimeInterval(30)
+        var observed: String?
+        repeat {
+            observed = (restCall("getPlaylist", [URLQueryItem(name: "id", value: id)], configuration: configuration)?[
+                "playlist"] as? [String: Any])?["name"] as? String
+            if observed == expected { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        } while Date() < deadline
+        return observed
+    }
+
+    /// Whether the playlist is gone from the account's playlists, polled for up to 30 seconds.
+    @MainActor
+    private func awaitServerPlaylistAbsent(_ id: String, configuration: LivePlaybackConfiguration) -> Bool {
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            if let playlists = serverPlaylists(configuration: configuration), !playlists.contains(where: { $0.id == id }) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        } while Date() < deadline
+        return false
+    }
+
     /// Now Playing's lyrics panel shows the server's synced lyrics and lights the current line as
     /// media time moves (spec §18.4). "Twenty Nine Seconds" carries embedded synced lyrics in three
     /// languages; an English-preferring simulator is shown the English layer, whose first line
@@ -2027,7 +2434,44 @@ final class DulcetiOSUITests: XCTestCase {
         attachScreenshot(named: "streaming-quality-chosen", app: app)
         guard openLibraryAlbum(album, containing: track, in: app, compact: expectedCompact),
               playAlbumTrack(track, in: app),
-              openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
+              // The server's log, read below, names the track; the 2-second probe can be over
+              // before the bar is read.
+              openNowPlayingFromBar(in: app, expectingTitle: nil) else { return }
+
+        // The capped play must start, not only reach the server: a first play that failed after
+        // its stream request still leaves the transcode in the log. The probe lasts 2 seconds and
+        // its album 5, and Now Playing counts whole seconds, so the start is either media time
+        // moving or the queue moving past the probe -- with no failure and no skip notice seen at
+        // any poll, since a track that cannot play is skipped with a notice (section 12.12). Now
+        // Playing's progress is a slider, or a progress bar where the stream cannot seek.
+        let sliderProgress = app.sliders["Now Playing"].firstMatch
+        let barProgress = app.progressIndicators["Now Playing"].firstMatch
+        let title = app.staticTexts.matching(identifier: "dulcet.now-playing.title").firstMatch
+        let failure = app.descendants(matching: .any).matching(identifier: "dulcet.now-playing.failure").firstMatch
+        let skipNotice = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Skipped.")).firstMatch
+        var started: String?
+        var failed: String?
+        var lastValue = "none"
+        let playDeadline = Date().addingTimeInterval(20)
+        repeat {
+            if failure.exists { failed = "failure shown: \(failure.label)"; break }
+            if skipNotice.exists { failed = "skip notice: \(skipNotice.label)"; break }
+            let progress = sliderProgress.exists ? sliderProgress : barProgress
+            if progress.exists, let value = progress.value as? String {
+                lastValue = value
+                if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
+                    started = "media-time \(value)"
+                    break
+                }
+            }
+            if title.exists, !title.label.isEmpty, title.label != track {
+                started = "moved-past-probe to \(title.label)"
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < playDeadline && started == nil
+        XCTAssertNil(failed, "The capped play must not fail: \(failed ?? "")")
+        XCTAssertNotNil(started, "The capped play must start: Now Playing's media time must move, or the queue"
+            + " move past the probe; last progress \(lastValue), title \(title.exists ? title.label : "none")")
 
         var lines: [[String: String]] = []
         let deadline = Date().addingTimeInterval(30)
@@ -2051,7 +2495,8 @@ final class DulcetiOSUITests: XCTestCase {
               chooseStreamingQuality("Original", row: "dulcet.streaming-quality.metered", in: app) else { return }
         let summary = lines.map { "\($0["format"] ?? "?")@\($0["bitRate"] ?? "?")" }.joined(separator: ",")
         print("DULCET STREAMING QUALITY PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
-            + " track=\(track.debugDescription) source-kbps=\(sourceKbps) server-streams=\(summary)")
+            + " track=\(track.debugDescription) source-kbps=\(sourceKbps) server-streams=\(summary)"
+            + " started=\(started ?? "nil")")
     }
 
     /// Launches the app with the account injected for `serverURL` and waits for its live
@@ -2492,6 +2937,159 @@ final class DulcetiOSUITests: XCTestCase {
         while observed != nil, observed != expected, Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(1))
             observed = readServerSongStarred(track, album: album, configuration: configuration)
+        }
+        return observed
+    }
+
+    /// Now Playing's stars for the playing track (spec §16.20, CONF-84) on iPhone, in the sheet.
+    @MainActor
+    func testNowPlayingStarsRateTheTrackOnTheServerOnIPhone() {
+        proveNowPlayingStarsRateTheTrackOnTheServer(compact: true)
+    }
+
+    /// Now Playing's stars for the playing track (spec §16.20, CONF-84) on iPad, in the
+    /// full-screen player.
+    @MainActor
+    func testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS() {
+        proveNowPlayingStarsRateTheTrackOnTheServer(compact: false)
+    }
+
+    /// A tap on a star rates the playing track that many stars: the stars show it at once, before
+    /// the server answers, and the server's `userRating` reads it back. Then another client's
+    /// rating is written to the server directly, the app is relaunched, and Now Playing shows the
+    /// server's value -- so what the stars show is read from the server, not remembered from the
+    /// tap. A tap on the star already shown removes the rating, and the server reads back 0.
+    ///
+    /// The stars are one adjustable accessibility element, so a star is tapped where it is drawn:
+    /// five equal hit areas side by side, star N at the centre of the N-th fifth. Each value is
+    /// chosen against what the server holds first, so no earlier run's rating can make a write
+    /// unobservable, and the server's rating is put back afterwards. Each destination has its own
+    /// test, and each fails on the other's device class, so an iPhone run cannot stand as iPad
+    /// evidence.
+    @MainActor
+    private func proveNowPlayingStarsRateTheTrackOnTheServer(compact expectedCompact: Bool) {
+        guard requireSimulator(expectedCompact ? .phone : .pad,
+                               "The Now Playing stars proof on \(expectedCompact ? "iPhone" : "iPad")"),
+              let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        guard let songID = serverSongID(track, album: album, configuration: configuration),
+              let before = readServerSongRating(songID, configuration: configuration) else {
+            XCTFail("The control: the server's rating of \(track) must be readable before any tap")
+            return
+        }
+        afterTest.append { [configuration] in
+            _ = self.restCall("setRating", [URLQueryItem(name: "id", value: songID), URLQueryItem(name: "rating", value: String(before))],
+                              configuration: configuration)
+        }
+        let rating = before == 3 ? 2 : 3
+        let elsewhere = rating == 4 ? 5 : 4
+
+        // 1. A tap rates the track: shown at once, then saved on the server.
+        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
+              let stars = openNowPlayingStars(album: album, track: track, in: app, compact: expectedCompact) else { return }
+        XCTAssertTrue(waitForValue(ratingValue(before), of: stars, timeout: 15),
+            "Before the tap the stars must show the server's rating, \(before); value=\(String(describing: stars.value))")
+        tapStar(rating, of: stars)
+        XCTAssertTrue(waitForValuePrefix(ratingValue(rating), of: stars, timeout: 3),
+            "The stars must show \(rating) at once, before the server answers; value=\(String(describing: stars.value))")
+        XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: rating, timeout: 30), rating,
+            "The tap on star \(rating) must rate \(track) \(rating) on the server (was \(before))")
+        XCTAssertTrue(waitForValue(ratingValue(rating), of: stars, timeout: 15),
+            "Once saved the stars must read \(rating) with nothing pending; value=\(String(describing: stars.value))")
+        XCTAssertEqual(app.staticTexts["dulcet.now-playing.title"].firstMatch.label, track, "Rating must not change what is playing")
+
+        // 2. Re-read: another client's rating, written to the server, is what a relaunch shows.
+        guard restCall("setRating", [URLQueryItem(name: "id", value: songID), URLQueryItem(name: "rating", value: String(elsewhere))],
+                       configuration: configuration) != nil,
+              readServerSongRating(songID, configuration: configuration) == elsewhere else {
+            XCTFail("The other client's rating, \(elsewhere), must be on the server before the relaunch")
+            return
+        }
+        app.terminate()
+        guard let relaunched = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
+              let reread = openNowPlayingStars(album: album, track: track, in: relaunched, compact: expectedCompact) else { return }
+        XCTAssertTrue(waitForValue(ratingValue(elsewhere), of: reread, timeout: 30),
+            "After a relaunch the stars must show the server's rating, \(elsewhere), not the tap's \(rating); value=\(String(describing: reread.value))")
+
+        // 3. A tap on the star shown removes the rating.
+        tapStar(elsewhere, of: reread)
+        XCTAssertTrue(waitForValuePrefix(ratingValue(0), of: reread, timeout: 3),
+            "A tap on the star shown must clear the stars at once; value=\(String(describing: reread.value))")
+        XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: 0, timeout: 30), 0,
+            "The tap on the star shown must remove the rating on the server")
+        print("DULCET NOW PLAYING STARS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " window-width=\(Int(relaunched.windows.firstMatch.frame.width)) track=\(track.debugDescription)"
+            + " server-before=\(before) tapped=\(rating) other-client=\(elsewhere) shown-after-relaunch=\(elsewhere) removed=0")
+    }
+
+    /// Opens `album`, plays it from its first track, opens Now Playing from the bar, and returns
+    /// the playing track's stars.
+    @MainActor
+    private func openNowPlayingStars(album: String, track: String, in app: XCUIApplication, compact: Bool) -> XCUIElement? {
+        guard openLibraryAlbum(album, in: app, compact: compact) else { return nil }
+        app.buttons["dulcet.album.play"].firstMatch.tap()
+        guard openNowPlayingFromBar(in: app, expectingTitle: track) else { return nil }
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        guard title.waitForExistence(timeout: 10), waitForLabel(track, of: title, timeout: 10) else {
+            XCTFail("Now Playing must show \(track): " + app.debugDescription)
+            return nil
+        }
+        let stars = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
+        guard stars.waitForExistence(timeout: 10), stars.isHittable else {
+            XCTFail("Now Playing must offer the playing track's stars: " + app.debugDescription)
+            return nil
+        }
+        return stars
+    }
+
+    /// Taps star `star` of a five-star row where it is drawn.
+    @MainActor
+    private func tapStar(_ star: Int, of stars: XCUIElement) {
+        stars.coordinate(withNormalizedOffset: CGVector(dx: (Double(star) - 0.5) / 5, dy: 0.5)).tap()
+    }
+
+    /// What the stars say their value is, settled: "Not rated", "1 star", "3 stars".
+    private func ratingValue(_ rating: Int) -> String {
+        switch rating {
+        case 0: "Not rated"
+        case 1: "1 star"
+        default: "\(rating) stars"
+        }
+    }
+
+    /// The value, settled or with a pending or held change after it.
+    @MainActor
+    private func waitForValuePrefix(_ value: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let matches = { (observed: String?) in observed == value || observed?.hasPrefix(value + ", ") == true }
+        let deadline = Date().addingTimeInterval(timeout)
+        while !matches(element.value as? String), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return matches(element.value as? String)
+    }
+
+    /// The server's rating of one song, 0 when it carries none, read over `/rest/getSong`.
+    private func readServerSongRating(_ songID: String, configuration: LivePlaybackConfiguration) -> Int? {
+        guard let song = restCall("getSong", [URLQueryItem(name: "id", value: songID)], configuration: configuration)?["song"]
+                as? [String: Any] else { return nil }
+        // Subsonic omits `userRating` on an unrated song.
+        return song["userRating"] as? Int ?? 0
+    }
+
+    /// Polls until the server's rating of the song is `expected` or the timeout passes.
+    @MainActor
+    private func awaitServerSongRating(
+        _ songID: String,
+        configuration: LivePlaybackConfiguration,
+        expected: Int,
+        timeout: TimeInterval
+    ) -> Int? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var observed = readServerSongRating(songID, configuration: configuration)
+        while observed != nil, observed != expected, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            observed = readServerSongRating(songID, configuration: configuration)
         }
         return observed
     }

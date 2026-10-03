@@ -566,6 +566,11 @@ enum DulcetStrings {
         formatted("reader.rating.accessibility", "Rating for %@", title)
     }
 
+    /// The Mac stars group's label: what it rates, then the rating it shows.
+    static func readerRatingGroupAccessibility(_ label: String, value: String) -> String {
+        formatted("reader.rating.group", "%1$@, %2$@", label, value)
+    }
+
     static func readerRatingValue(_ stars: Int) -> String {
         pluralized("reader.rating.value", fallback: "%d stars", count: stars)
     }
