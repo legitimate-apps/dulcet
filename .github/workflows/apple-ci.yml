@@ -688,17 +688,20 @@ jobs:
   # the canary must read 0 before anything streams on that server and the skip probe must come after
   # everything that counts the corpus.
   #
-  # 105 = ceil(1.5 x 67.9 / 5) x 5. 67.9 minutes is a PROJECTION from run 37105472578: this job's
-  # setup before the composite took 19.6 there and its uploads under a minute, and its composite
-  # phases took 47.4 (see the composite's cap). The job cap must stay above the composite's own
-  # 75-minute cap plus the rest of the job, 75 + 20.5 = 95.5, or a slow-but-healthy composite would
-  # be killed by the job and reported against whichever step was active. Re-size from measurement.
+  # 120 = ceil(1.5 x 77 / 5) x 5. 77 minutes is this job's MEASURED maximum over its first four green
+  # runs (70, 70, 77 and 69 minutes: 37125098942, 37133427531 and 37138000923 on the split's branch,
+  # 37142156762 on #217). Those runs paid the devices' first boots inside the composite. They are now
+  # paid in their own step, which moves them rather than adding to them. The job cap must stay above
+  # the composite's own 75-minute cap plus the rest of the job, 75 + 20.5 + 11.1 for first boots + 4
+  # when an ffmpeg cache miss (estimated at 8) replaces the old closure install's 4.0 = 110.6, or a
+  # slow-but-healthy composite would be killed by the job and reported against whichever step was
+  # active. 105 was a projection from run 37105472578 before any of these ran.
   apple-conformance-core:
     name: apple-conformance-core
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 105
+    timeout-minutes: 120
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -898,6 +901,20 @@ jobs:
           --cache-folder "$ROOT/cache"
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      # Pays each device's FIRST boot before any proof's clock, as apple-conformance-ipad-iphone does.
+      # OBSERVED in run 37142077432 on main: the composite's library-sync phases paid them instead.
+      # The iPhone's took 222.4 s at load1 up to 574, and right after the iPad's, `simctl list`
+      # timed out at 120 s and failed the step. 20 bounds three first boots (158 to 222 s each,
+      # OBSERVED) plus the tool's own 120 s shutdown bound.
+      - name: First-boot the iPhone, iPadOS and tvOS simulators before the timed proofs
+        timeout-minutes: 20
+        env:
+          IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
+        run: |
+          python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro"
+          python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
+          python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
+          python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
         # 75 = ceil(1.5 x 47.4 / 5) x 5, rule 5's leg formula applied to this step. 47.4 minutes is
         # what this composite's phases took inside the single composite of run 37105472578: the
