@@ -1097,6 +1097,34 @@ passing_cases = """\
             name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS" time="0.1" />
+  <testcase classname="DulcetMacLyricsAndQualityAppTest"
+            name="lyricsPanelShowsEveryStateThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacLyricsAndQualityAppTest"
+            name="streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
+            name="everyPlaylistEditReachesTheServerThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
+            name="nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testAStreamingQualityChosenByRemoteCapsTheStream" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testLyricsPlainNoneAndAFailedReadAreDrivenByRemote" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPadOS" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testEveryPlaylistEditReachesTheServerOnIPadOS" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testEveryPlaylistEditReachesTheServerOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testNowPlayingStarsRateTheTrackOnTheServerOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testTheLyricsPanelShowsEveryStateOnIPadOS" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testTheLyricsPanelShowsEveryStateOnIPhone" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
