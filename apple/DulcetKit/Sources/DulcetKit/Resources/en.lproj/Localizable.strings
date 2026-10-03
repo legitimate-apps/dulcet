@@ -338,6 +338,7 @@
 "reader.rating.remove" = "Remove Rating";
 "reader.rating.menuNone" = "No Rating";
 "reader.rating.accessibility" = "Rating for %@";
+"reader.rating.group" = "%1$@, %2$@";
 "reader.deviceOnly.title" = "Showing what’s on this device";
 "reader.search.scope.device" = "On this device";
 "reader.search.scope.server" = "Your server";

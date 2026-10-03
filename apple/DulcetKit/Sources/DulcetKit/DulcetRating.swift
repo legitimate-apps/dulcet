@@ -113,8 +113,9 @@ struct DulcetRatingControl: View {
         // group's label carries the value, unknown and pending included.
         row
             .accessibilityElement(children: .contain)
-            .accessibilityLabel((title.isEmpty ? DulcetStrings.readerRating : DulcetStrings.readerRatingAccessibility(title))
-                + ", " + DulcetRating.accessibilityValue(rating: rating, state: state))
+            .accessibilityLabel(DulcetStrings.readerRatingGroupAccessibility(
+                title.isEmpty ? DulcetStrings.readerRating : DulcetStrings.readerRatingAccessibility(title),
+                value: DulcetRating.accessibilityValue(rating: rating, state: state)))
             .accessibilityIdentifier(identifier)
 #else
         row

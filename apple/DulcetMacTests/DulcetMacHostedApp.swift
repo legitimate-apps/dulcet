@@ -493,8 +493,18 @@ final class HostedApp {
         let screenFrame = try frame(element)
         let point = window.convertPoint(fromScreen: NSPoint(x: screenFrame.midX, y: screenFrame.midY))
         let content = try XCTUnwrap(window.contentView)
-        let table = try XCTUnwrap(content.hitTest(content.convert(point, from: nil)) as? NSTableView,
-            "Expected a table at \(point) for \(identifier(element) ?? "nil")")
+        // The view hit can be one drawn inside the row (a section header's own control) rather than
+        // the table; the row belongs to the table that encloses it, or else to the table drawn there.
+        let hit = content.hitTest(content.convert(point, from: nil))
+        let enclosing = sequence(first: hit, next: { $0?.superview }).lazy.compactMap { $0 as? NSTableView }.first
+        let drawn = descendants(of: content).lazy.compactMap { $0 as? NSTableView }
+            .first { $0.convert($0.bounds, to: nil).contains(point) }
+        if !(hit is NSTableView) {
+            print("OBSERVED selectTableRow \(identifier(element) ?? "nil"): hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")"
+                + " at \(point); enclosing table=\(enclosing != nil) drawn table=\(drawn != nil)")
+        }
+        let table = try XCTUnwrap(enclosing ?? drawn,
+            "Expected a table at \(point) for \(identifier(element) ?? "nil"); hit \(hit.map { String(describing: type(of: $0)) } ?? "nil")")
         let index = table.row(at: table.convert(point, from: nil))
         let rows = try XCTUnwrap(value("accessibilityRows", of: table) as? [Any])
         guard rows.indices.contains(index) else {
