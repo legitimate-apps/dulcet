@@ -672,8 +672,8 @@ jobs:
           retention-days: 14
 
   # The conformance half, in two jobs since 2026-10-03 (spec §21.5): the composite that talks to the
-  # disposable server took 103 minutes alone in green run 37105472578, and every merge waits for a
-  # full run. Each job installs the checksum-pinned Darwin closure and starts its OWN native Navidrome
+  # disposable server took 103 minutes alone in green run 37105472578, and every push to `main`
+  # and every release gate waits for a full run. Each job installs the checksum-pinned Darwin closure and starts its OWN native Navidrome
   # and the fixtures its phases use; nothing is shared between them, so neither job's server state
   # can reach the other's assertions.
   #
@@ -1728,7 +1728,8 @@ jobs:
           # proofs' fault proxy (tools/ci/run-lyrics-quality-proofs), which forwards every request to
           # this server unchanged except a lyrics read a proof arms it to fail. The redirect, TLS and
           # forward-proxy fixtures serve only the core-conformance suites, which run in
-          # apple-conformance-core. Both write their logs where the failure upload below finds them.
+          # apple-conformance-core. Navidrome logs where the failure upload below finds it; the proxy
+          # writes no log file.
           "$ROOT/bin/navidrome" --configfile "$ROOT/config/navidrome.toml" > "$ROOT/logs/navidrome.log" 2>&1 &
           navidrome_pid=$!
           python3 tools/conformance-env/lyrics-fault-proxy --port 4544 --upstream http://127.0.0.1:4533 &
@@ -1795,7 +1796,7 @@ jobs:
           python3 tools/ci/isolate-simulator --phase playback-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
           # test-without-building: `Build the iOS shell for the iPadOS conformance legs` already
           # built this scheme into this same derived-data tree. Rebuilding re-enters the Gradle
-          # run-script phase while Navidrome and three python servers are live, consuming the
+          # run-script phase while Navidrome and the lyrics fault proxy are live, consuming the
           # conformance step budget.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \

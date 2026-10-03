@@ -7396,7 +7396,8 @@ argue against the recorded rationale — not as filling in a blank.
 
 **2026-10-03 — `apple-conformance` divided into two parallel conformance jobs (§21.1, §21.5, §21.6).**
 Green run 37105472578's conformance job took 123 minutes, 103 of them in the one composite step that
-talks to the disposable server, and every merge to `main` waits for a full run. The composite is now
+talks to the disposable server. Pull requests never run conformance (§21.6), but every push to
+`main` and every release gate waits for a full run, and it holds hosted macOS slots throughout. The composite is now
 two steps in two `macos-26` jobs, each with its own Navidrome and the fixtures its phases use.
 `apple-conformance-core` keeps the old job's setup and gate controls and runs the macOS app-host,
 library-sync, playback-integration and download proofs, the three `core-conformance` suites with
