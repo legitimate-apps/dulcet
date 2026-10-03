@@ -6274,7 +6274,7 @@ concurrency:
 ```
 
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
-2026-09-06, then per leg since the split — 80 `apple-platform`, 105 `apple-conformance-core`, 115
+ 2026-09-06, then per leg since the split — 80 `apple-platform`, 120 `apple-conformance-core`, 115
 `apple-conformance-ipad-iphone`, 5 for the aggregator — with per-step caps on the heavy steps; see
 §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
@@ -6488,7 +6488,7 @@ because the median is above 75 minutes. Either reading adopts the split.
    `dulcet-apple-parity-evidence-apple-platform-36188503621-1` alongside the conformance leg's
    `…-2` and verified 55 tests in 44 reports, the same counts as the single job's green runs.
 5. **Each leg's timeout is 1.5 times its measured maximum, rounded up to a multiple of 5:** 80
-   minutes for `apple-platform` (measured maximum 51.5, run 36196670168), 105 for
+   minutes for `apple-platform` (measured maximum 51.5, run 36196670168), 120 for
    `apple-conformance-core` and 115 for `apple-conformance-ipad-iphone`. *Since 2026-10-03* the two
    conformance figures are projections from green run 37105472578, whose single conformance job took
    123 minutes with a 103-minute composite, divided by phase: the core job's setup 19.6 and composite
@@ -6497,10 +6497,14 @@ because the median is above 75 minutes. Either reading adopts the split.
    iPhone's first boots are paid in a step of their own before the composite (158 to 219 s each,
    OBSERVED), so the composite pays re-boots as the single job did. Paid inside the composite, the
    iPhone's first boot ran the search proof that followed it at load1 up to 845, and it failed (run
-   37125098942 attempt 2). Each job cap exceeds its composite cap plus the rest of the job (95.5 and
-   109.0, the latter with 6.3 minutes of first boots). A Darwin ffmpeg cache miss (§20.2.1) builds in
-   each job, estimated at 8 minutes in place of the old closure install's 4.0. The second job's cap
-   rose from 110 to 115 to keep that margin (113.0).
+   37125098942 attempt 2). Each job cap exceeds its composite cap plus the rest of the job (110.6 and
+   113.0, each with its own first-boot step). A Darwin ffmpeg cache miss (§20.2.1) builds in each job,
+   estimated at 8 minutes in place of the old closure install's 4.0 (213 s OBSERVED on CI). The second
+   job's cap rose from 110 to 115 to keep that margin. *Since 2026-10-03* the core job's cap is
+   measured, not projected: 77 minutes was its maximum over its first four green runs, hence 120. It
+   first-boots the iPhone, the iPad and the Apple TV in a step of its own too. On `main` (run
+   37142077432) its composite paid them, and `simctl list` timed out at 120 s right after the iPad's
+   first boot. `tools/ci/isolate-simulator` now retries a listing that times out, three tries in all.
    Re-size both from their own history once they have run. *As of 2026-10-02, superseded:* 255 for
    `apple-conformance`. That conformance figure was a projection until it was re-measured: its
    measured maximum, 113.5 (run 36896866024), plus 27 minutes for the lyrics-state and

@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Stop the JVM build daemons an apple-ci conformance job leaves idle, before its timed proofs.
+
+The Xcode builds reach Gradle through `tools/run-gradle-exclusive`, and the first of them starts a
+persistent Gradle daemon ("Starting a Gradle Daemon", OBSERVED in both conformance jobs of runs
+37151705482 and 37151857492) with `org.gradle.jvmargs=-Xmx3g`, and that daemon its own Kotlin compile
+daemon. Nothing in the job builds with Gradle after the shells are built, yet both stay alive through
+every proof on a 3-CPU, 7 GB hosted runner whose proofs already swap: the iPad playback phase swapped
+out 393 MB in green run 37151705482 and 1,906 MB and 1,426 MB in the failing runs 37158357522 and
+37151857492's second attempt. This tool ends them, and prints the largest processes' resident memory
+before and after, so the next run records what the daemons held instead of leaving it assumed.
+
+It is for an ephemeral CI runner only: it signals every Gradle and Kotlin daemon owned by this user.
+
+Usage: stop-build-daemons [--grace SECONDS] [--dry-run]
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+
+DAEMON_MARKERS = (
+    "org.gradle.launcher.daemon.bootstrap.GradleDaemon",
+    "org.jetbrains.kotlin.daemon.KotlinCompileDaemon",
+)
+
+
+def processes() -> list[tuple[int, int, str]]:
+    """(pid, rss KiB, full command) for every process this user owns."""
+    out = subprocess.run(
+        ["ps", "-U", str(os.getuid()), "-o", "pid=,rss=,command="],
+        capture_output=True, text=True, timeout=30, check=True,
+    ).stdout
+    rows = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    return rows
+
+
+def label(command: str) -> str:
+    for marker in DAEMON_MARKERS:
+        if marker in command:
+            return marker.rsplit(".", 1)[-1]
+    return os.path.basename(command.split()[0]) if command.split() else "?"
+
+
+def report(tag: str, rows: list[tuple[int, int, str]]) -> None:
+    top = sorted(rows, key=lambda row: row[1], reverse=True)[:8]
+    total_mb = sum(row[1] for row in rows) / 1024
+    print(f"BUILD DAEMONS {tag} user_rss_mb={total_mb:.0f} top="
+          + ",".join(f"{label(cmd)}:{rss // 1024}" for _, rss, cmd in top))
+
+
+def daemons(rows: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    me = os.getpid()
+    return [row for row in rows if row[0] != me and any(m in row[2] for m in DAEMON_MARKERS)]
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--grace", type=float, default=20.0,
+                        help="seconds to wait after SIGTERM before SIGKILL")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="report what would be stopped and signal nothing")
+    args = parser.parse_args(argv)
+
+    before = processes()
+    report("before", before)
+    found = daemons(before)
+    if args.dry_run:
+        for pid, rss, cmd in found:
+            print(f"BUILD DAEMONS would-stop pid={pid} kind={label(cmd)} rss_mb={rss // 1024}")
+        return 0
+    for pid, rss, cmd in found:
+        print(f"BUILD DAEMONS stopping pid={pid} kind={label(cmd)} rss_mb={rss // 1024}")
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    deadline = time.monotonic() + args.grace
+    alive = found
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.5)
+        live = {row[0] for row in processes()}
+        alive = [row for row in alive if row[0] in live]
+    for pid, _, cmd in alive:
+        print(f"BUILD DAEMONS killing pid={pid} kind={label(cmd)} after {args.grace:.0f}s")
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    after = processes()
+    report("after", after)
+    freed = sum(row[1] for row in found) / 1024
+    left = daemons(after)
+    print(f"BUILD DAEMONS stopped={len(found)} freed_rss_mb={freed:.0f} remaining={len(left)}")
+    return 1 if left else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
