@@ -340,15 +340,14 @@ final class HostedApp {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         do {
-            for attempt in 1...attempts {
+            for attempt in 1..<attempts {
                 try await open()
-                let last = attempt == attempts
-                do {
-                    try await waitUntil(timeout: .seconds(last ? 5 : 2), "\(description) opens a menu") { tracking.opened }
-                    break
-                } catch where !last {
-                    print("DULCET MAC MENU RETRY \(description) attempt=\(attempt) opened=false")
-                }
+                if await poll(for: .seconds(2), { tracking.opened }) { break }
+                print("DULCET MAC MENU RETRY \(description) attempt=\(attempt) opened=false")
+            }
+            if !tracking.opened {
+                try await open()
+                try await waitUntil(timeout: .seconds(5), "\(description) opens a menu") { tracking.opened }
             }
         } catch {
             attachWindowImage(named: "\(description) did not open a menu")
