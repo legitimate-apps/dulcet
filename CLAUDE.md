@@ -96,7 +96,8 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   (`tools/ci/plan-apple-legs`); the two parallel conformance jobs, `apple-conformance-core` and
   `apple-conformance-ipad-iphone`, run on push to `main` and on dispatch. A release build requires
   every leg and every required check green on its commit (spec §21.6).
-- When several unrelated PRs go red together, check Homebrew pin drift first (`docs/TRAPS.md` 36).
+- When several unrelated PRs go red together, check the Darwin conformance environment first: a source
+  URL or cache failure in `install-darwin-ffmpeg` fails every run alike (`docs/TRAPS.md` 36).
 - **Soak Android host tests on Linux before the PR.** A pull request that adds or changes Android
   host (Robolectric/JVM) tests first dispatches `android-test-soak` with the changed classes as the
   `--tests` filter and 20 repetitions, and cites its `SOAK RESULT passed=N failed=M` line. Local
