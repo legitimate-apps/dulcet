@@ -183,8 +183,15 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             app.firstElement(where: { app.identifier($0) == "dulcet.library.playlist" && (app.label($0) ?? "").hasPrefix(renamed) }) == nil
         }
 
-        // 8. A failed edit: the playlist is deleted elsewhere while its page is open.
+        // 8. A failed edit: the playlist is deleted elsewhere while its page is open, after the
+        // page's own read (Edit is enabled once it has the entries), so the rename is sent and the
+        // server's answer is what the page reports. Deleting before that read lands left the order
+        // to chance: a page that learns first refuses the rename without sending it.
         try await openPlaylist(doomed, in: app)
+        let doomedEdit = try await app.element(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
+        try await waitUntil(timeout: .seconds(30), "the page must read the playlist before the other client deletes it") {
+            (doomedEdit as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
+        }
         try await server.deletePlaylist(doomedID)
         let doomedAbsent = try await awaitAbsent(doomedID, on: server)
         XCTAssertTrue(doomedAbsent, "The other client's delete must reach the server first")

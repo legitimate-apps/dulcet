@@ -7404,6 +7404,21 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-03 — A playlist edit refused because the playlist is gone is said on its page (§18.6).**
+A rename made on a playlist's page fails one of two ways, depending on which lands first. If the
+rename is sent before the page learns the playlist was deleted elsewhere, the server refuses the
+send and the outcome becomes the page's problem. If the page's read learns it first -- the person
+opened Rename… while the read was still out -- the core refuses the rename with `deleted` and sends
+nothing. On Apple that refusal was only the four-second notice, so the page then said nothing about
+the failed edit (OBSERVED: CI run 37133838021, iPad, where the notice was drawn and gone before the
+proof looked). Now an edit naming a playlist that the core refuses with `deleted` leaves the page
+the same problem, "That playlist has been deleted.", under no withdraw. Refusals about the tap
+(`staleView`, `notCached`, `notEditable`, `invalid`) stay notices. A page whose playlist is
+unavailable with no header and no entries no longer shows an empty title and disabled Play and
+Shuffle above its statement. The Apple playlist proofs drive both orders on purpose: step 8 waits
+for the page's own read before the other client's delete, and step 9 holds the page's `getPlaylist`
+at the fault proxy until the delete has landed and the rename prompt is open.
+
 **2026-10-03 — The Darwin conformance ffmpeg is built from pinned source, not poured from Homebrew
 (§20.2.1).** The Darwin leg installed Homebrew's ffmpeg bottle and its 14-formula runtime closure, and
 failed closed whenever Homebrew's index moved any one of the 15 formulae past its pin

@@ -270,6 +270,24 @@ public enum DulcetPlaylistPresentation {
         }
     }
 
+    /// What a playlist's page keeps saying about an edit the core refused at once, after the notice
+    /// has gone; nil when the refusal is about the tap, not the playlist. Only `deleted` is a
+    /// state of the playlist: its page may have learned the playlist is gone while the person was
+    /// typing a new name, and then the core refuses the rename before anything is sent -- the same
+    /// failed edit a send would have reported as an outcome, so the page says it the same way.
+    public static func problem(for result: DulcetPlaylistEditResult, edit: DulcetPlaylistEdit) -> (playlistID: String, problem: DulcetPlaylistProblem)? {
+        guard result.error == nil, result.record == .deleted else { return nil }
+        let playlistID: String
+        switch edit {
+        case let .rename(id, _), let .append(id, _), let .appendAlbum(id, _), let .remove(id, _, _),
+             let .move(id, _, _, _), let .delete(id):
+            playlistID = id
+        case .create, .withdraw, .chooseCreated:
+            return nil
+        }
+        return (playlistID, DulcetPlaylistProblem(message: DulcetStrings.playlistDeleted, withdrawable: nil))
+    }
+
     /// What a playlist's page keeps saying after the notice has gone; nil clears it.
     public static func problem(for outcome: DulcetPlaylistOutcome) -> DulcetPlaylistProblem? {
         switch outcome.kind {
@@ -469,6 +487,9 @@ public final class DulcetPlaylistEditor {
         editing.editPlaylist(edit) { [weak self] result in
             if let message = DulcetPlaylistPresentation.notice(for: result, edit: edit) {
                 self?.session?.post(message)
+            }
+            if let refused = DulcetPlaylistPresentation.problem(for: result, edit: edit) {
+                self?.problems[refused.playlistID] = refused.problem
             }
             if case let .withdraw(playlistID, _) = edit, result.record != nil {
                 self?.problems[playlistID] = nil
