@@ -901,6 +901,12 @@ jobs:
           --cache-folder "$ROOT/cache"
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      # The shells' Xcode builds leave a persistent Gradle daemon (-Xmx3g) and its Kotlin compile
+      # daemon idle through every proof on this 7 GB runner; nothing here builds with Gradle again.
+      # The tool prints the largest processes' resident memory before and after (BUILD DAEMONS).
+      - name: Stop the idle build daemons before the timed proofs
+        timeout-minutes: 3
+        run: python3 tools/ci/stop-build-daemons
       # Pays each device's FIRST boot before any proof's clock, as apple-conformance-ipad-iphone does.
       # OBSERVED in run 37142077432 on main: the composite's library-sync phases paid them instead.
       # The iPhone's took 222.4 s at load1 up to 574, and right after the iPad's, `simctl list`
@@ -1730,6 +1736,12 @@ jobs:
           --cache-folder "$ROOT/cache"
           --address 127.0.0.1
           --ffmpeg-path "$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+      # The shells' Xcode builds leave a persistent Gradle daemon (-Xmx3g) and its Kotlin compile
+      # daemon idle through every proof on this 7 GB runner; nothing here builds with Gradle again.
+      # The tool prints the largest processes' resident memory before and after (BUILD DAEMONS).
+      - name: Stop the idle build daemons before the timed proofs
+        timeout-minutes: 3
+        run: python3 tools/ci/stop-build-daemons
       # Pays each device's FIRST boot here, before any proof's clock. In the single job, earlier
       # phases had already booted the iPhone and iPad, and the composite paid only re-boots. OBSERVED
       # in run 37125098942 attempt 2: the iPhone's first boot took 218.6 s, and the search proof that
