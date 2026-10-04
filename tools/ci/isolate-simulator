@@ -38,7 +38,17 @@ def simctl(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
 def devices(devices_json: str | None) -> dict:
     if devices_json:
         return json.load(open(devices_json, encoding="utf-8"))["devices"]
-    return json.loads(simctl("list", "devices", "-j").stdout)["devices"]
+    # A listing can stall while CoreSimulator finishes a first boot. OBSERVED in run 37142077432:
+    # `simctl list` timed out at 120 s right after the iPad's first boot, which had passed
+    # `bootstatus -b`. Three tries before giving up.
+    for attempt in range(1, 4):
+        try:
+            return json.loads(simctl("list", "devices", "-j").stdout)["devices"]
+        except subprocess.TimeoutExpired:
+            print(f"SIMULATOR ISOLATION list timed out attempt={attempt}", flush=True)
+            if attempt == 3:
+                raise
+    raise AssertionError("unreachable")
 
 
 def runtime_version(runtime: str) -> list[int]:
