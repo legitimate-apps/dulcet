@@ -3012,6 +3012,9 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("Now Playing must offer the playing track's heart: " + app.debugDescription)
             return
         }
+        // Paused, and on the track, before any tap: the fixture tracks are about thirty seconds
+        // long, and a held tap can land after the queue moved on (see the stars proof).
+        guard bringPausedNowPlaying(to: track, in: app) else { return }
         // From a known starting point, whatever an earlier run left.
         if heart.label == "Remove Favorite" {
             heart.tap()
@@ -3124,6 +3127,10 @@ final class DulcetiOSUITests: XCTestCase {
               let stars = openNowPlayingStars(album: album, track: track, in: app, compact: expectedCompact) else { return }
         XCTAssertTrue(waitForValue(ratingValue(before), of: stars, timeout: 15),
             "Before the tap the stars must show the server's rating, \(before); value=\(String(describing: stars.value))")
+        // Paused and on the track first, as in step 3. OBSERVED on iPad in main's run 37188677065:
+        // the stars showed the tap's 3 at once, but the server's rating of this track stayed 0, and
+        // Now Playing read "UI Playback Canary" -- the tap rated the track the queue had reached.
+        guard bringPausedNowPlaying(to: track, in: app) else { return }
         tapStar(rating, of: stars)
         XCTAssertTrue(waitForValuePrefix(ratingValue(rating), of: stars, timeout: 3),
             "The stars must show \(rating) at once, before the server answers; value=\(String(describing: stars.value))")
