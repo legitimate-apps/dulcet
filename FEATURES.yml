@@ -867,31 +867,89 @@
         "macos": {
           "status": "partial",
           "evidence": [
-            {"observes": "the playing track's heart, which the Mac draws in the window's toolbar, goes through the rows' session: it changes with the press before any request, a row of the same track shows the change, the send names that track, and a held then saved outcome reads the same as on the row", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "DulcetKitTests/theNowPlayingHeartIsTheRowsHeartPendingHeldAndSaved"}
+            {
+              "observes": "the playing track's heart, which the Mac draws in the window's toolbar, goes through the rows' session: it changes with the press before any request, a row of the same track shows the change, the send names that track, and a held then saved outcome reads the same as on the row",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/theNowPlayingHeartIsTheRowsHeartPendingHeldAndSaved"
+            },
+            {
+              "observes": "through the Mac app hosted over the production root view against the disposable server, a click on a star of the Now Playing toolbar's five shows that rating at once and the server's userRating reads it back, another client's rating written to the server is what the reopened app shows, and a click on the star shown removes the rating and the server reads back 0",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacRatingsAndPlaylistsAppTest/nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp"
+            }
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "mac-rating-ui-proof", "reason": "The Mac app now offers five stars beside the heart in the Now Playing window's toolbar and a Rating menu on track rows. DulcetKit's model tests evidence the Apple rating control on every Apple platform -- the stars are offered by the heart's own rule, a star press goes through the heart's session and outbox, and unknown is not unrated -- but no wired UI test presses a Mac star and reads the server's userRating back, so CONF-84's rating half is not driven through the Mac app."},
-          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. No test drives the Mac app's heart against the server, and no wired UI proof drives the rating control against the server, so the cell is partial."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "mac-heart-ui-proof-and-conf84-star-half",
+            "reason": "The Mac rating proof executed and passed, so the rating UI proof no longer blocks the cell. Two things remain. No test drives the Mac app's heart, the toolbar's or a row's, against the server, so favouriting itself is not driven through the Mac app. And the cell cites no a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it."
+          },
+          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. No test drives the Mac app's heart against the server and no row labelled CONF-84 is cited, so the cell is partial."
         },
         "ios": {
           "status": "partial",
           "evidence": [
-            {"observes": "on iPhone, against the disposable server, Now Playing's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPhone"},
-            {"observes": "the heart, with the stars beside it, is offered in the iPhone and iPad player's footer only while the reader holds the playing track's account, on its own row above AirPlay, Lyrics and Up Next", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "DulcetKitIOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"}
+            {
+              "observes": "on iPhone, against the disposable server, Now Playing's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPhone"
+            },
+            {
+              "observes": "the heart, with the stars beside it, is offered in the iPhone and iPad player's footer only while the reader holds the playing track's account, on its own row above AirPlay, Lyrics and Up Next",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitIOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"
+            },
+            {
+              "observes": "through the iPhone app on a simulator against the disposable server, a tap on a star of Now Playing's five shows that rating at once and the server's userRating reads it back, another client's rating written to the server is what a relaunched Now Playing shows, and a tap on the star shown removes the rating and the server reads back 0",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testNowPlayingStarsRateTheTrackOnTheServerOnIPhone"
+            },
+            {
+              "observes": "on the iPhone simulator (compact, tab navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server, and the favourite is still shown after a relaunch with the account saved and no account hook",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone"
+            }
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "iphone-rating-ui-proof", "reason": "The iPhone app now offers five stars on their own row with the heart in Now Playing's footer and a Rating menu on track rows. DulcetKit's model tests evidence the Apple rating control on every Apple platform -- the stars are offered by the heart's own rule, a star press goes through the heart's session and outbox, and unknown is not unrated -- but no wired UI test taps an iPhone star and reads the server's userRating back, so CONF-84's rating half is not driven through the iPhone app."},
-          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. Album, artist and row hearts are not driven by a wired UI proof, and no wired UI proof drives the rating control against the server, so the cell is partial. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "conf84-star-half-evidence-on-apple",
+            "reason": "The iPhone rating proof executed and passed, so the rating UI proof no longer blocks the cell. What remains is a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it. Artist and track-row hearts are driven by no wired UI proof."
+          },
+          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Artist and track-row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main."
         },
         "ipados": {
           "status": "partial",
           "evidence": [
-            {"observes": "on iPad, against the disposable server, the full-screen player's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS"}
+            {
+              "observes": "on iPad, against the disposable server, the full-screen player's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS"
+            },
+            {
+              "observes": "through the iPad app on a simulator against the disposable server, a tap on a star of Now Playing's five shows that rating at once and the server's userRating reads it back, another client's rating written to the server is what a relaunched Now Playing shows, and a tap on the star shown removes the rating and the server reads back 0",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS"
+            },
+            {
+              "observes": "on the iPad simulator (regular width, sidebar navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server, and the favourite is still shown after a relaunch with the account saved and no account hook",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS"
+            }
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "ipad-rating-ui-proof", "reason": "The iPad app now offers five stars on their own row with the heart in the player's footer and a Rating menu on track rows. DulcetKit's model tests evidence the Apple rating control on every Apple platform -- the stars are offered by the heart's own rule, a star press goes through the heart's session and outbox, and unknown is not unrated -- but no wired UI test taps an iPad star and reads the server's userRating back, so CONF-84's rating half is not driven through the iPad app."},
-          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. Album, artist and row hearts are not driven by a wired UI proof, and no wired UI proof drives the rating control against the server, so the cell is partial. Resolved on main, as the iPhone proof is."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "conf84-star-half-evidence-on-apple",
+            "reason": "The iPad rating proof executed and passed, so the rating UI proof no longer blocks the cell. What remains is a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it. Artist and track-row hearts are driven by no wired UI proof."
+          },
+          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Artist and track-row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. Resolved on main, as the iPhone proof is."
         },
         "tvos": {
           "status": "partial",
@@ -1296,16 +1354,56 @@
             "reason": "CONF-51 and CONF-52 are observed on the emulator (core-ci run 36706956659). The cell stays partial on two gaps: a downloaded track whose metadata was never read online has no title offline; and a relaunch deletes a kept partial file instead of resuming it. It promotes when both are fixed and evidenced."
           },
           "evidence": [
-            {"observes": "on the phone app's unit-test runtime, the saved account's download controller from the process registry starts a WorkManager task tagged with the account and the row's download id; the task waits for a network, then its worker transfers the file from a loopback server and the core promotes exactly one file with the served bytes", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/aRequestedDownloadRunsAsAWorkManagerTaskAndIsPromoted"},
-            {"observes": "a relaunched process's controller leaves a download to the task WorkManager still holds and starts nothing more, and gives a row whose task WorkManager lost a new task that completes it", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/aRelaunchKeepsATaskWorkManagerStillHoldsAndRestartsOneItLost"},
-            {"observes": "removing the account through the production sign-out gateway cancels its outstanding download task and deletes its downloaded files", "workflow": "core-ci", "job": "core-ci", "test": "DownloadExecutorTest/signingOutCancelsTheAccountsTasksAndDeletesItsDownloads"},
-            {"observes": "a downloaded track's row shows the downloaded marker and its menu offers Remove download, which removes it", "workflow": "core-ci", "job": "core-ci", "test": "PhoneDownloadControlsTest/aDownloadedTrackShowsItsMarkerAndItsMenuRemovesTheDownload"},
-            {"observes": "a track with no download has no marker and its menu offers Download, which requests it", "workflow": "core-ci", "job": "core-ci", "test": "PhoneDownloadControlsTest/aTrackWithNoDownloadHasNoMarkerAndItsMenuDownloadsIt"},
-            {"observes": "a transfer under way shows its percentage on the track row", "workflow": "core-ci", "job": "core-ci", "test": "PhoneDownloadControlsTest/aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist"},
-            {"conformance": "CONF-51", "workflow": "core-ci", "job": "core-ci", "test": "AndroidEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask"},
-            {"conformance": "CONF-52", "workflow": "core-ci", "job": "core-ci", "test": "AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"}
+            {
+              "observes": "on the phone app's unit-test runtime, the saved account's download controller from the process registry starts a WorkManager task tagged with the account and the row's download id; the task waits for a network, then its worker transfers the file from a loopback server and the core promotes exactly one file with the served bytes",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "DownloadExecutorTest/aRequestedDownloadRunsAsAWorkManagerTaskAndIsPromoted"
+            },
+            {
+              "observes": "a relaunched process's controller leaves a download to the task WorkManager still holds and starts nothing more, and gives a row whose task WorkManager lost a new task that completes it",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "DownloadExecutorTest/aRelaunchKeepsATaskWorkManagerStillHoldsAndRestartsOneItLost"
+            },
+            {
+              "observes": "removing the account through the production sign-out gateway cancels its outstanding download task and deletes its downloaded files",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "DownloadExecutorTest/signingOutCancelsTheAccountsTasksAndDeletesItsDownloads"
+            },
+            {
+              "observes": "a downloaded track's row shows the downloaded marker and its menu offers Remove download, which removes it",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PhoneDownloadControlsTest/aDownloadedTrackShowsItsMarkerAndItsMenuRemovesTheDownload"
+            },
+            {
+              "observes": "a track with no download has no marker and its menu offers Download, which requests it",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PhoneDownloadControlsTest/aTrackWithNoDownloadHasNoMarkerAndItsMenuDownloadsIt"
+            },
+            {
+              "observes": "a transfer under way shows its percentage on the track row",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PhoneDownloadControlsTest/aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist"
+            },
+            {
+              "conformance": "CONF-51",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask"
+            },
+            {
+              "conformance": "CONF-52",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"
+            }
           ],
-          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and — in core's Android host tests, which core-ci runs but does not upload — of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server are wired and not yet observed, so the cell is partial. Downloads request the original file with format=raw, validation reads a bounded prefix plus the on-disk length, and a transfer stopped mid-body resumes with a Range request (host tests only, including a changed file restarting from zero); a track never read by the library has no title offline."
+          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and — in core's Android host tests, which core-ci runs but does not upload — of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server executed and passed on an API 34 phone emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656; the cell stays partial on the two gaps its promotion condition names. Downloads request the original file with format=raw, validation reads a bounded prefix plus the on-disk length, and a transfer stopped mid-body resumes with a Range request (host tests only, including a changed file restarting from zero); a track never read by the library has no title offline."
         },
         "androidtv": {
           "status": "partial",
@@ -1315,13 +1413,38 @@
             "reason": "CONF-51 and CONF-52 are observed on the emulator (core-ci run 36706956659). The cell stays partial on two gaps: a downloaded track whose metadata was never read online has no title offline; and a relaunch deletes a kept partial file instead of resuming it. It promotes when both are fixed and evidenced."
           },
           "evidence": [
-            {"observes": "on the TV app, a track row's own download button, reached by focus and pressed with the remote's centre key, requests the track's download", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/theRowsDownloadButtonDownloadsATrackThatHasNone"},
-            {"observes": "a downloaded TV row shows its marker and its button, pressed with the remote, removes the download", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/aDownloadedRowShowsItsMarkerAndItsButtonRemovesIt"},
-            {"observes": "a transfer under way shows its percentage on the TV row", "workflow": "core-ci", "job": "core-ci", "test": "TvDownloadControlsTest/aTransferUnderWayShowsItsProgressOnTheRow"},
-            {"conformance": "CONF-51", "workflow": "core-ci", "job": "core-ci", "test": "AndroidTvEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask"},
-            {"conformance": "CONF-52", "workflow": "core-ci", "job": "core-ci", "test": "AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"}
+            {
+              "observes": "on the TV app, a track row's own download button, reached by focus and pressed with the remote's centre key, requests the track's download",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvDownloadControlsTest/theRowsDownloadButtonDownloadsATrackThatHasNone"
+            },
+            {
+              "observes": "a downloaded TV row shows its marker and its button, pressed with the remote, removes the download",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvDownloadControlsTest/aDownloadedRowShowsItsMarkerAndItsButtonRemovesIt"
+            },
+            {
+              "observes": "a transfer under way shows its percentage on the TV row",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvDownloadControlsTest/aTransferUnderWayShowsItsProgressOnTheRow"
+            },
+            {
+              "conformance": "CONF-51",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvEmulatorDownloadConformanceTest/conf51ADownloadIsValidatedAndPromotedAtomicallyThroughAWorkManagerTask"
+            },
+            {
+              "conformance": "CONF-52",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"
+            }
           ],
-          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 are wired and not yet observed, so the cell is partial."
+          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 executed and passed on an API 34 Android TV emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656; the cell stays partial on the two gaps its promotion condition names."
         }
       }
     },
@@ -1341,11 +1464,6 @@
       "platforms": {
         "macos": {
           "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "mac-playlist-ui-proof",
-            "reason": "The core and conformance links are executed. What is missing is a test that drives the Mac app's playlist UI against the disposable reference server: open, play, create, rename, add, remove, reorder and delete, with the server read back. No such workflow, job or test exists yet, so none can be named."
-          },
           "evidence": [
             {
               "conformance": "CONF-88",
@@ -1376,17 +1494,23 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/positionalEditsCarryTheViewThePersonActedOn"
+            },
+            {
+              "observes": "through the Mac app hosted over the production root view against the disposable server, a playlist is created from the Playlists list, an album is added from its tile's context menu and a track from its row's, the fourth entry is removed alone, the third entry's Move Up action brings it to the top, and the playlist is renamed and deleted after its confirmation; after each step the server is read directly and holds exactly what the person did, and a rename of a playlist another client deleted is said on its page as a problem while no playlist of the new name reaches the server",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp"
             }
           ],
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. No test drives the Mac app's playlist UI, so the Mac surface is not observed and the cell stays partial."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "mac-playlist-play-ui-proof",
+            "reason": "The Mac playlist edit proof executed and passed: create, add an album, add a track, remove, move up, rename, delete and a failed rename, each read back from the server. What remains of this cell's original condition is play: no test opens a playlist on the Mac and plays it, so playing in the playlist's own order, as the iPhone proof does, is not driven through the Mac app. A drag reorder is not driven either; the Move Up accessibility action is."
+          },
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. No test opens a playlist on the Mac and plays it, so playing in the playlist's own order is not driven through the Mac app, and the cell stays partial."
         },
         "ios": {
           "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "iphone-playlist-edit-ui-proof",
-            "reason": "An iPhone UI proof covers open, play in order and rename. Promotion needs the remaining edits driven through the app with the server read back: create, Add to Playlist, removal, reorder, delete, and the pending and failed states. No such test exists yet, so none can be named."
-          },
           "evidence": [
             {
               "conformance": "CONF-88",
@@ -1423,16 +1547,27 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/theEditorKeepsProblemsQuestionsAndCreatedIDsFromOutcomes"
+            },
+            {
+              "observes": "through the iPhone app on a simulator against the disposable server, a playlist is created from Library > Playlists, an album is added from its tile's context menu and a track from its row's, the fourth entry is deleted by position in the edit list, the third entry is dragged by its handle to the top, and the playlist is renamed and deleted after its confirmation; after each step the server is read directly and holds exactly what the person did, and a rename of a playlist another client deleted is said on its page as a problem while no playlist of the new name reaches the server",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPhone"
             }
           ],
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server. Create, Add to Playlist, removal, reorder, delete and the pending and failed states are not driven through the UI; they are covered as core behaviour and as presentation values only, so the cell stays partial."
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "iphone-playlist-pending-state-ui-proof",
+            "reason": "The iPhone edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server, beside the existing open, play-in-order and rename proof. What remains of this cell's original condition is the pending state: no test makes an edit while the server is unreachable and observes the iPhone app show it pending and send it at reconnect."
+          },
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values only, not driven through the UI, so the cell stays partial."
         },
         "ipados": {
           "status": "partial",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "ipad-playlist-ui-proof",
-            "reason": "No test drives the iPad app's playlist UI; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run of the playlist page and its edits against the disposable reference server. No such test exists yet, so none can be named."
+            "blocked_on": "ipad-playlist-play-in-order-and-pending-state-ui-proof",
+            "reason": "The iPad edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server. What remains is what the iPhone cell also requires: no test plays a playlist in its own order on the iPad, and no test makes an edit while the server is unreachable and observes the iPad app show it pending and send it at reconnect."
           },
           "evidence": [
             {
@@ -1464,9 +1599,15 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/noPositionalEditIsOfferedOnAViewThatIsNotTheWholePlaylist"
+            },
+            {
+              "observes": "through the iPad app on a simulator against the disposable server, a playlist is created from Library > Playlists, an album is added from its tile's context menu and a track from its row's, the fourth entry is deleted by position in the edit list, the third entry is dragged by its handle to the top, and the playlist is renamed and deleted after its confirmation; after each step the server is read directly and holds exactly what the person did, and a rename of a playlist another client deleted is said on its page as a problem while no playlist of the new name reaches the server",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPadOS"
             }
           ],
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. No test drives the iPad app's playlist UI; an iPhone run does not evidence iPad layout, so the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order is driven on the iPhone and not on the iPad, and the pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values, not driven through the UI."
         },
         "tvos": {
           "status": "planned",
@@ -1587,12 +1728,7 @@
       ],
       "platforms": {
         "macos": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "mac-lyrics-ui-proof",
-            "reason": "No test drives the Mac app's lyrics panel. Promotion needs a Mac UI run that plays a track with synced lyrics from the disposable reference server and observes the lit line. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-42",
@@ -1605,17 +1741,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/theCurrentLineIsTheCoresCursorInWholeMillisecondsAndNoneWhenUnsynced"
+            },
+            {
+              "observes": "through the Mac app hosted over the production root view, playback controller and library reader against the disposable server, the lyrics panel shows every state: a synced track lights an English line and the panel sits beside the player where the window is wide enough for two columns, an unsynced track shows both of its lines and lights none, a track with none says No lyrics for this song with no spinner, and a failed read says so and offers Try Again, which sends a new read and shows the synced lines",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacLyricsAndQualityAppTest/lyricsPanelShowsEveryStateThroughTheHostedMacApp"
             }
           ],
-          "reason": "apple-ci executes CONF-42 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac Now Playing shows a lyrics panel beside the player on that core, and its presentation rules run as DulcetKit tests on macOS. No test drives the Mac app's lyrics panel, so the cell stays partial."
+          "reason": "apple-ci executes CONF-42 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac Now Playing shows a lyrics panel beside the player on that core, and its presentation rules run as DulcetKit tests on macOS. The Mac app's panel is driven through the production root view hosted in the app, over the production playback controller and library reader, against the disposable server (DulcetMacLyricsAndQualityAppTest, in the conformance leg, which a pull request does not run). Each state's shape is read back from the server first; the failed read is made by a fault proxy in front of the server fails that track's lyrics read until it is disarmed, and the proxy's own count shows the failure was met and that Try Again sent a new read. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The placement beside the player is asserted for the width the window actually got, which a CI host's screen can narrow to one column. The account is connected through the presentation store, as in the other hosted Mac proofs. The lit line follows the media time the controller reports; audio output through the OS graph is ASSUMED and not claimed."
         },
         "ios": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "iphone-lyrics-states-ui-proof",
-            "reason": "The iPhone proof observes synced lyrics lighting a line. Plain lyrics, no lyrics and a failed read are presentation values only; promotion needs them rendered through the app. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-42",
@@ -1634,17 +1771,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/theLyricsPanelDrawsWhatTheCorePublishedAndNeverASpinnerForNone"
+            },
+            {
+              "observes": "through the iPhone app on a simulator against the disposable server, every state of the lyrics panel is rendered in the sheet, each in its own launch: a synced track lights an English line, an unsynced track shows both of its lines and lights none, a track with none says No lyrics for this song with no spinner, and a failed read says so and offers Try Again, which sends a new read and shows the synced lines",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testTheLyricsPanelShowsEveryStateOnIPhone"
             }
           ],
-          "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: the lyrics panel shows the synced English layer and a line lights as media time moves. Plain lyrics, no lyrics and a failed read are covered as presentation values, not rendered through the app, so the cell stays partial."
+          "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: the lyrics panel shows the synced English layer and a line lights as media time moves (testTheLyricsPanelShowsTheSyncedLineThatIsPlaying), and plain lyrics, no lyrics and a failed read are rendered through the app (testTheLyricsPanelShowsEveryStateOnIPhone), each shape first read back from the server, the failed read made by a fault proxy in front of the server fails that track's lyrics read until it is disarmed. Both executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The test fails on an iPad idiom, so an iPad run cannot stand for it. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main. The lit line follows media time; audio output is ASSUMED and not claimed."
         },
         "ipados": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "ipad-lyrics-ui-proof",
-            "reason": "No test drives the iPad app's lyrics panel; the iPhone proof does not evidence iPad layout. Promotion needs an iPad-simulator run that observes the lit line beside the player. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-42",
@@ -1657,17 +1795,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitIOSTests/theModelPaintsTheStoredDocumentThenTheLiveOneAndDropsALateAnswer"
+            },
+            {
+              "observes": "through the iPad app on a simulator against the disposable server, every state of the lyrics panel is rendered, each in its own launch: a synced track lights an English line with the panel to the right of the player's title in the same row, an unsynced track shows both of its lines and lights none, a track with none says No lyrics for this song with no spinner, and a failed read says so and offers Try Again, which sends a new read and shows the synced lines",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testTheLyricsPanelShowsEveryStateOnIPadOS"
             }
           ],
-          "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad Now Playing shows lyrics beside the player on a regular width; its model runs as DulcetKit tests on an iPad simulator. No test drives the iPad app's lyrics panel; an iPhone run does not evidence iPad layout, so the cell stays partial."
+          "reason": "apple-ci executes CONF-42 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad Now Playing shows lyrics beside the player on a regular width; its model runs as DulcetKit tests on an iPad simulator, and the iPad app itself is driven on an iPad simulator (testTheLyricsPanelShowsEveryStateOnIPadOS): every state is rendered through the app, the synced panel is asserted to start right of the player's title in the same row, and the failed read is made by a fault proxy in front of the server fails that track's lyrics read until it is disarmed. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The test fails on an iPhone idiom, so an iPhone run does not evidence this cell. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. The lit line follows media time; audio output is ASSUMED and not claimed."
         },
         "tvos": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "tvos-lyrics-states-ui-proof",
-            "reason": "The Apple TV proof observes synced lyrics lighting a line. Plain lyrics (each line focusable, so the remote reads through them), no lyrics and a failed read are not rendered through the app on Apple TV; promotion needs them driven by remote. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-42",
@@ -1680,9 +1819,15 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote"
+            },
+            {
+              "observes": "on Apple TV, driven by the remote against the disposable server, plain lyrics show both lines and light none, with Right from the footer reaching the lines and Up and Down moving focus between them; a track with none says No lyrics for this song with no spinner; and a failed read says so and the remote reaches and presses Try Again, which sends a new read and shows the synced lines",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testLyricsPlainNoneAndAFailedReadAreDrivenByRemote"
             }
           ],
-          "reason": "apple-ci executes CONF-42 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: Lyrics opens the same lyrics panel and model the other Apple players use, one column up to 1,200 points wide with the lit line following media time, and a line lights. Plain lyrics, no lyrics and a failed read are not rendered through the app on Apple TV, so the cell stays partial. Readability at television distance is a layout choice, not a measurement. Resolved on main."
+          "reason": "apple-ci executes CONF-42 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: Lyrics opens the same lyrics panel and model the other Apple players use, one column up to 1,200 points wide with the lit line following media time, and a line lights (testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote); and plain lyrics, no lyrics and a failed read are driven by remote too (testLyricsPlainNoneAndAFailedReadAreDrivenByRemote), each shape first read back from the server, the failed read made by a fault proxy in front of the server fails that track's lyrics read until it is disarmed. Both executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Readability at television distance is a layout choice, not a measurement. Resolved on main."
         },
         "android": {
           "status": "shipped",
@@ -1800,12 +1945,7 @@
       ],
       "platforms": {
         "macos": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "mac-streaming-quality-ui-proof",
-            "reason": "No test drives the Mac Settings window or the Connection screen's Streaming Quality section and then plays a track from the disposable reference server to observe the capped stream. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-92",
@@ -1818,60 +1958,69 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/aStreamingQualityChoiceIsSavedThroughTheInstalledSettingAndShown"
+            },
+            {
+              "observes": "through the Mac app's Settings window, hosted over the production root view against the disposable server, the cellular choice is set to 128 kbps and the Wi-Fi choice to 96 kbps with the pickers, the choices are saved through the installed setting, and the server's own log records the next stream of a 123 kbps FLAC as transcoded to 96 kbps, not 128",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacLyricsAndQualityAppTest/streamingQualityChosenInSettingsCapsTheStreamThroughTheHostedMacApp"
             }
           ],
-          "reason": "The Mac offers the choice in its Settings window (Dulcet > Settings) and on the Connection screen. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+          "reason": "The Mac offers the choice in its Settings window (Dulcet > Settings) and on the Connection screen. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Settings window's pickers are driven through the production root view hosted in the app, over the production playback controller and a defaults suite of the run's own: the cellular choice is set to 128 kbps and the Wi-Fi choice to 96 kbps, the saved setting and the quality the next resolve applies are read back (this Mac's network is asserted unmetered, so the Wi-Fi choice is the one in force), and the disposable server's own log records the next stream of Dulcet Health Probe, a 123 kbps FLAC read back first, as transcoded to 96 kbps (DulcetMacLyricsAndQualityAppTest, in the conformance leg, which a pull request does not run). It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
         },
         "ios": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "ios-streaming-quality-ui-proof",
-            "reason": "No test drives the iPhone Connection screen's Streaming Quality section and plays a capped stream through the app. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-92",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            },
+            {
+              "observes": "through the iPhone app on a simulator against the disposable server, the Connection screen's pickers set the cellular choice to 128 kbps and the Wi-Fi choice to 96 kbps, the server's own log records the next stream of a 123 kbps FLAC as transcoded to 96 kbps, not 128, and Now Playing's media time moves",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPhone"
             }
           ],
-          "reason": "The iPhone offers the choice on the Connection screen, the app's settings surface. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+          "reason": "The iPhone offers the choice on the Connection screen, the app's settings surface. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Connection screen's real pickers are driven on an iPhone simulator: the cellular choice is set to 128 kbps and the Wi-Fi choice to 96 kbps, and the disposable server's own log, read from the offset it had before the play, records the stream of Dulcet Health Probe, a 123 kbps FLAC read back first, as transcoded to 96 kbps; the proof also requires Now Playing's media time to move, so a first play that failed after its stream request cannot pass; both choices are put back to Original through the same pickers (testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPhone, in the conformance leg, which a pull request does not run). It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
         },
         "ipados": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "ipados-streaming-quality-ui-proof",
-            "reason": "No test drives the iPad Connection screen's Streaming Quality section and plays a capped stream through the app. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-92",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            },
+            {
+              "observes": "through the iPad app on a simulator against the disposable server, the Connection screen's pickers set the cellular choice to 128 kbps and the Wi-Fi choice to 96 kbps, the server's own log records the next stream of a 123 kbps FLAC as transcoded to 96 kbps, not 128, and the play starts",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPadOS"
             }
           ],
-          "reason": "The iPad offers the choice on the Connection screen, as the iPhone does. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+          "reason": "The iPad offers the choice on the Connection screen, as the iPhone does. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Connection screen's real pickers are driven on an iPad simulator: the cellular choice is set to 128 kbps and the Wi-Fi choice to 96 kbps, and the disposable server's own log, read from the offset it had before the play, records the stream of Dulcet Health Probe, a 123 kbps FLAC read back first, as transcoded to 96 kbps; the proof also requires the play to start, by media time moving or the queue moving past the probe with no failure or skip notice; both choices are put back to Original (testAStreamingQualityChosenOnConnectionCapsTheStreamOnIPadOS, which fails on an iPhone idiom, in the conformance leg, which a pull request does not run). It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
         },
         "tvos": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "tvos-streaming-quality-ui-proof",
-            "reason": "The tvOS section is a row of focusable buttons per network that no test drives with the remote, and no test plays a capped stream through the tvOS app. No such test exists yet, so none can be named."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-92",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
+            },
+            {
+              "observes": "on Apple TV, driven by the remote against the disposable server, the Connection screen's cellular row is set to 128 kbps and the Wi-Fi row to 96 kbps, and the server's own log records the next stream of a 123 kbps FLAC as transcoded to 96 kbps, not 128",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testAStreamingQualityChosenByRemoteCapsTheStream"
             }
           ],
-          "reason": "Apple TV offers the choice on the Connection screen as a row of buttons per network, the chosen one checked. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
+          "reason": "Apple TV offers the choice on the Connection screen as a row of buttons per network, the chosen one checked. The core encodes the choice on both delivery paths (CONF-92, run by apple-ci in this platform's core-conformance runtime against the disposable reference server, transcoding asserted first). The rows are driven by remote on an Apple TV simulator: the cellular row is set to 128 kbps and the Wi-Fi row to 96 kbps, and the disposable server's own log, read from the offset it had before the play, records the stream of Dulcet Health Probe, a 123 kbps FLAC read back first, as transcoded to 96 kbps; both rows are put back to Original by remote (testAStreamingQualityChosenByRemoteCapsTheStream, in the conformance leg, which a pull request does not run). It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The Apple controller applies it from the next resolve and replaces a gapless preload resolved at the old quality without re-preparing or stopping what plays; that is DulcetCorePlaybackSystemTests/testTheStreamingQualityReachesTheNextResolveAndAChangeReplacesTheStalePreload, which apple-ci runs as a whole class on macOS but whose results are not among the evidence it verifies, so it is named here and not cited. Metered is decided from NWPathMonitor (isExpensive or isConstrained); no test drives a real network change, so that link is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes has no byte ranges, so it may not be scrubbable (spec 12.5)."
         },
         "android": {
           "status": "shipped",
