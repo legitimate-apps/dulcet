@@ -26,8 +26,8 @@ class ApplePlaybackColdTranscodeRequestTest {
     @Test
     fun theLoadersRequestForACappedTranscodeDoesNotAskForAnEstimatedLength() = runTest {
         val plan = cappedPlan()
-        // The core's own client still asks; only the Apple loader's request drops it.
-        assertEquals("true", plan.parameters["estimateContentLength"], "the core plan asks for an estimate")
+        // The core plan itself never asks (§28 2026-10-04), so no client's request does.
+        assertNull(plan.parameters["estimateContentLength"], "the core plan asks for an estimate")
 
         val client = ApplePlaybackWireClient(ACCOUNT)
         val prepared = client.prepareResourceRequest(plan, PlaybackByteRange(0, 262_143))

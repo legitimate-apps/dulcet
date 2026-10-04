@@ -205,7 +205,10 @@ private fun NSURLSessionTask.endedAnEstimatedBody(error: NSError, forwardedBytes
     )
 }
 
-/** The pure decision [EstimatedLengthCompletingDelegate] applies to a connection-lost completion. */
+/**
+ * The pure decision [EstimatedLengthCompletingDelegate] applies to a connection-lost completion.
+ * No production request asks for an estimate since §28 2026-10-04, so it never ends a body there.
+ */
 internal fun isEstimatedBodyEnd(
     statusCode: Int,
     hasRangeHeader: Boolean,

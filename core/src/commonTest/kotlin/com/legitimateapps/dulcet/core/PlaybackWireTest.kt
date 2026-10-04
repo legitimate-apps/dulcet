@@ -93,7 +93,7 @@ class PlaybackWireTest {
     }
 
     @Test
-    fun legacyTranscodeHintsCarryEstimateLengthAndOffsetWithoutParsingTheId() = runTest {
+    fun legacyTranscodeHintsCarryTheOffsetAndNoEstimatedLengthWithoutParsingTheId() = runTest {
         val transport = RecordingPlaybackTransport()
         val client = PlaybackWireClient(ACCOUNT, transport)
         val request = extensionRequest().copy(
@@ -115,7 +115,6 @@ class PlaybackWireTest {
                 "id" to OPAQUE_MEDIA_ID,
                 "format" to "mp3",
                 "maxBitRate" to "64",
-                "estimateContentLength" to "true",
                 "timeOffset" to "37",
             ),
             plan.parameters,
@@ -138,7 +137,6 @@ class PlaybackWireTest {
         assertEquals("stream", plan.endpoint)
         assertEquals(linkedMapOf("id" to OPAQUE_MEDIA_ID, "format" to "raw"), plan.parameters)
         assertFalse(plan.isTranscoded())
-        assertFalse(plan.usesEstimatedLegacyContentLength(), "an original file's length is exact")
 
         val transcoded = assertIs<PlaybackResolutionResult.Resolved>(
             client.resolve(original.copy(legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 128))),

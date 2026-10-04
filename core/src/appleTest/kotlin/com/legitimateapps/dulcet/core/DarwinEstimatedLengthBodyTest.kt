@@ -177,13 +177,14 @@ class DarwinEstimatedLengthBodyTest {
     }
 
     /**
-     * The production route into the rewrite: a capped legacy load through [PlaybackWireClient] and
-     * the [AuthenticatedEndpointClient] behind it, reading as soon as the response arrives, as
-     * playback does, rather than after the server has closed.
+     * The production route since §28 2026-10-04: a capped legacy load through [PlaybackWireClient]
+     * and the [AuthenticatedEndpointClient] behind it, reading as soon as the response arrives, as
+     * playback does. The plan asks for no estimate, so the same short body -- what an undershooting
+     * cold transcode sends -- is a lost connection, never the song, and the delegate ends nothing.
      */
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
     @Test
-    fun aCappedLegacyLoadOfAShortEstimatedBodySucceedsWithEveryForwardedByte() = runBlocking {
+    fun aCappedLegacyLoadAsksForNoEstimateAndFailsOnABodyCutOffShortOfItsLength() = runBlocking {
         val delivery = DeliveryLatch()
         val server = OneShotLoopbackServer(RESPONSE_HEAD + MP3_BODY, holdEnd = delivery::await)
         val serverThread = newSingleThreadContext("short-body-fixture")
@@ -212,24 +213,16 @@ class DarwinEstimatedLengthBodyTest {
             val served = CoroutineScope(serverThread).async { server.serveOnce() }
             val result = withTimeout(TIMEOUT_MILLIS) {
                 val plan = assertIs<PlaybackResolutionResult.Resolved>(wire.resolve(cappedLegacyRequest())).plan
-                assertTrue(plan.usesEstimatedLegacyContentLength(), "the plan does not ask for an estimate")
                 wire.load(plan)
             }
             val (head, endFollowedDelivery) = served.await()
 
             assertTrue(head.startsWith("GET /rest/stream.view?"), "the fixture never served the request")
+            assertTrue(head.contains("maxBitRate=96"), "setup: the request is not the capped transcode")
             assertTrue(endFollowedDelivery, "the stream ended before the client had been handed a byte")
-            assertTrue(head.contains("estimateContentLength=true"), "the load did not ask for an estimate")
-            val audio = assertIs<PlaybackLoadResult.Audio>(result, "the short estimated body failed to load")
-            assertTrue(audio.bytes.isNotEmpty(), "every delivered byte was discarded")
-            assertContentEquals(MP3_BODY.copyOf(audio.bytes.size), audio.bytes, "the body is not a prefix of what was sent")
-            // The marker the delegate emits: this load did reach the -1005 end, and kept all of it.
-            assertEquals(listOf(audio.bytes.size.toLong()), ends.snapshot(), "the load did not get every forwarded byte")
-            assertEquals(
-                PlaybackContentLength.Estimated(DECLARED_LENGTH.toLong()),
-                audio.validation.contentLength,
-                "the response was not read as an estimate",
-            )
+            assertIs<PlaybackLoadResult.Failed>(result, "a body cut off short of its length loaded as the song")
+            assertFalse(head.contains("estimateContentLength"), "the load asked for an estimate")
+            assertEquals(emptyList(), ends.snapshot(), "the delegate ended a body the load never asked to estimate")
         } finally {
             wire.close()
             server.closeListener()

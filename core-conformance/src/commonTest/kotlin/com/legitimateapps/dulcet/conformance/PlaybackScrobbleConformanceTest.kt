@@ -40,8 +40,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -59,7 +61,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
@@ -212,16 +214,10 @@ open class PlaybackScrobbleConformanceTest {
                 ),
                 "CONF-14a legacy offset transcode failed after the capability precondition passed",
             )
-            val fullEstimate = assertIs<PlaybackContentLength.Estimated>(full.plan.contentLength)
-            val seekEstimate = assertIs<PlaybackContentLength.Estimated>(seeked.plan.contentLength)
-            assertTrue(
-                fullEstimate.estimatedByteCount > full.bytes.size,
-                "CONF-14a cold full transcode did not expose the pinned estimate overshoot",
-            )
-            assertTrue(
-                seekEstimate.estimatedByteCount > seeked.bytes.size,
-                "CONF-14a cold offset transcode did not expose the pinned estimate overshoot",
-            )
+            // No request asks for an estimate (spec §12.5, §28 2026-10-04): a cold transcode
+            // arrives chunked, declaring no length, and is read to its end.
+            assertNull(full.plan.contentLength, "CONF-14a cold full transcode declared a length")
+            assertNull(seeked.plan.contentLength, "CONF-14a cold offset transcode declared a length")
             assertTrue(full.bytes.hasMp3Signature())
             assertTrue(seeked.bytes.hasMp3Signature())
             assertTrue(seeked.bytes.size < full.bytes.size, "CONF-14a offset did not shorten the audio")
@@ -239,44 +235,63 @@ open class PlaybackScrobbleConformanceTest {
             record(
                 "CONF-14a OBSERVED requested_offset_seconds=$SEEK_SECONDS " +
                     "source_duration_seconds=${source.durationSeconds} full_bytes=${full.bytes.size} " +
-                    "full_estimate=${fullEstimate.estimatedByteCount} " +
-                    "offset_bytes=${seeked.bytes.size} offset_estimate=${seekEstimate.estimatedByteCount} " +
+                    "offset_bytes=${seeked.bytes.size} declared_lengths=none " +
                     "full_bitrate_kbps=$FULL_BITRATE_KBPS offset_bitrate_kbps=$SEEK_BITRATE_KBPS " +
                     "bitrate_normalized_remaining_ratio=$observedRemainingRatio",
             )
         }
     }
 
+    /**
+     * Spec §12.5, §28 2026-10-04. Asked for an estimate, Navidrome declares a cold transcode's
+     * guessed length, and when the guess is short it cuts the body off at an earlier write and
+     * closes -- an end no client can tell from a complete body's. So no request asks: the cold
+     * answer then declares no length and arrives whole, which the warm answer's exact length shows.
+     */
     @Test
-    fun conf17LegacyTranscodeContentLengthIsUsableOnlyAsAnEstimate() = runTest {
+    fun conf17ColdLegacyTranscodeAsksForNoEstimateAndArrivesWhole() = runTest {
         withFixture {
             val source = requireSong("CONF-17", HEALTH_PROBE_TITLE)
             requireTranscodingCapability("CONF-17", source)
 
             // 73 kbps is unique in this suite, so this request cannot inherit a warmed transcode.
-            val audio = requireAudio(
-                playback.load(
-                    requireLegacyMp3Plan(
-                        "CONF-17",
-                        source,
-                        offsetSeconds = 0,
-                        maxBitRateKbps = CONF_17_COLD_BITRATE_KBPS,
-                    ),
-                ),
-                "CONF-17 cold legacy transcode did not complete with an estimated length",
+            val plan = requireLegacyMp3Plan(
+                "CONF-17",
+                source,
+                offsetSeconds = 0,
+                maxBitRateKbps = CONF_17_COLD_BITRATE_KBPS,
             )
-            val estimate = assertIs<PlaybackContentLength.Estimated>(audio.plan.contentLength)
-            assertTrue(audio.bytes.hasMp3Signature())
-            assertTrue(
-                estimate.estimatedByteCount > audio.bytes.size,
-                "CONF-17 expected the pinned cold-cache estimate to overshoot the complete body",
+            val cold = requireAudio(playback.load(plan), "CONF-17 cold legacy transcode did not load")
+            assertTrue(cold.bytes.hasMp3Signature())
+            assertNull(cold.validation.contentLength, "CONF-17 the cold transcode declared a length")
+
+            // Once cached, the same transcode answers with an exact length: the cold body was all of it.
+            val warm = requireWarmTranscode("CONF-17", plan)
+            val exact = assertIs<PlaybackContentLength.Exact>(
+                warm.validation.contentLength,
+                "CONF-17 the warm transcode declared no exact length",
             )
+            assertEquals(exact.byteCount, cold.bytes.size.toLong(), "CONF-17 the cold body was cut off")
+            assertContentEquals(warm.bytes, cold.bytes, "CONF-17 the cold body differs from the cached one")
             record(
-                "CONF-17 OBSERVED content_length_kind=estimate " +
-                    "estimated_bytes=${estimate.estimatedByteCount} body_bytes=${audio.bytes.size} " +
-                    "authoritative=false cache=cold bitrate_kbps=$CONF_17_COLD_BITRATE_KBPS",
+                "CONF-17 OBSERVED cold_declared_length=none cold_body_bytes=${cold.bytes.size} " +
+                    "warm_exact_bytes=${exact.byteCount} bitrate_kbps=$CONF_17_COLD_BITRATE_KBPS",
             )
         }
+    }
+
+    /** The plan loaded again until its answer is the cached one, with an exact length (bounded). */
+    private suspend fun PlaybackFixture.requireWarmTranscode(
+        label: String,
+        plan: com.legitimateapps.dulcet.core.RemotePlaybackWirePlan,
+    ): PlaybackLoadResult.Audio {
+        repeat(WARM_TRANSCODE_ATTEMPTS) { attempt ->
+            val audio = requireAudio(playback.load(plan), "$label warm reload did not load")
+            if (audio.validation.contentLength is PlaybackContentLength.Exact) return audio
+            // Real time, not runTest's virtual clock: the server is caching the transcode meanwhile.
+            if (attempt < WARM_TRANSCODE_ATTEMPTS - 1) withContext(Dispatchers.Default) { delay(WARM_TRANSCODE_PAUSE_MILLIS) }
+        }
+        error("$label the transcode never came back from the cache with an exact length")
     }
 
     @Test
@@ -587,15 +602,9 @@ open class PlaybackScrobbleConformanceTest {
                 ),
                 "CONF-51 cold legacy transcode failed after capability assertion",
             )
-            val estimate = assertIs<PlaybackContentLength.Estimated>(
-                coldLegacy.validation.contentLength,
-                "CONF-51 cold legacy transcode must retain estimated-length semantics",
-            )
-            assertNotEquals(
-                estimate.estimatedByteCount,
-                coldLegacy.bytes.size.toLong(),
-                "CONF-51 cold transcode unexpectedly lost the pinned estimate mismatch",
-            )
+            // No request asks for an estimate (spec §12.5): the cold answer declares no length, and
+            // the observed byte count is recorded as exact only once the file has closed.
+            assertNull(coldLegacy.validation.contentLength, "CONF-51 the cold transcode declared a length")
             val estimatedControl = DownloadPolicyContract.validatedAtomicPromotion(
                 DownloadControlPayload(
                     serverId = CONFORMANCE_PROVIDER_ID,
@@ -603,7 +612,7 @@ open class PlaybackScrobbleConformanceTest {
                     transcodeProfile = "legacy-mp3:$CONF_51_COLD_BITRATE_KBPS",
                     container = AudioContainer.Mp3,
                     contentType = "audio/mpeg",
-                    contentLength = estimate,
+                    contentLength = null,
                     bytes = coldLegacy.bytes,
                 ),
             )
@@ -612,7 +621,7 @@ open class PlaybackScrobbleConformanceTest {
             assertTrue(estimatedControl.exactMismatchLeftNoDestination)
             record(
                 "CONF-51 OBSERVED direct_exact_bytes=${directLength.byteCount} " +
-                    "cold_estimate_bytes=${estimate.estimatedByteCount} " +
+                    "cold_declared_length=none " +
                     "cold_observed_exact_after_close=${estimatedControl.storedExactByteCount} " +
                     "exact_mismatch_rejected=${directControl.exactMismatchRejected} " +
                     "destination_absent_on_rejection=${directControl.exactMismatchLeftNoDestination} " +
@@ -862,6 +871,8 @@ open class PlaybackScrobbleConformanceTest {
         const val SEEK_BITRATE_KBPS = 96
         const val CONF_17_COLD_BITRATE_KBPS = 73
         const val CONF_51_COLD_BITRATE_KBPS = 81
+        const val WARM_TRANSCODE_ATTEMPTS = 20
+        const val WARM_TRANSCODE_PAUSE_MILLIS = 250L
         const val OFFSET_RATIO_TOLERANCE = 0.03
         const val CAP_SIZE_TOLERANCE = 1.15
         const val CONF_22_SESSION_TIME = 1_788_220_000_001

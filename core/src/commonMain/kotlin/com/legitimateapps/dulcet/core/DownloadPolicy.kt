@@ -358,8 +358,9 @@ internal class DownloadPolicyEngine(
         if (!files.temporaryExists(row)) return DownloadPromotionResult.MissingTemporaryFile
 
         // The executor has closed the response body before delivery reaches this method, so the temp
-        // file's on-disk length is the terminal-body boundary for estimated legacy streams. Only a
-        // bounded prefix is read: a file is never loaded whole, whatever its size (spec §14.5).
+        // file's on-disk length is the terminal-body boundary for a response that declared no exact
+        // length. Only a bounded prefix is read: a file is never loaded whole, whatever its size
+        // (spec §14.5).
         val validation = validateDownloadFile(
             files = files,
             path = files.temporaryPath(row),

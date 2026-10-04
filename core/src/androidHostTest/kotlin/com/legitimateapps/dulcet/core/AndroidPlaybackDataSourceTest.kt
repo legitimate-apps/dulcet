@@ -267,10 +267,12 @@ class AndroidPlaybackDataSourceTest {
         assertEquals(0L, consumed)
     }
 
-    @Test fun estimatedLengthEndsAtObservedEofRatherThanTheServerEstimate() {
+    // A cold transcode, which no request asks to estimate (spec §12.5), arrives chunked: no
+    // declared length, so the body's end is the stream's end.
+    @Test fun undeclaredLengthEndsAtObservedEof() {
         val bytes = wav() + ByteArray(9000)
         val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ -> response(bytes).let {
-            AndroidPlaybackResponse(it.status, it.headers.copy(contentLength = PlaybackContentLength.Estimated(999999)), it.input, it.close)
+            AndroidPlaybackResponse(it.status, it.headers.copy(contentLength = null), it.input, it.close)
         } }).createDataSource()
         assertEquals(C.LENGTH_UNSET.toLong(), source.open(spec()))
         val buffer = ByteArray(8192)

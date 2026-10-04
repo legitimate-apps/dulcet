@@ -124,8 +124,9 @@ func urlSessionPlaybackResourcePassesEveryNegativeHTTPShapeToTheCoreValidator() 
 func aBodyEndedByALostConnectionReachesTheValidatorWithEveryByteReceived() async throws {
     // A body short of its declared length ends in -1005 after URLSession delivers what arrived
     // (OBSERVED on macOS against Navidrome 0.63.2: 24,576 declared, 24,012 delivered -- a prefix of
-    // a 24,639-byte body, the estimate having undershot). The core validator, which knows whether
-    // the declared length is an estimate, decides what that is.
+    // a 24,639-byte body, the estimate having undershot). The core validator decides what that is;
+    // since no request asks for an estimate it treats every declared length as exact and refuses it
+    // (spec §12.5). This pins only that the loader hands it every byte.
     let body = Data("ID3".utf8) + Data(repeating: 0xFF, count: 61)
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]

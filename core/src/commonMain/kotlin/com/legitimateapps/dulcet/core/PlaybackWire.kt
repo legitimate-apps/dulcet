@@ -415,14 +415,9 @@ public class PlaybackWireClient private constructor(
             val response = transport.get(
                 endpoint = plan.endpoint,
                 parameters = plan.parameters,
-                options = AuthenticatedEndpointRequestOptions(
-                    range = range?.render(),
-                    contentLengthKind = if (plan.usesEstimatedLegacyContentLength() && range == null) {
-                        AuthenticatedEndpointContentLengthKind.Estimated
-                    } else {
-                        AuthenticatedEndpointContentLengthKind.Exact
-                    },
-                ),
+                // Every declared length is exact: no plan asks for an estimate (resolveLegacy), so
+                // a body short of its Content-Length is truncation, never the end of the song.
+                options = AuthenticatedEndpointRequestOptions(range = range?.render()),
             )
             val validation = PlaybackStreamValidator.validate(response, plan.acceptedContainers())
             if (validation is PlaybackStreamValidationResult.Audio) {
@@ -609,7 +604,11 @@ public class PlaybackWireClient private constructor(
         val parameters = linkedMapOf("id" to request.itemId.rawId).apply {
             preference.format?.let { put("format", it.wireName()) }
             preference.maxBitRateKbps?.let { put("maxBitRate", it.toString()) }
-            if (preference.requestsTranscode) put("estimateContentLength", "true")
+            // Never `estimateContentLength` (spec §12.5, §28 2026-10-04): a cold transcode's
+            // estimate can be short of the real body, and the server then cuts the body off at an
+            // earlier write and closes. That ends exactly as a complete body does, so no client can
+            // tell it from the whole song. Without the flag a cold transcode arrives chunked and
+            // complete, and a cached one with an exact length.
             request.legacyTimeOffset?.let { put("timeOffset", it.inWholeSeconds.toString()) }
         }
         return RemotePlaybackWirePlan(
@@ -711,11 +710,6 @@ internal fun RemotePlaybackWirePlan.asOriginalFileDownload(): RemotePlaybackWire
 
 /** The Subsonic API's `format` value that disables transcoding (API 1.9.0). */
 internal const val ORIGINAL_FILE_FORMAT = "raw"
-
-internal fun RemotePlaybackWirePlan.usesEstimatedLegacyContentLength(): Boolean =
-    path == PlaybackDeliveryPath.Legacy &&
-        isTranscoded() &&
-        parameters["estimateContentLength"] == "true"
 
 private object SecurePlaybackAttemptIdSource : PlaybackAttemptIdSource {
     override fun nextAttemptId(): AttemptId = AttemptId(

@@ -285,8 +285,9 @@ internal class AndroidHttpPlaybackResource(
                 val declaredLength = connection.getHeaderField("Content-Length")?.toLongOrNull()?.takeIf { it >= 0 }
                 val headers = AuthenticatedEndpointResponseHeaders(
                     connection.contentType,
-                    declaredLength?.let { if (status == 200 && plan.usesEstimatedLegacyContentLength())
-                        PlaybackContentLength.Estimated(it) else PlaybackContentLength.Exact(it) },
+                    // Exact, always: no plan asks for an estimate (spec §12.5), so a body that ends
+                    // short of its declared length fails rather than ending the track early.
+                    declaredLength?.let(PlaybackContentLength::Exact),
                     connection.getHeaderField("Retry-After"), connection.getHeaderField("Accept-Ranges"),
                     connection.getHeaderField("Content-Range"),
                 )
