@@ -388,7 +388,7 @@ internal fun validateAppleRangeAndTotalLength(
             is PlaybackContentLength.Exact ->
                 declaredContentLength.byteCount.takeIf { it == bodyLength }
             // Nothing on this path produces an estimate: validateResponse maps every declared
-            // length to Exact. Were one to arrive, a body short of it is still never the resource.
+            // length to Exact. Were one to arrive, no body is accepted under it, short or not.
             is PlaybackContentLength.Estimated -> null
         }
     }

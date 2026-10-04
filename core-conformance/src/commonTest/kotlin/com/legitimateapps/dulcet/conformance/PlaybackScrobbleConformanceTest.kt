@@ -605,7 +605,7 @@ open class PlaybackScrobbleConformanceTest {
             // No request asks for an estimate (spec §12.5): the cold answer declares no length, and
             // the observed byte count is recorded as exact only once the file has closed.
             assertNull(coldLegacy.validation.contentLength, "CONF-51 the cold transcode declared a length")
-            val estimatedControl = DownloadPolicyContract.validatedAtomicPromotion(
+            val undeclaredControl = DownloadPolicyContract.validatedAtomicPromotion(
                 DownloadControlPayload(
                     serverId = CONFORMANCE_PROVIDER_ID,
                     rawId = source.id,
@@ -616,13 +616,13 @@ open class PlaybackScrobbleConformanceTest {
                     bytes = coldLegacy.bytes,
                 ),
             )
-            assertEquals(coldLegacy.bytes.size.toLong(), estimatedControl.storedExactByteCount)
-            assertTrue(estimatedControl.temporaryFileRemoved)
-            assertTrue(estimatedControl.exactMismatchLeftNoDestination)
+            assertEquals(coldLegacy.bytes.size.toLong(), undeclaredControl.storedExactByteCount)
+            assertTrue(undeclaredControl.temporaryFileRemoved)
+            assertTrue(undeclaredControl.exactMismatchLeftNoDestination)
             record(
                 "CONF-51 OBSERVED direct_exact_bytes=${directLength.byteCount} " +
                     "cold_declared_length=none " +
-                    "cold_observed_exact_after_close=${estimatedControl.storedExactByteCount} " +
+                    "cold_observed_exact_after_close=${undeclaredControl.storedExactByteCount} " +
                     "exact_mismatch_rejected=${directControl.exactMismatchRejected} " +
                     "destination_absent_on_rejection=${directControl.exactMismatchLeftNoDestination} " +
                     "duplicate_idempotent=${directControl.duplicateDeliveryWasIdempotent}",

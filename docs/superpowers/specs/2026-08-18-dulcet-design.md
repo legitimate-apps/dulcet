@@ -1734,8 +1734,15 @@ to the cold body, byte for byte. `PlaybackContentLength.Estimated` remains a dis
 `PlaybackContentLength.Exact`, and no validator, download promoter, or platform media loader may
 collapse the two into one numeric "expected length"; nothing in production produces an `Estimated`
 since §28 2026-10-04, and where one is still branched on it is never accepted as the length of a
-short body. A network drop part-way through a transcode is therefore a failure on every platform,
-not an early end. The core's Ktor read path for estimated bodies and the Darwin delegate's
+body short of it. A network drop part-way through a response that declares a length is therefore
+a failure on every platform, not an early end. A cold transcode now declares none and arrives
+chunked, so a cut-off there is caught only by the chunk framing, and per platform: **OBSERVED
+2026-10-04** (#227 review, real socket) Android's data source fails both a close mid-chunk and a
+close after a whole chunk with no terminating chunk ("Premature EOF"); the core's JVM client (Ktor
+CIO) fails a close mid-chunk but **loads** a close at a chunk boundary as the whole song, the same as
+before #227. That path is `PlaybackWireClient.load` (CONF-92, the core controls), not a shipping
+player. **ASSUMED, not measured:** the Apple URLSession loader and the Darwin core client. The
+core's Ktor read path for estimated bodies and the Darwin delegate's
 end-of-estimate rewrite (§28, 2026-09-30 and 2026-10-01) act only on a request that asks for an
 estimate, so neither acts now. **OBSERVED 2026-10-01 on macOS** (loopback fixture,
 `DarwinEstimatedLengthBodyTest`): when the end of the stream follows body bytes closely, NSURLSession
@@ -7414,8 +7421,8 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**2026-10-04 — No Dulcet request asks for an estimated length, so no client takes a cut-off cold
-transcode for the whole song (§12.5, §14.5).** The entry below fixed the Apple loader only. The core
+**2026-10-04 — No Dulcet request asks for an estimated length, so no declared length is short of
+the song (§12.5, §14.5).** The entry below fixed the Apple loader only. The core
 plan itself (`resolveLegacy`) no longer adds `estimateContentLength`, so no client sends it: the
 core's own client (`PlaybackWireClient.load`, which CONF-92 and the core controls drive), Android's
 data source (`AndroidHttpPlaybackResource`) and the Apple loader, which now sends the plan's request
@@ -7430,14 +7437,18 @@ as it is. Every declared length a playback client reads is exact:
   before the change. ASSUMED, not measured: on a device, Android's own `HttpURLConnection` may
   already throw on a short fixed-length body. Either way the length is now exact, and the short body
   fails. Seeking does not change: a transcoded stream was already `NotSeekable`, and an estimate was
-  never passed to Media3 as a length.
+  never passed to Media3 as a length. A warm (cached) transcode's declared length now reaches Media3
+  as exact, where an estimated one reached it as `LENGTH_UNSET`.
 - **Downloads** were never exposed. A download is the original file (`format=raw`), which never
   asked for an estimate, and both promoters received exact lengths only (derived from the code:
   `asOriginalFileDownload` refuses a transcoded plan). The promoter's rule for an `Estimated` length
   stays, and nothing produces one.
-- **Apple.** `validateAppleRangeAndTotalLength` now refuses a short body under an `Estimated` length
-  instead of accepting it. Nothing on that path produces one (#225 review item 3).
+- **Apple.** `validateAppleRangeAndTotalLength` now refuses any body under an `Estimated` length,
+  short or not, instead of accepting a short one. Nothing on that path produces one (#225 review item 3).
 
+Not closed: a cold transcode now arrives chunked, and the core's JVM client (Ktor CIO) still loads
+a chunked body cut off at a chunk boundary as the whole song (OBSERVED in #227's review; Android
+fails it; Apple not measured). §12.5 records the per-platform state.
 Not removed: the core's Ktor read path for estimated bodies and the Darwin delegate's end-of-estimate
 rewrite. Both act only on a request that asks for an estimate, so neither acts now. They are a
 follow-up to remove as one change. Tests that failed before the change and pass after it:

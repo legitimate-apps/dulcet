@@ -15,10 +15,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Spec §12.5, §28 2026-10-04, through the core's own client (downloads' resolver, CONF-92) and the
- * real HTTP stack against a real socket. OBSERVED against Navidrome 0.63.2 with an empty transcoding
- * cache: asked for an estimate, "Dulcet Health Probe" at 96 kbps declared 24,576 bytes for a
- * 24,639-byte body, refused the write that would cross the declaration and closed after 23,385
+ * Spec §12.5, §28 2026-10-04, through the core's own client (`load`: CONF-92 and the core
+ * controls) and the real HTTP stack against a real socket. OBSERVED against Navidrome 0.63.2 with
+ * an empty transcoding cache: asked for an estimate, "Dulcet Health Probe" at 96 kbps declared
+ * 24,576 bytes for a 24,639-byte body, refused the write that would cross the declaration and closed after 23,385
  * bytes. This server replays that answer to whatever request arrives, so it shows what the client
  * makes of it; without the flag Navidrome sends the whole body chunked, which the control replays.
  */
