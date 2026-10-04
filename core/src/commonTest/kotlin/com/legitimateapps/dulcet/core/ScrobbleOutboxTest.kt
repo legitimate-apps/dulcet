@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -352,11 +353,14 @@ class ScrobbleOutboxTest {
         val loop = retryLoop(fixture, transport, clock)
 
         loop.drainNow()
+        assertEquals(1, loop.liveTimers)
         advanceTimeBy(400)
         loop.drainNow() // a new play, a foreground: another trigger inside the wait
+        assertEquals(1, loop.liveTimers, "The earlier timer was replaced, not joined by a second")
         advanceTimeBy(400)
         loop.drainNow()
         runCurrent()
+        assertEquals(1, loop.liveTimers, "Still one live timer after a third trigger")
         assertEquals(1, transport.times.size, "The wait still holds")
 
         advanceTimeBy(200)
@@ -365,6 +369,50 @@ class ScrobbleOutboxTest {
         advanceTimeBy(10.minutes.inWholeMilliseconds)
         runCurrent()
         assertEquals(2, transport.times.size)
+        assertEquals(0, loop.liveTimers, "Nothing is left armed once the play is acknowledged")
+        fixture.close()
+    }
+
+    @Test
+    fun aClosedLoopIsNotRevivedByADrainThatWasInFlightWhenItClosed() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }
+        val gate = kotlinx.coroutines.CompletableDeferred<AuthenticatedEndpointResponse>()
+        var requests = 0
+        val transport = object : ScrobbleEndpointTransport {
+            override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                requests += 1
+                return gate.await()
+            }
+        }
+        fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
+        val worker = ScrobbleOutboxDeliveryWorker(
+            serverId = SERVER_ID,
+            outbox = fixture.outbox,
+            sender = ScrobbleEndpointSender(transport),
+            wallClock = fixture.wallClock,
+            monotonicClock = clock,
+            diagnosticSink = fixture.diagnostics,
+        )
+        var drains = 0
+        val loop = ScrobbleOutboxRetryLoop(backgroundScope, { worker.onForeground() }, onDrained = { drains += 1 })
+
+        val inFlight = backgroundScope.launch { loop.drainNow() }
+        runCurrent()
+        assertEquals(1, requests, "The drain is suspended inside the send")
+
+        loop.cancel() // the account was reconfigured: this loop and its sender are retired
+        gate.complete(errorResponse()) // the closed client's send fails
+        runCurrent()
+        assertTrue(inFlight.isCompleted)
+        assertEquals(0, loop.liveTimers, "A drain that finished after cancel armed no timer")
+
+        advanceTimeBy(1.days.inWholeMilliseconds)
+        runCurrent()
+        assertEquals(1, requests, "The closed loop sends nothing more")
+        loop.drainNow()
+        assertEquals(1, requests, "Nor does a trigger that reaches it later")
+        assertEquals(1, fixture.outbox.pending(SERVER_ID).single().attemptCount, "No failed attempt is added to rows the new worker shares")
         fixture.close()
     }
 

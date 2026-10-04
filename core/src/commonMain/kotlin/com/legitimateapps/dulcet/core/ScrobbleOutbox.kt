@@ -316,8 +316,24 @@ internal class ScrobbleOutboxRetryLoop(
 ) {
     private var timer: Job? = null
     private var consecutiveFailures = 0L
+    private var closed = false
+
+    private class ArmedTimer { var job: Job? = null; var fired = false }
+    private val armed = mutableListOf<ArmedTimer>()
+
+    /**
+     * Timers armed and neither fired nor cancelled: a test hook. A second live timer is a stacked
+     * one (two retries for one wait), which no request count can show, because the duplicates fire
+     * together and find the row sent or the worker gated.
+     */
+    internal val liveTimers: Int
+        get() {
+            armed.removeAll { it.fired || it.job?.isActive != true }
+            return armed.size
+        }
 
     suspend fun drainNow() {
+        if (closed) return
         val wait = try {
             val result = drain()
             consecutiveFailures = 0
@@ -330,17 +346,26 @@ internal class ScrobbleOutboxRetryLoop(
             onFailed()
             retryBackoff(consecutiveFailures)
         }
+        // A drain suspended in a send when cancel() ran finishes here, on a scope that is still
+        // alive: without this check its failure would re-arm the loop that was just closed.
+        if (closed) return
         timer?.cancel()
         timer = wait?.let { delayFor ->
+            armed.removeAll { it.fired || it.job?.isActive != true }
+            val entry = ArmedTimer()
+            armed += entry
             scope.launch {
                 delay(delayFor)
+                entry.fired = true
                 timer = null
                 drainNow()
-            }
+            }.also { entry.job = it }
         }
     }
 
+    /** Ends the loop for good: no timer is armed again, and a drain still in flight arms none. */
     fun cancel() {
+        closed = true
         timer?.cancel()
         timer = null
     }
