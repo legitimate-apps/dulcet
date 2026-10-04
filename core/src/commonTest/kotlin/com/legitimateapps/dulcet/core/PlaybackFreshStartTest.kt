@@ -120,6 +120,147 @@ class PlaybackFreshStartTest {
         rig.close()
     }
 
+    /**
+     * An engine teardown (the system reclaiming the player, say) ends the session but not the
+     * listen: the entry stays selected with no session, and Play there goes through
+     * `startCurrent`. It is the same listen picked up again, so it resumes where it was cut off.
+     */
+    @Test
+    fun playAfterAnEngineTeardownResumesTheListenItInterrupted() {
+        val rig = Rig()
+        val started = rig.controller.replaceAndStart(rig.album)
+        rig.apply(started.effects)
+        val attempt = assertNotNull(started.startDirective).attemptId
+        rig.listen(attempt, from = Duration.ZERO, pausedAt = 9.seconds)
+        rig.apply(
+            rig.controller.recordPlaybackEvent(
+                PlaybackEngineEvent.EngineTornDown(attempt, PlaybackEngineTeardownReason.SystemReclaimed),
+            ).effects,
+        )
+        assertNull(rig.controller.snapshot().currentSession, "the control requires the teardown to end the session")
+        assertEquals(9.seconds, rig.store.restore(rig.item("twenty-nine")), "the control requires the teardown to keep 9 s")
+
+        val played = rig.controller.startCurrent()
+        rig.apply(played.effects)
+        val directive = assertNotNull(played.startDirective)
+        assertEquals("twenty-nine", directive.itemId.rawId)
+        assertEquals(9.seconds, directive.resumePosition, "Play resumes the interrupted listen")
+        assertEquals(9.seconds, rig.store.restore(rig.item("twenty-nine")), "and keeps its saved position")
+        rig.close()
+    }
+
+    /** A queue that ran out keeps its last entry selected; Play replays it from the top (§14.3). */
+    @Test
+    fun playAfterTheQueueRanOutStartsTheLastTrackFromTheTop() {
+        val rig = Rig()
+        val started = rig.controller.replaceAndStart(rig.album.copy(startIndex = 2))
+        rig.apply(started.effects)
+        val attempt = assertNotNull(started.startDirective).attemptId
+        rig.listen(attempt, from = Duration.ZERO, pausedAt = 12.seconds, rawId = "canary")
+        rig.controller.recordPlaybackEvent(PlaybackEngineEvent.Resumed(attempt, 12.seconds)).also { rig.apply(it.effects) }
+        val ended = rig.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(attempt, 30.seconds))
+        rig.apply(ended.effects)
+        assertNull(ended.startDirective, "the control requires the queue to have run out")
+        assertNull(ended.snapshot.currentSession)
+
+        val played = rig.controller.startCurrent()
+        rig.apply(played.effects)
+        val directive = assertNotNull(played.startDirective)
+        assertEquals("canary", directive.itemId.rawId)
+        assertNull(directive.resumePosition, "Play after the last track replays it from the start")
+        assertNull(rig.store.restore(rig.item("canary")))
+        rig.close()
+    }
+
+    /**
+     * Next past the last entry and Previous before the first one finish the queue too, with the
+     * listen cut off part way. The person moved on from it, so Play there replays the entry from
+     * the top -- as after any other finished queue -- and a relaunch cannot bring the position back.
+     */
+    @Test
+    fun playAfterNextOrPreviousRanOffTheQueueStartsTheEntryFromTheTop() {
+        for (step in listOf("next", "previous")) {
+            val rig = Rig()
+            val startIndex = if (step == "next") 2 else 0
+            val rawId = if (step == "next") "canary" else "twenty-nine"
+            val started = rig.controller.replaceAndStart(rig.album.copy(startIndex = startIndex))
+            rig.apply(started.effects)
+            rig.listen(assertNotNull(started.startDirective).attemptId, Duration.ZERO, 12.seconds, rawId)
+
+            val finished = if (step == "next") rig.controller.next() else rig.controller.previous()
+            rig.apply(finished.effects)
+            assertNull(finished.startDirective, "$step: the control requires the queue to have finished")
+            assertNull(finished.snapshot.currentSession, "$step: the control requires no session")
+            assertNull(rig.store.restore(rig.item(rawId)), "$step: the finished queue keeps no position")
+
+            val played = rig.controller.startCurrent()
+            rig.apply(played.effects)
+            val directive = assertNotNull(played.startDirective)
+            assertEquals(rawId, directive.itemId.rawId)
+            assertNull(directive.resumePosition, "$step: Play replays the entry from the top")
+            rig.close()
+        }
+    }
+
+    /**
+     * The outgoing session writes its position first, and the fresh start clears it after: a live
+     * paused session on an item, then a new queue that starts with that same item, leaves nothing
+     * saved. In the other order the outgoing write would land last and survive the fresh start.
+     */
+    @Test
+    fun aFreshStartOfTheItemAlreadyPlayingClearsAfterTheOutgoingSessionsOwnWrite() {
+        val rig = Rig()
+        val first = rig.controller.replaceAndStart(rig.album)
+        rig.apply(first.effects)
+        rig.listen(assertNotNull(first.startDirective).attemptId, from = Duration.ZERO, pausedAt = 9.seconds)
+
+        val again = rig.controller.replaceAndStart(rig.album)
+        val twentyNine = rig.item("twenty-nine")
+        assertEquals(
+            listOf<PlaybackCoreEffect>(
+                PlaybackCoreEffect.PersistResumePosition(twentyNine, 9.seconds),
+                PlaybackCoreEffect.ClearResumePosition(twentyNine),
+            ),
+            again.effects.filter {
+                it is PlaybackCoreEffect.PersistResumePosition || it is PlaybackCoreEffect.ClearResumePosition
+            },
+            "the outgoing session's write, then the fresh start's clear",
+        )
+        rig.apply(again.effects)
+        assertNull(assertNotNull(again.startDirective).resumePosition)
+        assertNull(rig.store.restore(twentyNine), "nothing of the outgoing listen survives the fresh start")
+        rig.relaunch()
+        assertNull(assertNotNull(rig.controller.restoreCurrentPaused().startDirective).resumePosition)
+        rig.close()
+    }
+
+    /** Try Again after a failure part way through resumes from where the failure stopped (§12.1). */
+    @Test
+    fun tryAgainAfterAFailurePartWayThroughResumesWhereItFailed() {
+        val rig = Rig()
+        val started = rig.controller.replaceAndStart(rig.album)
+        rig.apply(started.effects)
+        val attempt = assertNotNull(started.startDirective).attemptId
+        rig.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.Ready(attempt, 29.seconds, PlaybackSeekability.Seekable),
+        ).also { rig.apply(it.effects) }
+        rig.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.PlaybackProgressBegan(attempt, WALL_CLOCK, Duration.ZERO),
+        ).also { rig.apply(it.effects) }
+        val failed = rig.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.FailedAfterPartial(attempt, 10.seconds, DomainError.Transport.Unreachable),
+        )
+        rig.apply(failed.effects)
+        assertNull(failed.startDirective, "the control requires a connection failure to stay on the entry")
+
+        val retried = rig.controller.retryCurrent()
+        rig.apply(retried.effects)
+        val directive = assertNotNull(retried.startDirective)
+        assertEquals("twenty-nine", directive.itemId.rawId)
+        assertEquals(10.seconds, directive.resumePosition, "Try Again resumes the listen the failure cut off")
+        rig.close()
+    }
+
     private class Rig {
         private val driver: SqlDriver = createTestDriver()
         private val database = DulcetDatabaseStore.open(driver).database
@@ -157,7 +298,7 @@ class PlaybackFreshStartTest {
             controller = newController()
         }
 
-        fun listen(attemptId: AttemptId, from: Duration, pausedAt: Duration) {
+        fun listen(attemptId: AttemptId, from: Duration, pausedAt: Duration, rawId: String = "twenty-nine") {
             controller.recordPlaybackEvent(
                 PlaybackEngineEvent.Ready(attemptId, 29.seconds, PlaybackSeekability.Seekable),
             ).also { apply(it.effects) }
@@ -166,7 +307,7 @@ class PlaybackFreshStartTest {
             ).also { apply(it.effects) }
             controller.recordPlaybackEvent(PlaybackEngineEvent.Paused(attemptId, pausedAt))
                 .also { apply(it.effects) }
-            assertEquals(pausedAt, store.restore(item("twenty-nine")), "the pause saved its position")
+            assertEquals(pausedAt, store.restore(item(rawId)), "the pause saved its position")
         }
 
         /** The resume-position half of what an owner does with a transition's effects, in order. */

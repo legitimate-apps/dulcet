@@ -3173,13 +3173,19 @@ implied.
 **v1 scope: local only.** `resume_position` is written on pause, on `FailedAfterPartial`, on session
 finalization, and on a 30-second cadence while progressing. It resumes **the listen it was saved
 from**, and nothing else: restored for the relaunch's paused current entry (§18.10), for Play after a
-stop of the selected entry, and when Try Again retries a partial failure (§12.1) -- unless that
-failure came at or past the end, where Try Again replays the track from the start and the saved
-position is cleared. **Every other start plays the item from the top and clears its saved position**:
-Play on an album, playlist, track or search result, Next, Previous, an Up Next tap, an automatic
-advance or skip, repeat-one. The clear follows the outgoing session's own write, so a relaunch before
-the new session saves anything restores the new listen, not the old one. Also cleared on
-`EndedNaturally` and on a submitted play that reached the end. It is protected data (§11.4).
+stop of the selected entry, for Play on the selected entry after an engine teardown ended its session
+(`EngineTornDown`; the entry stays selected with no session), and when Try Again retries a partial
+failure (§12.1) -- unless that failure came at or past the end, where Try Again replays the track from
+the start and the saved position is cleared. **Every other start plays the item from the top and
+clears its saved position**: Play on an album, playlist, track or search result, Next, Previous --
+including a Previous that restarts the current entry as a new session rather than seeking it, and
+Previous with no session -- an Up Next tap, an automatic advance or skip. The clear follows the
+outgoing session's own write, so a relaunch before the new session saves anything restores the new
+listen, not the old one. Repeat-one plays from the top too; the natural end before it has already
+cleared the position. Also cleared on `EndedNaturally`, on a submitted play that reached the end, and
+when Next past the last entry or Previous before the first finishes the queue part way through a
+listen. A finished queue therefore keeps no position for its selected entry, and Play there replays
+that entry from the start (§14.3). It is protected data (§11.4).
 
 **Server-side bookmarks (`getBookmarks` / `createBookmark` / `deleteBookmark`) are not implemented in
 v1**, so cross-device resume is not a v1 feature and is not claimed. This is stated explicitly because
@@ -7443,7 +7449,14 @@ belongs to the interrupted listen -- the relaunch's paused current entry, Play a
 after a partial failure -- and every other start plays from the top and clears the item's saved
 position. §1.3's long files still resume across a relaunch and a stop; picking one again from the
 library starts it over, the ordinary-song behaviour §18.7 promises. `PlaybackFreshStartTest`
-(core, every platform) carries the chain red to green.
+(core, every platform) carries the chain red to green. Review of the change added three cases, each
+shown failing without its fix (OBSERVED, `PlaybackFreshStartTest`, `AndroidPlaybackControllerTest`,
+`ApplePlaybackQueueFacadeTest`): Play with no session after an engine teardown resumes the listen the
+teardown cut off (the change's first version started it from the top); Next past the last entry or Previous
+before the first, which finish the queue, clear the position, so Play on the finished queue still
+replays from the start; and a Previous that restarts the entry -- Android's on an unseekable first
+entry, Apple's with no session -- plays from the top and clears it, through a non-resuming restart
+(`replayCurrent`) distinct from Play after a stop's (`restartCurrent`).
 
 **2026-10-04 — No Dulcet request asks for an estimated length, so no declared length is short of
 the song (§12.5, §14.5).** The entry below fixed the Apple loader only. The core

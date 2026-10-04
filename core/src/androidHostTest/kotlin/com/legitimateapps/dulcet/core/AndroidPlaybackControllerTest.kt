@@ -1294,6 +1294,46 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * Previous on the first entry of a stream that cannot seek restarts it from the top, as a seek
+     * to zero does on one that can: the new session carries no resume position, and the saved one
+     * is cleared after the outgoing session's own write, so a relaunch cannot bring it back
+     * (spec §15.5). Play after a stop is the restart that resumes; Previous is not.
+     */
+    @Test fun previousRestartingAnUnseekableFirstEntryClearsItsSavedPosition() {
+        Fixture().use { f ->
+            // As ExoPlayer does: the engine's stop clears the player's items, after which it is at
+            // 0, and the restarted item's paused preparation reports no play-when-ready change.
+            // So nothing of the new session writes a position before the assertion below.
+            f.probe.onClearMediaItems = { f.probe.position = 0 }
+            f.probe.reportsUnchangedPlayWhenReady = false
+            val positions = PersistentResumePositionStore(f.store.database)
+            val item = ProviderItemId(OWNER, "a")
+            f.controller.playQueue(album("a"), 0, AndroidQueueSource.Album, "Album", "album-id")
+            f.probe.seekable = false
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            f.probe.position = 10_000
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600))
+            assertEquals("Progressing", f.controller.state.value.phase, "The control requires a to have progressed")
+            assertFalse(f.controller.state.value.seekable, "The control requires a stream that cannot seek")
+            positions.save(item, 10.seconds)
+            assertEquals(10.seconds, positions.restore(item), "The control requires a saved position to clear")
+
+            f.controller.skipToPrevious()
+            assertNull(positions.restore(item), "Previous restarts from the top and keeps no saved position")
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf("a", "a"), f.prepared.map { it.itemId.rawId },
+                "The control requires Previous to restart a as a new session")
+            f.probe.state = androidx.media3.common.Player.STATE_READY
+            f.probe.events()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(emptyList(), f.probe.seekCommands, "Nothing seeks the restarted stream")
+            assertTrue(positions.restore(item).let { it == null || it == kotlin.time.Duration.ZERO },
+                "Only the new session's own position from its start may be saved: ${positions.restore(item)}")
+        }
+    }
+
     @Test fun everySystemSeekVerbGoesThroughTheController() {
         Fixture().use { f ->
             f.controller.playQueue(album("a"), 0, AndroidQueueSource.Album, "Album", "album-id")

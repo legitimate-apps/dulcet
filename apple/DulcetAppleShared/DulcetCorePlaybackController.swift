@@ -292,11 +292,17 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     func send(_ intent: DulcetPlaybackControlIntent) {
         guard let snapshot = queueClient.snapshot().snapshot else { return }
         guard let session = snapshot.currentSession else {
-            // A finished queue keeps its last entry selected with no session (spec §14.3).
-            // Play -- or Previous, which in Music replays -- starts it again as a new session.
+            // A finished queue keeps its last entry selected with no session (spec §14.3), and so
+            // does an engine teardown. Play starts it again as a new session, resuming the listen
+            // a teardown cut off (a finished queue keeps no position to resume, spec §15.5).
+            // Previous, which in Music replays, restarts it from the top instead.
             switch intent {
-            case .play, .toggle, .previous:
+            case .play, .toggle:
                 let transition = queueClient.startCurrent()
+                guard transition.errorKind == nil else { return publishFailure() }
+                start(transition.startDirective)
+            case .previous:
+                let transition = queueClient.replayCurrent()
                 guard transition.errorKind == nil else { return publishFailure() }
                 start(transition.startDirective)
             case .next:
@@ -401,7 +407,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     /// Play after a stop: the selected entry again, as a new session (spec §12.1), resuming where
-    /// the stop saved its position as every start does. The core decides; a session that was not
+    /// the stop saved its position -- the same listen picked up again, one of the few starts that
+    /// resume (spec §15.5). The core decides; a session that was not
     /// stopped -- one that ended naturally, above all one whose end is held for a preload -- has
     /// nothing to restart. Returns whether this handled the Play.
     private func restartStoppedEntry() -> Bool {

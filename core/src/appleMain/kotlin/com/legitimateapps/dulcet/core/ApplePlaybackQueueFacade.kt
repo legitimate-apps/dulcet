@@ -363,8 +363,22 @@ public class ApplePlaybackQueueClient private constructor(
         transition
     }
 
+    /**
+     * Play with no session (§15.5): after an engine teardown it resumes the listen the teardown
+     * cut off; after a finished queue, whose last entry keeps no saved position, it replays that
+     * entry from the start. See [PlaybackQueueController.startCurrent].
+     */
     public fun startCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().startCurrent()
+    }
+
+    /**
+     * Previous with no session: the selected entry again from the top, as a new session, clearing
+     * its saved position (§15.5) -- a restart, not the resumption Play makes ([startCurrent]).
+     * With no active queue it changes nothing.
+     */
+    public fun replayCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().replayCurrent()
     }
 
     /**
@@ -381,9 +395,10 @@ public class ApplePlaybackQueueClient private constructor(
      * Play after a stop (§12.1): the current attempt was stopped (`Skipped`), the engine's stop
      * removed its item, and a play addressed to it would reach nothing. The selected entry starts
      * again as a new session, as Android's Play after Stop does, through the same core restart
-     * ([PlaybackQueueController.restartAfterStop]); a position the stop saved is restored as it is
-     * for any start. A session that ended naturally -- including one whose end is held while a
-     * preload takes over -- or is live, failed (that is [retryCurrent]) or absent changes nothing.
+     * ([PlaybackQueueController.restartAfterStop]); it resumes from the position the stop saved,
+     * the same listen picked up again (§15.5). A session that ended naturally -- including one
+     * whose end is held while a preload takes over -- or is live, failed (that is [retryCurrent])
+     * or absent changes nothing.
      */
     public fun restartStoppedCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().restartAfterStop()
