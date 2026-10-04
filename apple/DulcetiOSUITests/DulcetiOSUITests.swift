@@ -2114,8 +2114,17 @@ final class DulcetiOSUITests: XCTestCase {
         }
         if (field.value(forKey: "hasKeyboardFocus") as? Bool) != true { field.tap() }
         field.typeText(name)
-        guard (field.value as? String) == name else {
-            XCTFail("The name field must hold exactly the new name; value=\(String(describing: field.value))")
+        // typeText can return before the app's field model has every character: OBSERVED in CI run
+        // 37166450657 (iPad), where the check read a short value and the failure message, read a
+        // second later, the whole name. Poll one snapshot at a time, briefly.
+        var typed = (try? field.snapshot())?.value as? String
+        let typedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while typed != name, ContinuousClock.now < typedDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            typed = (try? field.snapshot())?.value as? String
+        }
+        guard typed == name else {
+            XCTFail("The name field must hold exactly the new name; value=\(String(describing: typed))")
             return false
         }
         alert.buttons[confirm].firstMatch.tap()
