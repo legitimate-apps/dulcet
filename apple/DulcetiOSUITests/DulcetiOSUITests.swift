@@ -1790,9 +1790,19 @@ final class DulcetiOSUITests: XCTestCase {
     /// 5. reorder: "UI Playback Canary" dragged by its handle from third to first;
     /// 6. rename: Rename… in the page's menu;
     /// 7. delete: Delete Playlist in the page's menu, confirmed -- gone from the server and the list;
-    /// 8. a failed edit: a second playlist, made over `/rest` for this run, is opened, then deleted
-    ///    on the server as another client would; a rename made on its page cannot be saved, the
-    ///    page says so, and no playlist of the new name reaches the server.
+    /// 8. a failed edit the server reports: a second playlist, made over `/rest` for this run, is
+    ///    opened and its page's own read lands (Edit is enabled), then it is deleted on the server
+    ///    as another client would; a rename made on its page is sent, cannot be saved, the page
+    ///    says so, and no playlist of the new name reaches the server;
+    /// 9. a failed edit the page already knows: a third playlist is opened with its page's read
+    ///    held at the fault proxy; the rename prompt is opened, the playlist is deleted on the
+    ///    server, and only then is the read released, so the page learns the playlist is gone
+    ///    while the person is typing (the order CI met by chance once). The core refuses the
+    ///    rename before anything is sent; the page must still say so, under its statement that
+    ///    the playlist is no longer on the server, and nothing of the new name reaches the server.
+    ///
+    /// The app reaches the server through the fault proxy for the whole proof; the proxy forwards
+    /// every request unchanged except the one read step 9 holds.
     ///
     /// Every name carries this run's own suffix, and whatever the run made is deleted afterwards,
     /// pass or fail. The test fails on the other device class, so an iPhone run cannot stand as
@@ -1801,7 +1811,8 @@ final class DulcetiOSUITests: XCTestCase {
     private func provePlaylistEditsReachTheServer(compact expectedCompact: Bool) {
         guard requireSimulator(expectedCompact ? .phone : .pad,
                                "The playlist edits proof on \(expectedCompact ? "iPhone" : "iPad")"),
-              let configuration = livePlaybackConfiguration() else { return }
+              let configuration = livePlaybackConfiguration(),
+              let proxy = lyricsFaultProxyConfiguration(server: configuration) else { return }
         let album = "Threshold Boundary"
         let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
         let run = String(UUID().uuidString.prefix(8))
@@ -1809,6 +1820,8 @@ final class DulcetiOSUITests: XCTestCase {
         let renamed = name + " Renamed"
         let doomed = "Dulcet Failed Edit Proof " + run
         let doomedRenamed = doomed + " Renamed"
+        let known = "Dulcet Known Gone Proof " + run
+        let knownRenamed = known + " Renamed"
         afterTest.append { [configuration] in
             for playlist in self.serverPlaylists(configuration: configuration) ?? [] where playlist.name.contains(run) {
                 _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlist.id)], configuration: configuration)
@@ -1821,7 +1834,14 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The failed-edit playlist could not be made on the disposable server")
             return
         }
-        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
+        guard let knownID = (restCall("createPlaylist", [
+                  URLQueryItem(name: "name", value: known), URLQueryItem(name: "songId", value: canaryID),
+              ], configuration: configuration)?["playlist"] as? [String: Any])?["id"] as? String else {
+            XCTFail("The known-gone playlist could not be made on the disposable server")
+            return
+        }
+        afterTest.append { [proxy] in _ = self.proxyPlaylistHold(knownID, on: false, proxy: proxy) }
+        guard let app = launchConnected(serverURL: proxy.url, configuration: configuration, compact: expectedCompact),
               openLibraryPlaylists(in: app, compact: expectedCompact) else { return }
 
         // 1. Create.
@@ -1896,8 +1916,15 @@ final class DulcetiOSUITests: XCTestCase {
             .matching(NSPredicate(format: "label BEGINSWITH %@", renamed)).firstMatch
         XCTAssertFalse(gone.waitForExistence(timeout: 3) && gone.isHittable, "The list must no longer show the deleted playlist")
 
-        // 8. A failed edit: the playlist is deleted elsewhere while its page is open.
+        // 8. A failed edit the server reports: the playlist is deleted elsewhere after its page has
+        // read it, so the rename is sent. Edit is enabled once the page's own read has its entries;
+        // deleting before that would leave the order to chance (step 9 drives the other order).
         guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(doomed, in: app) else { return }
+        let doomedEdit = app.buttons["dulcet.playlist.edit"].firstMatch
+        guard doomedEdit.waitForExistence(timeout: 10), waitForEnabled(doomedEdit, timeout: 30) else {
+            XCTFail("The page must read the playlist before the other client deletes it: " + app.debugDescription)
+            return
+        }
         guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: doomedID)], configuration: configuration) != nil,
               awaitServerPlaylistAbsent(doomedID, configuration: configuration) else {
             XCTFail("The other client's delete must reach the server first")
@@ -1910,10 +1937,58 @@ final class DulcetiOSUITests: XCTestCase {
         let problemText = problem.exists ? problem.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ") : "<none>"
         XCTAssertFalse((serverPlaylists(configuration: configuration) ?? []).contains { $0.name == doomedRenamed },
             "The failed rename must not reach the server under any id")
+
+        // 9. A failed edit the page already knows: its read is held until the playlist is gone
+        // from the server and the rename prompt is open, then released.
+        guard let armed = proxyPlaylistHold(knownID, on: true, proxy: proxy), armed.holding else {
+            XCTFail("The fault proxy must hold the playlist's read")
+            return
+        }
+        guard openLibraryPlaylists(in: app, compact: expectedCompact), openPlaylistRow(known, in: app) else { return }
+        guard let heldRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 15, until: { $0.held >= 1 }) else {
+            XCTFail("The page must have asked for the playlist, and the proxy must be holding that read")
+            return
+        }
+        guard openRenamePrompt(in: app) else { return }
+        guard restCall("deletePlaylist", [URLQueryItem(name: "id", value: knownID)], configuration: configuration) != nil,
+              awaitServerPlaylistAbsent(knownID, configuration: configuration) else {
+            XCTFail("The other client's delete must reach the server before the held read")
+            return
+        }
+        guard proxyPlaylistHold(knownID, on: false, proxy: proxy) != nil,
+              let releasedRead = awaitPlaylistObservations(knownID, proxy: proxy, timeout: 10, until: { $0.released >= 1 }) else {
+            XCTFail("The held read must be released to the server")
+            return
+        }
+        // The page says the playlist is gone before the rename is confirmed: the order is met,
+        // not assumed.
+        let statement = app.descendants(matching: .any)["dulcet.reader.unavailable"].firstMatch
+        XCTAssertTrue(statement.waitForExistence(timeout: 20),
+            "The released read must tell the page the playlist is gone, under the open prompt: " + app.debugDescription)
+        guard submitNamePrompt(knownRenamed, confirm: "Rename", in: app) else { return }
+        let knownProblem = app.descendants(matching: .any)["dulcet.playlist.problem"].firstMatch
+        XCTAssertTrue(knownProblem.waitForExistence(timeout: 15),
+            "A rename refused because the playlist is gone must be said on the playlist's page: " + app.debugDescription)
+        let knownText = knownProblem.exists
+            ? knownProblem.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ") : "<none>"
+        XCTAssertTrue(knownText.contains("deleted"), "The page must say the playlist is gone; says \(knownText.debugDescription)")
+        // Still there after the notice has gone (the notice lasts four seconds), and reachable.
+        RunLoop.current.run(until: Date().addingTimeInterval(6))
+        attachScreenshot(named: "playlist-known-gone-problem-\(expectedCompact ? "compact" : "regular")", app: app)
+        let dismiss = knownProblem.buttons["OK"].firstMatch
+        XCTAssertTrue(knownProblem.exists && dismiss.exists && dismiss.isHittable,
+            "The page's problem must outlast the notice and be reachable: " + app.debugDescription)
+        XCTAssertTrue(statement.exists, "The page must still say the playlist is no longer on the server")
+        XCTAssertFalse(app.buttons["dulcet.playlist.play"].exists,
+            "A gone playlist's page offers nothing to play: " + app.debugDescription)
+        XCTAssertFalse((serverPlaylists(configuration: configuration) ?? []).contains { $0.name == knownRenamed },
+            "The refused rename must not reach the server under any id")
         print("DULCET PLAYLIST EDITS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " window-width=\(Int(app.windows.firstMatch.frame.width)) created=\(name.debugDescription)"
             + " album-added=\(albumOrder.count) track-added=1 removed-index=3 reordered=\(reordered) renamed=true deleted=true"
-            + " failed-rename-problem=\(problemText.debugDescription)")
+            + " failed-rename-problem=\(problemText.debugDescription)"
+            + " known-gone-held=\(heldRead.held) released=\(releasedRead.released) timed-out=\(releasedRead.timedOut)"
+            + " known-gone-problem=\(knownText.debugDescription)")
     }
 
     /// The library place that shows album tiles: Library on a phone, Albums in the sidebar on a
@@ -2039,8 +2114,17 @@ final class DulcetiOSUITests: XCTestCase {
         }
         if (field.value(forKey: "hasKeyboardFocus") as? Bool) != true { field.tap() }
         field.typeText(name)
-        guard (field.value as? String) == name else {
-            XCTFail("The name field must hold exactly the new name; value=\(String(describing: field.value))")
+        // typeText can return before the app's field model has every character: OBSERVED in CI run
+        // 37166450657 (iPad), where the check read a short value and the failure message, read a
+        // second later, the whole name. Poll one snapshot at a time, briefly.
+        var typed = (try? field.snapshot())?.value as? String
+        let typedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while typed != name, ContinuousClock.now < typedDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            typed = (try? field.snapshot())?.value as? String
+        }
+        guard typed == name else {
+            XCTFail("The name field must hold exactly the new name; value=\(String(describing: typed))")
             return false
         }
         alert.buttons[confirm].firstMatch.tap()
@@ -2050,6 +2134,12 @@ final class DulcetiOSUITests: XCTestCase {
     /// Rename… from the playlist page's menu, and the new name confirmed.
     @MainActor
     private func renamePlaylist(to name: String, in app: XCUIApplication) -> Bool {
+        openRenamePrompt(in: app) && submitNamePrompt(name, confirm: "Rename", in: app)
+    }
+
+    /// Rename… from the playlist page's menu, leaving its prompt open.
+    @MainActor
+    private func openRenamePrompt(in app: XCUIApplication) -> Bool {
         let more = app.buttons["dulcet.playlist.more"].firstMatch
         guard more.waitForExistence(timeout: 10) else {
             XCTFail("The person's own playlist must offer its menu: " + app.debugDescription)
@@ -2062,7 +2152,11 @@ final class DulcetiOSUITests: XCTestCase {
             return false
         }
         rename.tap()
-        return submitNamePrompt(name, confirm: "Rename", in: app)
+        guard app.alerts.firstMatch.waitForExistence(timeout: 5) else {
+            XCTFail("Rename… must open its prompt: " + app.debugDescription)
+            return false
+        }
+        return true
     }
 
     /// Delete Playlist from the page's menu, confirmed; the page closes.
@@ -2456,8 +2550,11 @@ final class DulcetiOSUITests: XCTestCase {
         repeat {
             if failure.exists { failed = "failure shown: \(failure.label)"; break }
             if skipNotice.exists { failed = "skip notice: \(skipNotice.label)"; break }
-            let progress = sliderProgress.exists ? sliderProgress : barProgress
-            if progress.exists, let value = progress.value as? String {
+            // One snapshot each, whose failure is thrown rather than recorded: the progress view
+            // can be redrawn between an `exists` check and a `value` read. That failed this proof
+            // with "Failed to get matching snapshot" (CI run 37142156762, iPhone).
+            let progress = (try? sliderProgress.snapshot()) ?? (try? barProgress.snapshot())
+            if let value = progress?.value as? String {
                 lastValue = value
                 if let sample = playbackProgressSample(from: value), sample.elapsed > 0 {
                     started = "media-time \(value)"
@@ -2762,6 +2859,43 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         return LyricsFaultObservations(failed: failed, forwardedAfterDisarm: forwarded)
+    }
+
+    private struct PlaylistHoldObservations {
+        let holding: Bool
+        let held: Int
+        let released: Int
+        let timedOut: Int
+    }
+
+    /// Holds, or releases, every read of `playlist` at the proxy.
+    @discardableResult
+    private func proxyPlaylistHold(_ playlist: String, on: Bool, proxy: LyricsFaultProxy) -> PlaylistHoldObservations? {
+        playlistHoldObservations(proxyRequest("POST", "/__dulcet/playlist-hold?playlist=\(playlist)&state=\(on ? "on" : "off")", proxy: proxy))
+    }
+
+    /// Polls the proxy's counts for `playlist` until `condition` holds; nil if it never does.
+    private func awaitPlaylistObservations(
+        _ playlist: String,
+        proxy: LyricsFaultProxy,
+        timeout: TimeInterval,
+        until condition: (PlaylistHoldObservations) -> Bool
+    ) -> PlaylistHoldObservations? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let seen = playlistHoldObservations(proxyRequest("GET", "/__dulcet/playlist-observations?playlist=\(playlist)", proxy: proxy)),
+               condition(seen) {
+                return seen
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+        return nil
+    }
+
+    private func playlistHoldObservations(_ body: [String: Any]?) -> PlaylistHoldObservations? {
+        guard let body, let holding = body["holding"] as? Bool, let held = body["held"] as? Int,
+              let released = body["released"] as? Int, let timedOut = body["timedOut"] as? Int else { return nil }
+        return PlaylistHoldObservations(holding: holding, held: held, released: released, timedOut: timedOut)
     }
 
     /// One control request to the proxy: credential-free, so it may be named in a failure.

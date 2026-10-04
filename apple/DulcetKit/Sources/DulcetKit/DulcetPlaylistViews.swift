@@ -101,7 +101,13 @@ private struct DulcetPlaylistPageContent: View {
     private func page(_ model: DulcetLibraryWindowModel) -> some View {
         DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false) { width in
             if let window = model.window {
-                header(window, width: width)
+                // Gone from the server, or never read and offline, with nothing kept: the core has
+                // no playlist to name, so there is no title to show and nothing to play -- an empty header and
+                // two disabled buttons would only push the statement down. What the page says
+                // about a failed edit comes first, then the statement in place of the tracks.
+                if window.header != nil || !window.items.isEmpty || !Self.isUnavailable(window) {
+                    header(window, width: width)
+                }
                 awaitingChoiceBanner
                 problemBanner
                 DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { window in
@@ -111,6 +117,11 @@ private struct DulcetPlaylistPageContent: View {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
         }
+    }
+
+    private static func isUnavailable(_ window: DulcetLibraryWindow) -> Bool {
+        if case .unavailable = window.freshness { return true }
+        return false
     }
 
     // MARK: Header
