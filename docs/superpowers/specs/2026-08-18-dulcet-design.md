@@ -1698,9 +1698,14 @@ are hints, not a contract; the server may ignore them.
 **Path B also sends `estimateContentLength` whenever the plan is transcoded** — the lever revision 2
 missed. **OBSERVED:** `stream` takes `estimateContentLength`, which *"Sets Content-Length header for
 transcoded media."* Without it a cold legacy transcoded stream has no declared length, so it is
-delivered chunked and cannot advertise a seekable resource size. Keep sending it. The estimate is
-not a bound in either direction: a short cold transcode can outgrow it, and the server then stops at
-the declaration, so the body ends short and without its last frames (§28, 2026-09-30).
+delivered chunked and cannot advertise a seekable resource size. The core's own client keeps sending
+it; the Apple playback loader does not (below, and §28 2026-10-04). The estimate is not a bound in
+either direction: a short cold transcode can outgrow it, and the server then refuses the write that
+would cross the declaration and closes, so the body ends short and without its last frames (§28,
+2026-09-30). **OBSERVED 2026-10-04:** what arrives on an undershoot is whatever earlier writes
+carried, anywhere from nothing to just under the estimate (501 bytes once, 22,758–24,325 otherwise,
+for the 2-second probe's 24,639-byte body), and it ends exactly as a complete body under an
+overshooting estimate does. No client can tell the two apart from the response.
 
 🚨 **OBSERVED 2026-08-28 by CONF-13 against Navidrome 0.63.2: a COLD transcode is not
 range-capable at all.** A ranged `getTranscodeStream` against a transcode that is not yet cached
@@ -1736,10 +1741,13 @@ bytes never reach `countOfBytesReceived` either, so the Apple client's end-of-es
 every byte arrives before the first hand-over fails as `Unreachable`. **ASSUMED:** a full-length track
 is not exposed to the second case, because its body cannot all arrive before the session hands over
 a first read; nothing has measured it. **The Apple playback loader is a second client with its own
-session** (`DulcetURLSessionPlaybackResource`): it reads each chunk through its delegate and, when a
-200 body ends in the -1005 after at least one byte, hands what arrived to the core validator, which
-accepts it only when the plan's length is an estimate; refused, with no byte, or on a 200 that declared
-no length, the load stays the lost connection. A cold transcode answers the loader's first ranged read with 200 and the whole
+session** (`DulcetURLSessionPlaybackResource`), and its request never carries `estimateContentLength`
+(§28, 2026-10-04): a cold transcode then answers with a complete chunked 200 and a cached one with
+206 and an exact total, so every length the loader is given is exact. It reads each chunk through
+its delegate and, when a 200 body ends in the -1005 after at least one byte, hands what arrived to
+the core validator, which accepts it only when the plan's length is an estimate -- never, now, on
+this path; refused, with no byte, or on a 200 that declared no length, the load stays the lost
+connection. A cold transcode answers the loader's first ranged read with 200 and the whole
 representation, which the loader accepts as the resource only from byte 0 and only at the length
 the validator measured (§28, 2026-10-02). No validator, download promoter, or platform media loader may collapse those
 variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
@@ -7403,6 +7411,36 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — The Apple playback loader no longer asks for an estimated length (§12.5).** Main's
+conformance run 37173707529 failed the iPhone streaming-quality proof: "Couldn't play “Dulcet Health
+Probe”", three cold 96 kbps transcodes, each logged by the server as `wrote more than the declared
+Content-Length`. Reproduced against Navidrome 0.63.2 with an empty transcoding cache, OBSERVED:
+
+1. The probe's real 96 kbps body is 24,639 bytes and the estimate 24,576, so it **undershoots** on
+   every cold play, and the transcode never enters the cache (`cached=false` each time) -- the same
+   numbers as the 2026-09-30 entry. The 2026-10-02 entry's 23,385-byte reads of this track were
+   this undershoot, not an overshoot; the loader then accepted a truncated prefix as the song.
+2. Go's server refuses a whole write that would cross the declaration, so what the client gets is
+   whatever earlier writes carried. Over 152 cold reads through a URLSession delegate: 501 bytes
+   once, 22,758–24,325 bytes otherwise, each ending in `-1005`. A 501-byte prefix is the ID3 tag and
+   one frame: AVPlayer reported it ready, 0.026 s long, and played to its end. A read that carries
+   no byte fails as `transport` before validation -- "Couldn't play". Which of the two the hosted
+   iPhone met is not recorded (no app log); both come from requesting the estimate.
+3. Other tracks overshoot (31-second probe: 380,928 declared, 372,589 delivered and complete). A
+   body ended short of an estimate is complete in one case and truncated in the other, with the
+   same response shape, so the 2026-10-02 rule cannot be made safe from the client side.
+4. Without the flag the same cold request, `Range` included, answered 200 chunked with every byte:
+   10 of 10 cold reads under 14 busy loops completed without error at 24,639 bytes. With a warm
+   cache it answered 206 with an exact `Content-Range` total, as it does with the flag.
+
+The loader buffers a 200 body whole before it answers AVFoundation, so the estimate bought it
+nothing. `ApplePlaybackWireClient` now prepares the loader's request without
+`estimateContentLength` and validates every declared length as exact, so a body short of it is
+truncation (`ApplePlaybackColdTranscodeRequestTest`; its first two tests failed before the
+change). The core's own client (downloads, CONF-92) and Android still send the flag and still take a
+short estimated body as complete; on an undershoot that is a truncated song (follow-up, not changed
+here). Not driven here: the hosted iPhone proof itself and real hardware.
 
 **2026-10-03 — A playlist edit refused because the playlist is gone is said on its page (§18.6).**
 A rename made on a playlist's page fails one of two ways, depending on which lands first. If the
