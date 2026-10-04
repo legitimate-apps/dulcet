@@ -122,10 +122,10 @@ func urlSessionPlaybackResourcePassesEveryNegativeHTTPShapeToTheCoreValidator() 
 
 @Test
 func aBodyEndedByALostConnectionReachesTheValidatorWithEveryByteReceived() async throws {
-    // Navidrome's estimated Content-Length overshoots a cold transcode, the server stops at the end
-    // of the body, and URLSession reports the short body as -1005 after delivering all of it
-    // (OBSERVED on macOS against Navidrome 0.63.2: 24,576 declared, 24,012 delivered). The core
-    // validator, which knows whether the plan's length is an estimate, decides what that is.
+    // A body short of its declared length ends in -1005 after URLSession delivers what arrived
+    // (OBSERVED on macOS against Navidrome 0.63.2: 24,576 declared, 24,012 delivered -- a prefix of
+    // a 24,639-byte body, the estimate having undershot). The core validator, which knows whether
+    // the declared length is an estimate, decides what that is.
     let body = Data("ID3".utf8) + Data(repeating: 0xFF, count: 61)
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
@@ -214,6 +214,39 @@ func aLostConnectionWithNoBodyNoDeclaredLengthOrAPartialAnswerFailsWithoutValida
         #expect(refreshReason == nil, "\(label)")
         #expect(validator.observed.isEmpty, "\(label)")
     }
+}
+
+@Test
+func aCompleteChunkedAnswerToARangedReadReachesTheValidatorWithNoDeclaredLength() async throws {
+    // What a cold Navidrome transcode answers once the request asks for no estimate (spec §12.5,
+    // §28 2026-10-04): HTTP 200, no Content-Length, the Range ignored, every byte, and a clean end.
+    // OBSERVED against Navidrome 0.63.2: 24,639 bytes for "Dulcet Health Probe" at 96 kbps.
+    let body = Data("ID3".utf8) + Data(repeating: 0xFF, count: 24_639 - 3)
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+    ScriptedPlaybackURLProtocol.install { _ in
+        .response(
+            status: 200,
+            headers: ["Content-Type": "audio/mpeg", "Accept-Ranges": "none"],
+            body: body
+        )
+    }
+    let validator = ShortBodyValidator(verdict: .accepted(
+        contentInformation: .init(contentLength: Int64(body.count), supportsByteRanges: false)
+    ))
+    let resource = makeURLSessionResource(validator: validator, configuration: configuration)
+
+    let outcome = await load(resource, range: .init(start: 0, endInclusive: 262_143))
+
+    guard case let .loaded(data, information) = outcome else {
+        Issue.record("a complete chunked answer did not load: \(outcome)")
+        return
+    }
+    #expect(data == body)
+    #expect(information == .init(contentLength: Int64(body.count), supportsByteRanges: false))
+    #expect(validator.observed.map(\.body) == [body])
+    #expect(validator.observed.map(\.contentLength) == [nil])
+    #expect(validator.observed.map(\.statusCode) == [200])
 }
 
 @Test

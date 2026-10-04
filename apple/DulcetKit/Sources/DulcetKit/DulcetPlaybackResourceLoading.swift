@@ -203,12 +203,13 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                         return
                     }
                     // A 200 body cut off by a lost connection after some of it arrived is handed to the
-                    // validator as received: Navidrome's estimated Content-Length overshoots a cold
-                    // transcode and the server stops at the end of the body, which URLSession reports
-                    // as -1005 (spec §12.5). Only the core validator knows whether the plan's length
-                    // is an estimate -- EOF before an estimate is the end of the representation, EOF
-                    // before an exact length is truncation -- so when it refuses the short body the
-                    // load fails as the lost connection it was. A 200 that declared no length is never
+                    // validator as received, and URLSession reports it as -1005. Only the core
+                    // validator knows whether the declared length is an estimate -- EOF before an
+                    // estimate is the end of the representation, EOF before an exact length is
+                    // truncation -- so when it refuses the short body the load fails as the lost
+                    // connection it was. The Apple core facade asks for no estimate, so it refuses
+                    // every one (spec §12.5): Navidrome's estimate can undershoot a cold transcode,
+                    // and the body then stops at an arbitrary earlier write. A 200 that declared no length is never
                     // ended this way: with nothing to compare against, a body cut off by a real drop
                     // would pass as the whole representation.
                     let lostConnectionResponse = error.map { Self.isLostConnection($0) } == true

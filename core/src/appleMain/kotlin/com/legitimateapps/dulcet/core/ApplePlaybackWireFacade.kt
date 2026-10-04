@@ -126,11 +126,9 @@ public class ApplePlaybackWireClient(
         completion: (ApplePlaybackRequestPreparationOutcomeDto) -> Unit,
     ): ApplePlaybackWireOperation = ApplePlaybackWireOperationImpl(scope) {
         val outcome = try {
-            val range = PlaybackByteRange(rangeStart, rangeEndInclusive)
-            val prepared = requestClient.prepareGetRequest(
-                endpoint = plan.corePlan.endpoint,
-                parameters = plan.corePlan.parameters,
-                options = AuthenticatedEndpointRequestOptions(range.render()),
+            val prepared = prepareResourceRequest(
+                plan.corePlan,
+                PlaybackByteRange(rangeStart, rangeEndInclusive),
             )
             ApplePlaybackRequestPreparationOutcomeDto(
                 request = ApplePlaybackPreparedRequestDto(
@@ -161,6 +159,25 @@ public class ApplePlaybackWireClient(
         completion(outcome)
     }
 
+    /**
+     * The request the Apple resource loader sends for one byte range: the plan's request without
+     * `estimateContentLength` (spec §12.5, §28 2026-10-04). Navidrome declares a cold transcode's
+     * estimate as an HTTP Content-Length and refuses any write that would cross it, so when the
+     * estimate is short of the real body the response stops at an arbitrary earlier write -- 0 to
+     * just under the estimate -- and ends exactly as a complete body under an overshooting estimate
+     * does; no client can tell the two apart. Without the flag the same cold transcode arrives
+     * complete as a chunked 200, and a cached one answers ranges with an exact total either way.
+     * The loader buffers a 200 body whole before answering, so the estimate bought it nothing.
+     */
+    internal suspend fun prepareResourceRequest(
+        plan: RemotePlaybackWirePlan,
+        range: PlaybackByteRange,
+    ): AuthenticatedEndpointPreparedRequest = requestClient.prepareGetRequest(
+        endpoint = plan.endpoint,
+        parameters = plan.parameters - ESTIMATE_CONTENT_LENGTH_PARAMETER,
+        options = AuthenticatedEndpointRequestOptions(range.render()),
+    )
+
     @OptIn(ExperimentalForeignApi::class)
     public fun validateResponse(
         plan: AppleRemotePlaybackPlanDto,
@@ -178,17 +195,9 @@ public class ApplePlaybackWireClient(
         val bytes = body.toByteArray()
         val headers = AuthenticatedEndpointResponseHeaders(
             contentType = contentType,
-            contentLength = contentLength.takeIf { it >= 0 }?.let { byteCount ->
-                if (
-                    statusCode == 200 &&
-                    contentRange == null &&
-                    plan.corePlan.usesEstimatedLegacyContentLength()
-                ) {
-                    PlaybackContentLength.Estimated(byteCount)
-                } else {
-                    PlaybackContentLength.Exact(byteCount)
-                }
-            },
+            // Every length is exact: the loader's request never asks for an estimate
+            // (prepareResourceRequest), so a body short of its declared length is truncation.
+            contentLength = contentLength.takeIf { it >= 0 }?.let(PlaybackContentLength::Exact),
             retryAfter = retryAfter,
             acceptRanges = acceptRanges,
             contentRange = contentRange,
@@ -454,3 +463,5 @@ internal const val UNEXPECTED_BINARY_KIND = "unexpectedBinary"
 internal const val CAPABILITY_UNSUPPORTED_KIND = "capabilityUnsupported"
 
 private val CONTENT_RANGE_PATTERN = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
+
+private const val ESTIMATE_CONTENT_LENGTH_PARAMETER = "estimateContentLength"
