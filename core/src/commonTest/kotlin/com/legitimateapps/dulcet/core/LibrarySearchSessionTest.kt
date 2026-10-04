@@ -294,6 +294,82 @@ class LibrarySearchSessionTest {
         }
     }
 
+    // ---- The bound on `deviceWhileServerPending` (§16.15, §28 2026-10-04) -------------------------
+
+    private val config = LibrarySearchConfig()
+    private val due = config.debounceMillis + config.serverAnswerDeadlineMillis
+
+    @Test
+    fun aServerAnswerThatMissesTheDeadlineSaysTimeoutAndStillLandsWhenItComes() = sessionTest { env ->
+        val session = primed(env)
+        env.server.holdBeforeApply += "search3"
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        session.openSearch(listener = pubs).updateQuery("Album 003")
+        advanceTimeBy(due - 1)
+        runCurrent()
+        assertEquals(1, env.server.heldCount, "fixture: the search3 is out and unanswered")
+        assertEquals(SearchScope.DeviceWhileServerPending, pubs.last.scope, "pending until the deadline")
+        advanceTimeBy(2)
+        runCurrent()
+        val failed = assertIs<SearchScope.DeviceServerFailed>(pubs.last.scope, "the deadline passed with no answer")
+        assertEquals(DomainError.Transport.Timeout, failed.error)
+        assertEquals(100L, failed.seen.albums)
+        assertEquals((30..39).map(::albumId), pubs.last.rows.ids(), "the device's rows stay under the timeout")
+        assertEquals(1, env.server.heldCount, "the request is not abandoned at the deadline")
+        env.server.holdBeforeApply.clear()
+        env.server.release()
+        advanceUntilIdle()
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope, "the late answer replaces the timeout")
+        assertEquals("Album 003", pubs.last.query)
+        assertEquals(1, env.server.count("search3"), "no second request: the first one's answer was kept")
+    }
+
+    @Test
+    fun aQueryWaitingForASlotBehindAStalledReadStillEndsItsWait() = sessionTest { env ->
+        val session = env.session(config = LibraryReaderConfig(lookAheadMaxPerViewport = 0, serverConcurrency = 1, lookAheadInFlight = 1))
+        session.reader.connect()
+        session.reader.open(grid) {}.also { advanceUntilIdle() }.close()
+        env.server.base.holdMatching = { it.endpoint == "getAlbum" }
+        session.reader.open(LibraryQuery.Album(albumId(3))) {}
+        advanceUntilIdle()
+        assertEquals(1, env.server.base.heldCount, "fixture: a stalled read holds the only slot")
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        session.openSearch(listener = pubs).updateQuery("Album 004")
+        advanceUntilIdle()
+        assertEquals(0, env.server.count("search3"), "fixture: the search3 is still waiting for the slot")
+        val failed = assertIs<SearchScope.DeviceServerFailed>(pubs.last.scope, "a search queued behind a stall must not stay pending")
+        assertEquals(DomainError.Transport.Timeout, failed.error)
+        assertEquals((40..49).map(::albumId), pubs.last.rows.ids())
+        env.server.base.holdMatching = null
+        env.server.base.release()
+        advanceUntilIdle()
+        assertEquals(1, env.server.count("search3"), "the queued search3 went out once the slot freed")
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope)
+    }
+
+    @Test
+    fun aKeystrokeRestartsTheDeadlineSoAnOlderQuerysWaitNeverFailsANewerOne() = sessionTest { env ->
+        val session = primed(env)
+        env.server.holdBeforeApply += "search3"
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        search.updateQuery("Album 001")
+        advanceTimeBy(due - 100)
+        runCurrent()
+        search.updateQuery("Album 002")
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals("Album 002", pubs.last.query)
+        assertEquals(SearchScope.DeviceWhileServerPending, pubs.last.scope, "the older query's deadline must not fire for this one")
+        assertTrue(pubs.all.none { it.value.scope is SearchScope.DeviceServerFailed })
+        advanceTimeBy(due)
+        runCurrent()
+        assertIs<SearchScope.DeviceServerFailed>(pubs.last.scope, "the newer query has its own deadline")
+        env.server.holdBeforeApply.clear()
+        env.server.release()
+        advanceUntilIdle()
+    }
+
     @Test
     fun aGoneRowIsNeverShown() = sessionTest { env ->
         val session = primed(env)

@@ -57,6 +57,39 @@ public data class SearchUiState(
         "SearchUiState(query=<redacted>, results=${rows.size}, scope=${scope?.let { it::class.simpleName }})"
 }
 
+/**
+ * What a search screen says when it has no row to draw and is not waiting (§16.15), the same on the
+ * phone and the TV, and the same as Apple says for the same scope.
+ */
+public sealed interface SearchEmptyState {
+    /** The server answered and nothing matches. */
+    public data object NoMatches : SearchEmptyState
+
+    /** Offline, and nothing this device has seen matches: said of this device, never of the server. */
+    public data object NoMatchesOnDevice : SearchEmptyState
+
+    /** The server search failed (a timeout included) and nothing on this device matches: Try Again. */
+    public data class Failed(val error: DomainError) : SearchEmptyState
+}
+
+/**
+ * The statement a screen makes in place of rows, or null while it has rows, a blank query, a
+ * server answer still coming, or no publication yet. A failed or offline search is never "no
+ * matches": the server was not heard from, so only the device is said to have none.
+ * [AndroidLibrarySearchScope.ReaderFailed] is the scope line's alone; there is nothing to retry from here.
+ */
+public val SearchUiState.emptyState: SearchEmptyState?
+    get() {
+        if (query.isBlank() || rows.isNotEmpty() || isLoading) return null
+        return when (val current = scope) {
+            null, AndroidLibrarySearchScope.ReaderFailed -> null
+            AndroidLibrarySearchScope.ServerAndDevice, AndroidLibrarySearchScope.DeviceWhileServerPending ->
+                SearchEmptyState.NoMatches
+            is AndroidLibrarySearchScope.DeviceOffline -> SearchEmptyState.NoMatchesOnDevice
+            is AndroidLibrarySearchScope.DeviceServerFailed -> SearchEmptyState.Failed(current.error)
+        }
+    }
+
 /** A search screen's state, for tests: rows carry catalog ids and titles, never account data. */
 public val SearchObservation: androidx.compose.ui.semantics.SemanticsPropertyKey<SearchUiState> =
     androidx.compose.ui.semantics.SemanticsPropertyKey("SearchObservation")

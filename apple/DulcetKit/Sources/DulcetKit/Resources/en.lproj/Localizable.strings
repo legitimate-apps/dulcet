@@ -346,6 +346,7 @@
 "reader.search.summary" = "Results come from your server and from what this device has seen, from the first character.";
 "reader.search.idle.body" = "Find artists, albums, and tracks on your server and on this device.";
 "reader.search.empty.title" = "No matches";
+"reader.search.offline.empty.title" = "No matches on this device";
 "reader.signOut.stay" = "Stay Signed In";
 "reader.signOut.discard" = "Sign Out and Discard";
 "reader.signOut.send" = "Send Changes, Then Sign Out";
@@ -366,6 +367,7 @@
 "reader.change.heldRefused" = "That change isn’t sent yet — %@. It’s kept, and will be sent once your server accepts it.";
 "reader.search.scope.offline" = "Searching what’s available offline — %1$@ and %2$@ on this device";
 "reader.search.scope.failed" = "On this device — %@";
+"reader.search.failed.body" = "Nothing on this device matches, and %@.";
 "reader.favorite.accessibility" = "%@, Favorite";
 "reader.seeAll" = "See All";
 "reader.signOut.title" = "Changes Not Sent";

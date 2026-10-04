@@ -4437,6 +4437,22 @@ keystroke the list is ranked again over everything the device now holds — incl
 previous answer wrote through — with a total order (match tier, type, normalized title, id), so rows
 never reorder by arrival.
 
+**The wait for the server is bounded (2026-10-04).** A query whose server answer has not arrived
+`LibrarySearchConfig.serverAnswerDeadlineMillis` (8 s, ASSUMED as the longest a person waits on a
+spinner before being told) after its debounce publishes `deviceServerFailed(timeout)` with the
+device's rows and seen counts. The bound counts the wait for a request slot as well as the request
+itself, so a search queued behind stalled reads is told too. The request is not abandoned: an answer
+that lands later replaces the failure with `serverAndDevice`, and a keystroke restarts the bound for
+the new query. On Apple a failed or offline search with no device rows is never drawn as "no
+matches": a failure says the server was not heard from, names the §18.12 kind and offers Try Again
+(which reconnects and re-runs the search); an offline one says nothing on this device matches.
+Android (phone and TV) says the same for the same scope, in the same words, from one shared
+mapping (`SearchUiState.emptyState`): with no rows, `deviceServerFailed` is "Search could not be
+completed — Nothing on this device matches, and <kind>." with Try Again (which re-runs the query as if
+retyped, `SearchSourceHandle.refresh`; on the TV it is reached from the field with the D-pad), and
+`deviceOffline` is "No matches on this device" under the offline label. Only `serverAndDevice` says
+"No matching music"; a reader failure keeps its scope line alone.
+
 **Revalidated like a window (R2a review, §28 revision 104 item 30).** Open searches are part of the
 visible screen of §16.14 step 3, revalidated after the windows, and by the windows' rule: a server
 answer read within the re-read interval under the current epoch is left alone — no request, no
@@ -7433,6 +7449,34 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — A server search that has not answered in 8 s says `deviceServerFailed(timeout)`, and
+Apple draws a failed search as a failure, not "no matches" (§16.15).** Two conformance runs on
+2026-10-04 (iPhone, run 37199157986; tvOS, run 37188722537) left the search screen on "Searching the
+server…" for over 30 s. Reproduced locally on the tvOS simulator against a disposable Navidrome
+behind a proxy that holds `search3` (and the home-row reads, so no device row exists), OBSERVED:
+the screen stays on the waiting state for the whole transport timeout (30 s), and when the request
+times out it says "No server matches — Try a different artist, album, or track name." with no way
+to retry, although the server never answered. Two defects, one each side of the boundary:
+
+1. `deviceWhileServerPending` had no bound in core, so a hung `search3` (or one queued for a request
+   slot behind stalled reads) kept the person on a spinner until the transport gave up. Now
+   `LibrarySearchSession` publishes `deviceServerFailed(timeout)` 8 s after the debounce; a late
+   answer still lands and replaces it. OBSERVED by three `LibrarySearchSessionTest` cases, which fail
+   without the bound.
+2. The Apple screen mapped every scope with no rows except a pending one to the server-empty copy.
+   It now draws `deviceServerFailed` as a failure with the kind and Try Again, and `deviceOffline` as
+   "No matches on this device" with the offline label. OBSERVED by `SearchPresentationTests`,
+   and on the tvOS simulator under the same reproduction: "Search could not be completed — Nothing
+   on this device matches, and your server didn’t answer in time." with Try Again focused.
+
+Why the CI request hung past its own 30 s timeout is not established; it matches the 2026-09-07
+loopback-stall class and stays ASSUMED environmental.
+
+3. Android drew the same state as the scope line plus "No matching music" (phone) or the scope line
+   alone (TV), with no retry. Both now draw the failure or the offline statement of item 2, and Try
+   Again runs the search again. OBSERVED by `MobileSearchFailureTest` and `TvSearchFailureTest`
+   (Robolectric/Compose host tests, not an emulator).
 
 **2026-10-04 — A saved position resumes only the listen it came from (§15.5).** Conformance run
 37192537098 failed the iPad lyrics proof: album Play on "Threshold Boundary" never named its first

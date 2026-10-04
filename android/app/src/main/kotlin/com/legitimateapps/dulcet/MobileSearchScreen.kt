@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +43,7 @@ import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.searchFailedBody
 import com.legitimateapps.dulcet.library.searchScopeLabel
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
@@ -49,7 +51,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchHostDependencies
+import com.legitimateapps.dulcet.search.SearchEmptyState
 import com.legitimateapps.dulcet.search.SearchObservation
+import com.legitimateapps.dulcet.search.emptyState
 import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
 
@@ -99,22 +103,45 @@ internal fun MobileSearchScreen(
             )
             // Where these results come from (§16.15): the core's scope, in the shared words. A server
             // that failed or cannot be reached leaves the device's rows showing, labelled.
-            val scopeLine = libraryResources().searchScopeLabel(state.scope.takeIf { state.query.isNotBlank() })
+            val resources = libraryResources()
+            val empty = state.emptyState
+            // With nothing to show, a failure says it all below; the line would only repeat it.
+            val scopeLine = resources.searchScopeLabel(
+                state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed })
             if (scopeLine != null) Text(
                 scopeLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("search.scope"),
             )
-            when {
-                state.isLoading && state.results.isEmpty() -> Text(
-                    stringResource(R.string.search_loading),
-                    modifier = Modifier.testTag("search.loading"),
-                )
-                state.query.isNotBlank() && !state.isLoading && state.results.isEmpty() -> Text(
+            if (state.isLoading && state.results.isEmpty()) Text(
+                stringResource(R.string.search_loading),
+                modifier = Modifier.testTag("search.loading"),
+            )
+            // Only a search the server answered says "no matching music"; a failed or offline one
+            // never heard from it (§16.15), so it says what it knows: this device has none.
+            when (empty) {
+                null -> Unit
+                SearchEmptyState.NoMatches -> Text(
                     stringResource(R.string.search_empty),
                     modifier = Modifier.testTag("search.empty"),
                 )
+                SearchEmptyState.NoMatchesOnDevice -> Text(
+                    stringResource(SharedR.string.search_offline_empty_title),
+                    modifier = Modifier.testTag("search.empty.offline"),
+                )
+                is SearchEmptyState.Failed -> Column(
+                    modifier = Modifier.fillMaxWidth().testTag("search.failed"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(stringResource(SharedR.string.search_failed_title),
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(resources.searchFailedBody(empty.error), style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.testTag("search.failed.body"))
+                    Button(onClick = presenter::refresh, modifier = Modifier.testTag("search.retry")) {
+                        Text(stringResource(SharedR.string.library_try_again))
+                    }
+                }
             }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
