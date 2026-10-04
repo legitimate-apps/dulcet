@@ -443,6 +443,54 @@ class ApplePlaybackQueueFacadeTest {
         fixture.driver.close()
     }
 
+    /**
+     * The shell's Play and Previous with no session, after an engine teardown (the system
+     * reclaimed the player): Play resumes the listen the teardown cut off, through
+     * `startCurrent`; Previous restarts the entry from the top and clears its saved position,
+     * through `replayCurrent` (§15.5).
+     */
+    @Test
+    fun afterAnEngineTeardownPlayResumesAndPreviousRestartsFromTheTop() {
+        for (intent in listOf("play", "previous")) {
+            val driver = createTestDriver()
+            val database = DulcetDatabaseStore.open(driver).database
+            val resumePositions = PersistentResumePositionStore(database)
+            var identity = 0
+            val client = ApplePlaybackQueueClient(
+                database = database,
+                controller = PlaybackQueueController(
+                    queues = PersistentQueueStore(database),
+                    resumePositions = resumePositions,
+                    identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+                ),
+                resumePositions = resumePositions,
+            )
+            val started = assertNotNull(client.replaceAndStart(queueRequest()).startDirective)
+            client.recordReady(started.attemptId, 180_000, "seekable")
+            client.recordPlaybackProgressBegan(started.attemptId, 1_788_000_000_000, 0)
+            client.recordPaused(started.attemptId, 9_000)
+            val tornDown = client.recordEngineTornDown(started.attemptId, "systemReclaimed")
+            assertNull(tornDown.snapshot?.currentSession, "$intent: the control requires no session")
+            val item = ProviderItemId(started.providerInstanceId, started.rawId)
+            assertEquals(9.seconds, resumePositions.restore(item), "$intent: the control requires a saved 9 s")
+
+            val transition = if (intent == "play") client.startCurrent() else client.replayCurrent()
+            assertNull(transition.errorKind)
+            val directive = assertNotNull(transition.startDirective)
+            assertEquals("track-a", directive.rawId)
+            assertNotEquals(started.playbackSessionId, directive.playbackSessionId)
+            if (intent == "play") {
+                assertEquals(9_000, directive.resumePositionMilliseconds, "Play resumes the interrupted listen")
+                assertEquals(9.seconds, resumePositions.restore(item))
+            } else {
+                assertEquals(-1, directive.resumePositionMilliseconds, "Previous restarts from the top")
+                assertNull(resumePositions.restore(item), "and keeps no saved position")
+            }
+            client.close()
+            driver.close()
+        }
+    }
+
     @Test
     fun retryCurrentCrossesTheBoundaryKeepingTheSessionAfterEitherFailure() {
         val driver = createTestDriver()

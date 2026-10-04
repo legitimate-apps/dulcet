@@ -301,6 +301,10 @@ internal class PlayerProbe {
     var requested = false
     var suppression = Player.PLAYBACK_SUPPRESSION_REASON_NONE
     var seekable = true
+    /** Runs when the engine clears the player's items; nothing by default. */
+    var onClearMediaItems: () -> Unit = {}
+    /** ExoPlayer reports a play-when-ready change only when it changes; the probe, by default, on every call. */
+    var reportsUnchangedPlayWhenReady = true
     val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
         when (method.name) {
             "getApplicationLooper" -> Looper.getMainLooper()
@@ -316,8 +320,11 @@ internal class PlayerProbe {
             "getSeekBackIncrement" -> 5_000L
             "getSeekForwardIncrement" -> 15_000L
             "getPlaybackParameters" -> PlaybackParameters.DEFAULT
-            "play", "pause" -> { requested = method.name == "play"
-                listener?.onPlayWhenReadyChanged(requested, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST); null }
+            "play", "pause" -> { val changed = requested != (method.name == "play")
+                requested = method.name == "play"
+                if (changed || reportsUnchangedPlayWhenReady)
+                    listener?.onPlayWhenReadyChanged(requested, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                null }
             "seekTo" -> {
                 val target = args!![0] as Long
                 seekCommands += target
@@ -325,7 +332,8 @@ internal class PlayerProbe {
                 null
             }
             "getAvailableCommands" -> Player.Commands.Builder().addAllCommands().build()
-            "prepare", "stop", "clearMediaItems", "release" -> null
+            "clearMediaItems" -> { onClearMediaItems(); null }
+            "prepare", "stop", "release" -> null
             "toString" -> "PlayerProbe"
             else -> throw AssertionError("Unmodeled Player call ${method.name}")
         }

@@ -515,9 +515,11 @@ public class AndroidPlaybackController internal constructor(
         else {
             // An unseekable stream restarts as a new session of the same entry, which re-requests
             // it. That reaches the entry anew, so the person's Previous begins a new pass here as
-            // it does wherever Previous moves (spec §12.12 rule 3); `restartCurrent` begins none.
+            // it does wherever Previous moves (spec §12.12 rule 3). It restarts from the top and
+            // clears the saved position, as a seek to zero would leave it: `replayCurrent`, not
+            // `restartCurrent`, which resumes the listen (Play after a stop, spec §15.5).
             recordPlayRequested()
-            transition(queue.restartCurrent(ServerId(account.providerInstanceId)))
+            transition(queue.replayCurrent(ServerId(account.providerInstanceId)))
         }
     }
 

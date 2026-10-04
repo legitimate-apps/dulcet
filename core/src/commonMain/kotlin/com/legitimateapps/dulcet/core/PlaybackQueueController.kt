@@ -273,8 +273,15 @@ internal class PlaybackQueueController(
     }
 
     /**
-     * Starts the selected entry when no session exists — the state a finished queue leaves behind
-     * (§14.3). Play after the last track therefore replays it, from the start, as a new session.
+     * Play on the selected entry when no session exists. It resumes the entry's saved position
+     * (§15.5): it is the same listen picked up again. Two states leave no session behind:
+     * - an engine teardown (`EngineTornDown`) finalized the session part way through, saving its
+     *   position, and Play continues that listen from there;
+     * - a finished queue (§14.3) keeps its last entry selected, and that entry has no saved
+     *   position to resume, so Play replays it from the start as a new session. A natural end
+     *   clears the position (`EndedNaturally`); Next past the last entry and Previous before the
+     *   first one, which finish the queue part way through a listen, clear it too ([moveBy]).
+     * Previous with no session restarts the entry instead: that is [replayCurrent].
      */
     fun startCurrent(): PlaybackQueueTransition {
         if (playback.currentSession != null) return emptyTransition()
@@ -282,7 +289,7 @@ internal class PlaybackQueueController(
         val state = queues.load(serverId)
         val index = state.currentIndex ?: return emptyTransition()
         skippedPastFailures.clear()
-        return startAt(state, index)
+        return startAt(state, index, resume = true)
     }
 
     /**
@@ -291,8 +298,9 @@ internal class PlaybackQueueController(
      *
      * Declines — returns no directive — when nothing follows, under repeat-one (which restarts
      * through a fresh start), when the named session is not current, and when the next item has a
-     * saved resume position, because a preloaded item begins at zero and the engine has no seek
-     * for an item it has not started.
+     * saved resume position. A preloaded item begins at zero, as every non-resuming start now does
+     * (§15.5), but the advance onto it does not clear that saved position the way a start does, so
+     * such an item takes the ordinary start instead.
      */
     fun preloadNext(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition {
         if (!acceptsCommand(playbackSessionId)) return emptyTransition()
@@ -411,7 +419,7 @@ internal class PlaybackQueueController(
         check(transition is PlaybackTransitionResult.Applied)
         return PlaybackQueueTransition(
             snapshot = snapshot(),
-            startDirective = start.directive(entry).copy(resumePosition = null),
+            startDirective = start.directive(entry),
             effects = transition.effects + PlaybackCoreEffect.ClearResumePosition(entry.providerItemId),
             discardedPreloadAttemptId = discarded,
         )
@@ -460,11 +468,32 @@ internal class PlaybackQueueController(
         return restartCurrent(serverId)
     }
 
-    /** Transport restart keeps the persisted selection and every queue entry identity. */
+    /**
+     * Transport restart keeps the persisted selection and every queue entry identity. It is the
+     * same listen picked up again -- Play after a stop -- so it resumes from the saved position
+     * (§15.5).
+     */
     fun restartCurrent(serverId: ServerId): PlaybackQueueTransition {
         if (queues.activeServerId() != serverId) return emptyTransition()
         val state = queues.load(serverId)
         val entry = state.currentIndex?.let(state.entries::get) ?: return emptyTransition()
+        return beginSession(entry, replacingQueue = false, resume = true)
+    }
+
+    /**
+     * Previous that restarts the selected entry rather than moving: a new session of the same
+     * entry, with or without a current one, keeping the selection and every queue entry identity.
+     * Unlike [restartCurrent] it is not the same listen picked up again: it plays from the top and
+     * clears the entry's saved position after the outgoing session's own write (§15.5), as every
+     * other non-resuming start does. A [serverId] that is not the active queue's changes nothing;
+     * without one, the active queue's selected entry restarts.
+     */
+    fun replayCurrent(serverId: ServerId? = null): PlaybackQueueTransition {
+        val active = queues.activeServerId() ?: return emptyTransition()
+        if (serverId != null && serverId != active) return emptyTransition()
+        val state = queues.load(active)
+        val entry = state.currentIndex?.let(state.entries::get) ?: return emptyTransition()
+        skippedPastFailures.clear()
         return beginSession(entry, replacingQueue = false)
     }
 
@@ -496,7 +525,7 @@ internal class PlaybackQueueController(
         skippedPastFailures.clear()
         return PlaybackQueueTransition(
             snapshot(),
-            start.directive(entry, shouldAutoPlay = false),
+            start.directive(entry, shouldAutoPlay = false, resume = true),
             transition.effects,
         )
     }
@@ -627,13 +656,25 @@ internal class PlaybackQueueController(
         return queues.load(serverId).snapshot()
     }
 
+    /**
+     * Next or Previous. Stepping off either end of the queue (no repeat-all) finishes it: the
+     * session is finalized, the entry stays selected, and its saved position is cleared after the
+     * outgoing session's own write. The person moved on from that listen, so Play there replays
+     * the entry from the start, as after any finished queue ([startCurrent]), and a relaunch does
+     * not restore the position either.
+     */
     private fun moveBy(delta: Int): PlaybackQueueTransition {
         skippedPastFailures.clear()
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
-        state.currentIndex ?: return emptyTransition()
+        val current = state.currentIndex ?: return emptyTransition()
         val direction = if (delta > 0) QueueTravel.Forward else QueueTravel.Backward
-        val target = state.steppedIndex(direction) ?: return finishQueue(emptyList())
+        val target = state.steppedIndex(direction) ?: return finishQueue(emptyList()).let { finished ->
+            finished.copy(
+                effects = finished.effects +
+                    PlaybackCoreEffect.ClearResumePosition(state.entries[current].providerItemId),
+            )
+        }
         return startAt(state, target, travel = direction)
     }
 
@@ -773,17 +814,25 @@ internal class PlaybackQueueController(
         index: Int,
         priorEffects: List<PlaybackCoreEffect> = emptyList(),
         travel: QueueTravel = QueueTravel.Forward,
+        resume: Boolean = false,
     ): PlaybackQueueTransition {
         val entry = state.entries[index]
         queues.setCurrentIndex(state.serverId, index)
-        val transition = beginSession(entry, replacingQueue = false, travel = travel)
+        val transition = beginSession(entry, replacingQueue = false, travel = travel, resume = resume)
         return transition.copy(effects = priorEffects + transition.effects)
     }
 
+    /**
+     * Only [resume] picks up the listen the saved position belongs to (§15.5). Every other start --
+     * Play on an album, playlist or track, Next, Previous, an Up Next tap, an automatic advance --
+     * plays the item from the top and clears its saved position, after the outgoing session's
+     * own write, so a relaunch before the new session saves anything cannot restore the old one.
+     */
     private fun beginSession(
         entry: QueueEntry,
         replacingQueue: Boolean,
         travel: QueueTravel = QueueTravel.Forward,
+        resume: Boolean = false,
     ): PlaybackQueueTransition {
         // Anything but Previous reaches the entry going forward, and so does an automatic skip
         // that did not start from a Previous (§12.12).
@@ -805,8 +854,12 @@ internal class PlaybackQueueController(
         check(coreTransition is PlaybackTransitionResult.Applied)
         return PlaybackQueueTransition(
             snapshot(),
-            start.directive(entry),
-            coreTransition.effects,
+            start.directive(entry, resume = resume),
+            if (resume) {
+                coreTransition.effects
+            } else {
+                coreTransition.effects + PlaybackCoreEffect.ClearResumePosition(entry.providerItemId)
+            },
         )
     }
 
@@ -818,16 +871,18 @@ internal class PlaybackQueueController(
         initialDuration = knownDurations[entry.queueEntryId],
     )
 
+    /** A start plays from the top unless it [resume]s the listen its saved position belongs to. */
     private fun PlaybackSessionStart.directive(
         entry: QueueEntry,
         shouldAutoPlay: Boolean = true,
+        resume: Boolean = false,
     ) = PlaybackQueueStartDirective(
         queueEntryId = queueEntryId,
         playbackSessionId = playbackSessionId,
         attemptId = attemptId,
         itemId = itemId,
         duration = initialDuration,
-        resumePosition = resumePositions.restore(entry.providerItemId),
+        resumePosition = if (resume) resumePositions.restore(entry.providerItemId) else null,
         shouldAutoPlay = shouldAutoPlay,
     )
 
