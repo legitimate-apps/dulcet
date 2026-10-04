@@ -126,6 +126,9 @@ public fun Resources.searchScopeLabel(scope: AndroidLibrarySearchScope?): String
     AndroidLibrarySearchScope.ReaderFailed -> getString(R.string.search_scope_reader_failed)
 }
 
+/** What a search with no rows says when the server failed: the device has none, and why the server was not heard (§16.15). */
+public fun Resources.searchFailedBody(error: DomainError): String = getString(R.string.search_failed_body, errorPhrase(error))
+
 /** A favourite or rating outcome that needs words; null for one that was saved. */
 public fun Resources.outcomeLine(outcome: AndroidLibraryChangeOutcome?): String? = when (outcome) {
     null, is AndroidLibraryChangeOutcome.Saved -> null

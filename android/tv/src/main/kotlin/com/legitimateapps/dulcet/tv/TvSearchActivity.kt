@@ -68,11 +68,14 @@ import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.searchFailedBody
 import com.legitimateapps.dulcet.library.searchScopeLabel
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.SearchActivation
+import com.legitimateapps.dulcet.search.SearchEmptyState
 import com.legitimateapps.dulcet.search.SearchObservation
+import com.legitimateapps.dulcet.search.emptyState
 import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
 import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
@@ -159,6 +162,8 @@ internal fun TvSearchScreen(
     val state by presenter.state.collectAsStateWithLifecycle()
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
+    val retryFocus = remember { FocusRequester() }
+    val failed = state.emptyState is SearchEmptyState.Failed
     val navFocus = LocalTvNavFocus.current
     // One read of the rows for this composition, used by the list and its focus requesters alike.
     // The list's items are read when it measures, not when this composes; reading the state again
@@ -247,6 +252,10 @@ internal fun TvSearchScreen(
                                     resultFocus.first().requestFocus()
                                     true
                                 }
+                                // The field keeps DOWN too, so the way to Try Again is explicit.
+                                event.key == Key.DirectionDown && failed -> {
+                                    runCatching { retryFocus.requestFocus() }.isSuccess
+                                }
                                 // The field keeps UP for its cursor; the navigation bar is above it.
                                 event.key == Key.DirectionUp && navFocus != null -> {
                                     navFocus.requestFocus()
@@ -258,12 +267,47 @@ internal fun TvSearchScreen(
                         .tvFocus("search.query"),
                 )
             }
+            val empty = state.emptyState
             // Where these results come from (§16.15), in the words the phone uses for the same scope.
-            libraryResources().searchScopeLabel(state.scope.takeIf { state.query.isNotBlank() })?.let { line ->
+            // With nothing to show, a failure says it all below; the line would only repeat it.
+            resources.searchScopeLabel(
+                state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed },
+            )?.let { line ->
                 Text(line, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("search.scope"))
             }
             if (state.isLoading && state.results.isEmpty()) {
                 Text(stringResource(R.string.tv_search_searching), modifier = Modifier.testTag("search.loading"))
+            }
+            // Only a search the server answered says "no matching music"; a failed or offline one
+            // never heard from it (§16.15), so it says what it knows: this device has none.
+            when (empty) {
+                null -> Unit
+                SearchEmptyState.NoMatches -> Text(
+                    stringResource(R.string.tv_search_empty),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.testTag("search.empty"),
+                )
+                SearchEmptyState.NoMatchesOnDevice -> Text(
+                    stringResource(SharedR.string.search_offline_empty_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.testTag("search.empty.offline"),
+                )
+                is SearchEmptyState.Failed -> Column(
+                    modifier = Modifier.fillMaxWidth().testTag("search.failed"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(stringResource(SharedR.string.search_failed_title), style = MaterialTheme.typography.titleLarge)
+                    Text(resources.searchFailedBody(empty.error), style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.testTag("search.failed.body"))
+                    // Reached from the field by DOWN, as the list is. The button leaves as the search
+                    // starts again, so focus goes back to the field rather than to nothing.
+                    Button(
+                        onClick = { presenter.refresh(); runCatching { queryFocus.requestFocus() } },
+                        modifier = Modifier.focusRequester(retryFocus).tvFocus("search.retry"),
+                    ) {
+                        Text(stringResource(SharedR.string.library_try_again))
+                    }
+                }
             }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")

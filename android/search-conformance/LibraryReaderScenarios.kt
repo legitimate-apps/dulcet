@@ -721,6 +721,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(compose.onAllNodesWithTag("search.scope").fetchSemanticsNodes().isEmpty(), "no scope line when the server answered")
 
         // deviceWhileServerPending: the device's rows at once, labelled, while the server is asked.
+        // The core ends this wait after LibrarySearchConfig.serverAnswerDeadlineMillis (8 s) with
+        // deviceServerFailed(timeout), so the hold is released within a few seconds of the first assertion.
         proxy.hold { it.endpoint == "search3" }
         val answeredBefore = proxy.answered("search3")
         type("Lines")

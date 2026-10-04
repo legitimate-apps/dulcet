@@ -32,6 +32,7 @@
     <!-- Search -->
     <string name="tv_search_hint">Artists, albums, and tracks</string>
     <string name="tv_search_searching">Searching…</string>
+    <string name="tv_search_empty">No matching music</string>
     <string name="tv_search_type_album">Album</string>
     <string name="tv_search_type_artist">Artist</string>
     <string name="tv_search_type_track">Track</string>

@@ -125,6 +125,9 @@
     <string name="search_scope_failed">On this device — %1$s</string>
     <string name="search_scope_reader_failed">On this device — something went wrong on this device</string>
     <string name="search_row_device_only">On this device</string>
+    <string name="search_failed_title">Search could not be completed</string>
+    <string name="search_failed_body">Nothing on this device matches, and %1$s.</string>
+    <string name="search_offline_empty_title">No matches on this device</string>
     <plurals name="search_scope_albums">
         <item quantity="one">%1$d album</item>
         <item quantity="other">%1$d albums</item>

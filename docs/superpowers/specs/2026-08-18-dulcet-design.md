@@ -4446,6 +4446,12 @@ that lands later replaces the failure with `serverAndDevice`, and a keystroke re
 the new query. On Apple a failed or offline search with no device rows is never drawn as "no
 matches": a failure says the server was not heard from, names the §18.12 kind and offers Try Again
 (which reconnects and re-runs the search); an offline one says nothing on this device matches.
+Android (phone and TV) says the same for the same scope, in the same words, from one shared
+mapping (`SearchUiState.emptyState`): with no rows, `deviceServerFailed` is "Search could not be
+completed — Nothing on this device matches, and <kind>." with Try Again (which re-runs the query as if
+retyped, `SearchSourceHandle.refresh`; on the TV it is reached from the field with the D-pad), and
+`deviceOffline` is "No matches on this device" under the offline label. Only `serverAndDevice` says
+"No matching music"; a reader failure keeps its scope line alone.
 
 **Revalidated like a window (R2a review, §28 revision 104 item 30).** Open searches are part of the
 visible screen of §16.14 step 3, revalidated after the windows, and by the windows' rule: a server
@@ -7465,8 +7471,12 @@ to retry, although the server never answered. Two defects, one each side of the 
    on this device matches, and your server didn’t answer in time." with Try Again focused.
 
 Why the CI request hung past its own 30 s timeout is not established; it matches the 2026-09-07
-loopback-stall class and stays ASSUMED environmental. Android draws the new timeout scope with its
-existing failed-scope copy; not separately verified.
+loopback-stall class and stays ASSUMED environmental.
+
+3. Android drew the same state as the scope line plus "No matching music" (phone) or the scope line
+   alone (TV), with no retry. Both now draw the failure or the offline statement of item 2, and Try
+   Again runs the search again. OBSERVED by `MobileSearchFailureTest` and `TvSearchFailureTest`
+   (Robolectric/Compose host tests, not an emulator).
 
 **2026-10-04 — A saved position resumes only the listen it came from (§15.5).** Conformance run
 37192537098 failed the iPad lyrics proof: album Play on "Threshold Boundary" never named its first
