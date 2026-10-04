@@ -1737,11 +1737,13 @@ since §28 2026-10-04, and where one is still branched on it is never accepted a
 body short of it. A network drop part-way through a response that declares a length is therefore
 a failure on every platform, not an early end. A cold transcode now declares none and arrives
 chunked, so a cut-off there is caught only by the chunk framing, and per platform: **OBSERVED
-2026-10-04** (#227 review, real socket) Android's data source fails both a close mid-chunk and a
+2026-10-04** (#227 review, real socket; Android under Robolectric with the JDK's
+`HttpURLConnection`, not a device) Android's data source fails both a close mid-chunk and a
 close after a whole chunk with no terminating chunk ("Premature EOF"); the core's JVM client (Ktor
 CIO) fails a close mid-chunk but **loads** a close at a chunk boundary as the whole song, the same as
 before #227. That path is `PlaybackWireClient.load` (CONF-92, the core controls), not a shipping
-player. **ASSUMED, not measured:** the Apple URLSession loader and the Darwin core client. The
+player. **ASSUMED, not measured:** that the Apple URLSession loader and the Darwin core client fail
+both kinds of cut-off. The
 core's Ktor read path for estimated bodies and the Darwin delegate's
 end-of-estimate rewrite (§28, 2026-09-30 and 2026-10-01) act only on a request that asks for an
 estimate, so neither acts now. **OBSERVED 2026-10-01 on macOS** (loopback fixture,
