@@ -3171,10 +3171,15 @@ Play position and "played" are distinct (§9.5 invariant 5), so the behavior is 
 implied.
 
 **v1 scope: local only.** `resume_position` is written on pause, on `FailedAfterPartial`, on session
-finalization, and on a 30-second cadence while progressing; restored when the same item is started
-again, and when Try Again retries a partial failure (§12.1) -- unless that failure came at or past
-the end, where Try Again replays the track from the start and the saved position is cleared; cleared
-on `EndedNaturally` and on a submitted play that reached the end. It is protected data (§11.4).
+finalization, and on a 30-second cadence while progressing. It resumes **the listen it was saved
+from**, and nothing else: restored for the relaunch's paused current entry (§18.10), for Play after a
+stop of the selected entry, and when Try Again retries a partial failure (§12.1) -- unless that
+failure came at or past the end, where Try Again replays the track from the start and the saved
+position is cleared. **Every other start plays the item from the top and clears its saved position**:
+Play on an album, playlist, track or search result, Next, Previous, an Up Next tap, an automatic
+advance or skip, repeat-one. The clear follows the outgoing session's own write, so a relaunch before
+the new session saves anything restores the new listen, not the old one. Also cleared on
+`EndedNaturally` and on a submitted play that reached the end. It is protected data (§11.4).
 
 **Server-side bookmarks (`getBookmarks` / `createBookmark` / `deleteBookmark`) are not implemented in
 v1**, so cross-device resume is not a v1 feature and is not claimed. This is stated explicitly because
@@ -7422,6 +7427,23 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — A saved position resumes only the listen it came from (§15.5).** Conformance run
+37192537098 failed the iPad lyrics proof: album Play on "Threshold Boundary" never named its first
+track, "Twenty Nine Seconds"; the server logged its Now Playing and, about a second later, "Thirty One
+Seconds" (scrobbled with a client start of 10:11:17.757; the first track was never scrobbled).
+§15.5 restored a saved position "when the same item is started again", for every start. Three earlier
+proofs on the same app data had each pressed album Play on that 29-second track and paused it, after
+about 9 s, 12 s and 7.7 s by the test transcript, each resuming where the last paused -- OBSERVED in
+the core with those numbers: the fourth press began 28.7 s in. Where the hosted simulator's saved
+row actually stood is ASSUMED from the transcript's tap times; no app log was captured. For a music
+player that is the defect, not the test: Play on an album starts its first song, and a song once
+skipped mid-way must not later start mid-way when an album or the queue reaches it. Resume now
+belongs to the interrupted listen -- the relaunch's paused current entry, Play after a stop, Try Again
+after a partial failure -- and every other start plays from the top and clears the item's saved
+position. §1.3's long files still resume across a relaunch and a stop; picking one again from the
+library starts it over, the ordinary-song behaviour §18.7 promises. `PlaybackFreshStartTest`
+(core, every platform) carries the chain red to green.
 
 **2026-10-04 — No Dulcet request asks for an estimated length, so no declared length is short of
 the song (§12.5, §14.5).** The entry below fixed the Apple loader only. The core
