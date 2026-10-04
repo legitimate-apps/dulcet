@@ -638,7 +638,10 @@ final class DulcetiOSUITests: XCTestCase {
             app.swipeUp()
             swipes += 1
         }
-        guard tile.waitForExistence(timeout: 1), scrollIntoView(tile, in: app) else {
+        // A regular window's Albums list has not been waited on above. OBSERVED on iPad in main's
+        // run 37188677065 (rerun): straight after a fresh connection the list held no album yet,
+        // and a 1-second wait failed the proof with no album tile in the hierarchy at all.
+        guard tile.waitForExistence(timeout: compact ? 1 : 30), scrollIntoView(tile, in: app) else {
             XCTFail("The library must show the \(album) tile: " + app.debugDescription)
             return false
         }
