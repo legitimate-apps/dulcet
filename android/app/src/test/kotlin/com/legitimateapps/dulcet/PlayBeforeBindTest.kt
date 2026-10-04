@@ -164,10 +164,16 @@ class PlayBeforeBindTest {
         compose.waitForIdle()
         val toasts = ShadowToast.shownToastCount()
         // The fixture answers getSong with no song, so this queue fails once its first entry is read.
+        // The answer is held until the addition is in: a queue that has already failed is not
+        // loading, and an addition to it plays instead of being held (seen on CI, where the
+        // fixture's getSong came back first and the addition's own Play made a second one).
+        server.holdSongs = true
         controller.playQueue(listOf(AndroidTrack(provider, "a1", "A1")), 0, AndroidQueueSource.Library, "Library")
         assertTrue(controller.addToQueue(listOf(AndroidTrack(provider, "x1", "X1"), AndroidTrack(provider, "x2", "X2")),
             AndroidQueueInsertion.PlayNext, AndroidQueueSource.Library, "Library"), "held while the queue loads")
+        server.releaseSongs()
         await("the queue to fail and the drop to be said") { ShadowToast.shownToastCount() > toasts }
+        assertEquals(listOf("a1"), server.requests("getSong").map { it["id"] }, "held, not played: only the queue's own entry was read")
         assertNotNull(controller.state.value.error, "setup: the queue failed")
         assertEquals(context.resources.getQuantityString(com.legitimateapps.dulcet.shared.R.plurals.queue_additions_dropped, 2, 2),
             ShadowToast.getTextOfLatestToast())
