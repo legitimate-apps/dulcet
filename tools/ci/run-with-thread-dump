@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Run a command; if it outlives a limit, print a thread dump of every JVM on the host, then stop it.
+
+Why this exists. On 2026-10-04 core-ci's core-build job hit its 20-minute cap twice on one branch
+(runs 37188704887 attempt 1 and 37202111331): the core Gradle step printed `> Task :core:jvmTest`
+and `> Task :core:testAndroidHostTest`, then nothing for 17 minutes. A green attempt of the same
+commit finished 26 s after that point, and five local runs of both tasks (974 + 1150 tests) took
+under a minute each. The cancellation left no thread dump and no core JUnit output, so the stuck
+test could not be named. This wrapper ends such a step itself, well inside the job's cap, after
+printing what every JVM -- the Gradle client, daemon and test workers -- was doing.
+
+Usage:
+  run-with-thread-dump SECONDS -- COMMAND [ARGS...]
+      exit status: COMMAND's own, or 124 when it was stopped at the limit
+  run-with-thread-dump --self-test
+
+Each dump is printed between `THREAD DUMP BEGIN pid=...` and `THREAD DUMP END pid=...` lines.
+Stdlib only.
+"""
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+TIMED_OUT = 124
+
+
+def tool(name):
+    """A JDK tool from JAVA_HOME when set, else from PATH; None when neither has it."""
+    home = os.environ.get("JAVA_HOME")
+    if home:
+        candidate = os.path.join(home, "bin", name)
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which(name)
+
+
+def jvm_pids():
+    jps = tool("jps")
+    if jps is None:
+        print("THREAD DUMP: no jps on this host; nothing to dump", flush=True)
+        return []
+    try:
+        listing = subprocess.run([jps, "-l"], capture_output=True, text=True, timeout=30).stdout
+    except subprocess.TimeoutExpired:
+        print("THREAD DUMP: jps did not answer in 30 s", flush=True)
+        return []
+    pids = []
+    for line in listing.splitlines():
+        pid, _, name = line.partition(" ")
+        if pid.isdigit() and "Jps" not in name:
+            pids.append((int(pid), name))
+    return pids
+
+
+def dump_every_jvm():
+    jstack = tool("jstack")
+    for pid, name in jvm_pids():
+        print(f"THREAD DUMP BEGIN pid={pid} main={name}", flush=True)
+        if jstack is None:
+            print("no jstack on this host", flush=True)
+        else:
+            try:
+                result = subprocess.run([jstack, str(pid)], capture_output=True, text=True, timeout=60)
+                print(result.stdout or result.stderr, flush=True)
+            except subprocess.TimeoutExpired:
+                print("jstack did not answer in 60 s", flush=True)
+        print(f"THREAD DUMP END pid={pid}", flush=True)
+
+
+def run(limit, command):
+    # A process group of its own, so stopping it reaches Gradle's children too.
+    process = subprocess.Popen(command, start_new_session=True)
+    try:
+        return process.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        pass
+    print(f"WATCHDOG: still running after {limit} s; dumping every JVM, then stopping it", flush=True)
+    dump_every_jvm()
+    for sig, grace in ((signal.SIGTERM, 20), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            break
+        try:
+            process.wait(timeout=grace)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    return TIMED_OUT
+
+
+def self_test():
+    failures = []
+
+    def check(condition, what):
+        print(("PASS " if condition else "FAIL ") + what, flush=True)
+        if not condition:
+            failures.append(what)
+
+    check(run(30, [sys.executable, "-c", "pass"]) == 0, "a command that finishes keeps its status 0")
+    check(run(30, [sys.executable, "-c", "raise SystemExit(3)"]) == 3, "a failing command keeps its own status")
+    started = time.monotonic()
+    status = run(2, [sys.executable, "-c", "import time; time.sleep(120)"])
+    elapsed = time.monotonic() - started
+    check(status == TIMED_OUT, "a command past the limit is stopped with 124")
+    check(elapsed < 60, f"the stopped command does not outlive the limit for long ({elapsed:.1f} s)")
+
+    # The dump itself: a JVM stuck in a known frame must appear in the output, by that frame.
+    java = tool("java")
+    check(java is not None, "a JDK is on this host, so the dump can be proved")
+    if java is not None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "StuckForTheWatchdog.java")
+            with open(source, "w") as handle:
+                handle.write("public class StuckForTheWatchdog { public static void main(String[] a)"
+                             " throws Exception { Thread.sleep(600_000); } }\n")
+            result = subprocess.run([sys.executable, os.path.abspath(__file__), "15", "--", java, source],
+                                    capture_output=True, text=True, timeout=180)
+        check(result.returncode == TIMED_OUT, f"the stuck JVM is stopped with 124 (got {result.returncode})")
+        check("THREAD DUMP BEGIN" in result.stdout, "a thread dump is printed")
+        check("StuckForTheWatchdog.main" in result.stdout, "the dump names the frame the JVM is stuck in")
+    print("SELF TEST " + ("FAILED: " + "; ".join(failures) if failures else "PASSED"), flush=True)
+    return 1 if failures else 0
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
+    if len(argv) < 3 or argv[1] != "--" or not argv[0].isdigit():
+        print(__doc__, file=sys.stderr)
+        return 2
+    return run(int(argv[0]), argv[2:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

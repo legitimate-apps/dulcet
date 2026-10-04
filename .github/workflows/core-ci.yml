@@ -51,8 +51,13 @@ jobs:
         run: python3 tools/migration_gate.py
       - name: Verify Apple presents every playback phase the core can send
         run: python3 tools/verify-playback-phase-parity
+      - name: Prove the hang watchdog dumps a stuck JVM and stops it
+        run: python3 tools/ci/run-with-thread-dump --self-test
+      # The watchdog ends this step at 11 minutes, inside the job's cap, after printing a thread dump
+      # of every JVM: a hung core test then names itself instead of leaving only a cancellation.
       - name: Build, test, and audit dependency licences
         run: >-
+          python3 tools/ci/run-with-thread-dump 660 --
           ./gradlew --no-daemon
           --max-workers=2
           :core:verifySqlDelightMigration
@@ -61,6 +66,16 @@ jobs:
           :core:testAndroidHostTest
           :core:bundleAndroidMainAar
           :core:licensee
+      - name: Upload core test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            core/build/test-results/jvmTest
+            core/build/test-results/testAndroidHostTest
+          if-no-files-found: warn
+          retention-days: 7
       # The Android shell builds here rather than in a job of its own. This runner already provisions
       # the SDK for the core's Android target, so a separate job would duplicate that setup and widen
       # a matrix the design deliberately keeps narrow -- for no added signal.
