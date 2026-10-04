@@ -154,6 +154,47 @@ class AndroidHttpPlaybackResourceTest {
         }
     }
 
+    /**
+     * Spec §12.5, §28 2026-10-04. OBSERVED against Navidrome 0.63.2 with an empty transcoding cache:
+     * asked for an estimate, a 96 kbps cold transcode declared 24,576 bytes for a 24,639-byte body
+     * and closed after 23,385. The fixture replays that answer: the capped plan must not ask for an
+     * estimate, and the cut-off body must fail rather than end the track early as if it finished.
+     */
+    @Test fun aCappedStreamAsksForNoEstimateAndACutOffBodyFailsRatherThanEnding() {
+        val body = MP3.copyOf(23_385)
+        WireServer { WireReply(200, body, declaredLength = 24_576, contentType = "audio/mpeg") }.use { server ->
+            val account = PlaybackEndpointAccount("provider:opaque", server.url, USER, PASSWORD, true)
+            val authorizer = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(server.url, USER, PASSWORD, true),
+                "playback-resource-test", SaltSource { SALT })
+            val wire = PlaybackWireClient(account)
+            try {
+                val plan = assertIs<PlaybackResolutionResult.Resolved>(kotlinx.coroutines.runBlocking {
+                    wire.resolve(playbackPlan(container = AudioContainer.Flac).resolutionRequest
+                        .copy(legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 96)))
+                }).plan
+                val source = AndroidPlaybackDataSourceFactory(plan, AndroidHttpPlaybackResource(account, plan, authorizer))
+                    .createDataSource()
+                var delivered = 0
+                val failure = assertFailsWith<AndroidPlaybackIOException>("a cut-off body ended as if it finished") {
+                    try {
+                        source.open(DataSpec.Builder().setUri(Uri.parse("dulcet://resource")).build())
+                        val buffer = ByteArray(4096)
+                        while (true) {
+                            val n = source.read(buffer, 0, buffer.size)
+                            if (n == C.RESULT_END_OF_INPUT) break
+                            delivered += n
+                        }
+                    } finally { source.close() }
+                }
+                val query = server.requests.single().query
+                assertEquals(listOf("96"), query["maxBitRate"], "setup: the request is not the capped transcode")
+                assertNull(query["estimateContentLength"], "the stream asked for an estimated length")
+                assertTrue(delivered <= body.size)
+                assertSanitized(failure)
+            } finally { wire.close(); authorizer.close() }
+        }
+    }
+
     private fun consume(baseUrl: String) {
         val account = PlaybackEndpointAccount("provider:opaque", baseUrl, USER, PASSWORD, true)
         val authorizer = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(baseUrl, USER, PASSWORD, true),
@@ -201,6 +242,10 @@ class AndroidHttpPlaybackResourceTest {
         private val TOKEN = AccountConnectionContract.saltedToken(PASSWORD, SALT)
         private val canaries = listOf(USER, PASSWORD, SALT, TOKEN)
         private val AUDIO = "RIFF\u0000\u0000\u0000\u0000WAVE".toByteArray() + ByteArray(9000)
+        // A 24,639-byte body opening with an MPEG-1 Layer III frame header.
+        private val MP3 = ByteArray(24_639) { (it % 251).toByte() }.also {
+            byteArrayOf(0xFF.toByte(), 0xFB.toByte(), 0x50, 0xC4.toByte()).copyInto(it)
+        }
     }
 
     private data class WireRequest(val target: String, val host: String?) {
@@ -212,7 +257,8 @@ class AndroidHttpPlaybackResourceTest {
             URLDecoder.decode(parts[0], "UTF-8") to URLDecoder.decode(parts.getOrElse(1) { "" }, "UTF-8")
         }.groupBy({ it.first }, { it.second })
     }
-    private data class WireReply(val code: Int, val bytes: ByteArray, val location: String? = null, val declaredLength: Int = bytes.size) {
+    private data class WireReply(val code: Int, val bytes: ByteArray, val location: String? = null, val declaredLength: Int = bytes.size,
+        val contentType: String = "audio/wav") {
         companion object {
             fun redirect(location: String) = WireReply(302, byteArrayOf(), location)
             fun audio() = WireReply(200, AUDIO)
@@ -241,7 +287,7 @@ class AndroidHttpPlaybackResourceTest {
             val request = WireRequest(line.split(' ')[1], headers.firstOrNull { it.startsWith("Host:", true) }?.substringAfter(':')?.trim())
             requests += request
             val reply = respond(request)
-            val header = "HTTP/1.1 ${reply.code} Fixture\r\nContent-Type: audio/wav\r\nContent-Length: ${reply.declaredLength}\r\nConnection: close\r\n" +
+            val header = "HTTP/1.1 ${reply.code} Fixture\r\nContent-Type: ${reply.contentType}\r\nContent-Length: ${reply.declaredLength}\r\nConnection: close\r\n" +
                 (reply.location?.let { "Location: $it\r\n" } ?: "") + "\r\n"
             client.getOutputStream().apply { write(header.toByteArray(Charsets.US_ASCII)); write(reply.bytes); flush() }
         }

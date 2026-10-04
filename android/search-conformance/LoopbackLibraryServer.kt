@@ -39,6 +39,12 @@ class LoopbackLibraryServer : AutoCloseable {
 
     fun releaseGenres() = genresReleased.countDown()
 
+    /** When set, `getSong` is not answered until [releaseSongs]. */
+    @Volatile var holdSongs = false
+    private val songsReleased = CountDownLatch(1)
+
+    fun releaseSongs() = songsReleased.countDown()
+
     private val log = CopyOnWriteArrayList<Pair<String, Map<String, String>>>()
     private val connections = Executors.newCachedThreadPool()
 
@@ -78,6 +84,7 @@ class LoopbackLibraryServer : AutoCloseable {
             return@use
         }
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
+        if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
         respond(client, 200, envelope(endpoint, parameters))
     }
 

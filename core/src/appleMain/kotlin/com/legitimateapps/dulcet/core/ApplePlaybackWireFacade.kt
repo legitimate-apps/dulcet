@@ -160,21 +160,20 @@ public class ApplePlaybackWireClient(
     }
 
     /**
-     * The request the Apple resource loader sends for one byte range: the plan's request without
-     * `estimateContentLength` (spec §12.5, §28 2026-10-04). Navidrome declares a cold transcode's
-     * estimate as an HTTP Content-Length and refuses any write that would cross it, so when the
-     * estimate is short of the real body the response stops at an arbitrary earlier write -- 0 to
-     * just under the estimate -- and ends exactly as a complete body under an overshooting estimate
-     * does; no client can tell the two apart. Without the flag the same cold transcode arrives
-     * complete as a chunked 200, and a cached one answers ranges with an exact total either way.
-     * The loader buffers a 200 body whole before answering, so the estimate bought it nothing.
+     * The request the Apple resource loader sends for one byte range: the plan's own request, which
+     * never carries `estimateContentLength` (spec §12.5, §28 2026-10-04). Navidrome declares a cold
+     * transcode's estimate as an HTTP Content-Length and refuses any write that would cross it, so
+     * when the estimate is short of the real body the response stops at an arbitrary earlier write
+     * and ends exactly as a complete body under an overshooting estimate does; no client can tell
+     * the two apart. Without the flag the same cold transcode arrives complete as a chunked 200, and
+     * a cached one answers ranges with an exact total.
      */
     internal suspend fun prepareResourceRequest(
         plan: RemotePlaybackWirePlan,
         range: PlaybackByteRange,
     ): AuthenticatedEndpointPreparedRequest = requestClient.prepareGetRequest(
         endpoint = plan.endpoint,
-        parameters = plan.parameters - ESTIMATE_CONTENT_LENGTH_PARAMETER,
+        parameters = plan.parameters,
         options = AuthenticatedEndpointRequestOptions(range.render()),
     )
 
@@ -388,7 +387,9 @@ internal fun validateAppleRangeAndTotalLength(
             null -> bodyLength
             is PlaybackContentLength.Exact ->
                 declaredContentLength.byteCount.takeIf { it == bodyLength }
-            is PlaybackContentLength.Estimated -> bodyLength
+            // Nothing on this path produces an estimate: validateResponse maps every declared
+            // length to Exact. Were one to arrive, no body is accepted under it, short or not.
+            is PlaybackContentLength.Estimated -> null
         }
     }
     return null
@@ -463,5 +464,3 @@ internal const val UNEXPECTED_BINARY_KIND = "unexpectedBinary"
 internal const val CAPABILITY_UNSUPPORTED_KIND = "capabilityUnsupported"
 
 private val CONTENT_RANGE_PATTERN = Regex("bytes\\s+(\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
-
-private const val ESTIMATE_CONTENT_LENGTH_PARAMETER = "estimateContentLength"

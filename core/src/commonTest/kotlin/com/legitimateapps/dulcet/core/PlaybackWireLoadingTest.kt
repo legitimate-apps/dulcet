@@ -8,18 +8,21 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class PlaybackWireLoadingTest {
+    /**
+     * Spec §12.5, §28 2026-10-04: a legacy transcode never asks for an estimated length, so the
+     * length a response declares is exact and a body short of it is a cut-off song, refused.
+     */
     @Test
-    fun legacyTranscodeCarriesReturnedLengthAsEstimatedOnTheLoadedPlan() = runTest {
-        val body = "ID3\u0004complete cold transcode".encodeToByteArray()
-        val estimate = body.size.toLong() + 23_398
+    fun aLegacyTranscodeAsksForNoEstimateAndABodyShortOfItsDeclaredLengthIsRefused() = runTest {
+        val received = "ID3\u0004cut-off cold transcode".encodeToByteArray()
         val transport = QueueTransport(
             gets = ArrayDeque(
                 listOf(
                     response(
                         statusCode = 200,
-                        body = body,
+                        body = received,
                         contentType = "audio/mpeg",
-                        contentLength = PlaybackContentLength.Estimated(estimate),
+                        contentLength = PlaybackContentLength.Exact(received.size.toLong() + 1_191),
                     ),
                 ),
             ),
@@ -29,16 +32,14 @@ class PlaybackWireLoadingTest {
             client,
             resolveRequest(FIRST_ATTEMPT).copy(supportsTranscodingExtension = false),
         )
+        assertTrue(plan.isTranscoded(), "setup: the plan is a transcode")
 
-        val loaded = assertIs<PlaybackLoadResult.Audio>(client.load(plan))
+        val failed = assertIs<PlaybackLoadResult.Failed>(client.load(plan), "a cut-off body loaded as the song")
 
-        assertEquals(null, plan.contentLength)
-        assertEquals(PlaybackContentLength.Estimated(estimate), loaded.plan.contentLength)
-        assertEquals(PlaybackContentLength.Estimated(estimate), loaded.validation.contentLength)
-        assertEquals(
-            AuthenticatedEndpointContentLengthKind.Estimated,
-            transport.requests.single().options.contentLengthKind,
-        )
+        assertEquals(DomainError.Protocol.UnexpectedBinary, failed.error)
+        val request = transport.requests.single()
+        assertEquals(null, request.parameters["estimateContentLength"], "the load asked for an estimate")
+        assertEquals(AuthenticatedEndpointContentLengthKind.Exact, request.options.contentLengthKind)
     }
 
     @Test

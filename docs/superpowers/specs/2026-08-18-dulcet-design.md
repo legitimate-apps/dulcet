@@ -1695,17 +1695,19 @@ determines the parameters; the client does not construct or modify them.**
 **Path B — extension absent (legacy):** classic `stream?format=&maxBitRate=` **preference hints**. They
 are hints, not a contract; the server may ignore them.
 
-**Path B also sends `estimateContentLength` whenever the plan is transcoded** — the lever revision 2
-missed. **OBSERVED:** `stream` takes `estimateContentLength`, which *"Sets Content-Length header for
-transcoded media."* Without it a cold legacy transcoded stream has no declared length, so it is
-delivered chunked and cannot advertise a seekable resource size. The core's own client keeps sending
-it; the Apple playback loader does not (below, and §28 2026-10-04). The estimate is not a bound in
+**Path B never sends `estimateContentLength` (§28, 2026-10-04).** **OBSERVED:** `stream` takes
+`estimateContentLength`, which *"Sets Content-Length header for transcoded media."* Without it a cold
+legacy transcoded stream has no declared length, so it is delivered chunked and complete; a cached
+one declares its exact length. With it, the declared length is an estimate that is not a bound in
 either direction: a short cold transcode can outgrow it, and the server then refuses the write that
 would cross the declaration and closes, so the body ends short and without its last frames (§28,
 2026-09-30). **OBSERVED 2026-10-04:** what arrives on an undershoot is whatever earlier writes
 carried, anywhere from nothing to just under the estimate (501 bytes once, 22,758–24,325 otherwise,
 for the 2-second probe's 24,639-byte body), and it ends exactly as a complete body under an
-overshooting estimate does. No client can tell the two apart from the response.
+overshooting estimate does. No client can tell the two apart from the response, so no Dulcet
+request asks for the estimate -- not the core's own client, not Android's data source, not the
+Apple loader -- and every declared length a playback client reads is exact: a body short of it is
+truncation, refused, never the end of the song.
 
 🚨 **OBSERVED 2026-08-28 by CONF-13 against Navidrome 0.63.2: a COLD transcode is not
 range-capable at all.** A ranged `getTranscodeStream` against a transcode that is not yet cached
@@ -1721,37 +1723,44 @@ test in the same run had warmed that transcode. The control now establishes its 
 instead of depending on execution order — a test whose outcome depends on what ran before it is not
 measuring what it claims.
 
-**OBSERVED 2026-08-28 by CONF-17 against Navidrome 0.63.2:** this value is usable only as an
-**estimate**, not an authoritative representation length. On a cold transcode cache, representative
-declared/body pairs were 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes: the
-header overshot the complete body by approximately 2.3–2.5%. Without the flag the same cold response
-had no `Content-Length` and completed chunked; after the transcode cache warmed, the declared length
-was exact. The plan therefore records the response as `PlaybackContentLength.Estimated`, a distinct
-type from `PlaybackContentLength.Exact`. EOF before an estimate is completion; EOF before an exact
-length is truncation. **ASSUMED** (no real mid-transcode drop has been measured): a network drop
-part-way through a transcode arrives as the same connection-lost end after a prefix of the body, so
-it cannot be told from a body that ended short of its estimate and is accepted as the end of the
-representation -- the track ends early rather than failing; that has been the policy since revision
-84. **OBSERVED 2026-10-01 on macOS** (loopback fixture, `DarwinEstimatedLengthBodyTest`): when the end
-of the stream follows body bytes closely, NSURLSession discards the ones it has read but not yet
-handed to its delegate and reports the -1005 without them -- on an idle host usually the tail after
-its first 16 KiB read, and under CPU load every byte of a 23,385-byte body in 65 of 200 reads. Those
-bytes never reach `countOfBytesReceived` either, so the Apple client's end-of-estimate rewrite (§28,
-2026-09-30 and 2026-10-01) cannot keep them: a short estimated body can lose its tail, and one whose
-every byte arrives before the first hand-over fails as `Unreachable`. **ASSUMED:** a full-length track
-is not exposed to the second case, because its body cannot all arrive before the session hands over
-a first read; nothing has measured it. **The Apple playback loader is a second client with its own
-session** (`DulcetURLSessionPlaybackResource`), and its request never carries `estimateContentLength`
-(§28, 2026-10-04): a cold transcode then answers with a complete chunked 200 and a cached one with
-206 and an exact total, so every length the loader is given is exact. It reads each chunk through
-its delegate and, when a 200 body ends in the -1005 after at least one byte, hands what arrived to
-the core validator, which accepts it only when the plan's length is an estimate -- never, now, on
-this path; refused, with no byte, or on a 200 that declared no length, the load stays the lost
-connection. A cold transcode answers the loader's first ranged read with 200 and the whole
-representation, which the loader accepts as the resource only from byte 0 and only at the length
-the validator measured (§28, 2026-10-02). No validator, download promoter, or platform media loader may collapse those
-variants into one numeric "expected length." `TranscodeDecision.LegacyHint` records that we are on
-this path so the UI never claims a negotiated result.
+**OBSERVED 2026-08-28 by CONF-17 against Navidrome 0.63.2,** when Dulcet still asked for it: the
+estimate is not an authoritative representation length. On a cold transcode cache, representative
+declared/body pairs were 1,218,703/1,191,316, 1,517,813/1,483,156, and 842,588/823,923 bytes (an
+overshoot of about 2.3–2.5%); the 2-second probe at 96 kbps undershoots instead (above). Without the
+flag the same cold response had no `Content-Length` and completed chunked; after the transcode cache
+warmed, the declared length was exact. CONF-17 now pins the contract Dulcet relies on: a cold capped
+legacy load declares no length, and the same transcode once cached declares an exact length equal
+to the cold body, byte for byte. `PlaybackContentLength.Estimated` remains a distinct type from
+`PlaybackContentLength.Exact`, and no validator, download promoter, or platform media loader may
+collapse the two into one numeric "expected length"; nothing in production produces an `Estimated`
+since §28 2026-10-04, and where one is still branched on it is never accepted as the length of a
+body short of it. A network drop part-way through a response that declares a length is therefore
+a failure on every platform, not an early end. A cold transcode now declares none and arrives
+chunked, so a cut-off there is caught only by the chunk framing, and per platform: **OBSERVED
+2026-10-04** (#227 review, real socket; Android under Robolectric with the JDK's
+`HttpURLConnection`, not a device) Android's data source fails both a close mid-chunk and a
+close after a whole chunk with no terminating chunk ("Premature EOF"); the core's JVM client (Ktor
+CIO) fails a close mid-chunk but **loads** a close at a chunk boundary as the whole song, the same as
+before #227. That path is `PlaybackWireClient.load` (CONF-92, the core controls), not a shipping
+player. **ASSUMED, not measured:** that the Apple URLSession loader and the Darwin core client fail
+both kinds of cut-off. The
+core's Ktor read path for estimated bodies and the Darwin delegate's
+end-of-estimate rewrite (§28, 2026-09-30 and 2026-10-01) act only on a request that asks for an
+estimate, so neither acts now. **OBSERVED 2026-10-01 on macOS** (loopback fixture,
+`DarwinEstimatedLengthBodyTest`): when the end of the stream follows body bytes closely, NSURLSession
+discards the ones it has read but not yet handed to its delegate and reports the -1005 without them
+-- on an idle host usually the tail after its first 16 KiB read, and under CPU load every byte of a
+23,385-byte body in 65 of 200 reads. **The Apple playback loader is a second client with its own
+session** (`DulcetURLSessionPlaybackResource`), and it sends the plan's request, which never carries
+`estimateContentLength`: a cold transcode answers it with a complete chunked 200 and a cached one
+with 206 and an exact total. It reads each chunk through its delegate and, when a 200 body that
+declared a length ends in the -1005 after at least one byte, hands what arrived to the core
+validator, which treats every declared length as exact and refuses the short body; refused, with no
+byte, or on a 200 that declared no length, the load stays the lost connection. A cold transcode
+answers the loader's first ranged read with 200 and the whole representation, which the loader
+accepts as the resource only from byte 0 and only at the length the validator measured (§28,
+2026-10-02). `TranscodeDecision.LegacyHint` records that we are on this path so the UI never claims a
+negotiated result.
 
 **`transcodeOffset` applies to Path B. OBSERVED 2026-08-28 by CONF-14a against Navidrome 0.63.2 with
 the pinned Linux ffmpeg 6.1.1:** the generated 31-second FLAC fixture transcoded to a 248,455-byte MP3
@@ -1816,7 +1825,7 @@ default. The preference is:
   At that point it is the item starting; discarding it would resume the held end and prepare the
   same track again. It plays at the quality it was resolved at, and the item after it at the new one.
 - **What a transcoded stream costs.** A stream the server really transcodes is not served by byte
-  range; its length is only an estimate (`estimateContentLength`):
+  range on its first, cold play, and declares no length then:
   - Android reports it `NotSeekable`. A pending resume position is not applied to it, and Previous
     goes to the previous track rather than restarting it.
   - Apple follows AVFoundation's seekable ranges.
@@ -1835,7 +1844,8 @@ default. The preference is:
 - Path B: *Original* returned the FLAC file, and the cap returned MP3 with `LegacyHint(mp3, 96)`.
 - Path A: *Original* was `ExtensionDirect` FLAC, and the cap was `ExtensionTranscode` MP3.
 - Both capped bodies were no larger than the cap allows. The original is 39,183 bytes; across
-  runs the capped bodies were 24,012–24,639 bytes on Path B and 24,639 on Path A.
+  runs the capped bodies were 24,012–24,639 bytes on Path B and 24,639 on Path A. Path B then
+  asked for an estimate, and every body under 24,639 was cut off and accepted (§28, 2026-10-04).
 - With a 128 kbps cap, which the 123 kbps source already meets, the plan asked for no transcode
   and the FLAC original arrived (review round, same day).
 
@@ -2869,9 +2879,10 @@ and reconciliation against a changed server item. The platform owns the **execut
 - **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
   table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
   before the file is atomically renamed and the row marked complete. An estimated length is never an
-  integrity boundary. For a cold legacy transcoded download, completion is the terminal response-body
-  end plus successful container/signature validation; the stored row records the observed file byte
-  count as exact only **after** the complete temp file closes. A crash between validation and rename
+  integrity boundary, and no download request asks for one (a download is the original file, below).
+  A response that declared no length completes at the terminal response-body end plus successful
+  container/signature validation; the stored row records the observed file byte count as exact only
+  **after** the complete temp file closes. A crash between validation and rename
   leaves a temp file that reconciliation deletes. **Validation never reads a file whole (§28,
   2026-09-30, fix round):** the envelope and signature checks see a bounded prefix (64 KiB, widened
   only as far as a leading ID3v2 tag needs, to at most 16 MiB), and the exact length is compared with
@@ -6138,7 +6149,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-12 | Error shape **per delivery path**: `/rest/stream` with a bad id, **and** `getTranscodeStream` with a bad id. Records the actual HTTP status for each, since the two paths use different error conventions (§12.4). This is what promotes §12.4's defensive assumption to an observation |
 | CONF-07b | whether the reference server honours **form-POSTed credentials on `stream`** — changes §13.2's threat analysis (C6) |
 | CONF-16 | **drives the transcode concurrency limiter** until it rejects: asserts HTTP **429**, a `Retry-After` header, an envelope body, and that the client maps it to `Server.Busy` rather than a generic error (§18.12) |
-| CONF-17 | `estimateContentLength` on a cold transcoded legacy stream returns a usable length only as an estimate: it overshoots the complete body and is non-authoritative (§12.5) |
+| CONF-17 | a cold capped legacy load, which never asks for `estimateContentLength`, declares no length and arrives whole: once cached, the same transcode declares an exact length equal to the cold body, byte for byte (§12.5, §28 2026-10-04) |
 | CONF-43 | a fixed query set through `search3`, recording returned id sets, to measure local-vs-server matching divergence (§18.1) |
 | CONF-13 | `Range` support on raw and on transcoded streams |
 | CONF-14a | `transcodeOffset` seek on the **legacy** `stream` path returns audio at the requested offset |
@@ -7412,10 +7423,60 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-04 — No Dulcet request asks for an estimated length, so no declared length is short of
+the song (§12.5, §14.5).** The entry below fixed the Apple loader only. The core
+plan itself (`resolveLegacy`) no longer adds `estimateContentLength`, so no client sends it: the
+core's own client (`PlaybackWireClient.load`, which CONF-92 and the core controls drive), Android's
+data source (`AndroidHttpPlaybackResource`) and the Apple loader, which now sends the plan's request
+as it is. Every declared length a playback client reads is exact:
+- **Core client.** `load` always reads the length as exact, so a body short of it fails as a
+  transport error or `UnexpectedBinary` instead of loading. CONF-92's recorded Path-B capped bodies of
+  24,012–24,639 bytes (2026-09-30) were, by the complete body's 24,639 bytes, cut off and accepted
+  whenever they were under 24,639 (derived from those numbers; no body was compared then).
+- **Android.** With an estimated length the data source tracked no exact remainder, so a body that
+  ended early returned end-of-input and ExoPlayer ended the track as if it had finished. OBSERVED
+  with the JVM's `HttpURLConnection` under Robolectric: the new test completed without a failure
+  before the change. ASSUMED, not measured: on a device, Android's own `HttpURLConnection` may
+  already throw on a short fixed-length body. Either way the length is now exact, and the short body
+  fails. Seeking does not change: a transcoded stream was already `NotSeekable`, and an estimate was
+  never passed to Media3 as a length. A warm (cached) transcode's declared length now reaches Media3
+  as exact, where an estimated one reached it as `LENGTH_UNSET`.
+- **Downloads** were never exposed. A download is the original file (`format=raw`), which never
+  asked for an estimate, and both promoters received exact lengths only (derived from the code:
+  `asOriginalFileDownload` refuses a transcoded plan). The promoter's rule for an `Estimated` length
+  stays, and nothing produces one.
+- **Apple.** `validateAppleRangeAndTotalLength` now refuses any body under an `Estimated` length,
+  short or not, instead of accepting a short one. Nothing on that path produces one (#225 review item 3).
+
+Not closed: a cold transcode now arrives chunked, and the core's JVM client (Ktor CIO) still loads
+a chunked body cut off at a chunk boundary as the whole song (OBSERVED in #227's review; Android
+fails it; Apple not measured). §12.5 records the per-platform state.
+Not removed: the core's Ktor read path for estimated bodies and the Darwin delegate's end-of-estimate
+rewrite. Both act only on a request that asks for an estimate, so neither acts now. They are a
+follow-up to remove as one change. Tests that failed before the change and pass after it:
+`PlaybackColdTranscodeTruncationTest` (JVM, real socket: the cut-off body loaded as the song),
+`DarwinEstimatedLengthBodyTest.aCappedLegacyLoadAsksForNoEstimateAndFailsOnABodyCutOffShortOfItsLength`
+(Darwin, real socket, same failure), `AndroidHttpPlaybackResourceTest.aCappedStreamAsksForNoEstimate…`
+("completed successfully"), and the plan and request tests in `PlaybackWireTest`,
+`StreamingQualityTest`, `PlaybackWireLoadingTest`, `ApplePlaybackColdTranscodeRequestTest` and
+`ApplePlaybackEstimatedLengthTest`. CONF-14a and CONF-51 now expect a cold transcode to declare no
+length. CONF-17 now pins the contract: a cold capped load declares no length, and the same
+transcode, once cached, declares an exact length equal to the cold body, byte for byte.
+OBSERVED against a local disposable Navidrome 0.63.2 with an empty transcoding cache, Homebrew
+ffmpeg: `PlaybackScrobbleConformanceTest` passed 12 of 12 on the JVM and 12 of 12 on macOS, with no
+`wrote more than the declared Content-Length` in the server log. CONF-17's cold 73 kbps body was
+20,564 bytes with no declared length, and the cached answer declared exactly 20,564. With the change
+reverted, CONF-17 failed: the server declared an estimate of 18,688 bytes for that same 20,564-byte
+transcode, an undershoot, and logged the refused write once. CONF-92's capped Path-B body was
+24,639 bytes, the whole body.
+
 **2026-10-04 — The Apple playback loader no longer asks for an estimated length (§12.5).** Main's
-conformance run 37173707529 failed the iPhone streaming-quality proof: "Couldn't play “Dulcet Health
-Probe”", three cold 96 kbps transcodes, each logged by the server as `wrote more than the declared
-Content-Length`. Reproduced against Navidrome 0.63.2 with an empty transcoding cache, OBSERVED:
+conformance run 37173707529 failed the iPhone streaming-quality proof once -- one test case, with two
+failed assertions ("Couldn't play “Dulcet Health Probe”", and the play never started). During that
+test the server logged `wrote more than the declared Content-Length` three times, for cold 96 kbps
+transcodes of the probe (one line per transcoded response, ASSUMED); the iPad proof in the same run
+passed, with two such lines. Reproduced against Navidrome 0.63.2 with an empty transcoding cache,
+OBSERVED:
 
 1. The probe's real 96 kbps body is 24,639 bytes and the estimate 24,576, so it **undershoots** on
    every cold play, and the transcode never enters the cache (`cached=false` each time) -- the same
@@ -7425,8 +7486,9 @@ Content-Length`. Reproduced against Navidrome 0.63.2 with an empty transcoding c
    whatever earlier writes carried. Over 152 cold reads through a URLSession delegate: 501 bytes
    once, 22,758–24,325 bytes otherwise, each ending in `-1005`. A 501-byte prefix is the ID3 tag and
    one frame: AVPlayer reported it ready, 0.026 s long, and played to its end. A read that carries
-   no byte fails as `transport` before validation -- "Couldn't play". Which of the two the hosted
-   iPhone met is not recorded (no app log); both come from requesting the estimate.
+   no byte fails as `transport` before validation -- "Couldn't play" (derived from the code, not
+   observed: no read here carried 0 bytes). Which of the two the hosted iPhone met is not recorded
+   (no app log); both come from requesting the estimate.
 3. Other tracks overshoot (31-second probe: 380,928 declared, 372,589 delivered and complete). A
    body ended short of an estimate is complete in one case and truncated in the other, with the
    same response shape, so the 2026-10-02 rule cannot be made safe from the client side.
@@ -7438,9 +7500,9 @@ The loader buffers a 200 body whole before it answers AVFoundation, so the estim
 nothing. `ApplePlaybackWireClient` now prepares the loader's request without
 `estimateContentLength` and validates every declared length as exact, so a body short of it is
 truncation (`ApplePlaybackColdTranscodeRequestTest`; its first two tests failed before the
-change). The core's own client (downloads, CONF-92) and Android still send the flag and still take a
-short estimated body as complete; on an undershoot that is a truncated song (follow-up, not changed
-here). Not driven here: the hosted iPhone proof itself and real hardware.
+change). The core's own client (CONF-92) and Android still sent the flag and still took a short
+estimated body as complete; on an undershoot that is a truncated song. The entry above removes the
+flag from every request. Not driven here: the hosted iPhone proof itself and real hardware.
 
 **2026-10-03 — A playlist edit refused because the playlist is gone is said on its page (§18.6).**
 A rename made on a playlist's page fails one of two ways, depending on which lands first. If the

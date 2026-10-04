@@ -30,7 +30,6 @@ class StreamingQualityTest {
                 "id" to MEDIA_ID,
                 "format" to "mp3",
                 "maxBitRate" to "192",
-                "estimateContentLength" to "true",
             ),
             plan.parameters,
         )

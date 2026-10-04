@@ -86,6 +86,13 @@ internal data class AuthenticatedEndpointRequestOptions(
 
 internal enum class AuthenticatedEndpointContentLengthKind {
     Exact,
+
+    /**
+     * Unused in production since §28 2026-10-04: no request asks Navidrome for an estimated length,
+     * because a short estimate cuts a cold transcode off in a way no client can tell from its end.
+     * The read path behind it, and the Darwin delegate's matching rewrite, are kept only until they
+     * are removed as one change.
+     */
     Estimated,
 }
 
