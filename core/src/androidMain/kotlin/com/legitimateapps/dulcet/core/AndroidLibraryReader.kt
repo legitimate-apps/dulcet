@@ -238,7 +238,7 @@ public class AndroidLibraryReader internal constructor(
      * could not be opened yet). The windows and searches opened while it was failing were told so and
      * hold no session; they are opened now, so whoever holds this reader keeps working screens.
      */
-    private fun composed(): AndroidLibraryReaderComposition? {
+    internal fun composed(): AndroidLibraryReaderComposition? {
         if (composition == null && compositionFailed.get() && !closed.get()) {
             compose()
             composition?.let { built ->
@@ -1310,6 +1310,11 @@ public class AndroidLibraryWindow internal constructor(
 /**
  * One search (§16.15). [updateQuery] publishes the device's rows at once and the server's after the
  * core's debounce; [close] is idempotent and cancels the server request.
+ *
+ * Every keystroke is answered. With no search session (setup failed), a keystroke is kept — the
+ * search opens with it once setup succeeds — and answered at once with
+ * [AndroidLibrarySearchScope.ReaderFailed] for that query; on a closed reader, the same. [refresh]
+ * with no session retries setup. A failure always names the text in the field.
  */
 public class AndroidLibrarySearch internal constructor(
     private val owner: AndroidLibraryReader,
@@ -1317,20 +1322,27 @@ public class AndroidLibrarySearch internal constructor(
 ) {
     private val listener = AtomicReference<((AndroidLibrarySearchPublication) -> Unit)?>(listener)
 
+    /** The query last typed, for an answer made off the reader's thread once the reader has closed. */
+    private val lastTyped = AtomicReference<String?>(null)
+
     // Reader-thread state.
     private var session: LibrarySearchSession? = null
     private var minimumServerQueryLength = LibrarySearchConfig().minimumServerQueryLength
     private var sequence = 0
-    private var emitted: AndroidLibrarySearchPublication? = null
 
-    /** The latest query, typed even while setup was failing, for a search opened late. */
-    private var query: String? = null
+    /** The query last typed — even while setup was failing, for a search opened late — and what was shown. */
+    private val memory = SearchFacadeMemory<AndroidLibrarySearchRow>()
 
     public fun updateQuery(text: String) {
         if (listener.get() == null) return
-        owner.onReader {
-            query = text
-            val current = session ?: return@onReader
+        lastTyped.set(text)
+        owner.onReader(onDropped = ::emitClosed) {
+            memory.type(text)
+            val current = session
+            if (current == null) {
+                emit(readerFailed())
+                return@onReader
+            }
             try {
                 current.updateQuery(text)
             } catch (cancelled: CancellationException) {
@@ -1341,9 +1353,27 @@ public class AndroidLibrarySearch internal constructor(
         }
     }
 
-    /** Runs the current query again, as if retyped. */
+    /**
+     * Runs the current query again, as if retyped. With no session it first retries setup: the
+     * search then opens with the query last typed, or says again that the reader failed.
+     */
     public fun refresh() {
-        call { it.refresh() }
+        if (listener.get() == null) return
+        owner.onReader(onDropped = ::emitClosed) {
+            val current = session
+            if (current == null) {
+                owner.composed()?.let(::reopen)
+                if (session == null) emit(readerFailed())
+                return@onReader
+            }
+            try {
+                current.refresh()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                emit(readerFailed())
+            }
+        }
     }
 
     public fun close() {
@@ -1366,7 +1396,7 @@ public class AndroidLibrarySearch internal constructor(
         if (listener.get() == null || session != null) return
         start(composition)
         // Applied now, in this task: a query typed meanwhile is queued behind it and supersedes it.
-        val text = query ?: return
+        val text = memory.typed ?: return
         val current = session ?: return
         try {
             current.updateQuery(text)
@@ -1404,20 +1434,6 @@ public class AndroidLibrarySearch internal constructor(
         owner.unregister(this)
     }
 
-    private fun call(action: (LibrarySearchSession) -> Unit) {
-        if (listener.get() == null) return
-        owner.onReader {
-            val current = session ?: return@onReader
-            try {
-                action(current)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                emit(readerFailed())
-            }
-        }
-    }
-
     private fun publish(publication: LibrarySearchPublication) {
         val converted = try {
             publication.toAndroid(sequence + 1, minimumServerQueryLength)
@@ -1427,22 +1443,23 @@ public class AndroidLibrarySearch internal constructor(
         emit(converted)
     }
 
-    /** The rows already shown stay, under a failed scope. */
+    /** For the query in the field: the rows already shown for it stay, under a failed scope. */
     private fun readerFailed() = AndroidLibrarySearchPublication(
-        query = emitted?.query ?: "",
+        query = memory.failureQuery,
         sequence = sequence + 1,
         scope = AndroidLibrarySearchScope.ReaderFailed,
-        rows = emitted?.rows ?: emptyList(),
+        rows = memory.failureRows,
     )
 
     private fun emit(publication: AndroidLibrarySearchPublication) {
         sequence = publication.sequence
-        emitted = publication
+        memory.shown(publication.query, publication.rows)
         owner.onMain { listener.get()?.invoke(publication) }
     }
 
+    /** A search opened, or a keystroke made, on a closed reader: the reader's failure, for the query last typed. */
     internal fun emitClosed() {
-        val publication = AndroidLibrarySearchPublication("", 1, AndroidLibrarySearchScope.ReaderFailed, emptyList())
+        val publication = AndroidLibrarySearchPublication(lastTyped.get() ?: "", 1, AndroidLibrarySearchScope.ReaderFailed, emptyList())
         owner.onMain(checkClosed = false) { listener.get()?.invoke(publication) }
     }
 }

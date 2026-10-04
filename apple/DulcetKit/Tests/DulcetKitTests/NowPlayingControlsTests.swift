@@ -79,6 +79,7 @@ private final class HeartWindow: DulcetLibraryWindowSubscribing {
 @MainActor
 private final class HeartSearch: DulcetLibrarySearchSubscribing {
     func updateQuery(_ text: String) {}
+    func refresh() {}
     func close() {}
 }
 

@@ -68,21 +68,25 @@ public sealed interface SearchEmptyState {
     /** Offline, and nothing this device has seen matches: said of this device, never of the server. */
     public data object NoMatchesOnDevice : SearchEmptyState
 
-    /** The server search failed (a timeout included) and nothing on this device matches: Try Again. */
-    public data class Failed(val error: DomainError) : SearchEmptyState
+    /**
+     * The search failed and nothing on this device matches: Try Again. [error] is the server's
+     * (a timeout included), or null when the reader itself failed — Try Again then retries its setup.
+     */
+    public data class Failed(val error: DomainError?) : SearchEmptyState
 }
 
 /**
  * The statement a screen makes in place of rows, or null while it has rows, a blank query, a
  * server answer still coming, or no publication yet. A failed or offline search is never "no
- * matches": the server was not heard from, so only the device is said to have none.
- * [AndroidLibrarySearchScope.ReaderFailed] is the scope line's alone; there is nothing to retry from here.
+ * matches": the server was not heard from, so only the device is said to have none. A reader that
+ * failed is a failure too, with Try Again ([SearchSourceHandle.refresh] retries its setup).
  */
 public val SearchUiState.emptyState: SearchEmptyState?
     get() {
         if (query.isBlank() || rows.isNotEmpty() || isLoading) return null
         return when (val current = scope) {
-            null, AndroidLibrarySearchScope.ReaderFailed -> null
+            null -> null
+            AndroidLibrarySearchScope.ReaderFailed -> SearchEmptyState.Failed(null)
             AndroidLibrarySearchScope.ServerAndDevice, AndroidLibrarySearchScope.DeviceWhileServerPending ->
                 SearchEmptyState.NoMatches
             is AndroidLibrarySearchScope.DeviceOffline -> SearchEmptyState.NoMatchesOnDevice

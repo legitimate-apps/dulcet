@@ -23,6 +23,9 @@ public protocol DulcetLibraryWindowSubscribing: AnyObject {
 @MainActor
 public protocol DulcetLibrarySearchSubscribing: AnyObject {
     func updateQuery(_ text: String)
+    /// Runs the current query again, as if retyped; with no search session, the reader answers
+    /// again for the query in the field (§16.15).
+    func refresh()
     func close()
 }
 
@@ -941,5 +944,17 @@ public final class DulcetReaderSearchModel {
     public var current: DulcetReaderSearchPublication? {
         guard let publication, publication.query == query else { return nil }
         return publication
+    }
+
+    /// Try Again on a failed search (§16.15). A failure of the reader itself is retried by the
+    /// search: the reconnect re-runs a search by the core session's own scope, which a failure the
+    /// facade states does not change, so it could leave this one as it is. Every other failure is
+    /// the reconnect's, which re-runs the search after the epoch read (§16.14).
+    public func retry(reconnect: () -> Void) {
+        if case let .deviceServerFailed(kind, _)? = current?.scope, kind == .internalFailure {
+            subscription?.refresh()
+        } else {
+            reconnect()
+        }
     }
 }

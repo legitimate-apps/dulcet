@@ -80,6 +80,26 @@ class TvSearchFailureTest {
         presenter.close()
     }
 
+    /** A reader that failed is a failure too: Try Again is reached with the D-pad and reaches the reader. */
+    @Test fun aReaderFailureOffersTryAgainReachedAndRunWithTheDpad() {
+        val source = ScriptedSource()
+        val presenter = open(source)
+        type(presenter, source, "echo", AndroidLibrarySearchScope.ReaderFailed)
+        compose.onNodeWithTag("search.failed.body")
+            .assertTextEquals("Nothing on this device matches, and something went wrong on this device.")
+        compose.onNodeWithTag("search.scope").assertDoesNotExist()
+        compose.onNodeWithTag("search.query").performSemanticsAction(SemanticsActions.RequestFocus)
+
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithTag("search.retry").assertIsFocused()
+        compose.onNodeWithTag("search.retry").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitForIdle()
+
+        assertEquals(1, source.refreshes, "Try Again goes through SearchSourceHandle.refresh, which retries the reader's setup")
+        compose.onNodeWithTag("search.query").assertIsFocused()
+        presenter.close()
+    }
+
     @Test fun anOfflineSearchWithNothingOnTheDeviceSaysThisDeviceHasNoMatchesNotThatMusicIsMissing() {
         val source = ScriptedSource()
         val presenter = open(source)

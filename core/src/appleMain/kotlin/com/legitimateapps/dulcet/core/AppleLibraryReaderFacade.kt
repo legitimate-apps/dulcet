@@ -159,7 +159,7 @@ public class AppleLibraryReaderClient internal constructor(
     /** Search as you type over what this device has seen and the server (§16.15, §18.1). Threading as [subscribeLibraryWindow]. */
     public fun subscribeSearch(listener: AppleLibrarySearchListener): AppleLibrarySearchSubscription {
         val subscription = AppleLibrarySearchSubscription(this, listener)
-        if (!onReader { subscription.open(composition) }) subscription.emitClosed()
+        if (!onReader { subscription.open(composition) }) subscription.openedOnClosedClient()
         return subscription
     }
 
@@ -886,6 +886,12 @@ public class AppleLibraryWindowSubscription internal constructor(
 /**
  * One search (§16.15). [updateQuery] publishes the device's rows at once and the server's after
  * the core's debounce; [close] is idempotent and cancels the server request.
+ *
+ * Every keystroke is answered. With no search session (the client's session could not be built),
+ * a keystroke is kept and answered at once with the reader's failure for that query; on a
+ * subscription made on a closed client, with `closed` for it. A failure always names the text in
+ * the field, so the shell can show it rather than wait for an answer that will not come. A
+ * subscription open when its client closes says nothing more, as every subscription.
  */
 @OptIn(ExperimentalAtomicApi::class)
 public class AppleLibrarySearchSubscription internal constructor(
@@ -894,16 +900,31 @@ public class AppleLibrarySearchSubscription internal constructor(
 ) {
     private val listener = AtomicReference<AppleLibrarySearchListener?>(listener)
 
+    /**
+     * The query last typed, for a `closed` answer made off the reader's thread: a keystroke on a
+     * closed client never reaches it.
+     */
+    private val lastTyped = AtomicReference<String?>(null)
+
+    /** Made on a client already closed: never opened, so every call is answered with `closed`. */
+    private val bornClosed = AtomicBoolean(false)
+
     // Reader-thread state.
     private var session: LibrarySearchSession? = null
     private var sequence = 0
-    private var emitted: AppleLibrarySearchPublication? = null
+    private val memory = SearchFacadeMemory<AppleLibrarySearchRow>()
 
     public fun updateQuery(text: String) {
-        call { it.updateQuery(text) }
+        if (listener.load() == null) return
+        lastTyped.store(text)
+        call(typed = text) { it.updateQuery(text) }
     }
 
-    /** Runs the current query again, as if retyped. */
+    /**
+     * Runs the current query again, as if retyped. With no search session it answers again with
+     * the reader's failure for the current query: an Apple client does not retry a setup that
+     * failed (§16.15).
+     */
     public fun refresh() {
         call { it.refresh() }
     }
@@ -949,13 +970,22 @@ public class AppleLibrarySearchSubscription internal constructor(
         client.unregister(this)
     }
 
-    private fun call(action: (LibrarySearchSession) -> Unit) {
+    /**
+     * Runs [action] on the reader's thread with the search session; [typed], when given, is kept
+     * first. With no session the call is answered with the reader's failure for the current query.
+     */
+    private fun call(typed: String? = null, action: (LibrarySearchSession) -> Unit) {
         if (listener.load() == null) return
-        client.onReader {
+        val queued = client.onReader {
             // Checked again when it RUNS: a call queued before a close of this subscription or of
             // the client does nothing once that close has returned — no SQL, no request.
             if (listener.load() == null || client.isClosed) return@onReader
-            val current = session ?: return@onReader
+            if (typed != null) memory.type(typed)
+            val current = session
+            if (current == null) {
+                emit(searchFailurePublication("internalFailure"))
+                return@onReader
+            }
             try {
                 action(current)
             } catch (cancelled: CancellationException) {
@@ -964,6 +994,7 @@ public class AppleLibrarySearchSubscription internal constructor(
                 emit(searchFailurePublication("internalFailure"))
             }
         }
+        if (!queued && bornClosed.load()) emitClosed()
     }
 
     private fun publish(publication: LibrarySearchPublication) {
@@ -981,7 +1012,7 @@ public class AppleLibrarySearchSubscription internal constructor(
             publication.query, sequence, publication.scope, publication.errorKind,
             publication.seenArtistCount, publication.seenAlbumCount, publication.seenTrackCount, publication.rows,
         )
-        emitted = numbered
+        memory.shown(numbered.query, numbered.rows)
         client.onMain { deliver(numbered) }
     }
 
@@ -991,20 +1022,32 @@ public class AppleLibrarySearchSubscription internal constructor(
         listener.load()?.onSearchPublication(publication)
     }
 
-    /** The device's rows already shown stay, under a failed scope (an error never replaces content). */
+    /**
+     * For the query in the field: the device's rows already shown for it stay, under a failed
+     * scope (an error never replaces content).
+     */
     private fun searchFailurePublication(errorKind: String) = AppleLibrarySearchPublication(
-        query = emitted?.query ?: "",
+        query = memory.failureQuery,
         sequence = 0,
         scope = "deviceServerFailed",
         errorKind = errorKind,
         seenArtistCount = null,
         seenAlbumCount = null,
         seenTrackCount = null,
-        rows = emitted?.rows ?: emptyList(),
+        rows = memory.failureRows,
     )
 
-    internal fun emitClosed() {
-        val publication = AppleLibrarySearchPublication("", 1, "deviceServerFailed", "closed", null, null, null, emptyList())
+    /** Made on a closed client: one statement of fact, never silence. */
+    internal fun openedOnClosedClient() {
+        bornClosed.store(true)
+        emitClosed()
+    }
+
+    /** `closed`, for the query last typed. */
+    private fun emitClosed() {
+        val publication = AppleLibrarySearchPublication(
+            lastTyped.load() ?: "", 1, "deviceServerFailed", "closed", null, null, null, emptyList(),
+        )
         client.onMain { listener.load()?.onSearchPublication(publication) }
     }
 }

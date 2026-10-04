@@ -4451,7 +4451,27 @@ mapping (`SearchUiState.emptyState`): with no rows, `deviceServerFailed` is "Sea
 completed — Nothing on this device matches, and <kind>." with Try Again (which re-runs the query as if
 retyped, `SearchSourceHandle.refresh`; on the TV it is reached from the field with the D-pad), and
 `deviceOffline` is "No matches on this device" under the offline label. Only `serverAndDevice` says
-"No matching music"; a reader failure keeps its scope line alone.
+"No matching music". A reader failure with no rows is drawn as a failure too (below).
+
+**A search the facade cannot ask still answers (2026-10-04).** The platform facade keeps the query
+last typed whether or not it holds a search session, and answers every keystroke. With no session
+(the reader's setup failed), a keystroke is answered at once with the reader's own failure for that
+query — `deviceServerFailed(internalFailure)` on Apple, `ReaderFailed` on Android — and on a closed
+reader with `closed` (Apple, for a subscription made on a closed client; one open when its client
+closed says nothing more) or `ReaderFailed` (Android, the racing-close rule of §28, 2026-09-29) for
+it. Every failure the facade states
+names the query last typed, and keeps the rows already shown only when they answer that query
+(`SearchFacadeMemory`), so a shell that matches a publication to the text in the field shows the
+failure instead of waiting for an answer that will not come. Try Again does something real for a
+reader failure: on Android, `refresh` with no session retries setup — the search then opens with the
+query last typed, or says again that the reader failed — and phone and TV draw `ReaderFailed` with
+no rows as "Search could not be completed — Nothing on this device matches, and something went
+wrong on this device." with Try Again. On Apple, Try Again on an `internalFailure` search runs the
+subscription's `refresh` rather than the reconnect (the reconnect re-runs a search by the core
+session's own scope, which a failure the facade states does not change, so it could leave this one
+as it is); every other kind keeps the reconnect. An
+Apple client does not retry a setup that failed, so with no session its `refresh` answers again with
+the failure for the query in the field (the Android-only rule of §28, 2026-09-29).
 
 **Revalidated like a window (R2a review, §28 revision 104 item 30).** Open searches are part of the
 visible screen of §16.14 step 3, revalidated after the windows, and by the windows' rule: a server
@@ -7449,6 +7469,34 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — A search the facade cannot ask answers every keystroke for its own text, and Try
+Again on a reader failure does something (§16.15).** Two facade defects, OBSERVED by the 8 s
+search-bound lanes on Apple and Android:
+
+1. The failure and closed publications the facades make themselves carried the query of the last
+   publication (empty before any), not the text in the field, so the Apple screen — which shows a
+   publication only for the query typed — drew the spinner instead of the failure. Now both name the
+   query last typed and keep the rows shown only when they answer it (`SearchFacadeMemory`).
+   OBSERVED by `AppleLibraryReaderFacadeTest` (`aSessionThatCannotBeBuiltAnswersEveryEntryPoint`,
+   `aClosedClientAnswersEveryEntryPoint`, `aSearchWithNoSessionAnswersEveryKeystrokeAndTryAgainForTheTextInTheField`)
+   and `AndroidLibraryReaderTest` (`aKeystrokeOnAClosedReaderIsAnsweredForItsText`), each failing
+   without the change.
+2. Both facades dropped a keystroke and a `refresh` made with no search session: the query was
+   lost on Apple, and on Android `ReaderFailed` with no rows offered no Try Again because the button
+   would have done nothing. Now a keystroke with no session is answered with the reader's failure
+   for it; Android's `refresh` retries setup and opens the search with the query typed; the phone
+   and TV draw that failure with Try Again; and Apple's Try Again on `internalFailure` re-runs the
+   search through the subscription instead of the reconnect. OBSERVED by
+   `tryAgainOnASearchWhoseSetupFailedRetriesSetupAndRunsTheQueryTyped`,
+   `tryAgainWhileSetupStillFailsSaysSoAgainForTheQueryTyped`, `MobileSearchFailureTest`,
+   `TvSearchFailureTest` and `tryAgainOnASearchTheReaderFailedRerunsTheSearchAndAServerFailureReconnects`
+   (Robolectric and DulcetKit host tests, not a simulator or emulator).
+
+An Apple client still builds its session once: one whose setup failed stays failed for every screen
+until the app relaunches or the account changes. Bringing Android's setup retry to Apple needs the
+playlist facade's outcome listener, attached once at construction, to be attached to a session built
+later; it is not done here.
 
 **2026-10-04 — A server search that has not answered in 8 s says `deviceServerFailed(timeout)`, and
 Apple draws a failed search as a failure, not "no matches" (§16.15).** Two conformance runs on

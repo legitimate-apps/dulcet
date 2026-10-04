@@ -1136,6 +1136,7 @@ private final class DulcetCoreSearchSubscription: DulcetLibrarySearchSubscribing
     }
 
     func updateQuery(_ text: String) { subscription.updateQuery(text: text) }
+    func refresh() { subscription.refresh() }
     func close() { subscription.close() }
 }
 

@@ -113,14 +113,32 @@ class MobileSearchFailureTest {
         presenter.close()
     }
 
-    @Test fun aReaderFailureClaimsNoMatchesEither() {
+    /** A reader that failed (its setup, say) is a failure with a Try Again that reaches the reader. */
+    @Test fun aReaderFailureWithNothingOnTheDeviceIsAFailureWithTryAgain() {
         val source = ScriptedSource()
         val presenter = open(source)
         type(presenter, source, "echo", AndroidLibrarySearchScope.ReaderFailed)
 
         compose.onNodeWithTag("search.empty").assertDoesNotExist()
-        compose.onNodeWithTag("search.failed").assertDoesNotExist()
+        compose.onNodeWithTag("search.failed").assertIsDisplayed()
+        compose.onNodeWithTag("search.failed.body")
+            .assertTextEquals("Nothing on this device matches, and something went wrong on this device.")
+        compose.onNodeWithTag("search.scope").assertDoesNotExist()
+
+        compose.onNodeWithTag("search.retry").assertIsDisplayed().performClick()
+        compose.waitForIdle()
+        assertEquals(1, source.refreshes, "Try Again goes through SearchSourceHandle.refresh, which retries the reader's setup")
+        presenter.close()
+    }
+
+    @Test fun aReaderFailureBesideTheDevicesRowsKeepsThemUnderTheScopeLine() {
+        val source = ScriptedSource()
+        val presenter = open(source)
+        type(presenter, source, "echo", AndroidLibrarySearchScope.ReaderFailed, rows = 1)
+
+        compose.onNodeWithTag("search.result.0").assertTextContains("Echo 0")
         compose.onNodeWithTag("search.scope").assertTextEquals("On this device — something went wrong on this device")
+        compose.onNodeWithTag("search.failed").assertDoesNotExist()
         presenter.close()
     }
 

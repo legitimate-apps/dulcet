@@ -758,6 +758,7 @@ class AppleLibraryReaderFacadeTest {
         pumpUntil("the closed answers") { window.any() && search.any() && connection.load() != null }
         assertEquals(listOf<Any?>("unavailable", "failed", "closed"), listOf(window.last.freshness.kind, window.last.freshness.reason, window.last.freshness.errorKind))
         assertEquals("closed", search.last.errorKind)
+        assertEquals("x", search.last.query, "a keystroke on a closed client is answered for the text in the field")
         assertEquals("closed", connection.load()?.errorKind)
     }
 
@@ -836,11 +837,39 @@ class AppleLibraryReaderFacadeTest {
         }
         assertEquals(listOf<Any?>("unavailable", "internalFailure", null), listOf(window.last.freshness.kind, window.last.freshness.reason, window.last.freshness.errorKind))
         assertEquals(listOf<Any?>("deviceServerFailed", "internalFailure"), listOf(search.last.scope, search.last.errorKind))
+        assertEquals("abc", search.last.query, "the failure names the query typed, or the shell waits for another answer")
         assertEquals("notRecorded", outcomes.last.kind)
         assertEquals(listOf<Any?>(null, "internalFailure"), listOf(pending.load()?.count, pending.load()?.errorKind))
         assertEquals("internalFailure", connection.load()?.errorKind)
         assertNoCanary(window.all)
         assertTrue(search.all.none { CANARY in it.query || CANARY in (it.errorKind ?: "") }, "failure text reached a search publication")
+    }
+
+    /**
+     * With no session every keystroke is answered for its own text, and Try Again answers again —
+     * never silence, which leaves the shell waiting on a spinner (§16.15).
+     */
+    @Test
+    fun aSearchWithNoSessionAnswersEveryKeystrokeAndTryAgainForTheTextInTheField() = facadeTest { h ->
+        val c = h.client(compose = { _, _ -> error("setup failed") })
+        val search = SearchRecorder()
+        val sub = c.client.subscribeSearch(search)
+        pumpUntil("the opening's failure") { search.any() }
+        assertEquals("", search.last.query, "control: nothing was typed when the search opened")
+
+        sub.updateQuery("ab")
+        pumpUntil("the failure for the first keystroke") { search.any { it.query == "ab" } }
+        sub.updateQuery("abc")
+        pumpUntil("the failure for the second keystroke") { search.any { it.query == "abc" } }
+        val typed = search.last
+        assertEquals(listOf<Any?>("deviceServerFailed", "internalFailure"), listOf(typed.scope, typed.errorKind))
+
+        sub.refresh()
+        pumpUntil("Try Again's answer") { search.all.size > search.all.indexOf(typed) + 1 }
+        val retried = search.last
+        assertEquals(listOf<Any?>("abc", "deviceServerFailed", "internalFailure"), listOf(retried.query, retried.scope, retried.errorKind))
+        assertTrue(retried.sequence > typed.sequence, "Try Again's answer is a new publication")
+        assertEquals(emptyList(), c.onReader { c.client.uncaughtFailures.toList() })
     }
 
     @Test
