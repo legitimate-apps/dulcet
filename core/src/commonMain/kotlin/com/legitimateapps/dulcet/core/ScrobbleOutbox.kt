@@ -1,6 +1,11 @@
 package com.legitimateapps.dulcet.core
 
 import com.legitimateapps.dulcet.database.DulcetDatabase
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration
@@ -229,7 +234,8 @@ internal class ScrobbleOutboxDeliveryWorker(
                 } else {
                     entry.toSubmittedPlay()
                 }
-                when (sender.send(ScrobbleEndpointRequest(event))) {
+                val sent = sender.send(ScrobbleEndpointRequest(event))
+                when (sent) {
                     is ScrobbleSendResult.Sent -> {
                         attemptedEntries += entry
                         outbox.delete(entry)
@@ -239,7 +245,7 @@ internal class ScrobbleOutboxDeliveryWorker(
                     is ScrobbleSendResult.Failed -> {
                         val failed = outbox.recordFailedAttempt(entry)
                         attemptedEntries += failed
-                        val delay = retryBackoff(failed.attemptCount)
+                        val delay = retryDelay(failed.attemptCount, sent)
                         nextRetryAt = monotonicClock.now() + delay
                         diagnosticSink.record(
                             ScrobbleOutboxDiagnosticEvent.DeliveryFailed(
@@ -281,7 +287,66 @@ internal class ScrobbleOutboxDeliveryWorker(
 private fun retryBackoff(attemptCount: Long): Duration {
     require(attemptCount > 0)
     val exponent = (attemptCount - 1).coerceAtMost(8).toInt()
-    return (1.seconds * (1 shl exponent)).coerceAtMost(5.minutes)
+    return (1.seconds * (1 shl exponent)).coerceAtMost(OUTBOX_RETRY_CEILING)
+}
+
+/**
+ * The wait after a failed send: the exponential backoff, or a rate-limited server's `Retry-After`
+ * when that is longer, and never more than [OUTBOX_RETRY_CEILING] whatever the server says (§18.6:
+ * `max(Retry-After, floor)`, capped at five minutes).
+ */
+private fun retryDelay(attemptCount: Long, failure: ScrobbleSendResult.Failed): Duration {
+    val asked = (failure.error as? DomainError.Server.Busy)?.retryAfter ?: Duration.ZERO
+    return maxOf(retryBackoff(attemptCount), asked).coerceAtMost(OUTBOX_RETRY_CEILING)
+}
+
+/**
+ * Keeps one outbox draining while the process lives (spec §15.3): after a drain that leaves a play
+ * unsent it waits out the worker's own backoff on the platform's scheduler and drains again, so a
+ * failed submission is not left until the next launch, foreground or reachability event. It runs
+ * on a single-threaded scope (the main thread on both platforms); the worker's mutex serialises the
+ * drains themselves. Every drain, whoever started it, reports through [onDrained]; one that threw
+ * (a storage failure) reports through [onFailed] and is retried on the same backoff.
+ */
+internal class ScrobbleOutboxRetryLoop(
+    private val scope: CoroutineScope,
+    private val drain: suspend () -> ScrobbleOutboxDeliveryResult,
+    private val onDrained: (ScrobbleOutboxDeliveryResult) -> Unit = {},
+    private val onFailed: () -> Unit = {},
+) {
+    private var timer: Job? = null
+    private var consecutiveFailures = 0L
+
+    suspend fun drainNow() {
+        val wait = try {
+            val result = drain()
+            consecutiveFailures = 0
+            onDrained(result)
+            result.nextRetryAfter
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            consecutiveFailures += 1
+            onFailed()
+            retryBackoff(consecutiveFailures)
+        }
+        timer?.cancel()
+        timer = wait?.let { delayFor ->
+            scope.launch {
+                delay(delayFor)
+                timer = null
+                drainNow()
+            }
+        }
+    }
+
+    fun cancel() {
+        timer?.cancel()
+        timer = null
+    }
 }
 
 internal val OUTBOX_RETENTION: Duration = 30.days
+
+/** The longest the outbox waits between two attempts, whatever the backoff or `Retry-After` says. */
+internal val OUTBOX_RETRY_CEILING: Duration = 5.minutes

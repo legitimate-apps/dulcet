@@ -1,14 +1,18 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ApplePlaybackQueueFacadeTest {
     @Test
     fun facadeCopiesCoreQueueAndOpaqueIdentitiesIntoClosedDtos() {
@@ -275,7 +279,71 @@ class ApplePlaybackQueueFacadeTest {
         client.setDeliveryReportObserver(null)
     }
 
-    private fun deliveryFixture(transport: QueuedScrobbleTransport): DeliveryFixture {
+    @Test
+    fun aSubmittedPlayTheServerRefusedIsRetriedWhileTheClientStaysOpen() {
+        // Virtual time: the delivery dispatcher, the worker's monotonic clock and the retry timer
+        // all read one scheduler, so nothing here sleeps. No foreground or reachability event is
+        // sent: the shell has none to send, and the first refusal must still not be the last try.
+        val scheduler = TestCoroutineScheduler()
+        val transport = QueuedScrobbleTransport(
+            ArrayDeque(listOf(okEnvelope(), failedEnvelope(), failedEnvelope(), okEnvelope())),
+        )
+        val delivery = deliveryFixture(
+            transport,
+            deliveryDispatcher = StandardTestDispatcher(scheduler),
+            monotonicClock = OutboxMonotonicClock { scheduler.currentTime.milliseconds },
+        )
+        try {
+            val client = delivery.client
+            client.replaceAndStart(queueRequest())
+            client.recordReady("attempt:2", 30_000, "seekable")
+            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+            client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+            client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+            client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+            scheduler.runCurrent()
+
+            // Now-playing, then the first submission, which the server refuses.
+            assertEquals(listOf("false", "true"), transport.parameters.map { it["submission"] })
+            val refused = client.deliveryReport()
+            assertEquals(0, refused.submittedPlaysDelivered)
+            assertEquals(1, refused.submittedPlaysPending)
+            assertEquals(1, refused.submittedPlayFailedAttempts)
+
+            scheduler.advanceTimeBy(999)
+            scheduler.runCurrent()
+            assertEquals(2, transport.parameters.size, "The first retry waits the whole 1 s backoff")
+            scheduler.advanceTimeBy(1)
+            scheduler.runCurrent()
+            assertEquals(3, transport.parameters.size, "One second after the refusal the client asks again")
+            assertEquals(2, client.deliveryReport().submittedPlayFailedAttempts)
+            scheduler.advanceTimeBy(1_999)
+            scheduler.runCurrent()
+            assertEquals(3, transport.parameters.size, "The second retry waits the whole 2 s backoff")
+            scheduler.advanceTimeBy(1)
+            scheduler.runCurrent()
+
+            assertEquals(listOf("false", "true", "true", "true"), transport.parameters.map { it["submission"] })
+            assertEquals(1, transport.parameters.filter { it["submission"] == "true" }.map { it["time"] }.toSet().size,
+                "Every retry carries the same session start")
+            val delivered = client.deliveryReport()
+            assertEquals(1, delivered.submittedPlaysDelivered)
+            assertEquals(0, delivered.submittedPlaysPending)
+            assertEquals(2, delivered.submittedPlayFailedAttempts)
+            scheduler.advanceTimeBy(3_600_000)
+            scheduler.runCurrent()
+            assertEquals(4, transport.parameters.size, "Nothing more is sent once the play is acknowledged")
+        } finally {
+            delivery.close()
+        }
+    }
+
+    private fun deliveryFixture(
+        transport: QueuedScrobbleTransport,
+        deliveryDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Unconfined,
+        monotonicClock: OutboxMonotonicClock? = null,
+    ): DeliveryFixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database
         val resumePositions = PersistentResumePositionStore(database)
@@ -290,7 +358,7 @@ class ApplePlaybackQueueFacadeTest {
             resumePositions = resumePositions,
             // Unconfined runs delivery inline on the ingesting thread, so every report is visible
             // the moment the ingestion call returns and the test needs no main run loop.
-            deliveryDispatcher = Dispatchers.Unconfined,
+            deliveryDispatcher = deliveryDispatcher,
         )
         val reports = mutableListOf<ApplePlaybackDeliveryReportDto>()
         client.setDeliveryReportObserver { reports += it }
@@ -302,6 +370,7 @@ class ApplePlaybackQueueFacadeTest {
             sender = ScrobbleEndpointSender(transport),
             outbox = PersistentScrobbleOutbox(database, wallClock),
             wallClock = wallClock,
+            monotonicClock = monotonicClock,
         )
         return DeliveryFixture(driver, client, reports)
     }

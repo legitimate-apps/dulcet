@@ -4125,11 +4125,15 @@ final class DulcetiOSUITests: XCTestCase {
         // between them on this track, so the threshold is necessary, never sufficient. Return only
         // once the app reports the server acknowledged `submission=true`; XCUITest kills the app
         // when this method returns, and a play that has not left by then never leaves in CI.
-        // The budget covers the next 500 ms position sample, the request, and a loaded host; it
-        // is not a retry window, because the facade schedules no in-process retry.
+        // The budget covers the next 500 ms position sample, the request, and a loaded host, and
+        // it is a retry window: the facade retries a refused submission itself, waiting 1, 2, 4,
+        // 8 and 16 s between tries (spec §15.3). 60 s holds the first request and five retries
+        // (31 s of waiting) with half the budget left for the requests themselves, so a refusal
+        // on a heavily loaded runner (CI run 37235449008) delays the acknowledgement instead of
+        // ending the proof.
         guard let delivered = waitForScrobbleDeliveryCounts(
             in: deliveryMarker,
-            timeout: 30,
+            timeout: 60,
             until: { ($0["delivered"] ?? 0) >= 1 }
         ) else {
             XCTFail(
@@ -4138,7 +4142,14 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         XCTAssertEqual(delivered["delivered"], 1, "Exactly one play is expected for one crossing")
-        XCTAssertEqual(delivered["failures"], 0, "No delivery attempt may have failed")
+        // A refused attempt that a retry then delivered is the designed path, not a failure of
+        // this proof (apple-ci's server-side play count still has to read exactly one); what must
+        // not be left is a play waiting in the outbox.
+        XCTAssertEqual(
+            delivered["pending"],
+            0,
+            "No play may be left unsent once it is delivered (failed attempts before it: \(delivered["failures"] ?? -1))"
+        )
     }
 
     /// The live server every proof here reads -- and writes: playlists, favourites, and a play

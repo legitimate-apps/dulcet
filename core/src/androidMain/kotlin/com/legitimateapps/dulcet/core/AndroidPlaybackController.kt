@@ -143,7 +143,7 @@ public class AndroidPlaybackController internal constructor(
     private val worker = ScrobbleOutboxDeliveryWorker(ServerId(account.providerInstanceId), outbox, sender,
         wall, OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds }, ScrobbleOutboxDiagnosticSink {})
     private val deliveries = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
-    private var retryDelivery: Job? = null
+    private val retryDelivery = ScrobbleOutboxRetryLoop(scope, { worker.onForeground() })
     private var resolution: Job? = null
     private var startJob: Job? = null
     private var activePlan: PlaybackPlan? = null
@@ -950,11 +950,8 @@ public class AndroidPlaybackController internal constructor(
         }
     }
 
-    private suspend fun drain() {
-        val result = worker.onForeground()
-        retryDelivery?.cancel()
-        retryDelivery = result.nextRetryAfter?.let { wait -> scope.launch { delay(wait); retryDelivery = null; drain() } }
-    }
+    /** One drain; a play left unsent is retried on the worker's backoff while the service lives (§15.3). */
+    private suspend fun drain() = retryDelivery.drainNow()
 
     private fun command(command: PlaybackCommand) {
         checkMain()
@@ -1018,7 +1015,7 @@ public class AndroidPlaybackController internal constructor(
         skipNotice = null
         droppedAdditions = null
         mutableState.value = mutableState.value.copy(skipNotice = null, droppedAdditions = null)
-        resolution?.cancel(); startJob?.cancel(); retryDelivery?.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
+        resolution?.cancel(); startJob?.cancel(); retryDelivery.cancel(); artworkJob?.cancel(); metadataFill?.cancel()
         deliveries.close(); scope.cancel()
         sender.close(); requests.close(); wire.close(); store.close()
     }

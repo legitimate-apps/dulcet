@@ -257,15 +257,17 @@ public class ApplePlaybackQueueClient private constructor(
         sender: ScrobbleEndpointSender,
         outbox: PersistentScrobbleOutbox,
         wallClock: OutboxWallClock = ApplePlaybackWallClock,
+        monotonicClock: OutboxMonotonicClock? = null,
     ) {
         delivery?.sender?.close()
+        delivery?.retry?.cancel()
         val monotonicOrigin = TimeSource.Monotonic.markNow()
         val worker = ScrobbleOutboxDeliveryWorker(
             serverId = serverId,
             outbox = outbox,
             sender = sender,
             wallClock = wallClock,
-            monotonicClock = OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
+            monotonicClock = monotonicClock ?: OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
             diagnosticSink = ScrobbleOutboxDiagnosticSink { event ->
                 if (event is ScrobbleOutboxDiagnosticEvent.DeliveryFailed) {
                     updateDeliveryReport {
@@ -274,11 +276,33 @@ public class ApplePlaybackQueueClient private constructor(
                 }
             },
         )
-        delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker)
+        // A play the server did not take is retried here, on the worker's backoff, while the
+        // client lives (spec §15.3). Every drain reports through the callbacks below, whether an
+        // ingestion or the loop's own timer started it; both run on the delivery dispatcher.
+        val retry = ScrobbleOutboxRetryLoop(
+            scope = deliveryScope,
+            drain = { worker.onForeground() },
+            onDrained = { result ->
+                // Counts server acknowledgements and nothing else: a drain that found no pending
+                // row, or whose send failed, reports the same delivered count it started with.
+                updateDeliveryReport {
+                    copy(submittedPlaysDelivered = submittedPlaysDelivered + result.deliveredCount)
+                }
+            },
+            onFailed = {
+                // A storage failure, or a drain racing close(): this runs on a coroutine the shell
+                // never sees, and an exception here would terminate the process. Report it as a
+                // failed attempt; the play stays in the outbox and the loop tries again.
+                updateDeliveryReport {
+                    copy(submittedPlayFailedAttempts = submittedPlayFailedAttempts + 1)
+                }
+            },
+        )
+        delivery = ApplePlaybackDeliveryComposition(sender, outbox, worker, retry)
         val waiting = pendingEffects.toList()
         pendingEffects.clear()
         captureEffects(waiting)
-        deliveryScope.launch { drainOutbox(worker) }
+        deliveryScope.launch { retry.drainNow() }
     }
 
     public fun replaceAndStart(
@@ -735,6 +759,7 @@ public class ApplePlaybackQueueClient private constructor(
             deliveryEvents.close()
             deliveryScope.cancel()
             delivery?.sender?.close()
+            delivery?.retry?.cancel()
             delivery = null
             databaseStore?.close()
         } catch (_: Throwable) {
@@ -775,7 +800,7 @@ public class ApplePlaybackQueueClient private constructor(
     internal fun pendingSubmittedPlayCount(): Long = delivery?.outbox?.count() ?: 0
 
     internal fun configurePersistenceOnlyDelivery(outbox: PersistentScrobbleOutbox) {
-        delivery = ApplePlaybackDeliveryComposition(null, outbox, null)
+        delivery = ApplePlaybackDeliveryComposition(null, outbox, null, null)
         val waiting = pendingEffects.toList()
         pendingEffects.clear()
         captureEffects(waiting)
@@ -831,30 +856,8 @@ public class ApplePlaybackQueueClient private constructor(
                 }
             }
             is RecordedPlaybackEvent.SubmittedPlay -> {
-                activeDelivery.worker?.let { drainOutbox(it) }
+                activeDelivery.retry?.drainNow()
             }
-        }
-    }
-
-    /**
-     * Every outbox drain reports through here so `submittedPlaysDelivered` counts server
-     * acknowledgements and nothing else: a drain that found no pending row, or whose send failed,
-     * reports the same delivered count it started with.
-     */
-    private suspend fun drainOutbox(worker: ScrobbleOutboxDeliveryWorker) {
-        // This runs on a coroutine the shell never sees; an exception here (a storage failure, or
-        // a drain racing close()) would be unhandled and terminate the process. Report it as a
-        // failed attempt instead: the play stays in the outbox for the next drain or launch.
-        val delivered = try {
-            worker.onForeground().deliveredCount
-        } catch (_: Throwable) {
-            updateDeliveryReport {
-                copy(submittedPlayFailedAttempts = submittedPlayFailedAttempts + 1)
-            }
-            return
-        }
-        updateDeliveryReport {
-            copy(submittedPlaysDelivered = submittedPlaysDelivered + delivered)
         }
     }
 
@@ -898,6 +901,7 @@ private data class ApplePlaybackDeliveryComposition(
     val sender: ScrobbleEndpointSender?,
     val outbox: PersistentScrobbleOutbox,
     val worker: ScrobbleOutboxDeliveryWorker?,
+    val retry: ScrobbleOutboxRetryLoop?,
 )
 
 private data class ApplePlaybackQueueCompositionResult(
