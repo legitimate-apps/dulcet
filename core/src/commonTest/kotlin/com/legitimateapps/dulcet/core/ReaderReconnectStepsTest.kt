@@ -3,7 +3,9 @@ package com.legitimateapps.dulcet.core
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -396,7 +398,10 @@ class ReaderReconnectStepsTest {
     fun aSearchWaitingForTheServerIsLeftToItByAReconnect() = sessionTest { env ->
         val session = primed(env)
         val pubs = Recorder<LibrarySearchPublication>(env.server)
-        val search = session.openSearch(LibrarySearchConfig(debounceMillis = 0), pubs)
+        // No deadline (delay(Long.MAX_VALUE) is never scheduled), so advanceUntilIdle leaves the
+        // search waiting at the reconnect; the deadline's own reconnect case is the next test.
+        val config = LibrarySearchConfig(debounceMillis = 0, serverAnswerDeadlineMillis = Long.MAX_VALUE)
+        val search = session.openSearch(config, pubs)
         env.server.holdBeforeApply += "search3"
         search.updateQuery("Album 002")
         advanceUntilIdle()
@@ -412,6 +417,37 @@ class ReaderReconnectStepsTest {
         advanceUntilIdle()
         assertEquals(1, env.server.count("search3"))
         assertEquals(SearchScope.ServerAndDevice, pubs.last.scope)
+    }
+
+    /**
+     * Try again after the wait ran out: a search the deadline marked as timed out is re-run by a
+     * reconnect, and the new answer replaces the failure. The stalled request is given up for the
+     * new one, so its late answer never publishes over it.
+     */
+    @Test
+    fun aSearchThatRanOutOfTimeIsRunAgainByAReconnect() = sessionTest { env ->
+        val session = primed(env)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val config = LibrarySearchConfig(debounceMillis = 0)
+        val search = session.openSearch(config, pubs)
+        env.server.holdBeforeApply += "search3"
+        search.updateQuery("Album 002")
+        advanceTimeBy(config.serverAnswerDeadlineMillis + 1)
+        runCurrent()
+        val failed = assertIs<SearchScope.DeviceServerFailed>(pubs.last.scope, "fixture: the wait ran out")
+        assertEquals(DomainError.Transport.Timeout, failed.error, "fixture")
+        val sent = env.server.count("search3")
+        env.server.holdBeforeApply.clear()
+        session.reader.reconnect()
+        advanceUntilIdle()
+        assertEquals(sent + 1, env.server.count("search3"), "the timed-out search was not run again")
+        assertEquals(1, env.server.cancelledWhileHeld, "the stalled request was not given up for the retry")
+        assertEquals(SearchScope.ServerAndDevice, pubs.last.scope)
+        assertTrue(pubs.last.rows.isNotEmpty())
+        val settled = pubs.all.size
+        env.server.release()
+        advanceUntilIdle()
+        assertEquals(settled, pubs.all.size, "the stalled request's late answer published over the retry")
     }
 
     /**

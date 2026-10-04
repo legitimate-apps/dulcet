@@ -191,11 +191,19 @@ internal data class LibrarySearchConfig(
     val minimumServerQueryLength: Int = 2,
     /** Rows asked of `search3` per type. */
     val serverPageSize: Int = 30,
+    /**
+     * How long a query waits for the server's answer, from when its request is due, before it says
+     * `deviceServerFailed(timeout)` (spec §16.15). The request is not abandoned: an answer arriving
+     * later still replaces that label. The wait for a free request slot counts, because the person
+     * is waiting through it too. The figure is ASSUMED.
+     */
+    val serverAnswerDeadlineMillis: Long = 8_000,
 ) {
     init {
         require(debounceMillis >= 0)
         require(minimumServerQueryLength >= 1)
         require(serverPageSize in 1..500)
+        require(serverAnswerDeadlineMillis > 0)
     }
 }
 
@@ -298,6 +306,9 @@ internal class LibrarySearchSession(
     private var text = ""
     private var generation = 0L
     private var serverJob: Job? = null
+
+    /** Says `deviceServerFailed(timeout)` if [serverJob]'s answer is not in by the deadline. */
+    private var deadlineJob: Job? = null
     private var sequence = 0
     private var closed = false
     private var scope: SearchScope = SearchScope.DeviceWhileServerPending
@@ -333,8 +344,7 @@ internal class LibrarySearchSession(
     private fun query(value: String) {
         if (closed) return
         generation += 1
-        serverJob?.cancel()
-        serverJob = null
+        cancelServerRead()
         text = value
         val trimmed = value.trim()
         val device = local.search(trimmed)
@@ -354,10 +364,43 @@ internal class LibrarySearchSession(
         serverJob = reader.scope.launch {
             delay(config.debounceMillis)
             if (submitted != generation || closed) return@launch
+            startDeadline(submitted)
             val outcome = readServer(trimmed)
             if (submitted != generation || closed) return@launch
+            deadlineJob?.cancel()
+            deadlineJob = null
             adopt(outcome) { mergeSearchResults(device, it) }
             publish()
+        }
+    }
+
+    private fun cancelServerRead() {
+        serverJob?.cancel()
+        serverJob = null
+        deadlineJob?.cancel()
+        deadlineJob = null
+    }
+
+    /**
+     * The bound on `deviceWhileServerPending` (§16.15): a request that waits for a slot behind
+     * stalled reads, or hangs until the transport's own timeout, would otherwise leave the person
+     * looking at "searching the server" for as long as that takes. At the deadline the query says
+     * it timed out, keeping the device's rows; the request runs on, and its answer is adopted when
+     * it lands, as any answer to the current query is.
+     */
+    private fun startDeadline(submitted: Long) {
+        deadlineJob?.cancel()
+        deadlineJob = reader.scope.launch {
+            delay(config.serverAnswerDeadlineMillis)
+            if (submitted != generation || closed || scope != SearchScope.DeviceWhileServerPending) return@launch
+            try {
+                scope = SearchScope.DeviceServerFailed(DomainError.Transport.Timeout, local.counts())
+                publish()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // As in updateQuery: the rows already published stand, and nothing crosses the facade.
+            }
         }
     }
 
@@ -403,7 +446,9 @@ internal class LibrarySearchSession(
      *   (§18.1), and a row that neither the server nor the device still matches is dropped. A
      *   failure keeps the rows shown and names itself in the scope.
      * - **Offline or failed label while online:** the query re-runs, as if retyped.
-     * - **Waiting for the server's answer** (or too short to ask): left to it.
+     * - **Waiting for the server's answer** (or too short to ask): left to it — for no longer than
+     *   [LibrarySearchConfig.serverAnswerDeadlineMillis], after which it says it timed out and, as
+     *   a failed label, re-runs here.
      */
     fun revalidate() {
         reader.checkConfined()
@@ -431,7 +476,7 @@ internal class LibrarySearchSession(
     private fun reReadQuietly() {
         val trimmed = text.trim()
         val submitted = generation
-        serverJob?.cancel()
+        cancelServerRead()
         serverJob = reader.scope.launch {
             val outcome = readServer(trimmed)
             if (submitted != generation || closed) return@launch
@@ -468,8 +513,7 @@ internal class LibrarySearchSession(
         reader.checkConfined()
         if (closed) return
         closed = true
-        serverJob?.cancel()
-        serverJob = null
+        cancelServerRead()
         try {
             onClose()
         } catch (cancelled: CancellationException) {
