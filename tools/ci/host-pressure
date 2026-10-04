@@ -15,7 +15,9 @@ Subcommands:
   mark    FILE NAME                            append a phase boundary (with booted-simulator count)
   summarize FILE                               print one line per phase: deltas and peaks
 
-Samples are cumulative kernel counters (vm_stat) plus swap use and load average. A phase's
+Samples are cumulative kernel counters (vm_stat) plus swap use and load average; every sixth
+sample also lists the largest processes by resident memory, summed by command name, so a phase
+that swaps names what held the memory (`HOST PRESSURE TOP`). A phase's
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
 for the whole job without any phase needing to know about it. Stdlib only.
 """
@@ -67,6 +69,20 @@ def booted_simulators() -> int | None:
         return None
 
 
+def top_processes(limit: int = 8) -> list[list]:
+    """[[command basename, resident MB], ...] for the largest, summed across processes of a name."""
+    out = subprocess.run(["ps", "-axo", "rss=,comm="], capture_output=True, text=True,
+                         timeout=10).stdout
+    totals: dict[str, int] = {}
+    for line in out.splitlines():
+        rss, _, command = line.strip().partition(" ")
+        if rss.isdigit() and command:
+            name = os.path.basename(command.strip())
+            totals[name] = totals.get(name, 0) + int(rss)
+    ranked = sorted(totals.items(), key=lambda item: item[1], reverse=True)[:limit]
+    return [[name, kib // 1024] for name, kib in ranked]
+
+
 def append(path: str, record: dict) -> None:
     record = {"wallTimeMillis": time.time_ns() // 1_000_000, **record}
     with open(path, "a", encoding="utf-8") as handle:
@@ -78,10 +94,15 @@ def sample(path: str, interval: float) -> int:
                   "memBytes": int(subprocess.run(["sysctl", "-n", "hw.memsize"],
                                                  capture_output=True, text=True).stdout or 0),
                   "cpus": os.cpu_count()})
+    count = 0
     while True:
         try:
-            append(path, {"event": "sample", **vm_stat(), "swapUsedMb": swap_used_mb(),
-                          "load1": os.getloadavg()[0]})
+            record = {"event": "sample", **vm_stat(), "swapUsedMb": swap_used_mb(),
+                      "load1": os.getloadavg()[0]}
+            if count % 6 == 0:
+                record["top"] = top_processes()
+            count += 1
+            append(path, record)
         except Exception as error:  # noqa: BLE001 -- keep sampling; record why one sample failed
             append(path, {"event": "sample-error", "error": type(error).__name__})
         time.sleep(interval)
@@ -129,6 +150,13 @@ def summarize(path: str) -> int:
             f"compressor_max_mb={max(compressor):.0f} "
             f"load1_max={max(s.get('load1', 0) for s in window):.1f}"
         )
+        # The process list from the phase's most swapped sample that carries one: what held the
+        # memory when the phase was under the most pressure.
+        listed = [s for s in window if s.get("top")]
+        if listed:
+            worst = max(listed, key=lambda s: (s.get("swapUsedMb") or 0, s.get("compressor_pages", 0)))
+            print(f"HOST PRESSURE TOP phase={phase['name']} swap_used_mb={worst.get('swapUsedMb')} "
+                  + ",".join(f"{name}:{mb}" for name, mb in worst["top"]))
     return 0
 
 

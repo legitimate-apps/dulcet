@@ -24,6 +24,8 @@ summary = subprocess.run([sys.executable, str(Path(__file__).with_name("host-pre
                           "summarize", pressure], capture_output=True, text=True).stdout
 suite_pressure = {}
 for line in summary.splitlines():
+    if line.startswith("HOST PRESSURE TOP "):
+        continue  # the process list, not the phase's counters
     match = re.search(r"phase=iter-(\d+)-suite (.*)", line)
     if match:
         suite_pressure[int(match.group(1))] = dict(
