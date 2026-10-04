@@ -27,6 +27,10 @@ struct DulcetSearchView: View {
         case results
         case empty
         case error
+        /// The reader's server search failed and nothing on this device matches (§16.15).
+        case readerFailed(DulcetReaderErrorKind)
+        /// Offline, and nothing this device has seen matches.
+        case readerOffline(DulcetReaderSeenCounts?)
     }
 
     private var phase: Phase {
@@ -39,13 +43,14 @@ struct DulcetSearchView: View {
             default: .idle
             }
         }
-        let trimmed = reader.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return .idle }
-        guard let publication = reader.publication else { return .loading }
-        if !publication.rows.isEmpty { return .results }
-        // Nothing on the device yet; the server's answer is still coming for a query it is asked.
-        if publication.scope == .deviceWhileServerPending, trimmed.count >= 2 { return .loading }
-        return .empty
+        return switch reader.presentation {
+        case .idle: .idle
+        case .waiting: .loading
+        case .rows: .results
+        case .noMatches: .empty
+        case let .failed(kind): .readerFailed(kind)
+        case let .offlineNoMatches(seen): .readerOffline(seen)
+        }
     }
 
     private var results: [DulcetSearchResult] {
@@ -170,6 +175,23 @@ struct DulcetSearchView: View {
                 )
                 DulcetProminentAction(DulcetStrings.searchRetry, action: onRetry)
             }
+        case let .readerFailed(kind):
+            // A failure is never drawn as "no matches": the server was not heard from.
+            VStack(spacing: DulcetSpacing.md) {
+                searchMessage(
+                    symbol: "exclamationmark.magnifyingglass",
+                    title: DulcetStrings.searchErrorTitle,
+                    body: DulcetStrings.readerSearchFailedBody(DulcetStrings.readerErrorPhrase(kind))
+                )
+                DulcetProminentAction(DulcetStrings.searchRetry, action: onRetry)
+            }
+            .accessibilityIdentifier("dulcet.search.failed")
+        case let .readerOffline(seen):
+            searchMessage(
+                symbol: "wifi.slash",
+                title: DulcetStrings.readerSearchOfflineEmptyTitle,
+                body: DulcetReaderCopy.searchScopeLabel(.deviceOffline(seen)) ?? DulcetStrings.readerSearchScopeDevice
+            )
         case .idle:
             searchMessage(
                 symbol: "magnifyingglass",
@@ -480,6 +502,41 @@ struct DulcetReaderSearchContent {
     let query: String
     let publication: DulcetReaderSearchPublication?
     let onActivate: (DulcetReaderSearchRow) -> Void
+
+    /// What the screen says for the reader's search (§16.15).
+    enum Presentation: Equatable {
+        /// Nothing typed.
+        case idle
+        /// No row yet, and the server's answer is still coming.
+        case waiting
+        /// Rows to draw; their scope label says where they came from.
+        case rows
+        /// The server answered, and nothing matches.
+        case noMatches
+        /// The server's search failed (a timeout included) and nothing on this device matches.
+        case failed(DulcetReaderErrorKind)
+        /// Offline, and nothing this device has seen matches.
+        case offlineNoMatches(DulcetReaderSeenCounts?)
+    }
+
+    var presentation: Presentation {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return .idle }
+        guard let publication else { return .waiting }
+        if !publication.rows.isEmpty { return .rows }
+        switch publication.scope {
+        case .deviceWhileServerPending:
+            // Nothing on the device yet; the server's answer is still coming for a query it is
+            // asked. The core bounds this wait (LibrarySearchConfig.serverAnswerDeadlineMillis).
+            return trimmed.count >= 2 ? .waiting : .noMatches
+        case .serverAndDevice:
+            return .noMatches
+        case let .deviceServerFailed(kind, _):
+            return .failed(kind)
+        case let .deviceOffline(seen):
+            return .offlineNoMatches(seen)
+        }
+    }
 }
 
 extension DulcetSearchResultKind {

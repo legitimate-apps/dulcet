@@ -455,6 +455,7 @@ enum DulcetStrings {
     static let readerSearchSummary = text("reader.search.summary", "Results come from your server and from what this device has seen, from the first character.")
     static let readerSearchIdleBody = text("reader.search.idle.body", "Find artists, albums, and tracks on your server and on this device.")
     static let readerSearchEmptyTitle = text("reader.search.empty.title", "No matches")
+    static let readerSearchOfflineEmptyTitle = text("reader.search.offline.empty.title", "No matches on this device")
     static let readerSignOutPendingStay = text("reader.signOut.stay", "Stay Signed In")
     static let readerSignOutDiscard = text("reader.signOut.discard", "Sign Out and Discard")
     static let readerSignOutSend = text("reader.signOut.send", "Send Changes, Then Sign Out")
@@ -540,6 +541,10 @@ enum DulcetStrings {
             readerCount(.albums, albums),
             readerCount(.tracks, tracks)
         )
+    }
+
+    static func readerSearchFailedBody(_ phrase: String) -> String {
+        formatted("reader.search.failed.body", "Nothing on this device matches, and %@.", phrase)
     }
 
     static func readerSearchScopeFailed(_ phrase: String) -> String {
