@@ -836,6 +836,95 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         }
     }
 
+    /// An album's Play pressed while a relaunch is restoring the saved queue replaces it, at every
+    /// point of the restoration: before its entry is prepared, while it prepares, once it is ready,
+    /// once it is paused, and after. The restoration's late engine events and a second restore
+    /// request (a screen showing more tracks) arrive after the Play, in that forced order, and
+    /// neither takes the queue back (spec §14.1: recovery never applies to an existing session).
+    func testAnAlbumPlayWinsOverARelaunchRestorationAtEveryStage() async throws {
+        for stage in 0...5 {
+            // The previous launch played a one-track queue and saved it mid-way.
+            let launched = makeFixture(tracks: ["a", "b", "c", "p"])
+            launched.controller.replaceQueueAndPlay(DulcetPlaybackQueueIntent(
+                tracks: launched.tracks.filter { $0.id.rawID == "p" },
+                sourceKind: .album,
+                sourceID: DulcetProviderItemID(providerInstanceID: provider, rawID: "earlier"),
+                sourceDisplayName: "Earlier",
+                startIndex: 0,
+                shuffle: false
+            ))
+            let saved = try await launched.waitForPrepare(rawID: "p")
+            launched.emit(.ready(attemptID: saved, duration: 120, seekability: .seekable))
+            launched.emit(.playbackProgressBegan(attemptID: saved, wallClock: Date(), mediaPosition: 1))
+            launched.emit(.positionChanged(
+                attemptID: saved,
+                mediaPosition: 20,
+                monotonicTime: DulcetMonotonicInstant(uptimeNanoseconds: 20_000_000_000)
+            ))
+
+            // The relaunch restores it, and the restoration is stopped at `stage`.
+            let relaunched = makeFixture(tracks: ["a", "b", "c", "p"])
+            relaunched.controller.restorePersistedQueue(with: relaunched.tracks, catalogCoverage: .partial)
+            var restored: DulcetPlaybackAttemptID?
+            if stage >= 1 { restored = try await relaunched.waitForPrepare(rawID: "p") }
+            if stage >= 2, let restored { relaunched.emit(.preparing(attemptID: restored)) }
+            if stage >= 3, let restored { relaunched.emit(.ready(attemptID: restored, duration: 120, seekability: .seekable)) }
+            if stage >= 4, let restored { relaunched.emit(.paused(attemptID: restored, position: 20)) }
+            if stage >= 5 { try await Task.sleep(for: .milliseconds(200)) }
+
+            let before = relaunched.engine.commands.count
+            relaunched.controller.replaceQueueAndPlay(DulcetPlaybackQueueIntent(
+                tracks: relaunched.tracks.filter { $0.id.rawID != "p" },
+                sourceKind: .album,
+                sourceID: DulcetProviderItemID(providerInstanceID: provider, rawID: "album"),
+                sourceDisplayName: "Album",
+                startIndex: 0,
+                shuffle: false
+            ))
+            // Forced after the Play: another restore request, then the restoration's late events.
+            relaunched.controller.restorePersistedQueue(with: relaunched.tracks, catalogCoverage: .partial)
+            if restored == nil {
+                await relaunched.waitFor {
+                    relaunched.engine.commands.contains { $0.kind == "prepare" && $0.title == "Track p" }
+                }
+                restored = relaunched.engine.commands.last { $0.kind == "prepare" && $0.title == "Track p" }?
+                    .attempt.map(DulcetPlaybackAttemptID.init)
+            }
+            if let restored {
+                relaunched.emit(.ready(attemptID: restored, duration: 120, seekability: .seekable))
+                relaunched.emit(.paused(attemptID: restored, position: 20))
+                relaunched.emit(.skipped(attemptID: restored, position: 20, reason: .user))
+            }
+
+            await relaunched.waitFor {
+                relaunched.engine.commands.dropFirst(before).contains { $0.kind == "prepare" && $0.title == "Track a" }
+            }
+            let afterPlay = relaunched.engine.commands.dropFirst(before)
+            let lastPrepare = afterPlay.last { $0.kind == "prepare" }
+            XCTAssertEqual(lastPrepare?.title, "Track a", "stage \(stage): the album's first track is the last prepared")
+            // Once, by the Play: a restore that went ahead after it would prepare it again, paused.
+            XCTAssertEqual(
+                afterPlay.filter { $0.kind == "prepare" && $0.title == "Track a" }.count, 1,
+                "stage \(stage): only the Play prepares the album's first track; commands=\(afterPlay.map { "\($0.kind):\($0.title ?? "")" })"
+            )
+            let snapshot = relaunched.queue.snapshot().snapshot
+            XCTAssertEqual(snapshot?.entries.map(\.rawId), ["a", "b", "c"], "stage \(stage): the album is the queue")
+            XCTAssertEqual(snapshot?.currentIndex, 0, "stage \(stage)")
+            guard let started = lastPrepare?.attempt.map(DulcetPlaybackAttemptID.init) else {
+                XCTFail("stage \(stage): the album's first track was never prepared")
+                continue
+            }
+            let playsBefore = relaunched.engine.count("play")
+            relaunched.emit(.ready(attemptID: started, duration: 120, seekability: .seekable))
+            await relaunched.waitFor { relaunched.engine.count("play") > playsBefore }
+            XCTAssertGreaterThan(relaunched.engine.count("play"), playsBefore, "stage \(stage): the album plays")
+            XCTAssertEqual(
+                relaunched.controller.currentPresentation.nowPlaying?.current.id.rawID, "a",
+                "stage \(stage): Now Playing names the album's first track"
+            )
+        }
+    }
+
     /// A connection-class failure of the entry the engine advanced into stops there and is
     /// presented -- the same boundary as above, with the other side of the §12.12 rule.
     func testAnAutomaticAdvanceIntoAConnectionFailureStopsAndPresentsIt() async throws {

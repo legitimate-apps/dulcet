@@ -267,3 +267,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     CONF-76 failed 2 of 30 inside the TV suite, and 10 of 10 on each app with the reader's thread
     slowed; with the wait, 0 of 10 failed on each app with it still slowed, and 0 of 360 tests
     over 30 unslowed TV suite runs (spec §28 revision 104 item 37).
+
+47. **A disabled SwiftUI button takes an XCUITest tap and does nothing, and the reader can disable
+    Play for seconds mid-test.** An album page draws Play disabled while the reader is offline (its
+    tracks "Unavailable offline"), and the reader goes offline on the platform's reachability report
+    alone. OBSERVED in main's conformance run 37229956675: the iPhone lyrics proof's screen recording
+    shows the album page offline for 4.5 s from about two seconds after it opened, with the test's
+    Find and tap of Play both inside that window; the bar kept the relaunch's restored track and the failure read as
+    "Play lost to the restored queue". Nothing in the app logs reachability, so the path monitor's
+    report is ASSUMED. Wait for `isEnabled` before tapping a control the reader can disable
+    (`tapAlbumPlay`). The failure-diagnostics artifact's `.xcresult` carries a screen recording; read
+    its frames (`ffprobe -show_entries frame=pts_time` lists one frame per screen change) before
+    theorising about a UI failure.
