@@ -1822,11 +1822,10 @@ final class DulcetiOSUITests: XCTestCase {
         // The row carries a context menu: the condition the drag below has to get out of.
         var offered = false
         withoutIdleWaits(app) {
+            let source = dragged.frame
             dragged.press(forDuration: 1.2)
             offered = app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForExistence(timeout: 5)
-            // Outside the menu, which is narrower than the screen and leading-aligned: a tap on
-            // the status bar does not close it.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap()
+            self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: source, in: app)
         }
         guard offered else {
             XCTFail("The row must offer its context menu: " + app.debugDescription)
@@ -1869,7 +1868,9 @@ final class DulcetiOSUITests: XCTestCase {
             let menu = app.buttons["Add to Playlist\u{2026}"].firstMatch
             if menu.waitForExistence(timeout: 2) {
                 menuLeftOpen += 1
-                withoutIdleWaits(app) { app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap() }
+                withoutIdleWaits(app) {
+                    self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: dragged.frame, in: app)
+                }
                 _ = menu.waitForNonExistence(timeout: 10)
             }
             let deadline = Date().addingTimeInterval(10)
@@ -2141,6 +2142,13 @@ final class DulcetiOSUITests: XCTestCase {
         in app: XCUIApplication,
         compact: Bool
     ) -> (after: [String], drags: Int, menuLeftOpen: Int)? {
+        // Counted only while paused: a track that ends under the proof takes the head off Up
+        // Next, and a drop that landed reads as one that did not.
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard playPause.waitForExistence(timeout: 10), playPause.label == "Play" else {
+            XCTFail("Playback must be paused before a drag is counted; the bar's button reads \(playPause.label)")
+            return nil
+        }
         var after = before
         var drags = 0
         var menuLeftOpen = 0
@@ -2152,7 +2160,7 @@ final class DulcetiOSUITests: XCTestCase {
             let menu = app.buttons[menuMarker].firstMatch
             if menu.waitForExistence(timeout: 2) {
                 menuLeftOpen += 1
-                withoutIdleWaits(app) { app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap() }
+                withoutIdleWaits(app) { self.closeContextMenu(marker: menuMarker, openedFrom: source.frame, in: app) }
                 _ = menu.waitForNonExistence(timeout: 10)
             }
             let deadline = Date().addingTimeInterval(30)
@@ -2162,7 +2170,31 @@ final class DulcetiOSUITests: XCTestCase {
                 after = read
             } while after.count < before.count + count && Date() < deadline
         }
+        XCTAssertEqual(playPause.label, "Play",
+                       "Playback started during the drags: a tap meant to close a menu pressed one of its items")
         return (after, drags, menuLeftOpen)
+    }
+
+    /// Closes an open context menu with a tap beside it, clear of the menu's column and of the
+    /// element it opened from. A fixed point is not clear on iPad, where the menu opens beside
+    /// its row wherever the row is: there the tap pressed a menu item (INFERRED from two CI runs,
+    /// in which the playlist row proof's Up Next read exactly as the playlist's Play and then its
+    /// Shuffle leave it, and playback ran under the count).
+    @MainActor
+    private func closeContextMenu(marker menuMarker: String, openedFrom source: CGRect, in app: XCUIApplication) {
+        let window = app.frame
+        let item = app.buttons[menuMarker].firstMatch
+        let column = item.exists ? item.frame.insetBy(dx: -24, dy: 0) : .null
+        let lifted = source.insetBy(dx: -24, dy: -24)
+        let candidates = [
+            CGVector(dx: 0.92, dy: 0.25), CGVector(dx: 0.92, dy: 0.6), CGVector(dx: 0.6, dy: 0.25),
+            CGVector(dx: 0.6, dy: 0.6), CGVector(dx: 0.4, dy: 0.25), CGVector(dx: 0.4, dy: 0.6),
+        ]
+        let clear = candidates.first { offset in
+            let point = CGPoint(x: window.minX + window.width * offset.dx, y: window.minY + window.height * offset.dy)
+            return (column.isNull || point.x < column.minX || point.x > column.maxX) && !lifted.contains(point)
+        }
+        app.coordinate(withNormalizedOffset: clear ?? candidates[0]).tap()
     }
 
     /// Opens `element`'s context menu, requires `menuMarker` in it, and closes it with a tap
@@ -2171,9 +2203,10 @@ final class DulcetiOSUITests: XCTestCase {
     private func requireContextMenu(on element: XCUIElement, marker menuMarker: String, in app: XCUIApplication) -> Bool {
         var offered = false
         withoutIdleWaits(app) {
+            let source = element.frame
             element.press(forDuration: 1.2)
             offered = app.buttons[menuMarker].firstMatch.waitForExistence(timeout: 5)
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap()
+            self.closeContextMenu(marker: menuMarker, openedFrom: source, in: app)
         }
         guard offered else {
             XCTFail("The element must offer its context menu (\(menuMarker)): " + app.debugDescription)
