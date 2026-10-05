@@ -19,12 +19,24 @@ struct DulcetQueueDragItem: Codable, Transferable, Hashable {
     }
 }
 
+/// Reads the tracks behind a dragged item when it is dropped, for an item whose tracks have not
+/// been read yet: a reader album or playlist tile. Completes with nil when there is nothing to
+/// add, having said so itself. Never called for a drag that is abandoned.
+typealias DulcetDeferredQueueAddition =
+    @MainActor (_ completion: @escaping @MainActor (DulcetQueueAddition?) -> Void) -> Void
+
+/// What a ticket resolves to: tracks already in hand, or a read to make when it is dropped.
+enum DulcetQueueDragPayload {
+    case resolved(DulcetQueueAddition)
+    case deferred(DulcetDeferredQueueAddition)
+}
+
 /// The additions behind the drags this process has started, newest last. Bounded: a drag that
 /// was abandoned leaves its entry behind, and only the most recent few can still be dropped.
 @MainActor
 enum DulcetQueueDragRegistry {
     static let capacity = 16
-    private static var entries: [(ticket: UUID, addition: DulcetQueueAddition)] = []
+    private static var entries: [(ticket: UUID, payload: DulcetQueueDragPayload)] = []
     /// Whether the drag this process started most recently carries anything. A drop target
     /// outlines itself only for one that does, so a drag that can add nothing is never shown as
     /// something the queue would take.
@@ -35,13 +47,32 @@ enum DulcetQueueDragRegistry {
         let ticket = UUID()
         activeDragCarriesAddition = addition.map { !$0.tracks.isEmpty } ?? false
         guard let addition else { return DulcetQueueDragItem(ticket: ticket) }
-        entries.append((ticket, addition))
-        if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
+        append(ticket, .resolved(addition))
         return DulcetQueueDragItem(ticket: ticket)
     }
 
+    /// A drag whose tracks are read when it is dropped. A nil `resolve` is a drag that cannot be
+    /// added, as a nil addition is.
+    static func register(deferred resolve: DulcetDeferredQueueAddition?) -> DulcetQueueDragItem {
+        let ticket = UUID()
+        activeDragCarriesAddition = resolve != nil
+        guard let resolve else { return DulcetQueueDragItem(ticket: ticket) }
+        append(ticket, .deferred(resolve))
+        return DulcetQueueDragItem(ticket: ticket)
+    }
+
+    private static func append(_ ticket: UUID, _ payload: DulcetQueueDragPayload) {
+        entries.append((ticket, payload))
+        if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
+    }
+
+    static func payload(for item: DulcetQueueDragItem) -> DulcetQueueDragPayload? {
+        entries.last { $0.ticket == item.ticket }?.payload
+    }
+
     static func addition(for item: DulcetQueueDragItem) -> DulcetQueueAddition? {
-        entries.last { $0.ticket == item.ticket }?.addition
+        guard case let .resolved(addition) = payload(for: item) else { return nil }
+        return addition
     }
 
     /// Adds every dropped item the process can still resolve to the end of the queue, in the
@@ -54,13 +85,26 @@ enum DulcetQueueDragRegistry {
         store: DulcetPresentationStore
     ) -> Bool {
         guard store.queueEditingEnabled else { return false }
-        let additions = items.compactMap(addition(for:)).filter { !$0.tracks.isEmpty }
-        guard !additions.isEmpty else {
+        let payloads = items.compactMap(payload(for:)).filter {
+            if case let .resolved(addition) = $0 { return !addition.tracks.isEmpty }
+            return true
+        }
+        guard !payloads.isEmpty else {
             store.reportRefusedQueueEdit()
             return false
         }
-        for addition in additions {
-            store.editQueue(.playLater(addition))
+        for payload in payloads {
+            switch payload {
+            case let .resolved(addition):
+                store.editQueue(.playLater(addition))
+            case let .deferred(resolve):
+                // The drop is accepted now and the tracks arrive when the read settles, as the
+                // menu's Add to Queue does; a read with nothing to add has said so already.
+                resolve { addition in
+                    guard let addition else { return }
+                    store.editQueue(.playLater(addition))
+                }
+            }
         }
         return true
     }
@@ -92,6 +136,32 @@ extension View {
 #if os(iOS)
         draggable(DulcetQueueDragRegistry.register(
             isEnabled && store.queueEditingEnabled ? addition() : nil
+        )) {
+            DulcetQueueDragPreview(
+                store: store,
+                artwork: artwork,
+                title: title,
+                refused: !(isEnabled && store.queueEditingEnabled)
+            )
+        }
+#else
+        self
+#endif
+    }
+
+    /// Lets an album or a playlist whose tracks have not been read be dragged onto the queue: the
+    /// read is made when it is dropped, not when it lifts, so a tile costs nothing until used.
+    /// The refusal and the identity rules are `dulcetQueueDragSource`'s.
+    func dulcetDeferredQueueDragSource(
+        store: DulcetPresentationStore,
+        artwork: DulcetArtwork,
+        title: String,
+        isEnabled: Bool = true,
+        resolve: @escaping DulcetDeferredQueueAddition
+    ) -> some View {
+#if os(iOS)
+        draggable(DulcetQueueDragRegistry.register(
+            deferred: isEnabled && store.queueEditingEnabled ? resolve : nil
         )) {
             DulcetQueueDragPreview(
                 store: store,

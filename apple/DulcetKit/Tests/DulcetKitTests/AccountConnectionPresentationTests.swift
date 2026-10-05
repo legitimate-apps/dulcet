@@ -3050,6 +3050,52 @@ func droppingDraggedItemsOntoTheQueueAddsEachResolvableOneToTheEnd() throws {
 }
 
 @Test @MainActor
+func aDragWhoseTracksAreReadOnDropReadsOnlyWhenDroppedAndQueuesWhatTheReadReturns() throws {
+    DulcetQueueDragRegistry.removeAll()
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    let album = fixtureLibraryAlbum()
+    let read = DulcetQueueAddition.album(album)
+    let trackAddition = DulcetQueueAddition.searchResult(try #require(album.tracks.first))
+
+    var reads = 0
+    var finish: [@MainActor (DulcetQueueAddition?) -> Void] = []
+    let deferred = DulcetQueueDragRegistry.register(deferred: { completion in
+        reads += 1
+        finish.append(completion)
+    })
+    // Lifting reads nothing, and the drag already counts as one the queue would take.
+    #expect(reads == 0)
+    #expect(DulcetQueueDragRegistry.activeDragCarriesAddition)
+    #expect(DulcetQueueDragRegistry.addition(for: deferred) == nil)
+
+    // A drop is accepted at once and reads once; nothing is queued until the read answers, and
+    // the entry resolved at the time goes first, as the drop's order says.
+    let track = DulcetQueueDragRegistry.register(trackAddition)
+    #expect(DulcetQueueDragRegistry.dropOntoQueue([deferred, track], store: store))
+    #expect(reads == 1)
+    #expect(editing.edits == [.playLater(trackAddition)])
+    finish[0](read)
+    #expect(editing.edits == [.playLater(trackAddition), .playLater(read)])
+
+    // A read with nothing to add (it has said so itself) queues nothing and does not refuse again.
+    #expect(DulcetQueueDragRegistry.dropOntoQueue([deferred], store: store))
+    finish[1](nil)
+    #expect(editing.edits.count == 2)
+    #expect(store.snapshot.refusedQueueEdits == 0)
+
+    // A drag that cannot be added is a ticket for nothing, refused out loud on the drop.
+    let refused = DulcetQueueDragRegistry.register(deferred: nil)
+    #expect(!DulcetQueueDragRegistry.activeDragCarriesAddition)
+    #expect(!DulcetQueueDragRegistry.dropOntoQueue([refused], store: store))
+    #expect(reads == 2)
+    #expect(store.snapshot.refusedQueueEdits == 1)
+}
+
+@Test @MainActor
 func theDragRegistryForgetsAbandonedDragsBeyondItsCapacity() {
     DulcetQueueDragRegistry.removeAll()
     let addition = DulcetQueueAddition.album(fixtureLibraryAlbum())

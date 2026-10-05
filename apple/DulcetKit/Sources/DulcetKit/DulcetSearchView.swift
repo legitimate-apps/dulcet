@@ -292,13 +292,10 @@ struct DulcetSearchView: View {
                                 activate(result.id)
                             }
                         }
-                        .dulcetQueueDragSource(
-                            store: store,
-                            artwork: result.artwork,
-                            title: result.title,
-                            isEnabled: result.playableTrack != nil
-                                && readerRow(result.id)?.isUnavailableOffline != true
-                        ) { result.playableTrack.map(DulcetQueueAddition.searchResult) }
+                        .modifier(DulcetSearchRowQueueDrag(
+                            result: result,
+                            isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
+                        ))
 #endif
                     }
                 }
@@ -363,6 +360,42 @@ struct DulcetSearchView: View {
 }
 
 #if os(iOS) || os(macOS)
+/// A track in the results drags as itself; an album drags whole, its tracks read when it is
+/// dropped. An artist has no tracks of its own and lifts a card that says so. Chosen by the
+/// result's kind, which a row never changes.
+private struct DulcetSearchRowQueueDrag: ViewModifier {
+    @Environment(DulcetPresentationStore.self) private var store
+    let result: DulcetSearchResult
+    let isUnavailableOffline: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if result.kind == .album {
+            content.dulcetDeferredQueueDragSource(
+                store: store,
+                artwork: result.artwork,
+                title: result.title,
+                isEnabled: !isUnavailableOffline
+            ) { completion in
+                store.resolveReaderAddition(
+                    query: .album(rawID: result.id.rawID),
+                    kind: .album,
+                    id: result.id,
+                    title: result.title,
+                    completion: completion
+                )
+            }
+        } else {
+            content.dulcetQueueDragSource(
+                store: store,
+                artwork: result.artwork,
+                title: result.title,
+                isEnabled: result.playableTrack != nil && !isUnavailableOffline
+            ) { result.playableTrack.map(DulcetQueueAddition.searchResult) }
+        }
+    }
+}
+
 /// A search result's context menu: its own activation (play a track, open an album or artist),
 /// then Go to Album and Go to Artist where the library has those pages.
 private struct DulcetSearchResultMenuItems: View {

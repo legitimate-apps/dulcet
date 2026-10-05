@@ -434,7 +434,12 @@ horizontal size class**, never by the device:
   not its tracks have arrived; its drag card says it cannot be added, no drop target outlines itself
   for it, and dropping it gives the same refusal as a queue edit the core refuses. While the queue
   cannot be edited at all, every tile still lifts with a card that says it cannot be added, and
-  there is no drop target: the bar and Up Next do not accept a drop, so the card is the refusal. **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
+  there is no drop target: the bar and Up Next do not accept a drop, so the card is the refusal.
+  An album or a playlist in the library's own grids, lists and search results lifts before its tracks
+  have been read: it carries a read that is made when it is dropped, and the tracks join the end of
+  the queue in the order the reader lists them; a read with nothing playable says so, as the menu's
+  Add to Queue does. These surfaces use the system menu preview, so a drag that carries on out of
+  an open context menu lifts (`docs/TRAPS.md` 48, 49). **ASSUMED:** that a drag interaction attached only to enabled tiles loses a
   tap in flight when a library read replaces every tile; it was not reproduced.
 - **The player.** A swipe across the cover plays the next track (left) or the previous one
   (right), and a downward swipe closes a full-screen player; a diagonal drag, a drag short of the
