@@ -50,6 +50,17 @@ internal sealed interface ScrobbleOutboxDiagnosticEvent {
         val retentionLimit: Duration,
     ) : ScrobbleOutboxDiagnosticEvent
 
+    /**
+     * The server said, again and again, that it cannot take this one play (Subsonic error 70, "not
+     * found": the track is gone), so the play was dropped and the plays behind it went on. Like
+     * [ProductRetentionDropped] it removes user-authored play history, and so is never silent.
+     */
+    data class RefusedDropped(
+        val entry: ScrobbleOutboxEntry,
+        val refusals: Int,
+        val serverCode: Int,
+    ) : ScrobbleOutboxDiagnosticEvent
+
     data class DeliveryFailed(
         val entry: ScrobbleOutboxEntry,
         val trigger: ScrobbleOutboxTrigger,
@@ -71,6 +82,7 @@ internal data class ScrobbleOutboxDeliveryResult(
     val deliveredCount: Int,
     val retentionDropCount: Int,
     val nextRetryAfter: Duration?,
+    val refusedDropCount: Int = 0,
 )
 
 /**
@@ -180,6 +192,37 @@ private fun ScrobbleOutboxEntry.sameEventAs(other: ScrobbleOutboxEntry): Boolean
         rawId == other.rawId &&
         sessionStartWallClock == other.sessionStartWallClock
 
+/**
+ * What a failed send says about the play it carried (spec §15.3): the code of a refusal that is
+ * about this play alone, or null for every failure that is not.
+ *
+ * Only error 70, "the requested data was not found", is one: the server answered, and the track
+ * is gone, so no retry of this request can succeed and the plays behind it are unaffected. Every
+ * other failure is the transport's, the server's or the account's, not the play's, and the queue
+ * stops, keeps its order and backs off: no answer, a timeout, a 5xx, a 429 with its `Retry-After`,
+ * a malformed answer, the generic error 0, a missing parameter (10, the request's shape, the
+ * same for every play), an upgrade request (20, 30) and every refusal of the account that a
+ * reconnect or a new password can fix (40, 41, 50, 60, a TLS or redirect refusal). Dropping on any
+ * of those would lose every play behind it for a fault that is not theirs.
+ */
+private fun ScrobbleSendResult.Failed.refusedPlayCode(): Int? =
+    (error as? DomainError.Server.Known)?.code?.takeIf { it == SUBSONIC_DATA_NOT_FOUND }
+
+/** The OpenSubsonic error code for "the requested data was not found". */
+private const val SUBSONIC_DATA_NOT_FOUND = 70
+
+/**
+ * The refusals of one play that stop its retries, and how long the worker waits between them. A
+ * server that is mid-rescan can answer "not found" for a track that is back a minute later, so one
+ * refusal is not the end of a play; three, one minute and then five minutes apart (both ASSUMED),
+ * are. The count is the worker's, per process: a restart gives the play three more.
+ */
+internal const val OUTBOX_REFUSALS_BEFORE_DROP: Int = 3
+private val FIRST_REFUSAL_WAIT: Duration = 1.minutes
+
+private fun refusalWait(refusals: Int): Duration =
+    if (refusals <= 1) FIRST_REFUSAL_WAIT else OUTBOX_RETRY_CEILING
+
 /** Serial durable delivery entry point for platform foreground, reachability, and timer callbacks. */
 internal class ScrobbleOutboxDeliveryWorker(
     private val serverId: ServerId,
@@ -191,6 +234,11 @@ internal class ScrobbleOutboxDeliveryWorker(
 ) {
     private val mutex = Mutex()
     private var nextRetryAt: Duration? = null
+
+    /** A play the server refused as its own, waiting for its next try: [retryAt] is on the monotonic clock. */
+    private class Refused(var count: Int, var retryAt: Duration)
+
+    private val refused = mutableMapOf<RefusedPlayKey, Refused>()
 
     suspend fun onForeground(): ScrobbleOutboxDeliveryResult =
         drain(ScrobbleOutboxTrigger.Foreground)
@@ -216,8 +264,17 @@ internal class ScrobbleOutboxDeliveryWorker(
 
             var attempted = 0
             var delivered = 0
+            var refusedDrops = 0
             val attemptedEntries = mutableListOf<ScrobbleOutboxEntry>()
-            outbox.pending(serverId).forEach { entry ->
+            val pending = outbox.pending(serverId)
+            refused.keys.retainAll(pending.map { it.refusedKey() }.toSet())
+            pending.forEach { entry ->
+                val key = entry.refusedKey()
+                val waiting = refused[key]
+                if (waiting != null && monotonicClock.now() < waiting.retryAt) {
+                    // Refused as its own a moment ago: it waits its turn, and the plays behind it do not.
+                    return@forEach
+                }
                 attempted += 1
                 val submittedAt = PlaybackWallClockTime(wallClock.nowEpochMilliseconds())
                 val event = if (entry.sessionStartWallClock.epochMilliseconds > submittedAt.epochMilliseconds) {
@@ -239,12 +296,40 @@ internal class ScrobbleOutboxDeliveryWorker(
                     is ScrobbleSendResult.Sent -> {
                         attemptedEntries += entry
                         outbox.delete(entry)
+                        refused.remove(key)
                         delivered += 1
                         nextRetryAt = null
                     }
                     is ScrobbleSendResult.Failed -> {
                         val failed = outbox.recordFailedAttempt(entry)
                         attemptedEntries += failed
+                        val refusedCode = sent.refusedPlayCode()
+                        if (refusedCode != null) {
+                            val refusals = (refused[key]?.count ?: 0) + 1
+                            if (refusals >= OUTBOX_REFUSALS_BEFORE_DROP) {
+                                outbox.delete(failed)
+                                refused.remove(key)
+                                refusedDrops += 1
+                                diagnosticSink.record(
+                                    ScrobbleOutboxDiagnosticEvent.RefusedDropped(
+                                        entry = failed,
+                                        refusals = refusals,
+                                        serverCode = refusedCode,
+                                    ),
+                                )
+                            } else {
+                                val wait = refusalWait(refusals)
+                                refused[key] = Refused(refusals, monotonicClock.now() + wait)
+                                diagnosticSink.record(
+                                    ScrobbleOutboxDiagnosticEvent.DeliveryFailed(
+                                        entry = failed,
+                                        trigger = trigger,
+                                        nextRetryAfter = wait,
+                                    ),
+                                )
+                            }
+                            return@forEach
+                        }
                         val delay = retryDelay(failed.attemptCount, sent)
                         nextRetryAt = monotonicClock.now() + delay
                         diagnosticSink.record(
@@ -265,6 +350,7 @@ internal class ScrobbleOutboxDeliveryWorker(
                             deliveredCount = delivered,
                             retentionDropCount = retentionDrops,
                             nextRetryAfter = delay,
+                            refusedDropCount = refusedDrops,
                         )
                     }
                 }
@@ -275,14 +361,25 @@ internal class ScrobbleOutboxDeliveryWorker(
                 diagnosticSink = diagnosticSink,
                 eligibleEntries = attemptedEntries,
             )
+            // A play refused as its own and not yet dropped is tried again when its wait ends.
+            if (retentionDrops > 0) {
+                refused.keys.retainAll(outbox.pending(serverId).map { it.refusedKey() }.toSet())
+            }
+            val dueIn = refused.values.minOfOrNull { it.retryAt }?.let { (it - monotonicClock.now()).coerceAtLeast(Duration.ZERO) }
             ScrobbleOutboxDeliveryResult(
                 attemptedCount = attempted,
                 deliveredCount = delivered,
                 retentionDropCount = retentionDrops,
-                nextRetryAfter = null,
+                nextRetryAfter = dueIn,
+                refusedDropCount = refusedDrops,
             )
         }
 }
+
+private data class RefusedPlayKey(val rawId: String, val sessionStartEpochMilliseconds: Long)
+
+private fun ScrobbleOutboxEntry.refusedKey() =
+    RefusedPlayKey(rawId, sessionStartWallClock.epochMilliseconds)
 
 private fun retryBackoff(attemptCount: Long): Duration {
     require(attemptCount > 0)

@@ -88,6 +88,7 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-90 | a playlist edit whose base changed elsewhere is refused with nothing written; unchanged-list control |
 | CONF-91 | another user's playlist is not editable to the reader, the editor or the server; own-playlist control |
 | CONF-92 | a streaming-quality cap is transcoded on both delivery paths (legacy `maxBitRate` with a named format; `ClientInfo` bitrate limits), no larger than the cap allows, a source already within the cap streamed as the original, with *Original* as the control; transcoding capability asserted first |
+| CONF-93 | `scrobble` for an id the server does not hold is answered `ok` for `submission=true` and `false`, and moves no other track's play count |
 
 ## Account-connect evidence boundary (CONF-09b)
 

@@ -27,7 +27,10 @@ subsystem you are about to touch. Numbers are stable references, not an order of
 7. **`stream` does not record a play.** `scrobble submission=true`, past the threshold, measured from
    *progressing media time* with buffering, pause and forward discontinuities excluded (spec §15.2).
    Scrobble delivery is **at-least-once**; the local dedupe key does not make the network call
-   idempotent.
+   idempotent. The outbox classifies a failed send (spec §15.3): only error 70 is
+   "this play's own" and drops it after three refusals; everything else, account refusals included,
+   holds the queue in order. Navidrome answers `ok` to a scrobble for an unknown or deleted track
+   (CONF-93), so a test of the 70 path has to fake the server — the reference server cannot form it.
 8. **`playbackReport` is not called in v1.** Adopting it without CONF-21 double-counts plays.
 9. **Never collapse the three playback identities.** `QueueEntryId` / `PlaybackSessionId` / `AttemptId`
    (spec §12.1). A refresh, a retry and a server-offset seek keep the session; a next-item advance and

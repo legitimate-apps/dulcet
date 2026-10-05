@@ -28,6 +28,8 @@ struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
     let submittedPlayFailedAttempts: Int
     let nowPlayingSent: Int
     let nowPlayingDropped: Int
+    /// Plays the server refused as its own three times (the track is gone) and the outbox dropped.
+    let submittedPlaysRefusedDropped: Int
 
     init(_ dto: ApplePlaybackDeliveryReportDto) {
         submittedPlaysPersisted = Int(dto.submittedPlaysPersisted)
@@ -36,6 +38,7 @@ struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
         submittedPlayFailedAttempts = Int(dto.submittedPlayFailedAttempts)
         nowPlayingSent = Int(dto.nowPlayingSent)
         nowPlayingDropped = Int(dto.nowPlayingDropped)
+        submittedPlaysRefusedDropped = Int(dto.submittedPlaysRefusedDropped)
     }
 }
 

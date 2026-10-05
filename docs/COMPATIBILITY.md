@@ -23,6 +23,12 @@ targets. Protocol claims become evidence-backed in Phase 1.
   Repeating a submitted scrobble with the same item and `time` advanced another fixture from 0 to 1
   to 2. Navidrome 0.63.2 therefore does **not** deduplicate that at-least-once retry shape. This is a
   reference-server observation, not a claim about every Subsonic-compatible server.
+- **`scrobble` for an id the server does not hold answers `ok`** (CONF-93, and a probe that deleted a
+  track and rescanned): an unknown id, a deleted track's id, an empty id and an album id all return
+  `status="ok"` for `submission=true` and `false`, logged server-side as "Cannot find track for
+  scrobbling"; `getSong` for the same id is error 70. A missing `id` is error 10; a wrong password
+  and an unknown user are both error 40. A non-numeric `time` is ignored and the play stamped now.
+  Dulcet therefore never meets error 70 from this server (§15.3 classifies it for servers that send it).
 
 ## Navidrome library enumeration and paging (QUIRK-02)
 

@@ -140,8 +140,18 @@ public class AndroidPlaybackController internal constructor(
     private val sender = ScrobbleEndpointSender(account)
     private val wall = OutboxWallClock(System::currentTimeMillis)
     private val outbox = PersistentScrobbleOutbox(store.database, wall)
+    private val refusedDrops = AtomicLong()
     private val worker = ScrobbleOutboxDeliveryWorker(ServerId(account.providerInstanceId), outbox, sender,
-        wall, OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds }, ScrobbleOutboxDiagnosticSink {})
+        wall, OutboxMonotonicClock { SystemClock.elapsedRealtime().milliseconds },
+        ScrobbleOutboxDiagnosticSink { event ->
+            if (event is ScrobbleOutboxDiagnosticEvent.RefusedDropped) refusedDrops.incrementAndGet()
+        })
+    /**
+     * Plays the server refused as its own (error 70, the track is gone) three times, which the
+     * outbox therefore dropped since this controller was created (spec §15.3). Dropping user-authored
+     * play history is never silent; this is where it shows.
+     */
+    public val refusedPlaysDropped: Long get() = refusedDrops.get()
     private val deliveries = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
     private val retryDelivery = ScrobbleOutboxRetryLoop(scope, { worker.onForeground() })
     private var resolution: Job? = null

@@ -554,6 +554,44 @@ open class PlaybackScrobbleConformanceTest {
     }
 
     @Test
+    fun conf93ReferenceServerAcceptsAScrobbleForATrackItDoesNotHold() = runTest {
+        withFixture {
+            val known = requireSong("CONF-93", THIRTY_ONE_SECOND_TITLE)
+            val before = rest.playCount(known.id)
+            val unknown = ProviderItemId(known.itemId.providerInstanceId, MISSING_OPAQUE_ID)
+
+            // The control: the id really is unknown to the server (Subsonic error 70).
+            val lookup = rest.get("getSong", mapOf("id" to MISSING_OPAQUE_ID))
+            assertTrue(
+                lookup.body.decodeToString().contains("\"code\":70"),
+                "CONF-93 control: getSong must answer error 70 for the id",
+            )
+
+            assertIs<ScrobbleSendResult.Sent>(
+                scrobble.send(
+                    ScrobbleEndpointRequest(
+                        RecordedPlaybackEvent.SubmittedPlay(unknown, PlaybackWallClockTime(CONF_93_SESSION_TIME)),
+                    ),
+                ),
+                "CONF-93 submission=true for an unknown id was refused",
+            )
+            assertIs<ScrobbleSendResult.Sent>(
+                scrobble.send(ScrobbleEndpointRequest(RecordedPlaybackEvent.NowPlaying(unknown))),
+                "CONF-93 submission=false for an unknown id was refused",
+            )
+            assertEquals(
+                before,
+                rest.playCount(known.id),
+                "CONF-93 a scrobble for an unknown id changed another track's play count",
+            )
+            record(
+                "CONF-93 OBSERVED getSong_unknown_id=error_70 scrobble_submission_true_unknown_id=ok " +
+                    "scrobble_submission_false_unknown_id=ok other_track_play_count_unchanged=true",
+            )
+        }
+    }
+
+    @Test
     fun conf51LiveDownloadsValidateBeforeAtomicPromotion() = runTest {
         withFixture {
             val source = requireSong("CONF-51", HEALTH_PROBE_TITLE)
@@ -877,6 +915,7 @@ open class PlaybackScrobbleConformanceTest {
         const val CAP_SIZE_TOLERANCE = 1.15
         const val CONF_22_SESSION_TIME = 1_788_220_000_001
         const val CONF_23_REPEATED_SESSION_TIME = 1_788_230_000_001
+        const val CONF_93_SESSION_TIME = 1_788_930_000_001
 
         val FLAC_CONTENT_TYPES = setOf("audio/flac", "audio/x-flac", "application/octet-stream")
 

@@ -339,6 +339,62 @@ class ApplePlaybackQueueFacadeTest {
         }
     }
 
+    @Test
+    fun aSubmittedPlayTheServerSaysIsGoneIsDroppedAfterThreeRefusalsAndTheReportSaysSo() {
+        // Error 70 for the submission, every time: the track no longer exists on the server. The
+        // play is refused at once, a minute later and five minutes after that, and then dropped;
+        // nothing is sent for it afterwards, and the report names the drop (spec §15.3).
+        val scheduler = TestCoroutineScheduler()
+        val transport = QueuedScrobbleTransport(
+            ArrayDeque(listOf(okEnvelope(), notFoundEnvelope(), notFoundEnvelope(), notFoundEnvelope())),
+        )
+        val delivery = deliveryFixture(
+            transport,
+            deliveryDispatcher = StandardTestDispatcher(scheduler),
+            monotonicClock = OutboxMonotonicClock { scheduler.currentTime.milliseconds },
+        )
+        try {
+            val client = delivery.client
+            client.replaceAndStart(queueRequest())
+            client.recordReady("attempt:2", 30_000, "seekable")
+            client.recordPlaybackProgressBegan("attempt:2", 1_788_000_000_000, 0)
+            client.recordPositionChanged("attempt:2", 4_000, 4_000_000_000)
+            client.recordPositionChanged("attempt:2", 8_000, 8_000_000_000)
+            client.recordPositionChanged("attempt:2", 12_000, 12_000_000_000)
+            client.recordPositionChanged("attempt:2", 16_000, 16_000_000_000)
+            scheduler.runCurrent()
+
+            val first = client.deliveryReport()
+            assertEquals(1, first.submittedPlaysPending)
+            assertEquals(1, first.submittedPlayFailedAttempts)
+            assertEquals(0, first.submittedPlaysRefusedDropped, "One refusal never drops a play")
+
+            scheduler.advanceTimeBy(59_999)
+            scheduler.runCurrent()
+            assertEquals(2, transport.parameters.size, "The first retry waits the whole minute")
+            scheduler.advanceTimeBy(1)
+            scheduler.runCurrent()
+            assertEquals(3, transport.parameters.size)
+            scheduler.advanceTimeBy(5 * 60_000 - 1)
+            scheduler.runCurrent()
+            assertEquals(3, transport.parameters.size, "The second retry waits the whole five minutes")
+            scheduler.advanceTimeBy(1)
+            scheduler.runCurrent()
+
+            assertEquals(listOf("false", "true", "true", "true"), transport.parameters.map { it["submission"] })
+            val dropped = client.deliveryReport()
+            assertEquals(1, dropped.submittedPlaysRefusedDropped)
+            assertEquals(0, dropped.submittedPlaysPending, "The refused play is gone, not waiting")
+            assertEquals(0, dropped.submittedPlaysDelivered)
+            assertEquals(3, dropped.submittedPlayFailedAttempts)
+            scheduler.advanceTimeBy(3_600_000)
+            scheduler.runCurrent()
+            assertEquals(4, transport.parameters.size, "Nothing is sent for a dropped play")
+        } finally {
+            delivery.close()
+        }
+    }
+
     private fun deliveryFixture(
         transport: QueuedScrobbleTransport,
         deliveryDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Unconfined,
@@ -404,6 +460,9 @@ class ApplePlaybackQueueFacadeTest {
     }
 
     private fun okEnvelope() = envelope("""{"subsonic-response":{"status":"ok"}}""")
+
+    private fun notFoundEnvelope() =
+        envelope("""{"subsonic-response":{"status":"failed","error":{"code":70}}}""")
 
     private fun failedEnvelope() =
         envelope("""{"subsonic-response":{"status":"failed","error":{"code":0}}}""")
