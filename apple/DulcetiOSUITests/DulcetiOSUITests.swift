@@ -2290,7 +2290,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
-        app.buttons["dulcet.album.play"].firstMatch.tap()
+        guard tapAlbumPlay(in: app) else { return }
         guard openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
         let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         guard toggle.waitForExistence(timeout: 10) else {
@@ -2378,7 +2378,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard let syncedApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
                                               compact: expectedCompact),
               openLibraryAlbum(album, in: syncedApp, compact: expectedCompact) else { return }
-        syncedApp.buttons["dulcet.album.play"].firstMatch.tap()
+        guard tapAlbumPlay(in: syncedApp) else { return }
         guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
               let syncedPanel = openLyricsPanel(in: syncedApp) else { return }
         let current = syncedApp.staticTexts["dulcet.lyrics.line.current"].firstMatch
@@ -3005,7 +3005,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
-        app.buttons["dulcet.album.play"].firstMatch.tap()
+        guard tapAlbumPlay(in: app) else { return }
         guard openNowPlayingFromBar(in: app, expectingTitle: track) else { return }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 10) && title.label == track,
@@ -3177,7 +3177,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func openNowPlayingStars(album: String, track: String, in app: XCUIApplication, compact: Bool) -> XCUIElement? {
         guard openLibraryAlbum(album, in: app, compact: compact) else { return nil }
-        app.buttons["dulcet.album.play"].firstMatch.tap()
+        guard tapAlbumPlay(in: app) else { return nil }
         guard openNowPlayingFromBar(in: app, expectingTitle: track) else { return nil }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
         guard title.waitForExistence(timeout: 10), waitForLabel(track, of: title, timeout: 10) else {
@@ -3290,6 +3290,22 @@ final class DulcetiOSUITests: XCTestCase {
         return true
     }
 
+    /// Presses an album's Play once the page lets it be pressed. A disabled button takes the tap
+    /// and does nothing, and the page disables Play whenever the reader is offline, its tracks
+    /// "Unavailable offline": OBSERVED in main's conformance run 37229956675, whose recording
+    /// shows the iPhone album page offline for 4.5 s from about two seconds after it opened, the
+    /// test's tap landing inside that window, and the bar keeping the restored queue's track.
+    @MainActor
+    private func tapAlbumPlay(in app: XCUIApplication) -> Bool {
+        let play = app.buttons["dulcet.album.play"].firstMatch
+        guard play.waitForExistence(timeout: 10), waitForEnabled(play, timeout: 30) else {
+            XCTFail("The album page must offer Play, enabled: " + app.debugDescription)
+            return false
+        }
+        play.tap()
+        return true
+    }
+
     @MainActor
     private func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -3397,12 +3413,7 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
         album.tap()
-        let play = app.buttons["dulcet.album.play"].firstMatch
-        guard play.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer Play")
-            return
-        }
-        play.tap()
+        guard tapAlbumPlay(in: app) else { return }
 
         // Playback must have started before the bar is used to open it.
         let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch

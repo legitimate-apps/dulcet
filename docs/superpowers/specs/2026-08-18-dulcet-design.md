@@ -2823,7 +2823,9 @@ state. The supplied catalog has no completeness contract: it may be empty, parti
 lack playback metadata. Absence from it is not evidence that an entry was deleted from the library.
 Even an entirely unresolvable queue is retained, with no selection, including on subsequent launches.
 A resolvable selection continues the normal paused restoration path. Recovery never applies to an
-existing playback session or another account's queue. Failures of an explicitly started item retain
+existing playback session or another account's queue. An explicit Play therefore always wins over a restoration: pressed
+while the restored entry is still resolving, preparing, ready or paused, it replaces the queue, and a
+restore requested after it (a screen showing more tracks) finds a session and does nothing. Failures of an explicitly started item retain
 the playback failure presentation. No session or attempt identity is created for a cleared selection
 (§12.1). **Revision 104:** every queue entry's metadata is pinned in the seen-cache (§16.13), so the
 catalog supplied to restoration can always speak about the current entry — its no-completeness
@@ -7469,6 +7471,21 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — An explicit Play always wins over a restoration, written down (§14.1).** Conformance
+run 37229956675 failed the iPhone lyrics proof: after a relaunch restored "Thirty One Seconds" paused,
+album Play on "Threshold Boundary" never named "Twenty Nine Seconds". The product was not at fault.
+The job's screen recording shows the album page offline ("Unavailable offline", Play disabled) for
+4.5 s, from about two seconds after it opened, with the test's tap on Play inside that window (OBSERVED,
+frame timestamps against the test transcript); a disabled button takes the tap and does nothing. Why
+the reader went offline is ASSUMED to be the platform's reachability report, which nothing logs. The
+proofs now wait for Play to be enabled before pressing it; a temporary 6 s reachability flap at album
+open reproduced the CI failure line with the old wait and passed with the new one (OBSERVED, iPhone
+simulator). §14.1 already kept restoration off an existing session; it now also says that an explicit
+Play replaces a restored session at any point of its preparation, carried by
+`testAnAlbumPlayWinsOverARelaunchRestorationAtEveryStage` (six restoration stages, late restoration
+events and a late restore request forced after the Play). Android restores once, before any Play, and
+drops a superseded start by its request generation.
 
 **2026-10-04 — A search the facade cannot ask answers every keystroke for its own text, and Try
 Again on a reader failure does something (§16.15).** Two facade defects, OBSERVED by the 8 s
