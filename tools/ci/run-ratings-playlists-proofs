@@ -146,6 +146,37 @@ iphone)
         "$RUNNER_TEMP/dulcet-ios-drag-from-menu.xcresult" \
         DulcetiOSUITests.DulcetiOSUITests \
         testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone
+    # Beside it, the same drag from the library's own surfaces, whose tiles and rows had no drag
+    # source at all: an album tile, a playlist row and an album search result each add every
+    # track they stand for to the end of Up Next, in order (spec §3.1). No feature cell covers
+    # queue editing, so these have their execution guards and no JUnit.
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-album-tile-drag.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-album-tile-drag.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-album-tile-drag.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPhone
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist-row-drag.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistRowDraggedOntoTheBarJoinsUpNextOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-playlist-row-drag.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-playlist-row-drag.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAPlaylistRowDraggedOntoTheBarJoinsUpNextOnIPhone
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-album-search-drag.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAnAlbumSearchResultDraggedOntoTheBarJoinsUpNextOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-album-search-drag.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-album-search-drag.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAnAlbumSearchResultDraggedOntoTheBarJoinsUpNextOnIPhone
     ;;
 ipados)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-ipad --keep "${ipad_destination##*id=}"
@@ -175,5 +206,25 @@ ipados)
         "$RUNNER_TEMP/dulcet-ipados-playlist-edits.xcresult" \
         "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit/TEST-DulcetiOSUITests.xml" \
         DulcetiOSUITests
+    # The library's album tile and playlist row dragged out of their open menus onto the bar add
+    # their tracks to Up Next in order (spec §3.1); no feature cell, so no JUnit.
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-album-tile-drag.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-album-tile-drag.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-album-tile-drag.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPadOS
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playlist-row-drag.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistRowDraggedOntoTheBarJoinsUpNextOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-playlist-row-drag.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-row-drag.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAPlaylistRowDraggedOntoTheBarJoinsUpNextOnIPadOS
     ;;
 esac

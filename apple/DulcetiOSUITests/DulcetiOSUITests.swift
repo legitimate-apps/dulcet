@@ -1822,11 +1822,10 @@ final class DulcetiOSUITests: XCTestCase {
         // The row carries a context menu: the condition the drag below has to get out of.
         var offered = false
         withoutIdleWaits(app) {
+            let source = dragged.frame
             dragged.press(forDuration: 1.2)
             offered = app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForExistence(timeout: 5)
-            // Outside the menu, which is narrower than the screen and leading-aligned: a tap on
-            // the status bar does not close it.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap()
+            self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: source, in: app)
         }
         guard offered else {
             XCTFail("The row must offer its context menu: " + app.debugDescription)
@@ -1869,7 +1868,9 @@ final class DulcetiOSUITests: XCTestCase {
             let menu = app.buttons["Add to Playlist\u{2026}"].firstMatch
             if menu.waitForExistence(timeout: 2) {
                 menuLeftOpen += 1
-                withoutIdleWaits(app) { app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap() }
+                withoutIdleWaits(app) {
+                    self.closeContextMenu(marker: "Add to Playlist\u{2026}", openedFrom: dragged.frame, in: app)
+                }
                 _ = menu.waitForNonExistence(timeout: 10)
             }
             let deadline = Date().addingTimeInterval(10)
@@ -1886,28 +1887,388 @@ final class DulcetiOSUITests: XCTestCase {
         print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
     }
 
-    /// Up Next's entries, read from the player opened from the bar, which is then closed again.
+    /// Opens the album from its tile and plays its last track, so the bar is there to drop onto
+    /// and Up Next holds nothing of the album yet. Answers the bar.
     @MainActor
-    private func upNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication) -> [String]? {
-        bar.tap()
-        let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
-        guard toggle.waitForExistence(timeout: 10) else {
-            XCTFail("The player must offer Up Next: " + app.debugDescription)
+    private func startPlayingTheAlbumsLastTrack(
+        album: String,
+        last: String,
+        tile: XCUIElement,
+        in app: XCUIApplication
+    ) -> XCUIElement? {
+        tile.tap()
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", last + ", ")).firstMatch
+        guard row.waitForExistence(timeout: 15), scrollIntoView(row, in: app) else {
+            XCTFail("\(album) must list \(last): " + app.debugDescription)
             return nil
         }
-        toggle.tap()
+        row.tap()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 15) else {
+            XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
+            return nil
+        }
+        // Paused, so the queue stays as it is: the corpus's tracks last about thirty seconds, and
+        // a track that ends while the proof is still working ends the queue, after which a drop
+        // starts playing what it carries and the count of what Up Next holds is no longer the
+        // drop's (OBSERVED on a loaded host: the canary ended, the first album became the playing
+        // track and the second drag's tracks followed it).
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard playPause.waitForExistence(timeout: 10) else {
+            XCTFail("The bar must offer play/pause: " + app.debugDescription)
+            return nil
+        }
+        if playPause.label == "Pause" { playPause.tap() }
+        guard waitForLabel("Play", of: playPause, timeout: 10) else {
+            XCTFail("Pause on the bar must reach playback; label stayed \(playPause.label)")
+            return nil
+        }
+        return bar
+    }
+
+    /// A playlist row dragged out of its open context menu onto the bar adds every track of the
+    /// playlist to the end of Up Next, in the playlist's own order -- made different from the
+    /// album's order here, so the order proves where the tracks came from.
+    @MainActor
+    func testAPlaylistRowDraggedOntoTheBarJoinsUpNextOnIPhone() {
+        proveAPlaylistRowDragJoinsUpNext(compact: true)
+    }
+
+    @MainActor
+    func testAPlaylistRowDraggedOntoTheBarJoinsUpNextOnIPadOS() {
+        proveAPlaylistRowDragJoinsUpNext(compact: false)
+    }
+
+    @MainActor
+    private func proveAPlaylistRowDragJoinsUpNext(compact: Bool) {
+        guard requireSimulator(compact ? .phone : .pad, "The playlist row drag proof on \(compact ? "iPhone" : "iPad")"),
+              let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
+        let playlistOrder = ["Thirty One Seconds", "UI Playback Canary", "Twenty Nine Seconds"]
+        let run = String(UUID().uuidString.prefix(8))
+        let name = "Dulcet Drag Proof " + run
+        afterTest.append { [configuration] in
+            for playlist in self.serverPlaylists(configuration: configuration) ?? [] where playlist.name.contains(run) {
+                _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlist.id)], configuration: configuration)
+            }
+        }
+        var songIDs: [URLQueryItem] = []
+        for title in playlistOrder {
+            guard let id = serverSongID(title, album: album, configuration: configuration) else { return }
+            songIDs.append(URLQueryItem(name: "songId", value: id))
+        }
+        guard restCall("createPlaylist", [URLQueryItem(name: "name", value: name)] + songIDs, configuration: configuration) != nil,
+              let playlistID = awaitServerPlaylist(named: name, configuration: configuration) else {
+            XCTFail("The playlist could not be made on the disposable server")
+            return
+        }
+        XCTAssertEqual(serverPlaylistEntries(playlistID, configuration: configuration), playlistOrder,
+                       "The server must hold the playlist in the order the proof expects")
+        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: compact),
+              openLibraryDestinationForAlbums(in: app, compact: compact) else { return }
+        let tile = { app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
+        guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
+              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app),
+              openLibraryPlaylistsFromAnywhere(in: app, compact: compact) else { return }
+        let row = { app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch }
+        guard row().waitForExistence(timeout: 30), scrollIntoView(row(), in: app),
+              requireContextMenu(on: row(), marker: "Add to Queue", in: app),
+              let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact),
+              let result = dragOntoTheBar(
+                  row(), bar: bar, before: before, adding: playlistOrder.count, menuMarker: "Add to Queue",
+                  in: app, compact: compact
+              ) else { return }
+        attachScreenshot(named: "playlist-row-dragged-onto-the-bar", app: app)
+        XCTAssertEqual(result.after.count, before.count + playlistOrder.count,
+                       "The dragged playlist must join Up Next once; before=\(before) after=\(result.after)"
+                       + " drags=\(result.drags) menu-left-open-after=\(result.menuLeftOpen)")
+        XCTAssertEqual(result.menuLeftOpen, 0,
+                       "A drag that carries on out of the open menu must lift: a menu left open under the touch is the custom preview's defect (TRAPS 48)")
+        for (label, title) in zip(result.after.dropFirst(before.count), playlistOrder) {
+            XCTAssertTrue(label.hasPrefix(title), "Playlist order at the end of Up Next: \(title) expected, got \(label)")
+        }
+        print("DULCET PLAYLIST ROW DRAG before=\(before) after=\(result.after) drags=\(result.drags)"
+              + " menu-left-open-after=\(result.menuLeftOpen)")
+    }
+
+    /// An album in the search results, dragged out of its open context menu onto the bar, adds
+    /// the whole album to the end of Up Next in album order. The row had no drag source: only a
+    /// track result lifted a card that could be added.
+    @MainActor
+    func testAnAlbumSearchResultDraggedOntoTheBarJoinsUpNextOnIPhone() {
+        guard requireSimulator(.phone, "The album search result drag proof on iPhone"),
+              let configuration = livePlaybackConfiguration(),
+              let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true),
+              openLibraryDestinationForAlbums(in: app, compact: true) else { return }
+        let album = "Threshold Boundary"
+        let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
+        let tile = { app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
+        guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
+              let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app),
+              openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 10) else {
+            XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
+            return
+        }
+        field.tap()
+        field.typeText(album)
+        let result = { app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "dulcet.search.result.", album + ", "
+        )).firstMatch }
+        guard result().waitForExistence(timeout: 30), dismissKeyboardBeforeActivation(in: app),
+              scrollIntoView(result(), in: app),
+              requireContextMenu(on: result(), marker: "Go to Album", in: app),
+              let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: true),
+              let drag = dragOntoTheBar(
+                  result(), bar: bar, before: before, adding: albumOrder.count, menuMarker: "Go to Album",
+                  in: app, compact: true
+              ) else { return }
+        attachScreenshot(named: "album-search-result-dragged-onto-the-bar", app: app)
+        XCTAssertEqual(drag.after.count, before.count + albumOrder.count,
+                       "The dragged album must join Up Next once; before=\(before) after=\(drag.after)"
+                       + " drags=\(drag.drags) menu-left-open-after=\(drag.menuLeftOpen)")
+        XCTAssertEqual(drag.menuLeftOpen, 0,
+                       "A drag that carries on out of the open menu must lift: a menu left open under the touch is the custom preview's defect (TRAPS 48)")
+        for (label, title) in zip(drag.after.dropFirst(before.count), albumOrder) {
+            XCTAssertTrue(label.hasPrefix(title), "Album order at the end of Up Next: \(title) expected, got \(label)")
+        }
+        print("DULCET ALBUM SEARCH RESULT DRAG before=\(before) after=\(drag.after) drags=\(drag.drags)"
+              + " menu-left-open-after=\(drag.menuLeftOpen)")
+    }
+
+    /// The Playlists list, from wherever the Library destination's stack was left: the phone's
+    /// tab keeps its stack, so it is popped to the root first.
+    @MainActor
+    private func openLibraryPlaylistsFromAnywhere(in app: XCUIApplication, compact: Bool) -> Bool {
+        if compact {
+            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return false }
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            var pops = 0
+            while back.exists, back.isHittable, pops < 4 {
+                back.tap()
+                pops += 1
+            }
+        }
+        return openLibraryPlaylists(in: app, compact: compact)
+    }
+
+    /// Up Next once two reads in a row agree. A queue restored from an earlier launch can still be
+    /// on screen for a moment after the tap that replaces it, and a "before" read taken then makes
+    /// the drag's count wrong (OBSERVED on the iPad: before held two entries of the restored
+    /// queue, the queue then emptied, the drag's three entries were counted as too few, and a
+    /// second drag queued the playlist twice). What the queue holds after settling is not assumed:
+    /// a restored current track that the tap does not replace leaves its own entries, and the
+    /// proofs count what the drag adds to them.
+    @MainActor
+    private func awaitSettledUpNext(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool) -> [String]? {
+        let deadline = Date().addingTimeInterval(45)
+        var previous: [String]?
+        repeat {
+            guard let read = upNextLabels(openingFrom: bar, in: app, compact: compact) else { return nil }
+            if read == previous { return read }
+            previous = read
+            RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        } while Date() < deadline
+        XCTFail("Up Next must settle before a drag is counted; it last read \(previous ?? [])")
+        return nil
+    }
+
+    /// Up Next's entries, read from the player opened from the bar, which is then closed again.
+    /// A regular-width window shows Up Next beside the player and has no toggle for it.
+    @MainActor
+    private func upNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication, compact: Bool = true) -> [String]? {
+        bar.tap()
+        if compact {
+            let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            guard toggle.waitForExistence(timeout: 10) else {
+                XCTFail("The player must offer Up Next: " + app.debugDescription)
+                return nil
+            }
+            toggle.tap()
+        }
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.upNext.row."))
         // An empty Up Next has no row to wait for; give the list a moment to draw.
         _ = rows.firstMatch.waitForExistence(timeout: 2)
-        let labels = rows.allElementsBoundByIndex.map(\.label)
+        // Read through snapshots, which throw when a row has gone, instead of recording a failure
+        // as a bare `.label` does: the queue can change between counting its rows and reading them
+        // (OBSERVED: a restored queue replaced under the read, "No matches found for Element at
+        // index 1"), and a read that raced is taken again.
+        var labels: [String] = []
+        var attempts = 0
+        while true {
+            attempts += 1
+            if let read = try? rows.allElementsBoundByIndex.map({ try $0.snapshot().label }) {
+                labels = read
+                break
+            }
+            guard attempts < 4 else {
+                XCTFail("Up Next's rows kept changing under the read: " + app.debugDescription)
+                return nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
         guard bar.waitForExistence(timeout: 10) else {
             XCTFail("Closing the player must bring the bar back: " + app.debugDescription)
             return nil
         }
+        print("DULCET UP NEXT read=\(labels)")
         return labels
+    }
+
+    /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
+    /// `before`, at most twice (one local run in ten of the track proof lifted without following
+    /// the synthesized touch). A drag that never lifted leaves the menu it opened under the touch,
+    /// which `menuMarker` names; it is closed so Up Next can be read, and counted. A drag that
+    /// dropped queues only after its deferred read, which took over 10 s on a loaded CI host, so
+    /// each drag gets 30 s before the next: a retry sooner queues the source twice. Under a custom
+    /// menu preview, or with no drag source at all, both drags queue nothing, so the retry cannot
+    /// hide the defect.
+    @MainActor
+    private func dragOntoTheBar(
+        _ source: XCUIElement,
+        bar: XCUIElement,
+        before: [String],
+        adding count: Int,
+        menuMarker: String,
+        in app: XCUIApplication,
+        compact: Bool
+    ) -> (after: [String], drags: Int, menuLeftOpen: Int)? {
+        // Counted only while paused: a track that ends under the proof takes the head off Up
+        // Next, and a drop that landed reads as one that did not.
+        let playPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        guard playPause.waitForExistence(timeout: 10), playPause.label == "Play" else {
+            XCTFail("Playback must be paused before a drag is counted; the bar's button reads \(playPause.label)")
+            return nil
+        }
+        var after = before
+        var drags = 0
+        var menuLeftOpen = 0
+        while drags < 2, after.count < before.count + count {
+            drags += 1
+            withoutIdleWaits(app) {
+                source.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+            }
+            let menu = app.buttons[menuMarker].firstMatch
+            if menu.waitForExistence(timeout: 2) {
+                menuLeftOpen += 1
+                withoutIdleWaits(app) { self.closeContextMenu(marker: menuMarker, openedFrom: source.frame, in: app) }
+                _ = menu.waitForNonExistence(timeout: 10)
+            }
+            let deadline = Date().addingTimeInterval(30)
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(1))
+                guard let read = upNextLabels(openingFrom: bar, in: app, compact: compact) else { return nil }
+                after = read
+            } while after.count < before.count + count && Date() < deadline
+        }
+        XCTAssertEqual(playPause.label, "Play",
+                       "Playback started during the drags: a tap meant to close a menu pressed one of its items")
+        return (after, drags, menuLeftOpen)
+    }
+
+    /// Closes an open context menu with a tap beside it, clear of the menu's column and of the
+    /// element it opened from. A fixed point is not clear on iPad, where the menu opens beside
+    /// its row wherever the row is: there the tap pressed a menu item (INFERRED from two CI runs,
+    /// in which the playlist row proof's Up Next read exactly as the playlist's Play and then its
+    /// Shuffle leave it, and playback ran under the count).
+    @MainActor
+    private func closeContextMenu(marker menuMarker: String, openedFrom source: CGRect, in app: XCUIApplication) {
+        let window = app.frame
+        let item = app.buttons[menuMarker].firstMatch
+        let column = item.exists ? item.frame.insetBy(dx: -24, dy: 0) : .null
+        let lifted = source.insetBy(dx: -24, dy: -24)
+        let candidates = [
+            CGVector(dx: 0.92, dy: 0.25), CGVector(dx: 0.92, dy: 0.6), CGVector(dx: 0.6, dy: 0.25),
+            CGVector(dx: 0.6, dy: 0.6), CGVector(dx: 0.4, dy: 0.25), CGVector(dx: 0.4, dy: 0.6),
+        ]
+        let clear = candidates.first { offset in
+            let point = CGPoint(x: window.minX + window.width * offset.dx, y: window.minY + window.height * offset.dy)
+            return (column.isNull || point.x < column.minX || point.x > column.maxX) && !lifted.contains(point)
+        }
+        app.coordinate(withNormalizedOffset: clear ?? candidates[0]).tap()
+    }
+
+    /// Opens `element`'s context menu, requires `menuMarker` in it, and closes it with a tap
+    /// outside: the condition the drags below have to get out of.
+    @MainActor
+    private func requireContextMenu(on element: XCUIElement, marker menuMarker: String, in app: XCUIApplication) -> Bool {
+        var offered = false
+        withoutIdleWaits(app) {
+            let source = element.frame
+            element.press(forDuration: 1.2)
+            offered = app.buttons[menuMarker].firstMatch.waitForExistence(timeout: 5)
+            self.closeContextMenu(marker: menuMarker, openedFrom: source, in: app)
+        }
+        guard offered else {
+            XCTFail("The element must offer its context menu (\(menuMarker)): " + app.debugDescription)
+            return false
+        }
+        guard app.buttons[menuMarker].firstMatch.waitForNonExistence(timeout: 10) else {
+            XCTFail("A tap outside the menu must close it: " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    /// An album tile dragged out of its own open context menu onto the now-playing bar adds the
+    /// whole album to the end of Up Next, in album order (spec §3.1). The reader's tile has no
+    /// tracks to hand over when it lifts, so they are read when it is dropped.
+    @MainActor
+    func testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPhone() {
+        proveAnAlbumTileDragJoinsUpNext(compact: true)
+    }
+
+    @MainActor
+    func testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPadOS() {
+        proveAnAlbumTileDragJoinsUpNext(compact: false)
+    }
+
+    @MainActor
+    private func proveAnAlbumTileDragJoinsUpNext(compact: Bool) {
+        guard requireSimulator(compact ? .phone : .pad, "The album tile drag proof on \(compact ? "iPhone" : "iPad")"),
+              let configuration = livePlaybackConfiguration(),
+              let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: compact),
+              openLibraryDestinationForAlbums(in: app, compact: compact) else { return }
+        let album = "Threshold Boundary"
+        let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
+        let tile = { app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch }
+        guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app) else {
+            XCTFail("Library must show \(album): " + app.debugDescription)
+            return
+        }
+        guard requireContextMenu(on: tile(), marker: "Add to Playlist\u{2026}", in: app) else { return }
+
+        guard let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app) else { return }
+        guard openLibraryDestinationForAlbums(in: app, compact: compact),
+              tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
+              let before = awaitSettledUpNext(openingFrom: bar, in: app, compact: compact) else { return }
+        guard let result = dragOntoTheBar(
+            tile(), bar: bar, before: before, adding: albumOrder.count, menuMarker: "Add to Playlist\u{2026}",
+            in: app, compact: compact
+        ) else { return }
+        attachScreenshot(named: "album-tile-dragged-onto-the-bar", app: app)
+        let added = Array(result.after.dropFirst(before.count))
+        XCTAssertEqual(result.after.count, before.count + albumOrder.count,
+                       "The dragged album must join Up Next once; before=\(before) after=\(result.after)"
+                       + " drags=\(result.drags) menu-left-open-after=\(result.menuLeftOpen)")
+        XCTAssertEqual(result.menuLeftOpen, 0,
+                       "A drag that carries on out of the open menu must lift: a menu left open under the touch is the custom preview's defect (TRAPS 48)")
+        XCTAssertEqual(added.count, albumOrder.count)
+        for (label, title) in zip(added, albumOrder) {
+            XCTAssertTrue(label.hasPrefix(title), "Album order at the end of Up Next: \(title) expected, got \(label)")
+        }
+        print("DULCET ALBUM TILE DRAG before=\(before) after=\(result.after) drags=\(result.drags)"
+              + " menu-left-open-after=\(result.menuLeftOpen)")
     }
 
     /// Each playlist edit the app offers, made where a person makes it, and read back from the

@@ -300,3 +300,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     empty, and gained the track with the system preview or with no menu (OBSERVED, iPhone 17 Pro
     simulator, iOS 26.5). A row that is a drag source uses the system preview;
     `testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone` fails if a custom one comes back.
+49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
+    album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
+    counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the
+    addition when the drag begins, so these views use `dulcetDeferredQueueDragSource`: the ticket
+    holds a resolver, and the read is made when the drop lands on the bar or Up Next
+    (`DulcetQueueDragRegistry.dropOntoQueue`). The tracks come back in the reader's own order, the
+    one the menu's Add to Queue uses. The drag source is attached by the item's kind, which never
+    changes, so no tile changes identity under a read; an artist or a genre has no track list and
+    is not a drag source. The context menu of anything that is a drag source takes the system
+    preview (trap 48), so `dulcetReaderItemContextMenu` keeps the custom preview only for the kinds
+    that are not. `testAnAlbumTileDraggedOntoTheBarJoinsUpNextOnIPhone` and its iPadOS, playlist
+    row and search album siblings fail if the source goes. They also fail when the first drag leaves
+    the menu open, but on a simulator the custom preview left it open in one run of four, so a
+    custom preview put back is not reliably caught; the preview rule rests on trap 48's evidence.

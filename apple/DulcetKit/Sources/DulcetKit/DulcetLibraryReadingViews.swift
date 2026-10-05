@@ -398,21 +398,50 @@ extension DulcetPresentationStore {
         }
     }
 
-    func resolveAndQueue(_ item: DulcetReaderItem, next: Bool) {
+    /// An album's or a playlist's tracks, read from the reader and wrapped as an addition to the
+    /// queue, in the order the reader lists them. A list with nothing playable says so and
+    /// completes with nil.
+    func resolveReaderAddition(
+        of item: DulcetReaderItem,
+        completion: @escaping @MainActor (DulcetQueueAddition?) -> Void
+    ) {
         guard let query = item.trackListQuery else { return }
+        resolveReaderAddition(
+            query: query,
+            kind: item.kind == .playlist ? .playlist : .album,
+            id: item.id,
+            title: item.displayTitle,
+            completion: completion
+        )
+    }
+
+    func resolveReaderAddition(
+        query: DulcetLibraryQuery,
+        kind: DulcetPlaybackQueueSourceKind,
+        id: DulcetProviderItemID,
+        title: String,
+        completion: @escaping @MainActor (DulcetQueueAddition?) -> Void
+    ) {
         librarySession?.resolveTracks(of: query) { [weak self] tracks, window in
             guard let self else { return }
             guard !tracks.isEmpty else {
                 self.librarySession?.post(DulcetStrings.readerNothingPlayable)
+                completion(nil)
                 return
             }
-            let addition = DulcetQueueAddition(
+            completion(DulcetQueueAddition(
                 tracks: tracks,
-                sourceKind: item.kind == .playlist ? .playlist : .album,
-                sourceID: item.id,
-                sourceDisplayName: window.header?.displayTitle ?? item.displayTitle
-            )
-            self.editQueue(next ? .playNext(addition) : .playLater(addition))
+                sourceKind: kind,
+                sourceID: id,
+                sourceDisplayName: window.header?.displayTitle ?? title
+            ))
+        }
+    }
+
+    func resolveAndQueue(_ item: DulcetReaderItem, next: Bool) {
+        resolveReaderAddition(of: item) { [weak self] addition in
+            guard let addition else { return }
+            self?.editQueue(next ? .playNext(addition) : .playLater(addition))
         }
     }
 
@@ -516,6 +545,7 @@ struct DulcetReaderTile: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
         .dulcetReaderItemContextMenu(item)
+        .dulcetReaderQueueDragSource(item)
     }
 
     private var resolvedSubtitle: String {
@@ -588,6 +618,7 @@ struct DulcetReaderListRow: View {
             }
         }
         .dulcetReaderItemContextMenu(item)
+        .dulcetReaderQueueDragSource(item)
     }
 
     private var subtitle: String {
@@ -714,6 +745,41 @@ extension View {
     }
 }
 
+extension DulcetReaderItem {
+    /// Whether dragging this item can add tracks to the queue: an album or a playlist, whose
+    /// tracks the reader reads on the drop. An artist or a genre has no track list of its own.
+    var isQueueDraggable: Bool { trackListQuery != nil }
+}
+
+extension View {
+    /// Lets an album or a playlist be dragged onto the queue (§3.1), whole and in the order the
+    /// reader lists it. iOS and iPadOS only; any other kind of item is left as it is.
+    func dulcetReaderQueueDragSource(_ item: DulcetReaderItem) -> some View {
+        modifier(DulcetReaderQueueDragSource(item: item))
+    }
+}
+
+private struct DulcetReaderQueueDragSource: ViewModifier {
+    @Environment(DulcetPresentationStore.self) private var store
+    let item: DulcetReaderItem
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        // Chosen by kind, which an item never changes, so no tile changes identity under a read.
+        if item.isQueueDraggable {
+            content.dulcetDeferredQueueDragSource(
+                store: store,
+                artwork: item.artwork,
+                title: item.displayTitle
+            ) { completion in
+                store.resolveReaderAddition(of: item, completion: completion)
+            }
+        } else {
+            content
+        }
+    }
+}
+
 private struct DulcetReaderItemContextMenu: ViewModifier {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
@@ -722,15 +788,21 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 #if os(tvOS)
         content
 #elseif os(iOS)
-        content.contextMenu {
-            menuItems
-        } preview: {
-            DulcetContextMenuPreview(
-                store: store,
-                artwork: item.artwork,
-                title: item.displayTitle,
-                subtitle: item.artistName ?? ""
-            )
+        if item.isQueueDraggable {
+            // The system preview: an album or a playlist is also a drag source onto the queue,
+            // which a custom preview stops from lifting out of the open menu (TRAPS 48).
+            content.contextMenu { menuItems }
+        } else {
+            content.contextMenu {
+                menuItems
+            } preview: {
+                DulcetContextMenuPreview(
+                    store: store,
+                    artwork: item.artwork,
+                    title: item.displayTitle,
+                    subtitle: item.artistName ?? ""
+                )
+            }
         }
 #else
         content.contextMenu { menuItems }
