@@ -1458,6 +1458,8 @@ jobs:
           # fixture lifetime and retain simulator signing: the account hook uses the production
           # Keychain store.
           python3 tools/ci/isolate-simulator --phase search-tvos --keep-name "Apple TV 4K (3rd generation)"
+          # The app's own reader and reachability lines, printed after the proof (tools/ci/app-log).
+          python3 tools/ci/app-log start tvos-search
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -1471,6 +1473,7 @@ jobs:
               -parallel-testing-enabled NO \
               -only-testing:DulcetTVUITests/DulcetTVUITests/testSimulatorSearchQueryRanksAndActivatesTrack 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-tvos-search.log"
+          python3 tools/ci/app-log stop tvos-search
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             DulcetTVUITests.DulcetTVUITests \
@@ -1886,6 +1889,8 @@ jobs:
           # window class, so one destination's evidence cannot be mistaken for the other's.
           # The iPad playback proof above already has the iPad booted.
           python3 tools/ci/isolate-simulator --phase search-ipad --keep "${IPAD_PLAYBACK_DESTINATION##*id=}"
+          # The app's own reader and reachability lines, printed after the proof (tools/ci/app-log).
+          python3 tools/ci/app-log start ipados-search
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -1899,6 +1904,7 @@ jobs:
               -parallel-testing-enabled NO \
               -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPadOS 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-ipados-search.log"
+          python3 tools/ci/app-log stop ipados-search
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ipados-search.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
@@ -1951,6 +1957,8 @@ jobs:
           # launching the app (run 37121886722); this file also records an older launch flake
           # (runs 33420584120, 33457633113).
           python3 tools/ci/isolate-simulator --phase search-iphone --keep-name "iPhone 17 Pro"
+          # The app's own reader and reachability lines, printed after the proof (tools/ci/app-log).
+          python3 tools/ci/app-log start ios-search
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -1964,6 +1972,7 @@ jobs:
               -parallel-testing-enabled NO \
               -only-testing:DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-ios-search.log"
+          python3 tools/ci/app-log stop ios-search
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \

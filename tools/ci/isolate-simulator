@@ -88,7 +88,13 @@ def main() -> int:
         return 0
 
     for udid in to_shut:
-        simctl("shutdown", udid)
+        # A device left booted is reported below as isolated=false, never raised; a shutdown that
+        # does not return in time leaves the same state. OBSERVED in run 37346238826: shutting the
+        # iPad down timed out at 120 s right after its first boot and failed the whole step.
+        try:
+            simctl("shutdown", udid)
+        except subprocess.TimeoutExpired:
+            print(f"SIMULATOR ISOLATION shutdown timed out phase={args.phase} udid={udid}", flush=True)
     if keep:
         simctl("boot", keep)  # "already booted" is fine; bootstatus below is the actual check
         status = simctl("bootstatus", keep, "-b", timeout=BOOT_TIMEOUT_SECONDS)

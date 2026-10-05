@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Keep the app's own log lines from a simulator proof, so a failure the screen states only as
+"something went wrong on this device" names the step that failed.
+
+Why this exists. On 2026-10-05 the iPhone and tvOS search proofs failed with that sentence while
+typing into a search that had been answering a moment before (run 37279112332, attempt 2: the
+screen recording shows "Searching the server..." at "Thre" and the failure at "Threshold"). The
+sentence covers several facade failures, the reader logs nothing a run could read back, and the
+test's result bundle holds no console log. The facade now writes one unified-log line per failure
+("Dulcet reader: <step> failed (<class>)", never a message); this keeps those lines.
+
+Subcommands:
+  start NAME   stream the booted simulator's Dulcet lines into $RUNNER_TEMP/NAME-applog.log
+  stop NAME    stop that stream and print its reader and reachability lines
+
+It never fails the step it runs in: a missing simulator or stream is reported and ignored, so the
+proof's own result decides the step. The log file sits where the failure-diagnostics inventory
+already collects `$RUNNER_TEMP/*.log`. Stdlib only.
+"""
+import os
+import signal
+import subprocess
+import sys
+
+PREDICATE = (
+    'process BEGINSWITH "Dulcet" AND '
+    '(eventMessage BEGINSWITH "Dulcet reader" OR category == "reachability")'
+)
+
+
+def paths(name):
+    base = os.environ.get("RUNNER_TEMP") or os.environ.get("TMPDIR") or "/tmp"
+    return os.path.join(base, f"{name}-applog.log"), os.path.join(base, f"{name}-applog.pid")
+
+
+def start(name):
+    log, pid_file = paths(name)
+    with open(log, "w") as out:
+        process = subprocess.Popen(
+            ["xcrun", "simctl", "spawn", "booted", "log", "stream", "--style", "compact",
+             "--level", "info", "--predicate", PREDICATE],
+            stdout=out, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+    with open(pid_file, "w") as handle:
+        handle.write(str(process.pid))
+    print(f"APP LOG {name} started pid={process.pid}")
+
+
+def stop(name):
+    log, pid_file = paths(name)
+    try:
+        with open(pid_file) as handle:
+            pid = int(handle.read().strip())
+        os.killpg(pid, signal.SIGTERM)
+    except (OSError, ValueError) as failure:
+        print(f"APP LOG {name} stream was not running: {failure}")
+    try:
+        with open(log, errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        lines = []
+    kept = [line for line in lines
+            if not line.startswith("Filtering") and ("Dulcet reader" in line or "reachability" in line)]
+    print(f"APP LOG {name} lines={len(lines)} reader-or-reachability={len(kept)}")
+    for line in kept[-80:]:
+        print(f"APP LOG {name} | {line}")
+
+
+def main(argv):
+    if len(argv) != 3 or argv[1] not in ("start", "stop"):
+        print(__doc__)
+        return 2
+    try:
+        (start if argv[1] == "start" else stop)(argv[2])
+    except Exception as failure:  # never the proof's verdict
+        print(f"APP LOG {argv[2]} {argv[1]} failed: {failure!r}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
