@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
  * | tears on a stored-epoch mismatch at the first live read (rule 2) | `82.2a` (extend first), `82.2b` (open), `82.2c` (the extend is the first live read) |
  * | tears on a folder-set change (rule 3) | `82.3`, control `82.3c` |
  * | rebases only the viewport's pages | `82.4` |
- * | appends unguarded while scanning, rebases when the scan ends | `82.5a` (by an extend, stamp unchanged), `82.5b` (by a reconnect), `82.5c` (the scan ends inside the first page's bracket), `82.5d` (another list saw the scan end, its re-read failed), `82.5e` (another list saw the scan end: the grid and an album re-read at once) |
+ * | appends unguarded while scanning, rebases when the scan ends | `82.5a` (by an extend, stamp unchanged), `82.5b` (by a reconnect), `82.5c` (the scan ends inside the first page's bracket), `82.5d` (another list saw the scan end, its re-read failed), `82.5e` (another list saw the scan end: the grid and an album re-read at once), `82.5f` (an album the scan removed is not re-read again) |
  * | keeps the anchor by id | `82.4` (by id), `82.6` (nearest surviving predecessor) |
  * | the sentinel and an absent `lastScan` are no epoch whatever `scanning` says | `82.7` × 4, control `82.7c` |
  * | a failed `getScanStatus` is unread — never no epoch, never unchanged | `82.8a` (extend), `82.8b` (scanning window), `82.8c` (connect), `82.8d` (rebase) |
@@ -362,6 +362,35 @@ class ReaderWindowConformanceTest {
             reader.refreshEpoch()
             advanceUntilIdle()
             assertEquals(listOf("getMusicFolders", "getScanStatus"), env.server.log.drop(cadence).map { it.endpoint }.sorted())
+        }
+
+        clause("82.5f an album the scan removed is re-read once, then left alone") { env ->
+            env.server.scanning = true
+            env.server.lastScan = STAMP_AFTER_SCAN
+            val reader = env.reader(NO_LOOK_AHEAD)
+            reader.connect()
+            val album = Publications(env.server)
+            reader.open(LibraryQuery.Album(albumId(3)), album)
+            advanceUntilIdle()
+            assertEquals(LibraryCoverage.UnverifiedScanning, album.last.coverage, "fixture: the album was read during the scan")
+
+            env.server.scanning = false
+            env.server.albums.removeAll { it.id == albumId(3) }
+            val before = env.server.log.size
+            reader.open(LibraryQuery.AlbumList(AlbumListType.Newest), Publications(env.server))
+            advanceUntilIdle()
+            assertEquals(1, env.server.log.drop(before).count { it.toString() == "getAlbum[id=${albumId(3)}]" })
+            assertEquals(LibraryFreshness.Unavailable(LibraryUnavailableReason.Gone), album.last.freshness)
+
+            env.clock.now += reader.config.epochIntervalMillis
+            val cadence = env.server.log.size
+            reader.refreshEpoch()
+            advanceUntilIdle()
+            assertEquals(
+                listOf("getMusicFolders", "getScanStatus"),
+                env.server.log.drop(cadence).map { it.endpoint }.sorted(),
+                "a gone album was re-read on the epoch cadence",
+            )
         }
 
         // ---- 82.6 Anchor: the first visible item is gone -------------------------------------------

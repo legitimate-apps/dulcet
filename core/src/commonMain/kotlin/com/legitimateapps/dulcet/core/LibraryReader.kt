@@ -954,7 +954,7 @@ internal class LibraryReader(
             for (handle in visibleHandles()) {
                 if (handle === readBy) continue
                 if (!online) return@launch
-                // Judged again under each handle's lock: one rebased meanwhile reads nothing.
+                // revalidate re-judges freshness under the handle's lock: one rebased meanwhile reads nothing.
                 if (handle.awaitsQuietEpoch()) handle.revalidate(RevalidateCause.EpochChanged)
             }
         }
@@ -1017,6 +1017,8 @@ internal class LibraryReader(
             val error = failure.asReaderError()
             if (error.isNotFound() && seq > 0) {
                 cache.markAlbumNotFound(seq, albumRawId)
+                // A gone album holds no scan-time read to re-read once the scan ends.
+                detailsReadWhileScanning -= albumRawId
                 liveDetailReads[albumRawId] = cache.now()
                 DetailReadResult.Gone
             } else {
