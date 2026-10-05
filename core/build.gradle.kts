@@ -39,7 +39,13 @@ kotlin {
 
     macosArm64()
     iosArm64()
-    iosSimulatorArm64()
+    iosSimulatorArm64 {
+        // CI names the simulator the core's own reader conformance tests run on, as it does for
+        // :core-conformance; without it Gradle picks a device type by name, which an image may lack.
+        providers.gradleProperty("dulcet.iosSimulatorUdid").orNull?.let { simulatorUdid ->
+            testRuns["test"].deviceId = simulatorUdid
+        }
+    }
     tvosArm64()
     tvosSimulatorArm64()
 
