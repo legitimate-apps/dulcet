@@ -4561,7 +4561,9 @@ subscription's `refresh` rather than the reconnect (the reconnect re-runs a sear
 session's own scope, which a failure the facade states does not change, so it could leave this one
 as it is); every other kind keeps the reconnect. An
 Apple client does not retry a setup that failed, so with no session its `refresh` answers again with
-the failure for the query in the field (the Android-only rule of §28, 2026-09-29).
+the failure for the query in the field; the Swift session retries it instead with a new client
+(§16.18, the Apple paragraph), so Try Again on a search whose reader's setup failed is the reconnect
+— for a saved account not connected in this launch, its Reconnect — which makes that new client.
 
 **Revalidated like a window (R2a review, §28 revision 104 item 30).** Open searches are part of the
 visible screen of §16.14 step 3, revalidated after the windows, and by the windows' rule: a server
@@ -4710,6 +4712,18 @@ retires `DulcetKit`'s `browse` completion, which is invoked twice for one open (
   `AppleLibraryReaderClient(databaseName:account:foreground:)` (Objective-C
   `initWithDatabaseName:account:foreground:`). It is required, with no default (§16.14), and
   `setForeground` reports every change after construction.
+- **A failed setup is retried with a new client (2026-10-05).** A client builds its session once, on
+  its reader thread; `setupOutcome(completion)` says afterwards whether it was built (`null`),
+  whether the build threw (`internalFailure`), or `closed`/`cancelled`. `DulcetLibrarySession` asks
+  it of every reader it makes and records `readerSetupFailed` only for `internalFailure` from its
+  current reader. While that holds, every reconnect request — Try Again on any screen or search,
+  the account's Reconnect, a return to the foreground, and a network report that turns reachable
+  after unreachable — closes the failed client and, once its thread has stopped, makes a new one for
+  the same account and mode through the path every reader takes. So every open screen re-subscribes,
+  the reachability monitor restarts and reports to the new reader, the foreground is given at
+  construction, and favourite and playlist outcomes are subscribed on the new reader exactly as
+  after a first setup. Nothing retries by itself: the first reachability report after a setup is
+  not a change, and retrying on it would make readers in a loop while the setup keeps failing.
 
 **Android.** No ObjC rule applies, but the reader is still `internal` and confined to its thread, so
 the Android shell reaches it through a facade too: `AndroidLibraryReader` in `androidMain`, one per
@@ -7560,6 +7574,34 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-05 — Apple retries a reader setup that failed, and `isOnline` redraws on reachability
+alone (§16.18, §16.15).** Two shell defects, OBSERVED by reading `DulcetLibrarySession`:
+
+1. An Apple client builds its session once, and the session never replaced a client whose build
+   threw, so every library and search screen stayed failed until the app relaunched or the account
+   changed; Android retries setup from Try Again (§28, 2026-10-04). The core facade now says whether
+   its session was built (`AppleLibraryReaderClient.setupOutcome`), and the Swift session replaces a
+   reader whose setup failed with a new one for the same account at the next reconnect request (Try
+   Again, Reconnect, a return to the foreground, the network regained), through the same path as a
+   first setup, so screens, reachability, the foreground, and favourite and playlist outcomes follow
+   the new reader. This closes the "not done here" item of the 2026-10-04 search entry. The retry is
+   in the shell, not the facade, because a new client is the one way every subscription, report and
+   listener is wired as it is at a first setup. While doing so, a request for another account made
+   while a swap was still closing the old reader was never made (the close's completion matched
+   only the request that started it); the newest request is now made.
+2. `lastReachable` was `@ObservationIgnored`, so a view that read `isOnline` (the lyrics panel's
+   reload on coming back online) did not redraw when only reachability changed. It is now observed.
+
+OBSERVED by DulcetKit tests, each failing with its part of the change undone (mutants):
+`tryAgainOnAReaderWhoseSetupFailedMakesANewOneAndEverythingIsWiredToIt`,
+`aSetupThatKeepsFailingIsRetriedOnlyWhenSomethingAsksNeverInALoop`,
+`onlyTheCurrentReadersOwnFailureIsASetupToRetry`,
+`aSearchTryAgainOnASavedAccountWhoseSetupFailedReconnectsTheAccountAndMakesANewReader`,
+`anAccountChosenWhileTheOldReaderIsStillClosingIsTheOneMade` and
+`aViewThatReadsIsOnlineRedrawsWhenOnlyTheNetworkChanges`; and by `AppleLibraryReaderFacadeTest`
+(`theSetupOutcomeSaysWhetherTheSessionWasBuilt`). These are host tests over fakes and the core; no
+app on a simulator was driven through a failed setup.
 
 **2026-10-04 — A play the server says is gone stops being retried and no longer holds the plays behind it (§15.3).**
 The retry loop above made a play the server will never take cost a request every 256 s for thirty
