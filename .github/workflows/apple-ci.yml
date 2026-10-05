@@ -969,8 +969,9 @@ jobs:
           tls_pid=$!
           python3 tools/conformance-env/redirect-server --port 4543 --forward-proxy-auth &
           proxy_pid=$!
-          # The Apple lyrics proofs' fault proxy (tools/ci/run-lyrics-quality-proofs): forwards
-          # every request to this server unchanged, except a lyrics read a proof arms it to fail.
+          # The fault proxy (tools/ci/run-lyrics-quality-proofs, run-app-host-reader-proof): forwards
+          # every request to this server unchanged and logs it, except a read a proof arms it to
+          # fail or hold.
           python3 tools/conformance-env/lyrics-fault-proxy --port 4544 --upstream http://127.0.0.1:4533 &
           lyrics_proxy_pid=$!
           cleanup() {
@@ -2535,6 +2536,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-reader-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-conf76-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-conf77-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-conf86-junit" \
             "$RUNNER_TEMP/dulcet-ipados-reader-junit" \
             "$RUNNER_TEMP/dulcet-ios-reader-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \

@@ -75,6 +75,64 @@ if [ "$mode" = macos ]; then
         "$RUNNER_TEMP/dulcet-mac-reader-test.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-reader-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \
         DulcetMacAccountConnectAppTest
+
+    # CONF-76, CONF-77 and CONF-86, counted: the account's server is the fault proxy the calling
+    # step starts beside the disposable server, so its request log is everything the app sent, and
+    # its hold and fail rules make a read late or failed on purpose (each proof clears them, pass
+    # or fail). One proof per result bundle, because the execution guard requires exactly one.
+    proxy_url=http://127.0.0.1:4544
+    curl --fail --silent "$proxy_url/__dulcet/health" >/dev/null || {
+        echo "run-app-host-reader-proof: the fault proxy does not answer on $proxy_url" >&2
+        exit 1
+    }
+    export DULCET_LYRICS_FAULT_PROXY_URL="$proxy_url"
+    counted=(
+        -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug -destination 'platform=macOS'
+        -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" -parallel-testing-enabled NO
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300
+        CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+        DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_TEST_CONFORMANCE_DISPOSABLE=true
+        DULCET_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url"
+    )
+    DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true \
+        xcodebuild test-without-building "${counted[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-mac-reader-conf76.xcresult" \
+            -only-testing:DulcetMacTests/DulcetMacReaderCountedAppTest/conf76ACachedOpenPublishesBeforeAnyAnswerThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-reader-conf76.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf76.xcresult" \
+        DulcetMacTests.DulcetMacReaderCountedAppTest \
+        conf76ACachedOpenPublishesBeforeAnyAnswerThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf76.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf76-junit/TEST-DulcetMacReaderCountedAppTest.xml" \
+        DulcetMacReaderCountedAppTest
+    DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true \
+        xcodebuild test-without-building "${counted[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-mac-reader-conf77.xcresult" \
+            -only-testing:DulcetMacTests/DulcetMacReaderCountedAppTest/conf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-reader-conf77.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf77.xcresult" \
+        DulcetMacTests.DulcetMacReaderCountedAppTest \
+        conf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf77.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf77-junit/TEST-DulcetMacReaderCountedAppTest.xml" \
+        DulcetMacReaderCountedAppTest
+    DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true \
+        xcodebuild test-without-building "${counted[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-mac-reader-conf86.xcresult" \
+            -only-testing:DulcetMacTests/DulcetMacReaderCountedAppTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-reader-conf86.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf86.xcresult" \
+        DulcetMacTests.DulcetMacReaderCountedAppTest \
+        conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf86.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-reader-conf86-junit/TEST-DulcetMacReaderCountedAppTest.xml" \
+        DulcetMacReaderCountedAppTest
     exit 0
 fi
 

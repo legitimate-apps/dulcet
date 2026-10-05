@@ -59,6 +59,7 @@
 		58BF95EDC47EA62C04893F46 /* SQLiteLoadExtensionUnsupported.c in Sources */ = {isa = PBXBuildFile; fileRef = E622424025E4EC04C102373D /* SQLiteLoadExtensionUnsupported.c */; };
 		5A24D1AB2F01FB439097327A /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B945218F2D648F14255F44AE /* DulcetCorePlayback.swift */; };
 		5C2C669E3B42024BC79CC40A /* DulcetMacHostedApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 185D81741305C7567F007D8F /* DulcetMacHostedApp.swift */; };
+		5E2203DE07A160868A50DA7F /* DulcetMacReaderCountedAppTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41C03B3716FF6D2DC89372FE /* DulcetMacReaderCountedAppTest.swift */; };
 		675EF54FBC9633D3BA297092 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B3AFF0A0E1BC82DDA264BF84 /* libsqlite3.tbd */; };
 		68FE01B8BAF5F841D277752D /* DulcetCoreDownloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8028BF0FABA383220186FA62 /* DulcetCoreDownloads.swift */; };
 		68FFA0AB77EC8F3B923D2559 /* UpNextModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E86CDF4178AF7B2C5B6AC2 /* UpNextModelTests.swift */; };
@@ -197,6 +198,7 @@
 		3BFA774638BD4BF2715E3B31 /* DulcetiOSRelease.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetiOSRelease.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C11528CCD5BCF6E862A4CDA /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		3C480BFD2055575C8E86BA5D /* BackgroundAudio.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = BackgroundAudio.plist; sourceTree = "<group>"; };
+		41C03B3716FF6D2DC89372FE /* DulcetMacReaderCountedAppTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetMacReaderCountedAppTest.swift; sourceTree = "<group>"; };
 		41D4E46A00FEC9EC06B9005F /* DulcetMacRelease.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DulcetMacRelease.entitlements; sourceTree = "<group>"; };
 		43AACCDAF49333ECEDAF3CB8 /* DulcetKeychainAttributeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetKeychainAttributeTests.swift; sourceTree = "<group>"; };
 		442DB23CD71B21DE7C9FF492 /* DulcetMacLyricsAndQualityAppTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetMacLyricsAndQualityAppTest.swift; sourceTree = "<group>"; };
@@ -405,6 +407,7 @@
 				185D81741305C7567F007D8F /* DulcetMacHostedApp.swift */,
 				442DB23CD71B21DE7C9FF492 /* DulcetMacLyricsAndQualityAppTest.swift */,
 				5630C0800381AC8F987DAC37 /* DulcetMacRatingsAndPlaylistsAppTest.swift */,
+				41C03B3716FF6D2DC89372FE /* DulcetMacReaderCountedAppTest.swift */,
 			);
 			path = DulcetMacTests;
 			sourceTree = "<group>";
@@ -1273,6 +1276,7 @@
 				5C2C669E3B42024BC79CC40A /* DulcetMacHostedApp.swift in Sources */,
 				23EDD8E6D6146AA30F61D9C7 /* DulcetMacLyricsAndQualityAppTest.swift in Sources */,
 				0E74313491806EAB63202678 /* DulcetMacRatingsAndPlaylistsAppTest.swift in Sources */,
+				5E2203DE07A160868A50DA7F /* DulcetMacReaderCountedAppTest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

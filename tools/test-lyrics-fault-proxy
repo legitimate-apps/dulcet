@@ -16,6 +16,7 @@ import io
 import json
 import runpy
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -244,6 +245,65 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(again["dropped"], {})
         self.assertIn("LYRICS FAULT PROXY outage on", self.stdout.getvalue())
 
+    def test_every_rest_request_is_logged_by_endpoint_type_and_id_and_never_by_credential(self):
+        self.assertEqual(self.request("GET", f"/rest/getAlbumList2.view?u=a&t={CANARY}&s=x&type=newest&size=20")[0], 200)
+        form = f"u=a&t={CANARY}&s=x&id=al-1".encode()
+        self.assertEqual(self.request("POST", "/rest/getAlbum", body=form,
+                                      headers={"Content-Type": "application/x-www-form-urlencoded"})[0], 200)
+        self.control("GET", "/__dulcet/health")
+        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        self.assertEqual(log, {"total": 2, "requests": [
+            {"endpoint": "getAlbumList2", "type": "newest", "answered": True, "status": 200},
+            {"endpoint": "getAlbum", "id": "al-1", "answered": True, "status": 200},
+        ]}, "controls are not logged; an id in a form body is")
+        self.assertNotIn(CANARY, json.dumps(log))
+        _, tail = self.control("GET", "/__dulcet/requests?since=1")
+        self.assertEqual([entry["endpoint"] for entry in tail["requests"]], ["getAlbum"])
+        self.assertEqual(tail["total"], 2)
+        # A dropped request is logged, answered with no status.
+        self.control("POST", "/__dulcet/outage?state=on")
+        with self.assertRaises((http.client.RemoteDisconnected, ConnectionResetError, http.client.BadStatusLine)):
+            self.request("GET", f"/rest/ping?t={CANARY}")
+        self.control("POST", "/__dulcet/outage?state=off")
+        _, after = self.control("GET", "/__dulcet/requests?since=2")
+        self.assertEqual(after["requests"], [{"endpoint": "ping", "answered": True, "status": 0}])
+
+    def test_a_hold_rule_keeps_matching_requests_unanswered_until_switched_off(self):
+        status, rules = self.control("POST", "/__dulcet/rule?action=hold&state=on&endpoint=getAlbumList2&type=frequent")
+        self.assertEqual((status, rules), (200, {"hold": {"endpoint": "getAlbumList2", "type": "frequent"}, "fail": None, "held": 0}))
+        results = {}
+        held = threading.Thread(target=lambda: results.update(
+            held=self.request("GET", f"/rest/getAlbumList2?t={CANARY}&type=frequent")[0]))
+        held.start()
+        # Another order of the same endpoint, and another endpoint, pass.
+        self.assertEqual(self.request("GET", f"/rest/getAlbumList2?t={CANARY}&type=newest")[0], 200)
+        self.assertEqual(self.request("GET", f"/rest/getStarred2?t={CANARY}")[0], 200)
+        deadline = time.monotonic() + 5
+        while self.control("GET", "/__dulcet/requests?since=0")[1]["total"] < 3 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        frequent = [entry for entry in log["requests"] if entry.get("type") == "frequent"]
+        self.assertEqual([entry["answered"] for entry in frequent], [False], "the held request is logged, unanswered")
+        self.assertTrue(held.is_alive())
+        _, released = self.control("POST", "/__dulcet/rule?action=hold&state=off")
+        self.assertEqual(released, {"hold": None, "fail": None, "held": 1}, "switching off keeps the count")
+        held.join(5)
+        self.assertEqual(results.get("held"), 200, "released, it is forwarded and answered")
+        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        self.assertTrue(all(entry["answered"] for entry in log["requests"]))
+
+    def test_a_fail_rule_answers_matching_requests_with_a_500_and_never_reaches_the_server(self):
+        self.control("POST", "/__dulcet/rule?action=fail&state=on&endpoint=getStarred2")
+        status, _, body = self.request("GET", f"/rest/getStarred2.view?t={CANARY}")
+        self.assertEqual((status, body), (500, b""))
+        self.assertEqual(self.request("GET", f"/rest/getAlbumList2?t={CANARY}&type=recent")[0], 200)
+        self.assertEqual([seen["path"].split("?")[0] for seen in Upstream.seen], ["/rest/getAlbumList2"])
+        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        self.assertEqual([(entry["endpoint"], entry["status"]) for entry in log["requests"]],
+                         [("getStarred2", 500), ("getAlbumList2", 200)])
+        self.control("POST", "/__dulcet/rule?action=fail&state=off")
+        self.assertEqual(self.request("GET", f"/rest/getStarred2?t={CANARY}")[0], 200)
+
     def test_malformed_controls_are_refused(self):
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?state=on")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?song=s&state=maybe")[0], 400)
@@ -254,6 +314,11 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(self.control("GET", "/__dulcet/playlist-hold?playlist=p&state=on")[0], 404)
         self.assertEqual(self.control("POST", "/__dulcet/outage?state=maybe")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/outage")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/rule?action=hold&state=on")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/rule?action=drop&state=on&endpoint=ping")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/rule?action=fail&state=off&endpoint=ping")[0], 400)
+        self.assertEqual(self.control("GET", "/__dulcet/rule?action=hold&state=off")[0], 404)
+        self.assertEqual(self.control("GET", "/__dulcet/requests?since=x")[0], 400)
         self.assertEqual(self.control("GET", "/__dulcet/health"), (200, {"ok": True}))
         self.assertEqual(Upstream.seen, [], "control requests never reach the server")
 

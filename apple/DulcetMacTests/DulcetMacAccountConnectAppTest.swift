@@ -1536,13 +1536,13 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
 }
 
-private enum SearchHostedAppTestError: Error {
+enum SearchHostedAppTestError: Error {
     case invalidFixture
     case missingAccessibilityElement(String)
 }
 
 @MainActor
-private final class SearchIntentPlaybackController: DulcetPlaybackControlling {
+final class SearchIntentPlaybackController: DulcetPlaybackControlling {
     private var presentationHandler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private(set) var currentPresentation: DulcetPlaybackPresentation = .unavailable
     private(set) var lastIntent: DulcetPlaybackQueueIntent?
@@ -1810,7 +1810,7 @@ private final class InertLibraryRefreshOperation: DulcetLibraryRefreshOperation 
 }
 
 /// An in-memory credential store that remembers the provider instance, as the Keychain store does.
-private final class ReaderHostedCredentialStore: DulcetProviderInstanceCredentialStoring {
+final class ReaderHostedCredentialStore: DulcetProviderInstanceCredentialStoring {
     private var persisted: DulcetAccountConnectRequest?
     private(set) var providerInstanceID: String?
     private(set) var credentialGeneration: Int64 = 0
