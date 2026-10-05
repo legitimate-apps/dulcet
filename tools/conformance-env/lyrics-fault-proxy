@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A forwarding proxy in front of the disposable server that can fail one song's lyrics read.
 
-It can also hold one playlist's reads -- see "Holding a playlist read" below.
+It can also hold one playlist's reads -- see "Holding a playlist read" below -- and drop every
+request for a while -- see "An outage" below.
 
 The Apple lyrics proofs need a lyrics read that fails, then succeeds when the person presses Try
 Again (spec §18.4). The disposable server answers every lyrics read, and nothing about the corpus
@@ -36,6 +37,18 @@ Every other request passes straight through, and a hold never outlives HOLD_LIMI
 test released them, and `timedOut` those forwarded only because the limit passed. Arming starts all
 three from zero.
 
+An outage: the Apple playlist pending-state proofs need the server to go away while the app is
+open, and come back (spec §18.6). During an outage every `/rest` request is dropped -- its
+connection reset with no answer, as a server that went away leaves it -- until the test ends it.
+The controls keep answering throughout.
+
+    POST /__dulcet/outage?state=on|off
+    GET  /__dulcet/outage    {"outage": bool, "dropped": {endpoint: n}, "forwardedAfterOutage": {endpoint: n}}
+
+`dropped` counts, by endpoint name, the requests dropped since the outage began, and
+`forwardedAfterOutage` those forwarded since it last ended. Each switch starts its count from zero,
+so a proof can show that its edit met the outage and was sent after it.
+
 Requests carry credentials in their query strings, so nothing here ever prints a request line,
 a query or a header: the base handler's request log is silenced, and the only output is the
 listening line and the names of the endpoints that were failed.
@@ -44,8 +57,11 @@ listening line and the names of the endpoints that were failed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import http.client
 import json
+import socket
+import struct
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -73,6 +89,32 @@ class FaultState:
         self.held: dict[str, int] = {}
         self.released: dict[str, int] = {}
         self.timed_out: dict[str, int] = {}
+        self.outage = False
+        self.dropped: dict[str, int] = {}
+        self.forwarded_after_outage: dict[str, int] = {}
+
+    def set_outage(self, on: bool) -> None:
+        with self.lock:
+            self.outage = on
+            if on:
+                self.dropped = {}
+            else:
+                self.forwarded_after_outage = {}
+
+    def admit(self, endpoint: str) -> bool:
+        """Whether a `/rest` request for `endpoint` is forwarded; counted either way."""
+        with self.lock:
+            counts = self.dropped if self.outage else self.forwarded_after_outage
+            counts[endpoint] = counts.get(endpoint, 0) + 1
+            return not self.outage
+
+    def outage_observations(self) -> dict[str, object]:
+        with self.lock:
+            return {
+                "outage": self.outage,
+                "dropped": dict(self.dropped),
+                "forwardedAfterOutage": dict(self.forwarded_after_outage),
+            }
 
     def hold(self, playlist: str, on: bool) -> None:
         with self.lock:
@@ -137,6 +179,12 @@ class FaultState:
             }
 
 
+def rest_endpoint(path: str) -> str:
+    """The endpoint a `/rest` path names, without a `.view` suffix: `/rest/ping.view` is `ping`."""
+    name = path[len("/rest/"):].split("/", 1)[0]
+    return name[:-len(".view")] if name.endswith(".view") else name
+
+
 def lyrics_song(path: str, query: str, body: bytes, content_type: str) -> str | None:
     """The song id of a `getLyricsBySongId` request, from its query or its form body; else None."""
     return request_id(LYRICS_ENDPOINTS, path, query, body, content_type)
@@ -182,6 +230,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if parts.path.startswith("/__dulcet/"):
             self._control(parts.path, parse_qs(parts.query))
             return
+        if parts.path.startswith("/rest/") and not self.server.state.admit(rest_endpoint(parts.path)):
+            self._drop()
+            return
         song = lyrics_song(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
         if self.server.state.should_fail(song):
             print(f"LYRICS FAULT PROXY failed {parts.path}", flush=True)
@@ -201,6 +252,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         if path in {"/__dulcet/playlist-hold", "/__dulcet/playlist-observations"}:
             self._playlist_control(path, query)
+            return
+        if path == "/__dulcet/outage":
+            if self.command == "POST":
+                state = (query.get("state") or [""])[0]
+                if state not in {"on", "off"}:
+                    self._send_json(400, {"error": "state must be on or off"})
+                    return
+                self.server.state.set_outage(state == "on")
+                print(f"LYRICS FAULT PROXY outage {state}", flush=True)
+            self._send_json(200, self.server.state.outage_observations())
             return
         song = (query.get("song") or [""])[0]
         if not song:
@@ -271,6 +332,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 pass
         finally:
             upstream.close()
+
+    def _drop(self) -> None:
+        """Resets the connection with no answer: a zero linger makes the handler's close a reset."""
+        self.close_connection = True
+        with contextlib.suppress(OSError):
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
 
     def _send_json(self, status: int, value: object) -> None:
         data = json.dumps(value, separators=(",", ":")).encode()

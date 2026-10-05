@@ -1916,9 +1916,10 @@ jobs:
             ipad|iphone) ;;
             *) echo "unknown conformance leg device: '$DULCET_DEVICE'" >&2; exit 1 ;;
           esac
-          # This job's own disposable server and the one fixture its phases use: the Apple lyrics
-          # proofs' fault proxy (tools/ci/run-lyrics-quality-proofs), which forwards every request to
-          # this server unchanged except a lyrics read a proof arms it to fail. The redirect, TLS and
+          # This job's own disposable server and the one fixture its phases use: the fault proxy,
+          # which forwards every request to this server unchanged except a lyrics read a proof arms it
+          # to fail (tools/ci/run-lyrics-quality-proofs) and every request during an outage a playlist
+          # proof switches on (tools/ci/run-ratings-playlists-proofs). The redirect, TLS and
           # forward-proxy fixtures serve only the core-conformance suites, which run in
           # apple-conformance-core. Navidrome logs where the failure upload below finds it; the proxy
           # writes no log file.
@@ -2559,4 +2560,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-hearts-junit" \
             "$RUNNER_TEMP/dulcet-ios-row-hearts-junit" \
             "$RUNNER_TEMP/dulcet-ipados-row-hearts-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-hearts-junit"
+            "$RUNNER_TEMP/dulcet-tvos-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-mac-playlist-play-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-pending-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playlist-play-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playlist-pending-junit"

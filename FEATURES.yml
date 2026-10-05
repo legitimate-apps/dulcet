@@ -1507,14 +1507,20 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp"
+            },
+            {
+              "observes": "through the Mac app hosted over the production root view against the disposable server, a playlist made for the run in an order unlike its album's is opened from the Playlists list and its Play pressed with nothing playing: the playlist's own first entry becomes current, the queue holds the playlist's entries in the playlist's order with the first current, and its media time advances",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacRatingsAndPlaylistsAppTest/aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "mac-playlist-play-ui-proof",
-            "reason": "The Mac playlist edit proof executed and passed: create, add an album, add a track, remove, move up, rename, delete and a failed rename, each read back from the server. What remains of this cell's original condition is play: no test opens a playlist on the Mac and plays it, so playing in the playlist's own order, as the iPhone proof does, is not driven through the Mac app. A drag reorder is not driven either; the Move Up accessibility action is."
+            "blocked_on": "mac-playlist-play-proof-first-main-run",
+            "reason": "The Mac playlist edit proof executed and passed: create, add an album, add a track, remove, move up, rename, delete and a failed rename, each read back from the server. Play now has a proof, aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp: a playlist opened on the Mac plays in its own order, the queue read back, wired into the conformance leg. What remains is its first passing run on main, which a pull request does not run. A drag reorder is not driven either; the Move Up accessibility action is."
           },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. No test opens a playlist on the Mac and plays it, so playing in the playlist's own order is not driven through the Mac app, and the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. Playing a playlist in its own order is driven through the Mac app by aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp in the same leg; until it has passed on main the cell stays partial."
         },
         "ios": {
           "status": "partial",
@@ -1560,21 +1566,27 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPhone"
+            },
+            {
+              "observes": "through the iPhone app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "iphone-playlist-pending-state-ui-proof",
-            "reason": "The iPhone edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server, beside the existing open, play-in-order and rename proof. What remains of this cell's original condition is the pending state: no test makes an edit while the server is unreachable and observes the iPhone app show it pending and send it at reconnect."
+            "blocked_on": "iphone-playlist-pending-proof-first-main-run",
+            "reason": "The iPhone edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server, beside the existing open, play-in-order and rename proof. The pending state now has a proof, testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone: a rename made during the fault proxy's outage shows pending and reaches the server at the reconnect, wired into the conformance leg. What remains is its first passing run on main, which a pull request does not run."
           },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values only, not driven through the UI, so the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit made while the server is unreachable, is driven through the iPhone app by testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone in the same leg; until it has passed on main the cell stays partial."
         },
         "ipados": {
           "status": "partial",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "ipad-playlist-play-in-order-and-pending-state-ui-proof",
-            "reason": "The iPad edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server. What remains is what the iPhone cell also requires: no test plays a playlist in its own order on the iPad, and no test makes an edit while the server is unreachable and observes the iPad app show it pending and send it at reconnect."
+            "blocked_on": "ipad-playlist-play-and-pending-proofs-first-main-run",
+            "reason": "The iPad edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server. Both remaining parts now have proofs that fail on an iPhone idiom, wired into the conformance leg: testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS plays a playlist in its own order on the iPad, and testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS shows a rename made during the fault proxy's outage pending, then sent at the reconnect. What remains is their first passing run on main, which a pull request does not run."
           },
           "evidence": [
             {
@@ -1612,9 +1624,21 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPadOS"
+            },
+            {
+              "observes": "the iPad app in its regular-width window opens a server playlist from Library > Playlists, Play starts the playlist's own first entry rather than its album's, and a rename made on the page shows at once and is read back from the server",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS"
+            },
+            {
+              "observes": "through the iPad app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS"
             }
           ],
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order is driven on the iPhone and not on the iPad, and the pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values, not driven through the UI."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order and the pending state, an edit made while the server is unreachable, are driven on the iPad by two proofs in the same leg; until they have passed on main the cell stays partial."
         },
         "tvos": {
           "status": "planned",

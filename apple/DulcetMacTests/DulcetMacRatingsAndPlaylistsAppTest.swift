@@ -125,6 +125,45 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             + " row-heart=\(heartFrame) content=\(content)")
     }
 
+    /// A playlist on the server opens from the sidebar's Playlists and its Play starts it in ITS
+    /// order (spec §18.6). The playlist is made for this run over `/rest` with "UI Playback Canary"
+    /// first and "Thirty One Seconds" second -- the reverse of their album order -- so the track
+    /// that starts, and the queue behind it, prove the playlist's order and not the album's. Play
+    /// is pressed as VoiceOver presses it, once the page has read the entries and enabled it. The
+    /// playlist is deleted afterwards, whatever the outcome.
+    func aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp() async throws {
+        let server = try disposableServer()
+        let album = "Threshold Boundary"
+        let order = [Self.albumOrder[2], Self.albumOrder[1]]
+        let name = "Dulcet Mac Play Proof " + UUID().uuidString.prefix(8)
+        let ids = [try await server.songID(order[0], album: album), try await server.songID(order[1], album: album)]
+        let playlistID = try await server.createPlaylist(name, songIDs: ids)
+        addTeardownBlock { try? await server.deletePlaylist(playlistID) }
+        let entries = try await server.playlistEntries(playlistID)
+        XCTAssertEqual(entries, order, "The control: the server must hold the run's playlist in the reverse of album order")
+
+        let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, toolbar: true)
+        defer { app.close() }
+        try await openPlaylist(name, in: app)
+        let play = try await app.element(identifiedBy: "dulcet.playlist.play", timeout: .seconds(10))
+        try await waitUntil(timeout: .seconds(15), "Play must be enabled once the entries are read") {
+            (play as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
+        }
+        XCTAssertNil(app.store.snapshot.nowPlaying, "The control: nothing plays before Play is pressed")
+        try app.press(play, named: "dulcet.playlist.play")
+        try await waitUntil(timeout: .seconds(20), "Play must start \(order[0]); now playing=\(String(describing: app.store.snapshot.nowPlaying?.current.title))") {
+            app.store.snapshot.nowPlaying?.current.title == order[0]
+        }
+        let nowPlaying = try XCTUnwrap(app.store.snapshot.nowPlaying)
+        XCTAssertEqual(nowPlaying.queue.map(\.title), order, "The queue must be the playlist's entries in its order")
+        XCTAssertEqual(nowPlaying.currentIndex, 0, "Play must start at the playlist's first entry")
+        try await waitUntil(timeout: .seconds(20), "playback must progress; phase=\(String(describing: app.store.snapshot.nowPlaying?.phase))") {
+            app.store.snapshot.nowPlaying?.progressBegan == true
+        }
+        print("DULCET MAC PLAYLIST PLAY PROOF PASS first=\(order[0].debugDescription)"
+            + " queue=\(nowPlaying.queue.map(\.title)) source=\((nowPlaying.sourceDisplayName ?? "nil").debugDescription)")
+    }
+
     /// Every playlist edit the Mac offers, made through the rendered views and read back from the
     /// disposable server after each step:
     ///

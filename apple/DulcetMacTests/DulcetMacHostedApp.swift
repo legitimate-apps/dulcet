@@ -710,7 +710,13 @@ struct LiveServer {
 
     /// Makes a playlist as another client would.
     func createPlaylist(_ name: String, songID: String) async throws -> String {
-        let playlist = try await call("createPlaylist", [URLQueryItem(name: "name", value: name), URLQueryItem(name: "songId", value: songID)])["playlist"] as? [String: Any]
+        try await createPlaylist(name, songIDs: [songID])
+    }
+
+    /// Makes a playlist holding `songIDs` in that order, as another client would.
+    func createPlaylist(_ name: String, songIDs: [String]) async throws -> String {
+        let items = [URLQueryItem(name: "name", value: name)] + songIDs.map { URLQueryItem(name: "songId", value: $0) }
+        let playlist = try await call("createPlaylist", items)["playlist"] as? [String: Any]
         return try XCTUnwrap(playlist?["id"] as? String, "createPlaylist must return the playlist's id")
     }
 

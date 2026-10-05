@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the Apple rating, heart and playlist-editing UI proofs (spec §16.20, §18.6; CONF-84, CONF-88..91)
+# Run the Apple rating, heart and playlist UI proofs (spec §16.20, §18.6; CONF-84, CONF-88..91)
 # against the disposable server and turn each result bundle into cited evidence.
 #
 # A file rather than inline YAML for the reason tools/ci/run-app-host-reader-proof gives: the
@@ -56,6 +56,10 @@ esac
 export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533
 export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
 export TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password
+# The offline playlist proofs connect the app through the lyrics fault proxy, which the calling step
+# starts beside the server on port 4544 (tools/ci/run-lyrics-quality-proofs uses it too), and switch
+# its outage on and off; each ends the outage in its teardown, pass or fail.
+export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL=http://127.0.0.1:4544
 # The simulator playlist proofs reach the server through the fault proxy the calling step starts
 # beside it (tools/ci/run-lyrics-quality-proofs), which holds one playlist read so the proof meets
 # a playlist deleted elsewhere while its rename prompt is open on purpose, not by chance.
@@ -118,6 +122,19 @@ macos)
         "$RUNNER_TEMP/dulcet-mac-hearts.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-hearts-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
         DulcetMacRatingsAndPlaylistsAppTest
+    # A playlist's Play starts it in the playlist's own order, not the album's (spec §18.6).
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-playlist-play.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-playlist-play.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-playlist-play.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-playlist-play.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-playlist-play-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
+        DulcetMacRatingsAndPlaylistsAppTest
     ;;
 iphone)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-iphone --keep-name "iPhone 17 Pro"
@@ -160,6 +177,21 @@ iphone)
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-ios-row-hearts.xcresult" \
         "$RUNNER_TEMP/dulcet-ios-row-hearts-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    # A rename made during the fault proxy's outage shows pending, then reaches the server at the
+    # reconnect (spec §18.6). It ends the outage whatever happens.
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist-pending.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-playlist-pending.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-playlist-pending.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-playlist-pending.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-playlist-pending-junit/TEST-DulcetiOSUITests.xml" \
         DulcetiOSUITests
     # Beside the playlist proof because it opens the same album and the same row menu: a track
     # dragged out of its open context menu onto the now-playing bar joins Up Next (spec §3.1). It
@@ -246,6 +278,34 @@ ipados)
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-ipados-row-hearts.xcresult" \
         "$RUNNER_TEMP/dulcet-ipados-row-hearts-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    # A playlist opens and plays in its own order on the iPad, and a rename reaches the server (spec §18.6).
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playlist-play.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-playlist-play.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-play.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-play.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-play-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    # The offline rename on the iPad: pending during the proxy's outage, sent at the reconnect.
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-playlist-pending.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-playlist-pending.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-pending.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-pending.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-playlist-pending-junit/TEST-DulcetiOSUITests.xml" \
         DulcetiOSUITests
     # The library's album tile and playlist row dragged out of their open menus onto the bar add
     # their tracks to Up Next in order (spec §3.1); no feature cell, so no JUnit.

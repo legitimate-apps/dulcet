@@ -210,6 +210,40 @@ class LyricsFaultProxyTest(unittest.TestCase):
         _, observed = self.control("GET", "/__dulcet/playlist-observations?playlist=pl-3")
         self.assertEqual(observed, {"holding": True, "held": 1, "released": 0, "timedOut": 1})
 
+    def test_an_outage_drops_every_rest_request_unanswered_until_it_ends(self):
+        status, began = self.control("POST", "/__dulcet/outage?state=on")
+        self.assertEqual((status, began), (200, {"outage": True, "dropped": {}, "forwardedAfterOutage": {}}))
+        form = f"t={CANARY}&playlistId=p&songIdToAdd=s".encode()
+        for method, path, body in [
+            ("GET", f"/rest/ping.view?t={CANARY}", None),
+            ("POST", "/rest/updatePlaylist", form),
+            ("GET", f"/rest/getPlaylist?t={CANARY}&id=p", None),
+        ]:
+            headers = {"Content-Type": "application/x-www-form-urlencoded"} if body else {}
+            # No status line at all: a dropped request must never read as an answer.
+            with self.assertRaises((http.client.RemoteDisconnected, ConnectionResetError, http.client.BadStatusLine)):
+                self.request(method, path, body=body, headers=headers)
+        self.assertEqual(Upstream.seen, [], "nothing reaches the server during an outage")
+        # The controls keep answering.
+        self.assertEqual(self.control("GET", "/__dulcet/health"), (200, {"ok": True}))
+        _, observed = self.control("GET", "/__dulcet/outage")
+        self.assertEqual(observed, {"outage": True, "dropped": {"ping": 1, "updatePlaylist": 1, "getPlaylist": 1},
+                                    "forwardedAfterOutage": {}})
+        _, ended = self.control("POST", "/__dulcet/outage?state=off")
+        self.assertEqual(ended["outage"], False)
+        self.assertEqual(ended["dropped"], {"ping": 1, "updatePlaylist": 1, "getPlaylist": 1},
+                         "ending the outage keeps what it dropped")
+        status, _, _ = self.request("POST", "/rest/updatePlaylist.view", body=form,
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 200)
+        self.assertEqual(Upstream.seen[0]["body"], form, "the request after the outage is forwarded unchanged")
+        _, observed = self.control("GET", "/__dulcet/outage")
+        self.assertEqual(observed["forwardedAfterOutage"], {"updatePlaylist": 1})
+        # A second outage starts its count from zero.
+        _, again = self.control("POST", "/__dulcet/outage?state=on")
+        self.assertEqual(again["dropped"], {})
+        self.assertIn("LYRICS FAULT PROXY outage on", self.stdout.getvalue())
+
     def test_malformed_controls_are_refused(self):
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?state=on")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?song=s&state=maybe")[0], 400)
@@ -218,6 +252,8 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(self.control("POST", "/__dulcet/playlist-hold?state=on")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/playlist-hold?playlist=p&state=maybe")[0], 400)
         self.assertEqual(self.control("GET", "/__dulcet/playlist-hold?playlist=p&state=on")[0], 404)
+        self.assertEqual(self.control("POST", "/__dulcet/outage?state=maybe")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/outage")[0], 400)
         self.assertEqual(self.control("GET", "/__dulcet/health"), (200, {"ok": True}))
         self.assertEqual(Upstream.seen, [], "control requests never reach the server")
 
