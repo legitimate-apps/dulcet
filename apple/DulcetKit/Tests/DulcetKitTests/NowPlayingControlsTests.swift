@@ -60,6 +60,9 @@ private final class HeartReader: DulcetLibraryReading {
     func setOnline(_ reachable: Bool) {}
     func setForeground(_ foreground: Bool) {}
     func setNetworkConstrained(_ constrained: Bool) {}
+    func setupFailed(completion: @escaping @MainActor (Bool) -> Void) -> any DulcetLibraryReaderCancellable {
+        HeartCancellable()
+    }
     /// A reader whose thread has not stopped yet keeps its completion here.
     var holdsClose = false
     private(set) var pendingClose: (@MainActor () -> Void)?

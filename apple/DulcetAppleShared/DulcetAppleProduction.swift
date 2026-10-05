@@ -945,6 +945,16 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
         client.setNetworkConstrained(constrained: constrained)
     }
 
+    func setupFailed(completion: @escaping @MainActor (Bool) -> Void) -> any DulcetLibraryReaderCancellable {
+        // Only `internalFailure` is a failed build; `closed` and `cancelled` are not, or a reader
+        // closed during a swap would be made again.
+        let operation = client.setupOutcome { kind in
+            let failed = kind == "internalFailure"
+            MainActor.assumeIsolated { completion(failed) }
+        }
+        return DulcetCoreReaderCancellable(listener: nil) { operation.cancel() }
+    }
+
     func close(completion: @escaping @MainActor () -> Void) {
         client.close {
             MainActor.assumeIsolated { completion() }

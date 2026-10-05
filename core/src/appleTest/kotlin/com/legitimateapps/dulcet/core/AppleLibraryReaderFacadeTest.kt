@@ -846,6 +846,32 @@ class AppleLibraryReaderFacadeTest {
     }
 
     /**
+     * The setup outcome tells a session that could not be built from one that was, and from a
+     * closed client: the shell replaces only the first (§16.18, the Apple paragraph).
+     */
+    @Test
+    fun theSetupOutcomeSaysWhetherTheSessionWasBuilt() = facadeTest { h ->
+        val failed = h.client(compose = { _, _ -> error("GET https://music.example/rest/ping.view?u=$CANARY-user failed") })
+        val built = h.client()
+        // A closed client says `closed` even when its build also failed: closing is not a failed setup.
+        val closing = h.client(compose = { _, _ -> error("setup failed") })
+        closing.close()
+        val outcomes = AtomicReference<Map<String, String?>>(emptyMap())
+        fun record(name: String): (String?) -> Unit = { kind ->
+            while (true) {
+                val current = outcomes.load()
+                if (outcomes.compareAndSet(current, current + (name to kind))) break
+            }
+        }
+        failed.client.setupOutcome(record("failed"))
+        built.client.setupOutcome(record("built"))
+        closing.client.setupOutcome(record("closed"))
+        pumpUntil("every setup outcome") { outcomes.load().size == 3 }
+        assertEquals(mapOf("failed" to "internalFailure", "built" to null, "closed" to "closed"), outcomes.load())
+        assertEquals(1, built.onReader { h.sessions.size }, "control: the built client really has a session")
+    }
+
+    /**
      * With no session every keystroke is answered for its own text, and Try Again answers again —
      * never silence, which leaves the shell waiting on a spinner (§16.15).
      */

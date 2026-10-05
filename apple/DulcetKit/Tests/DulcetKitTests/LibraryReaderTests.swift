@@ -1,5 +1,6 @@
 import Foundation
 import MediaPlayer
+import Observation
 import Testing
 @testable import DulcetKit
 
@@ -11,7 +12,7 @@ import Testing
 // MARK: - Fakes
 
 @MainActor
-private final class RecordingReader: DulcetLibraryReading {
+private class RecordingReader: DulcetLibraryReading {
     let account: DulcetLibraryReaderAccount
     private(set) var events: [String] = []
     private(set) var windows: [RecordingWindow] = []
@@ -90,6 +91,21 @@ private final class RecordingReader: DulcetLibraryReading {
     func setForeground(_ foreground: Bool) { events.append("setForeground(\(foreground))") }
     func setNetworkConstrained(_ constrained: Bool) { events.append("setNetworkConstrained(\(constrained))") }
 
+    /// Whether the setup fails, said when the test calls `finishSetup`; nil until then.
+    var setupCompletion: (@MainActor (Bool) -> Void)?
+    var setupCancelled = false
+
+    func setupFailed(completion: @escaping @MainActor (Bool) -> Void) -> any DulcetLibraryReaderCancellable {
+        setupCompletion = completion
+        return RecordingCancellable { [weak self] in self?.setupCancelled = true }
+    }
+
+    func finishSetup(failed: Bool) {
+        let completion = setupCompletion
+        setupCompletion = nil
+        if !setupCancelled { completion?(failed) }
+    }
+
     func close(completion: @escaping @MainActor () -> Void) {
         events.append("close")
         closeCompletion = completion
@@ -143,17 +159,44 @@ private final class RecordingSearch: DulcetLibrarySearchSubscribing {
 
 @MainActor
 private final class RecordingCancellable: DulcetLibraryReaderCancellable {
-    func cancel() {}
+    private let onCancel: @MainActor () -> Void
+    init(onCancel: @escaping @MainActor () -> Void = {}) { self.onCancel = onCancel }
+    func cancel() { onCancel() }
 }
 
 @MainActor
 private final class RecordingReaderFactory: DulcetLibraryReaderMaking {
     private(set) var made: [RecordingReader] = []
+    /// The foreground each reader was made with, in order.
+    private(set) var foregrounds: [Bool] = []
+    /// Makes readers that also edit playlists.
+    var editsPlaylists = false
 
     func makeReader(account: DulcetLibraryReaderAccount, foreground: Bool) -> any DulcetLibraryReading {
-        let reader = RecordingReader(account: account)
+        let reader = editsPlaylists ? PlaylistEditingReader(account: account) : RecordingReader(account: account)
         made.append(reader)
+        foregrounds.append(foreground)
         return reader
+    }
+}
+
+/// A reader that edits playlists, recording who listens for its playlist outcomes.
+@MainActor
+private final class PlaylistEditingReader: RecordingReader, DulcetPlaylistEditing {
+    private(set) var playlistListeners = 0
+    private(set) var playlistListenersCancelled = 0
+
+    func editPlaylist(_ edit: DulcetPlaylistEdit, completion: @escaping @MainActor (DulcetPlaylistEditResult) -> Void) {}
+
+    func pendingPlaylistChanges(completion: @escaping @MainActor ([DulcetPlaylistPendingChange]?) -> Void) {
+        completion([])
+    }
+
+    func subscribePlaylistOutcomes(
+        _ handler: @escaping @MainActor (DulcetPlaylistOutcome) -> Void
+    ) -> any DulcetLibraryReaderCancellable {
+        playlistListeners += 1
+        return RecordingCancellable { [weak self] in self?.playlistListenersCancelled += 1 }
     }
 }
 
@@ -1541,4 +1584,209 @@ func theSavedHeartOfThePlayingTrackStaysFilledBetweenTheRepublicationAndTheOutco
         "republished: filled",
         "saved: filled",
     ], "the heart of a saved track never shows hollow, at any step of the flush (\(screen))")
+}
+
+// MARK: - A reader whose setup failed (§16.18, the Apple paragraph)
+
+/// A connected session whose first reader's setup failed, with one screen and one search open.
+@MainActor
+private func sessionWhoseSetupFailed() throws -> (
+    DulcetLibrarySession, RecordingReaderFactory, ManualReachability, ManualDelays,
+    DulcetLibraryWindowModel, DulcetReaderSearchModel
+) {
+    let factory = RecordingReaderFactory()
+    factory.editsPlaylists = true
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(
+        factory: factory, reachability: reachability, foreground: true, delays: delays, reachabilityLog: { _ in })
+    session.open(account: readerAccount, mode: .connected)
+    let screen = DulcetLibraryWindowModel(query: .artists)
+    screen.open(in: session)
+    let search = DulcetReaderSearchModel()
+    search.open(in: session, query: "abc")
+    reachability.report(reachable: true)
+    let failed = try #require(factory.made.first)
+    failed.finishSetup(failed: true)
+    return (session, factory, reachability, delays, screen, search)
+}
+
+@Test @MainActor
+func tryAgainOnAReaderWhoseSetupFailedMakesANewOneAndEverythingIsWiredToIt() throws {
+    let (session, factory, reachability, delays, screen, search) = try sessionWhoseSetupFailed()
+    let failed = try #require(factory.made.first as? PlaylistEditingReader)
+    #expect(session.readerSetupFailed, "control: the session heard the setup fail")
+    let generation = session.readerGeneration
+
+    session.reconnect() // Try Again on any screen
+    #expect(!failed.events.contains("reconnect"), "a reader with no session has nothing to reconnect")
+    #expect(failed.events.last == "close")
+    #expect(factory.made.count == 1, "the new reader waits for the failed one's thread to stop")
+    #expect(failed.playlistListenersCancelled == 1, "the failed reader's playlist outcomes are let go")
+    failed.finishClose()
+    let failedEventsAtClose = failed.events.count
+
+    #expect(factory.made.count == 2)
+    let fresh = try #require(factory.made.last as? PlaylistEditingReader)
+    #expect(fresh.account == readerAccount, "the same account, retried")
+    #expect(factory.foregrounds == [true, true], "made with the foreground as it is now")
+    #expect(!session.readerSetupFailed)
+    #expect(session.readerGeneration > generation, "screens that follow the generation read again")
+    #expect(fresh.events.contains("connect"), "connected exactly as after a first setup")
+    #expect(fresh.windows.map(\.query) == [.artists], "the open screen reads from the new reader")
+    #expect(screen.window == nil, "and no longer holds what the failed reader published")
+    search.open(in: session, query: "abc") // what the search screen does on a new generation
+    #expect(fresh.searches.first?.queries == ["abc"], "the open search asks the new reader for the text typed")
+    #expect(fresh.outcomeHandler != nil, "favourite outcomes come from the new reader")
+    #expect(fresh.playlistListeners == 1 && session.playlists != nil, "playlist outcomes come from the new reader")
+
+    #expect(reachability.started == 2, "reachability is reported to the new reader")
+    reachability.report(reachable: true, constrained: true)
+    #expect(Array(fresh.events.suffix(2)) == ["setNetworkConstrained(true)", "setOnline(true)"])
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    #expect(fresh.events.last == "setOnline(false)", "and its unreachable grace is the new reader's")
+    #expect(failed.events.count == failedEventsAtClose, "nothing reaches the closed reader: \(failed.events)")
+
+    session.setForeground(false)
+    #expect(fresh.events.last == "setForeground(false)", "the foreground is reported to the new reader")
+    fresh.finishSetup(failed: false)
+    reachability.report(reachable: true)
+    session.reconnect()
+    #expect(fresh.events.last == "reconnect", "a reader that was built reconnects as before")
+    #expect(factory.made.count == 2)
+}
+
+@Test @MainActor
+func aSetupThatKeepsFailingIsRetriedOnlyWhenSomethingAsksNeverInALoop() throws {
+    let (session, factory, reachability, delays, _, _) = try sessionWhoseSetupFailed()
+    session.reconnect()
+    factory.made[0].finishClose()
+    let second = try #require(factory.made.last)
+    second.finishSetup(failed: true)
+    reachability.report(reachable: true) // the first report to the new reader is not a change
+    #expect(session.readerSetupFailed)
+    #expect(factory.made.count == 2, "the first reachability report after a setup retries nothing")
+    #expect(second.events.last != "close")
+
+    // The network coming back asks for a reconnect, which here is a new reader.
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    reachability.report(reachable: true)
+    #expect(second.events.last == "close", "a regained network retries the setup")
+    second.finishClose()
+    #expect(factory.made.count == 3)
+    let third = try #require(factory.made.last)
+    third.finishSetup(failed: true)
+
+    // A return to the foreground reconnects, so it retries too.
+    session.setForeground(false)
+    session.setForeground(true)
+    #expect(third.events.last == "close", "a return to the foreground retries the setup")
+    third.finishClose()
+    #expect(factory.made.count == 4)
+}
+
+@Test @MainActor
+func onlyTheCurrentReadersOwnFailureIsASetupToRetry() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let first = try #require(factory.made.first)
+    let other = DulcetLibraryReaderAccount(
+        providerInstanceID: "provider-other", normalizedServerURL: "https://other.example.invalid",
+        username: "listener", password: "other-password", allowLocalHTTP: false)
+    // An answer already on its way to the main thread when the swap cancelled the question.
+    let lateAnswer = try #require(first.setupCompletion)
+    session.open(account: other, mode: .connected)
+    lateAnswer(true)
+    #expect(!session.readerSetupFailed, "a reader being replaced is not the session's failure")
+    first.finishClose()
+    lateAnswer(true)
+    #expect(!session.readerSetupFailed, "nor is one that has closed")
+    let second = try #require(factory.made.last)
+    #expect(second.account == other)
+    second.finishSetup(failed: false)
+    #expect(!session.readerSetupFailed)
+    session.reconnect()
+    #expect(second.events.last == "reconnect")
+    #expect(factory.made.count == 2)
+}
+
+@Test @MainActor
+func aSearchTryAgainOnASavedAccountWhoseSetupFailedReconnectsTheAccountAndMakesANewReader() throws {
+    let factory = RecordingReaderFactory()
+    let connector = ReaderTestConnector()
+    let (store, session, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader",
+        factory: factory,
+        connector: connector
+    )
+    store.navigate(to: .search)
+    let model = DulcetReaderSearchModel()
+    model.open(in: session, query: "echo")
+    let failed = try #require(factory.made.first)
+    #expect(session.mode == .deviceOnly, "control: a saved account, not connected in this launch")
+    failed.finishSetup(failed: true)
+    let search = try #require(failed.searches.first)
+    search.publish(DulcetReaderSearchPublication(
+        query: "echo", sequence: 1, scope: .deviceServerFailed(.internalFailure, nil), rows: []))
+
+    model.retry { dulcetReaderRetry(store) }
+    #expect(search.refreshes == 0, "a search on a reader with no session cannot answer anything new")
+    #expect(connector.requests.count == 1, "Try Again on a saved account is its Reconnect")
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Navidrome", normalizedServerURL: "https://music.example.invalid")))
+    #expect(failed.events.last == "close", "the reconnect replaces the reader whose setup failed")
+    failed.finishClose()
+    #expect(factory.made.count == 2)
+    #expect(factory.made.last?.account == failed.account, "the same account, retried")
+    #expect(session.mode == .connected)
+    #expect(factory.made.last?.events.contains("connect") == true)
+}
+
+@Test @MainActor
+func anAccountChosenWhileTheOldReaderIsStillClosingIsTheOneMade() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let first = try #require(factory.made.first)
+    func account(_ id: String) -> DulcetLibraryReaderAccount {
+        DulcetLibraryReaderAccount(
+            providerInstanceID: id, normalizedServerURL: "https://\(id).example.invalid",
+            username: "listener", password: "\(id)-password", allowLocalHTTP: false)
+    }
+    session.open(account: account("second"), mode: .connected)
+    session.open(account: account("third"), mode: .deviceOnly)
+    first.finishClose()
+    #expect(factory.made.count == 2, "the newest request is made once the old reader has stopped")
+    #expect(factory.made.last?.account == account("third"))
+    #expect(session.mode == .deviceOnly)
+    #expect(factory.made.last?.events.first == "setOnline(false)")
+}
+
+/// Set by an observation's onChange, which runs synchronously on the thread making the change.
+private final class ObservedChange: @unchecked Sendable {
+    var heard = false
+}
+
+@Test @MainActor
+func aViewThatReadsIsOnlineRedrawsWhenOnlyTheNetworkChanges() throws {
+    let (session, reachability, delays, _, _) = try connectedSessionWithManualTime()
+    #expect(session.isOnline, "control")
+    let lost = ObservedChange()
+    withObservationTracking { _ = session.isOnline } onChange: { lost.heard = true }
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    #expect(!session.isOnline)
+    #expect(lost.heard, "isOnline changed with nothing else, and an observer of it heard")
+
+    let regained = ObservedChange()
+    withObservationTracking { _ = session.isOnline } onChange: { regained.heard = true }
+    reachability.report(reachable: true)
+    #expect(session.isOnline)
+    #expect(regained.heard, "and again when the network came back")
 }

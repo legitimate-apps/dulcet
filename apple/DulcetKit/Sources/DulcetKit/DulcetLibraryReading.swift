@@ -96,6 +96,12 @@ public protocol DulcetLibraryReading: AnyObject {
     func setOnline(_ reachable: Bool)
     func setForeground(_ foreground: Bool)
     func setNetworkConstrained(_ constrained: Bool)
+    /// Whether this reader's setup failed -- its database or session could not be built -- said
+    /// once, after the setup has run. False for a reader that was built, or closed before it
+    /// answered. A reader builds its session once, so the session retries a failed setup with a new
+    /// reader for the same account (§16.18, the Apple paragraph).
+    @discardableResult
+    func setupFailed(completion: @escaping @MainActor (Bool) -> Void) -> any DulcetLibraryReaderCancellable
     /// The completion runs once the reader's own thread has stopped (§14.7 step 6).
     func close(completion: @escaping @MainActor () -> Void)
 }
@@ -177,9 +183,12 @@ public final class DulcetLibrarySession {
     @ObservationIgnored private let factory: (any DulcetLibraryReaderMaking)?
     @ObservationIgnored private let reachability: (any DulcetReachabilityMonitoring)?
     @ObservationIgnored private var outcomeSubscription: (any DulcetLibraryReaderCancellable)?
+    @ObservationIgnored private var setupCheck: (any DulcetLibraryReaderCancellable)?
     @ObservationIgnored private var windows = NSHashTable<DulcetLibraryWindowModel>.weakObjects()
     @ObservationIgnored private var foreground: Bool
-    @ObservationIgnored private var lastReachable: Bool?
+    /// Observed: `isOnline` reads it, and a view that draws `isOnline` must redraw when only the
+    /// network changed.
+    private var lastReachable: Bool?
     @ObservationIgnored private let delays: any DulcetDelayScheduling
     @ObservationIgnored private let unreachableGrace: Duration
     @ObservationIgnored private let reachabilityLog: @MainActor (String) -> Void
@@ -200,6 +209,10 @@ public final class DulcetLibrarySession {
     public private(set) var mode: DulcetLibraryReaderMode = .none
     /// Changes whenever a different reader takes over, so screens drop another account's rows.
     public private(set) var readerGeneration = 0
+    /// The current reader's setup failed (its database or session could not be built), so every
+    /// screen says the reader failed. Try Again, Reconnect, a return to the foreground and the
+    /// network coming back retry it with a new reader for the same account (§16.18).
+    public private(set) var readerSetupFailed = false
     /// Why the last reconnect could not read the server, while that keeps the reader offline.
     public private(set) var connectionFailure: DulcetReaderErrorKind?
     /// The server reports no scan stamp: stated once for the account, never per list.
@@ -286,18 +299,7 @@ public final class DulcetLibrarySession {
             // Two readers over one namespace would write the same cache from two threads, so
             // the new one is made only once the old one's thread has stopped. Screens keep their
             // last rows meanwhile; nothing can be read or changed until it opens.
-            let target = OpenRequest(account: account, mode: requested)
-            awaitingOpen = target
-            detachReader(reader) { [weak self] in
-                guard let self, self.awaitingOpen == target else { return }
-                self.awaitingOpen = nil
-                self.makeAndOpen(account: target.account, mode: target.mode, factory: factory)
-            }
-            // The session already speaks for the new account and mode, so the shells keep the
-            // reader's surfaces through the swap rather than falling back to another path.
-            self.reader = nil
-            self.account = account
-            mode = requested
+            replaceReader(reader, with: OpenRequest(account: account, mode: requested), factory: factory)
             return
         }
         if awaitingOpen != nil {
@@ -313,6 +315,33 @@ public final class DulcetLibrarySession {
     private struct OpenRequest: Equatable {
         let account: DulcetLibraryReaderAccount
         let mode: DulcetLibraryReaderMode
+    }
+
+    /// Closes `reader` and, once its thread has stopped, makes the newest reader asked for
+    /// meanwhile: `target`, or a later `open` that arrived during the close. A `close` in between
+    /// makes none.
+    private func replaceReader(_ reader: any DulcetLibraryReading, with target: OpenRequest, factory: any DulcetLibraryReaderMaking) {
+        awaitingOpen = target
+        detachReader(reader) { [weak self] in
+            guard let self, let next = self.awaitingOpen else { return }
+            self.awaitingOpen = nil
+            self.makeAndOpen(account: next.account, mode: next.mode, factory: factory)
+        }
+        // The session already speaks for the new account and mode, so the shells keep the
+        // reader's surfaces through the swap rather than falling back to another path.
+        self.reader = nil
+        self.account = target.account
+        mode = target.mode
+    }
+
+    /// Retries a setup that failed (§16.18, the Apple paragraph): the failed reader is closed and a
+    /// new one for the same account and mode is made through the same path as any other, so every
+    /// open screen, the reachability and foreground reports, favourite outcomes and playlist
+    /// editing are wired to it exactly as after a first setup.
+    private func retrySetup() {
+        guard readerSetupFailed, let factory, let reader, let account else { return }
+        readerSetupFailed = false
+        replaceReader(reader, with: OpenRequest(account: account, mode: mode), factory: factory)
     }
 
     private func makeAndOpen(
@@ -339,6 +368,12 @@ public final class DulcetLibrarySession {
         tappedRatings = [:]
         knownRatings = [:]
         readerGeneration += 1
+        readerSetupFailed = false
+        let generation = readerGeneration
+        setupCheck = made.setupFailed { [weak self] failed in
+            guard failed, let self, self.readerGeneration == generation, self.reader === made else { return }
+            self.readerSetupFailed = true
+        }
         outcomeSubscription = made.subscribeFavouriteOutcomes { [weak self] outcome in
             self?.receive(outcome)
         }
@@ -384,6 +419,7 @@ public final class DulcetLibrarySession {
         self.reader = nil
         account = nil
         mode = .none
+        readerSetupFailed = false
         connectionFailure = nil
         serverReportsNoEpoch = false
         pendingFavourites = [:]
@@ -401,6 +437,8 @@ public final class DulcetLibrarySession {
 
     private func detachReader(_ reader: any DulcetLibraryReading, completion: @escaping @MainActor () -> Void) {
         stopReachability()
+        setupCheck?.cancel()
+        setupCheck = nil
         outcomeSubscription?.cancel()
         outcomeSubscription = nil
         if let account, let playlists, !playlists.unansweredDeletionQuestions.isEmpty {
@@ -441,9 +479,14 @@ public final class DulcetLibrarySession {
 
     /// "Try again" on any screen: the reconnect, which re-reads every visible screen and makes any
     /// extend they owe -- never a screen's own refresh (§16.14). For an account not connected in
-    /// this launch it does nothing: that "Try again" is the account's Reconnect.
+    /// this launch it does nothing: that "Try again" is the account's Reconnect. A reader whose
+    /// setup failed has nothing to reconnect: it is replaced by a new one, which connects.
     public func reconnect() {
         guard mode == .connected, let reader else { return }
+        if readerSetupFailed {
+            retrySetup()
+            return
+        }
         reader.reconnect { [weak self] connection in
             self?.receive(connection)
         }
@@ -472,8 +515,17 @@ public final class DulcetLibrarySession {
                 return
             }
             guard lastReachable != true else { return }
-            reachabilityLog(lastReachable == false
-                ? "reachable; the reader is told and reconnects" : "reachable")
+            let regained = lastReachable == false
+            if regained, readerSetupFailed {
+                // The network came back; the reconnect it would request is a new reader. Only a
+                // regained network retries: the first report after a setup is not a change, and
+                // retrying on it would make readers in a loop while the setup keeps failing.
+                reachabilityLog("reachable; the reader's setup failed, so it is made again")
+                lastReachable = true
+                retrySetup()
+                return
+            }
+            reachabilityLog(regained ? "reachable; the reader is told and reconnects" : "reachable")
             lastReachable = true
             reader.setOnline(true)
             return
@@ -1044,8 +1096,11 @@ public final class DulcetReaderSearchModel {
     /// search: the reconnect re-runs a search by the core session's own scope, which a failure the
     /// facade states does not change, so it could leave this one as it is. Every other failure is
     /// the reconnect's, which re-runs the search after the epoch read (§16.14).
+    /// A reader whose setup failed is retried by the reconnect, which makes a new reader (§16.18).
     public func retry(reconnect: () -> Void) {
-        if case let .deviceServerFailed(kind, _)? = current?.scope, kind == .internalFailure {
+        if session?.readerSetupFailed == true {
+            reconnect()
+        } else if case let .deviceServerFailed(kind, _)? = current?.scope, kind == .internalFailure {
             subscription?.refresh()
         } else {
             reconnect()

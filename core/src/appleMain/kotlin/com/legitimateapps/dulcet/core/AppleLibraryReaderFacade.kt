@@ -210,6 +210,16 @@ public class AppleLibraryReaderClient internal constructor(
     // ---- Connection lifecycle --------------------------------------------------------------------------------
 
     /**
+     * Whether this client's session was built (§16.18, the Apple paragraph): completes once, on the
+     * main thread, after the build has run — with `null` when it was built, `internalFailure` when
+     * the build threw (its database or transport could not be opened), or `closed` or `cancelled`.
+     * A client builds its session once and never again, so a shell that hears `internalFailure`
+     * replaces the client with a new one for the same account to retry the setup. Sends nothing.
+     */
+    public fun setupOutcome(completion: (String?) -> Unit): AppleLibraryReaderOperation =
+        operation<String?>(completion, failed = { kind -> kind }) { null }
+
+    /**
      * The connect-time epoch reading (two requests, §16.11); the completion says whether THIS call
      * read it. While the reader is offline it reads the device only — no request — and completes
      * with the epoch not known and `unreachable`; the reconnect that brings the reader back reads it.
