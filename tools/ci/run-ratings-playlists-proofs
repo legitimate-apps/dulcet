@@ -56,13 +56,10 @@ esac
 export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533
 export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
 export TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password
-# The offline playlist proofs connect the app through the lyrics fault proxy, which the calling step
-# starts beside the server on port 4544 (tools/ci/run-lyrics-quality-proofs uses it too), and switch
-# its outage on and off; each ends the outage in its teardown, pass or fail.
-export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL=http://127.0.0.1:4544
 # The simulator playlist proofs reach the server through the fault proxy the calling step starts
 # beside it (tools/ci/run-lyrics-quality-proofs), which holds one playlist read so the proof meets
-# a playlist deleted elsewhere while its rename prompt is open on purpose, not by chance.
+# a playlist deleted elsewhere while its rename prompt is open on purpose, not by chance, and whose
+# outage the offline-edit proofs switch on and off (each ends it in its teardown, pass or fail).
 proxy_url=http://127.0.0.1:4544
 export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url"
 if [ "$mode" != macos ]; then
