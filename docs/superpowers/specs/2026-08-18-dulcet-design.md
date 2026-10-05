@@ -7607,13 +7607,18 @@ which fails against the previous ranker (the artist came after the track and alb
 Both the server and device halves share the ranker, so Apple and Android change together.
 
 **2026-10-05 — A next item with a saved resume position is preloaded, and the handover clears that
-position (§12.8, §15.5).** Since the 2026-10-04 change that made every start but a resume play from
-the top, `preloadNext` still declined a next item with a saved position, because the advance onto a
-preloaded item did not clear it the way a start does. A song skipped part-way through therefore lost
-its gapless start once. The core now clears the item's saved position on `AdvancedToPreloaded`, after
-the outgoing session's own effects, and no longer declines. Android registers no preload, so only
-Apple changes. OBSERVED by `aNextItemWithASavedPositionIsPreloadedAndTheHandoverClearsThatPosition`,
-which fails with the decline restored and with the clear removed (each mutant run separately).
+position (§12.8, §15.5).** `preloadNext` declined a next item with a saved position, a rule from
+when every start resumed, so a preload starting at zero would have disagreed with the ordinary start.
+Since the 2026-10-04 change that made every start but a resume play from the top, the decline only
+cost gapless starts: a song skipped part-way through, and the playing song queued again next (its
+own cadence save names the same item), took an ordinary start instead. The core now clears the
+item's saved position on `AdvancedToPreloaded`, after the outgoing session's own effects, and no
+longer declines. Android registers no preload, so only Apple changes; the Apple engine builds a new
+player item per preloaded plan, so a preload of the playing song is a second item (ASSUMED from
+reading `DulcetAVPlayerEngine.preload`, not run). OBSERVED by
+`aNextItemWithASavedPositionIsPreloadedAndTheHandoverClearsThatPosition`, which fails with the
+decline restored and with the clear removed (each mutant run separately), and by
+`theSameSongQueuedTwiceIsPreloadedAfterItsOwnSavedPositionAndTheHandoverClearsIt`.
 
 **2026-10-05 — Apple retries a reader setup that failed, and `isOnline` redraws on reachability
 alone (§16.18, §16.15).** Two shell defects, OBSERVED by reading `DulcetLibrarySession`:

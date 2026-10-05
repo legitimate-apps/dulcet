@@ -299,7 +299,8 @@ internal class PlaybackQueueController(
      * Declines — returns no directive — when nothing follows, under repeat-one (which restarts
      * through a fresh start), and when the named session is not current. A preloaded item begins at
      * zero, as every non-resuming start does (§15.5), and the advance onto it clears its saved
-     * position the way a start does, so an item skipped part-way through keeps its gapless start.
+     * position the way a start does, so a next item with a saved position -- one skipped part-way
+     * through, or the playing song queued again -- keeps its gapless start.
      */
     fun preloadNext(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition {
         if (!acceptsCommand(playbackSessionId)) return emptyTransition()
