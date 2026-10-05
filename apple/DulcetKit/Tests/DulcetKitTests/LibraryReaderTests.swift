@@ -129,6 +129,7 @@ private final class RecordingWindow: DulcetLibraryWindowSubscribing {
 private final class RecordingSearch: DulcetLibrarySearchSubscribing {
     let publish: @MainActor (DulcetReaderSearchPublication) -> Void
     private(set) var queries: [String] = []
+    private(set) var refreshes = 0
     private(set) var closed = false
 
     init(publish: @escaping @MainActor (DulcetReaderSearchPublication) -> Void) {
@@ -136,6 +137,7 @@ private final class RecordingSearch: DulcetLibrarySearchSubscribing {
     }
 
     func updateQuery(_ text: String) { queries.append(text) }
+    func refresh() { refreshes += 1 }
     func close() { closed = true }
 }
 
@@ -1226,6 +1228,41 @@ func searchIsAnsweredByTheReaderFromTheFirstCharacter() throws {
     // A publication for an older query never shows under a newer one.
     model.updateQuery("ab")
     #expect(model.current == nil)
+}
+
+/// Try Again on a search the reader itself failed re-runs the search, which answers again for the
+/// query in the field; the reconnect would leave it as it is (§16.15). A server failure is still
+/// the reconnect's.
+@Test @MainActor
+func tryAgainOnASearchTheReaderFailedRerunsTheSearchAndAServerFailureReconnects() throws {
+    let factory = RecordingReaderFactory()
+    let (store, session, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader",
+        factory: factory
+    )
+    store.navigate(to: .search)
+    let model = DulcetReaderSearchModel()
+    model.open(in: session, query: "echo")
+    let reader = try #require(factory.made.first)
+    let search = try #require(reader.searches.first)
+    var reconnects = 0
+
+    search.publish(DulcetReaderSearchPublication(
+        query: "echo", sequence: 1, scope: .deviceServerFailed(.internalFailure, nil), rows: []))
+    #expect(DulcetReaderSearchContent(query: model.query, publication: model.current, onActivate: { _ in })
+        .presentation == .failed(.internalFailure), "control: the failure names the query in the field")
+    model.retry { reconnects += 1 }
+    #expect(search.refreshes == 1, "Try Again re-ran the search")
+    #expect(reconnects == 0)
+
+    search.publish(DulcetReaderSearchPublication(
+        query: "echo", sequence: 2, scope: .deviceServerFailed(.timeout, nil), rows: []))
+    model.retry { reconnects += 1 }
+    #expect(reconnects == 1, "a server failure is retried by the reconnect, which re-runs the search")
+    #expect(search.refreshes == 1)
 }
 
 @Test @MainActor

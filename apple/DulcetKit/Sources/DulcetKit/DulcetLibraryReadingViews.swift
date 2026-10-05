@@ -1584,7 +1584,7 @@ struct DulcetReaderSearchScreen: View {
             snapshot: store.snapshot,
             searchQuery: $store.searchQuery,
             onLoadMore: { _ in },
-            onRetry: { dulcetReaderRetry(store) },
+            onRetry: { model.retry { dulcetReaderRetry(store) } },
             onActivateResult: { _ in },
             focusRequested: store.searchFocusRequested,
             onFocusRequestHandled: store.searchFocusRequestHandled,

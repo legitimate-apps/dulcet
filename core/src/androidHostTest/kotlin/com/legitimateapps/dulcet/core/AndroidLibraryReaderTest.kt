@@ -302,8 +302,11 @@ class AndroidLibraryReaderTest {
         reader.onReader { typed.countDown() }
         assertTrue(typed.await(30, TimeUnit.SECONDS))
         assertEquals(2, attempts.get(), "control: setup failed at creation and at the search's opening")
-        assertEquals(listOf(AndroidLibrarySearchScope.ReaderFailed), published.snapshot().map { it.scope },
+        assertEquals(listOf(AndroidLibrarySearchScope.ReaderFailed, AndroidLibrarySearchScope.ReaderFailed),
+            published.snapshot().map { it.scope },
             "control: the search was told setup failed, and nothing applied the query typed meanwhile")
+        assertEquals(listOf("", "older"), published.snapshot().map { it.query },
+            "the keystroke made while setup failed was answered for its own text")
 
         // The next call builds the session and opens the search late. A query typed right after it
         // is queued behind that call; held until both are queued, so the order is fixed.
@@ -322,8 +325,84 @@ class AndroidLibraryReaderTest {
             "the late opening applied the query typed while setup failed, and the one typed after it superseded it: $queries")
         assertEquals("newer", queries.last())
         // Publications are delivered as they are made (main is Unconfined), so this is exact.
-        assertTrue(published.snapshot().drop(1).all { it.scope is AndroidLibrarySearchScope.DeviceOffline },
+        assertTrue(published.snapshot().drop(2).all { it.scope is AndroidLibrarySearchScope.DeviceOffline },
             "the offline report made while setup failed applied to the search opened late: ${published.snapshot().map { it.scope }}")
+    }
+
+    private fun failingReader(failures: Int, attempts: java.util.concurrent.atomic.AtomicInteger): AndroidLibraryReader {
+        val account = AndroidLibraryReaderAccount("provider", "http://127.0.0.1:1", "user", "password", true)
+        return AndroidLibraryReader.obtain(account) { previous ->
+            AndroidLibraryReader(account, { scope, foreground ->
+                if (attempts.incrementAndGet() <= failures) error("setup failed")
+                AndroidLibraryReaderComposition(session(scope, foreground))
+            }, newLibraryReaderDispatcher(), Dispatchers.Unconfined, previous, initiallyForeground = false)
+        }.also { readers += it }
+    }
+
+    private fun AndroidLibraryReader.settle() {
+        val settled = CountDownLatch(1)
+        onReader { settled.countDown() }
+        assertTrue(settled.await(30, TimeUnit.SECONDS))
+    }
+
+    /** Try Again on a search setup failed for retries setup, and the search runs the query typed (§16.15). */
+    @Test
+    fun tryAgainOnASearchWhoseSetupFailedRetriesSetupAndRunsTheQueryTyped() {
+        val attempts = java.util.concurrent.atomic.AtomicInteger()
+        val reader = failingReader(failures = 2, attempts)
+        reader.setOnline(false) // The search below answers from this device alone.
+        val published = Collections.synchronizedList(mutableListOf<AndroidLibrarySearchPublication>())
+        val search = reader.openSearch { published += it }
+        search.updateQuery("Album")
+        reader.settle()
+        assertEquals(2, attempts.get(), "control: setup failed at creation and at the search's opening")
+        assertTrue(published.snapshot().all { it.scope == AndroidLibrarySearchScope.ReaderFailed },
+            "control: nothing has run the query: ${published.snapshot().map { it.scope }}")
+
+        search.refresh()
+        reader.settle()
+
+        assertEquals(3, attempts.get(), "Try Again retried setup")
+        val last = published.snapshot().last()
+        assertEquals("Album", last.query, "the search opened with the query typed while setup failed")
+        assertIs<AndroidLibrarySearchScope.DeviceOffline>(last.scope, "the query ran: ${published.snapshot().map { it.scope }}")
+    }
+
+    /** Try Again while setup still fails says so again, for the text in the field: never silence. */
+    @Test
+    fun tryAgainWhileSetupStillFailsSaysSoAgainForTheQueryTyped() {
+        val attempts = java.util.concurrent.atomic.AtomicInteger()
+        val reader = failingReader(failures = Int.MAX_VALUE, attempts)
+        val published = Collections.synchronizedList(mutableListOf<AndroidLibrarySearchPublication>())
+        val search = reader.openSearch { published += it }
+        search.updateQuery("echo")
+        reader.settle()
+        val before = published.snapshot()
+        assertEquals("echo", before.last().query, "the keystroke is answered for its own text")
+        assertEquals(AndroidLibrarySearchScope.ReaderFailed, before.last().scope)
+        val attemptsBefore = attempts.get()
+
+        search.refresh()
+        reader.settle()
+
+        assertEquals(attemptsBefore + 1, attempts.get(), "Try Again retried setup")
+        val after = published.snapshot()
+        assertEquals(before.size + 1, after.size, "Try Again was answered: ${after.map { it.scope }}")
+        assertEquals(listOf<Any>("echo", AndroidLibrarySearchScope.ReaderFailed), listOf(after.last().query, after.last().scope))
+        assertTrue(after.last().sequence > before.last().sequence)
+    }
+
+    /** A search opened on a closed reader answers a keystroke for its own text. */
+    @Test
+    fun aKeystrokeOnAClosedReaderIsAnsweredForItsText() {
+        val reader = reader()
+        reader.closeAndWait()
+        val published = Collections.synchronizedList(mutableListOf<AndroidLibrarySearchPublication>())
+        val search = reader.openSearch { published += it }
+        search.updateQuery("late")
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (published.none { it.query == "late" } && System.nanoTime() < deadline) Thread.sleep(5)
+        assertEquals(listOf<Any>("late", AndroidLibrarySearchScope.ReaderFailed), published.snapshot().last().let { listOf(it.query, it.scope) })
     }
 
     @Test
