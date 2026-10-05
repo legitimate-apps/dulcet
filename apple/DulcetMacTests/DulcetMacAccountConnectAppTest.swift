@@ -281,6 +281,83 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
     }
 
+    /// A first connection made on Connection lands on the library it connected to, rendered in
+    /// the production root view: the founding report was an app that "connected successfully
+    /// supposedly" and did not change the screen. The window shows Connection's form first, so a
+    /// library shown afterwards was reached by the connection, not by the launch.
+    func connectFromConnectionLandsOnTheLibraryInTheHostedApp() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let baseURL = try XCTUnwrap(
+            environment["DULCET_CONFORMANCE_BASE_URL"],
+            "The live conformance fixture URL must be supplied"
+        )
+        let components = URLComponents(string: baseURL)
+        guard components?.scheme == "http", components?.host == "127.0.0.1",
+              environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true" else {
+            XCTFail("Landing fixture refused: \(baseURL.debugDescription) is not a disposable loopback server")
+            throw SearchHostedAppTestError.invalidFixture
+        }
+
+        let session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(
+            databaseName: "dulcet-landing-hosted-\(UUID().uuidString).db"
+        ))
+        let providerInstanceID = "macos-landing-\(UUID().uuidString)"
+        let source = DulcetAccountDataSource(
+            connector: DulcetCoreAccountConnector(),
+            credentialStore: ReaderHostedCredentialStore(),
+            playbackController: SearchIntentPlaybackController(),
+            providerInstanceIDFactory: { providerInstanceID },
+            librarySession: session
+        )
+        let store = DulcetPresentationStore(source: source)
+
+        let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
+        NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
+        defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
+        let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        // Before: no account, so the window is on Connection, showing its form.
+        XCTAssertEqual(store.selectedDestination, .settings)
+        _ = try await accessibilityElement(
+            identifiedBy: "dulcet.account-connect.title", in: hostingView, timeout: .seconds(10)
+        )
+
+        store.accountServerURL = baseURL
+        store.accountUsername = fixtureUsername
+        store.accountPassword = fixturePassword
+        store.accountAllowLocalHTTP = true
+        store.submitAccountConnection()
+        try await waitUntil(
+            timeout: .seconds(20),
+            failureMessage: "Disposable account connected=\(store.snapshot.accountConnected) state=\(store.snapshot.state) mode=\(session.mode)"
+        ) {
+            store.snapshot.accountConnected && session.mode == .connected && session.reader != nil
+        }
+
+        // After: the library, on Home, and Connection's form is gone from the window.
+        XCTAssertEqual(store.selectedDestination, .library, "A connection made on Connection must land on Library")
+        _ = try await accessibilityElement(
+            identifiedBy: "dulcet.reader.home.recentlyAdded", in: hostingView, timeout: .seconds(20)
+        )
+        let stillShown = accessibilityDescendants(in: hostingView).contains {
+            accessibilityIdentifier($0) == "dulcet.account-connect.title"
+        }
+        XCTAssertFalse(stillShown, "Connection's form must not stay on screen once the library is shown")
+        print("MAC CONNECT LANDING destination=\(store.selectedDestination) state=\(store.snapshot.state.rawValue)")
+    }
+
     func accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction() async throws {
         guard try await assertDefaultActionShortcutBisection() else {
             return

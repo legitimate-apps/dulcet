@@ -1154,12 +1154,12 @@ final class DulcetTVUITests: XCTestCase {
     }
 
     /// The launch, then the injected account's live connection, confirmed where a person confirms
-    /// it: Sign Out on Connection. A first launch stays on Connection while the account connects.
-    /// A launch with an account already saved -- an earlier test on this simulator -- opens
-    /// straight into that account's library (CONF-10b) and connects there; Connection is then
-    /// reached through the section bar, as a person reaches it. Either way the launch places
-    /// remote focus on a named control inside the section, never on the bar, so the first press
-    /// does something the person asked for.
+    /// it: Sign Out on Connection. A first launch stays on Connection while the account connects,
+    /// and the connection lands on Library. A launch with an account already saved -- an earlier
+    /// test on this simulator -- opens straight into that account's library (CONF-10b) and
+    /// connects there. Either way Connection is then reached through the section bar, as a person
+    /// reaches it, and the launch places remote focus on a named control inside the section, never
+    /// on the bar, so the first press does something the person asked for.
     @MainActor
     private func awaitLaunchAndLiveConnection(
         _ app: XCUIApplication
@@ -1189,6 +1189,19 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertTrue(
                 focus.hasPrefix("dulcet.account-connect."),
                 "Launch focus must be a Connection control, observed \(focus): " + app.debugDescription
+            )
+            // A connection asked for on Connection lands on the library it connected to.
+            let landing = ContinuousClock.now.advanced(by: .seconds(60))
+            while app.navigationBars.firstMatch.identifier != "Library", ContinuousClock.now < landing {
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            XCTAssertEqual(
+                app.navigationBars.firstMatch.identifier, "Library",
+                "A connection made on Connection must land on Library: " + app.debugDescription
+            )
+            XCTAssertTrue(
+                selectSection(app, "settings"),
+                "The section bar must reach Connection from Library: " + app.debugDescription
             )
         } else {
             XCTAssertTrue(

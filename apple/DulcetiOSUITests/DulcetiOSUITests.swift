@@ -735,20 +735,25 @@ final class DulcetiOSUITests: XCTestCase {
     }
 
     /// Waits for the injected account's live connection to be confirmed where a person confirms
-    /// it: Sign Out on the Connection destination. A first launch stays on Connection while it
-    /// connects; a launch with a saved account opens straight into that account's library
-    /// (CONF-10b) and connects there, so Connection is opened the way a person opens it.
+    /// it: Sign Out on the Connection destination. A first launch connects on Connection and then
+    /// lands on the library; a launch with a saved account opens straight into that account's
+    /// library (CONF-10b) and connects there. Either way Connection is opened the way a person
+    /// opens it, and opened again if a connection still in flight moves the app to the library.
     @MainActor
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
         if signOut.waitForExistence(timeout: 5) { return true }
-        guard openDestination(
-            "Connection",
-            sidebarIdentifier: "dulcet.sidebar.settings",
-            in: app,
-            compact: compact
-        ) else { return false }
-        return signOut.waitForExistence(timeout: 30)
+        let deadline = Date().addingTimeInterval(35)
+        repeat {
+            guard openDestination(
+                "Connection",
+                sidebarIdentifier: "dulcet.sidebar.settings",
+                in: app,
+                compact: compact
+            ) else { return false }
+            if signOut.waitForExistence(timeout: 10) { return true }
+        } while Date() < deadline
+        return false
     }
 
     /// Opens one of the library's own places from a regular-width sidebar -- Albums, to find an

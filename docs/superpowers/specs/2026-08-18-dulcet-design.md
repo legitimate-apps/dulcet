@@ -7577,6 +7577,22 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-05 — A connection made on Connection lands on the library (§10.2).**
+A successful connect submitted from Connection (the Settings destination) published "connected" and
+left the window there; only a connect started from the library's own Reconnect opened the library.
+On a DEV macOS build against a real server (OBSERVED), the connection succeeded, the sidebar filled
+in, and the window stayed on Connection until Library was clicked, which read as the app not having
+moved: the founding report's "connected successfully supposedly". The Android phone and TV apps
+already replace their connect screen with the library on success (OBSERVED by reading
+`MainActivity` and `TvSearchActivity`). Every Apple shell now does the same: a successful connect
+from Connection or from the library opens the library, which starts a fresh read on the new
+connection; a library held from an earlier connection is never shown for it. Sign Out stays on
+Connection. Red without the change: `AccountConnectionPresentationTests` (the outcome table, the
+replacement submission, and the held-library test, which now proves the reconnect reads the new
+server), the hosted Mac control `connectFromConnectionLandsOnTheLibraryInTheHostedApp` (Connection's
+form shown first, then Library's Home after the connect) and the tvOS launch helper, which now
+requires Library after a connect made on Connection.
+
 **2026-10-05 — A result named by the query ranks before the rows that only carry its name (§18.1).**
 The tier counted a match on a track's credited artist or its album's title the same as a match on a
 result's own name, and type then put tracks first, so searching an artist's exact name listed every
