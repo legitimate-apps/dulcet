@@ -285,17 +285,12 @@ struct DulcetSearchView: View {
                             kind: result.kind.displayTitle
                         ))
 #if os(iOS)
+                        // The system preview: the row is also a drag source onto the queue, which a
+                        // custom preview stops from lifting out of the open menu (as for a track's).
                         .contextMenu {
                             DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
                                 activate(result.id)
                             }
-                        } preview: {
-                            DulcetContextMenuPreview(
-                                store: store,
-                                artwork: result.artwork,
-                                title: result.title,
-                                subtitle: result.subtitle
-                            )
                         }
                         .dulcetQueueDragSource(
                             store: store,

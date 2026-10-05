@@ -279,3 +279,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     (`tapAlbumPlay`). The failure-diagnostics artifact's `.xcresult` carries a screen recording; read
     its frames (`ffprobe -show_entries frame=pts_time` lists one frame per screen change) before
     theorising about a UI failure.
+
+48. **On iOS, an open context menu on a row that is also a drag source keeps the app from ever going
+    idle, and a custom menu preview kills the drag.** UIKit keeps the drag's lift armed while the
+    menu is up: a paused animation sits on a zero-size view the app never draws, so XCUITest's
+    quiescence check never passes and every event waits its full 60 s ("App animations complete
+    notification not received"). A press on such a row took 61.6 s against 2.7 s with the drag
+    source removed; that is the OS, and keeping drag-from-menu keeps it. Tests drive those menus
+    inside `withoutIdleWaits` in `DulcetiOSUITests`. Separately, `.contextMenu(menuItems:preview:)`
+    with a custom preview keeps the touch in the open menu and the drag never lifts: Up Next stayed
+    empty, and gained the track with the system preview or with no menu (OBSERVED, iPhone 17 Pro
+    simulator, iOS 26.5). A row that is a drag source uses the system preview;
+    `testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone` fails if a custom one comes back.

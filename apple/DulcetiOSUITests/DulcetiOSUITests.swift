@@ -1780,6 +1780,136 @@ final class DulcetiOSUITests: XCTestCase {
         provePlaylistEditsReachTheServer(compact: false)
     }
 
+    /// A track dragged out of its own open context menu onto the now-playing bar joins Up Next
+    /// (spec §3.1: every track row is a drag source onto the queue). The row's menu is opened
+    /// first, so the row is known to carry one, and the drag then begins with a hold long enough
+    /// to open it again before it moves.
+    ///
+    /// A custom menu preview on a draggable row keeps the touch in the open menu, and the drag
+    /// never lifts (OBSERVED on an iPhone 17 Pro simulator, iOS 26.5: Up Next stayed empty with the
+    /// custom preview, and gained the track with the system preview or with no menu). The test
+    /// fails if a preview of that kind comes back.
+    @MainActor
+    func testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone() {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            XCTFail("This proof names iPhone but runs on idiom \(UIDevice.current.userInterfaceIdiom.rawValue)")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration(),
+              let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true),
+              openLibraryDestinationForAlbums(in: app, compact: true) else { return }
+        let tile = app.buttons.matching(identifier: "dulcet.library.album")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Threshold Boundary")).firstMatch
+        guard tile.waitForExistence(timeout: 30), scrollIntoView(tile, in: app) else {
+            XCTFail("Library must show Threshold Boundary: " + app.debugDescription)
+            return
+        }
+        tile.tap()
+        let track = { (title: String) in
+            app.buttons.matching(identifier: "dulcet.reader.track")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", title + ", ")).firstMatch
+        }
+        let dragged = track("Thirty One Seconds")
+        guard dragged.waitForExistence(timeout: 15), scrollIntoView(dragged, in: app) else {
+            XCTFail("The album must list Thirty One Seconds: " + app.debugDescription)
+            return
+        }
+
+        // The row carries a context menu: the condition the drag below has to get out of.
+        var offered = false
+        withoutIdleWaits(app) {
+            dragged.press(forDuration: 1.2)
+            offered = app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForExistence(timeout: 5)
+            // Outside the menu, which is narrower than the screen and leading-aligned: a tap on
+            // the status bar does not close it.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap()
+        }
+        guard offered else {
+            XCTFail("The row must offer its context menu: " + app.debugDescription)
+            return
+        }
+        guard app.buttons["Add to Playlist\u{2026}"].firstMatch.waitForNonExistence(timeout: 10) else {
+            XCTFail("A tap outside the menu must close it: " + app.debugDescription)
+            return
+        }
+
+        // Something plays, so the bar is there to drop onto; the canary is the album's last track,
+        // so nothing follows it yet.
+        let canary = track("UI Playback Canary")
+        guard canary.waitForExistence(timeout: 10), scrollIntoView(canary, in: app) else {
+            XCTFail("The album must list UI Playback Canary: " + app.debugDescription)
+            return
+        }
+        canary.tap()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        guard bar.waitForExistence(timeout: 15) else {
+            XCTFail("Playing a track must show the now-playing bar: " + app.debugDescription)
+            return
+        }
+        guard let before = upNextLabels(openingFrom: bar, in: app) else { return }
+        let queuedBefore = before.filter { $0.hasPrefix("Thirty One Seconds") }.count
+
+        // A second drag only if the first queued nothing: on one local run of ten the lifted
+        // track stayed where it was while the synthesized touch moved, and the menu closed. Under
+        // a custom preview both drags queue nothing, so the retry cannot hide the defect.
+        var after = before
+        var attempts = 0
+        var menuLeftOpen = 0
+        while attempts < 2, after.filter({ $0.hasPrefix("Thirty One Seconds") }).count == queuedBefore {
+            attempts += 1
+            withoutIdleWaits(app) {
+                dragged.press(forDuration: 0.8, thenDragTo: bar, withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 1.0)
+            }
+            // A drag that never lifted out leaves the menu open where the touch ended (the
+            // defect's shape); close it so Up Next can be read.
+            let menu = app.buttons["Add to Playlist\u{2026}"].firstMatch
+            if menu.waitForExistence(timeout: 2) {
+                menuLeftOpen += 1
+                withoutIdleWaits(app) { app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap() }
+                _ = menu.waitForNonExistence(timeout: 10)
+            }
+            let deadline = Date().addingTimeInterval(10)
+            repeat {
+                RunLoop.current.run(until: Date().addingTimeInterval(1))
+                guard let read = upNextLabels(openingFrom: bar, in: app) else { return }
+                after = read
+            } while after.filter({ $0.hasPrefix("Thirty One Seconds") }).count == queuedBefore && Date() < deadline
+        }
+        attachScreenshot(named: "track-dragged-from-its-menu", app: app)
+        XCTAssertEqual(after.filter { $0.hasPrefix("Thirty One Seconds") }.count, queuedBefore + 1,
+                       "The dragged track must join Up Next once; before=\(before) after=\(after) drags=\(attempts)"
+                       + " menu-left-open-after=\(menuLeftOpen)")
+        print("DULCET DRAG FROM MENU before=\(before) after=\(after) drags=\(attempts) menu-left-open-after=\(menuLeftOpen)")
+    }
+
+    /// Up Next's entries, read from the player opened from the bar, which is then closed again.
+    @MainActor
+    private func upNextLabels(openingFrom bar: XCUIElement, in app: XCUIApplication) -> [String]? {
+        bar.tap()
+        let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        guard toggle.waitForExistence(timeout: 10) else {
+            XCTFail("The player must offer Up Next: " + app.debugDescription)
+            return nil
+        }
+        toggle.tap()
+        let rows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.upNext.row."))
+        // An empty Up Next has no row to wait for; give the list a moment to draw.
+        _ = rows.firstMatch.waitForExistence(timeout: 2)
+        let labels = rows.allElementsBoundByIndex.map(\.label)
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
+        guard bar.waitForExistence(timeout: 10) else {
+            XCTFail("Closing the player must bring the bar back: " + app.debugDescription)
+            return nil
+        }
+        return labels
+    }
+
     /// Each playlist edit the app offers, made where a person makes it, and read back from the
     /// disposable server after each one:
     ///
@@ -2032,17 +2162,47 @@ final class DulcetiOSUITests: XCTestCase {
         return true
     }
 
+    /// Runs `body` without XCUITest's wait for the app to go idle before and after each event.
+    ///
+    /// While a context menu is open on a row that is also a drag source, UIKit keeps the drag's
+    /// lift armed: a paused animation stays on a view the app never draws (OBSERVED in an lldb
+    /// dump of the layer tree, iPhone 17 Pro simulator, iOS 26.5), so XCUITest's quiescence check
+    /// never passes and each event waits its full 60 s before going ahead. A menu item tapped
+    /// inside this block is tapped at once. The option is XCUIApplication's own private
+    /// interaction-options call (bit 0 skips the wait before the event, bit 1 the wait after); if
+    /// a later Xcode drops or changes it, `body` runs with the waits, which is slower but correct.
+    @MainActor
+    private func withoutIdleWaits(_ app: XCUIApplication, _ body: @escaping () -> Void) {
+        let selector = NSSelectorFromString("_performWithInteractionOptions:block:")
+        guard let method = class_getInstanceMethod(type(of: app), selector),
+              let encoding = method_getTypeEncoding(method).map({ String(cString: $0) }),
+              encoding.filter({ !$0.isNumber }) == "v@:I@?" else {
+            print("DULCET withoutIdleWaits: the interaction-options call is missing or changed; waiting for idle")
+            body()
+            return
+        }
+        typealias Perform = @convention(c) (AnyObject, Selector, UInt32, @convention(block) () -> Void) -> Void
+        let perform = unsafeBitCast(method_getImplementation(method), to: Perform.self)
+        perform(app, selector, 3, body)
+    }
+
     /// "Add to Playlist…" from the element's context menu, then the named playlist in the chooser,
     /// which closes once it is chosen.
     @MainActor
     private func addToPlaylist(_ name: String, fromContextMenuOf element: XCUIElement, in app: XCUIApplication) -> Bool {
-        element.press(forDuration: 1.2)
         let add = app.buttons["Add to Playlist\u{2026}"].firstMatch
-        guard add.waitForExistence(timeout: 5) else {
+        var offered = false
+        // A track row is also a drag source, and the app does not go idle while its menu is open
+        // (see withoutIdleWaits); the press and the tap would each wait a minute for it.
+        withoutIdleWaits(app) {
+            element.press(forDuration: 1.2)
+            offered = add.waitForExistence(timeout: 5)
+            if offered { add.tap() }
+        }
+        guard offered else {
             XCTFail("The context menu must offer Add to Playlist…: " + app.debugDescription)
             return false
         }
-        add.tap()
         let choice = app.buttons.matching(identifier: "dulcet.addToPlaylist.playlist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
         guard choice.waitForExistence(timeout: 15) else {

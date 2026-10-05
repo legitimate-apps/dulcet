@@ -134,6 +134,18 @@ iphone)
         "$RUNNER_TEMP/dulcet-ios-playlist-edits.xcresult" \
         "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit/TEST-DulcetiOSUITests.xml" \
         DulcetiOSUITests
+    # Beside the playlist proof because it opens the same album and the same row menu: a track
+    # dragged out of its open context menu onto the now-playing bar joins Up Next (spec §3.1). It
+    # backs no feature cell, so it has its execution guard and no JUnit.
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-drag-from-menu.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-drag-from-menu.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-drag-from-menu.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone
     ;;
 ipados)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-ipad --keep "${ipad_destination##*id=}"

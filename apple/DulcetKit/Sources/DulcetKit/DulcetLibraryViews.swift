@@ -1252,22 +1252,11 @@ private struct DulcetTrackContextMenu: ViewModifier {
 #if os(tvOS)
         content
 #else
-#if os(iOS)
-        content.contextMenu {
-            menuItems
-        } preview: {
-            DulcetContextMenuPreview(
-                store: store,
-                artwork: track.artwork,
-                title: track.title,
-                subtitle: DulcetStrings.artistNames(
-                    track.credits.filter { $0.role == .artist }.map(\.name)
-                )
-            )
-        }
-#else
+        // The system preview, not DulcetContextMenuPreview: on iOS every track row is also a
+        // drag source onto the queue, and only with the row itself as the preview does a drag
+        // that carries on out of the open menu lift the track. Under a custom preview the menu
+        // kept the touch and the drag never began (§3.1).
         content.contextMenu { menuItems }
-#endif
 #endif
     }
 
@@ -1304,20 +1293,9 @@ private struct DulcetAlbumContextMenu: ViewModifier {
         content
 #else
         if isEnabled {
-#if os(iOS)
-            content.contextMenu {
-                menuItems
-            } preview: {
-                DulcetContextMenuPreview(
-                    store: store,
-                    artwork: album.artwork,
-                    title: album.title,
-                    subtitle: DulcetStrings.artistNames(album.albumArtists)
-                )
-            }
-#else
+            // The system preview: the tile is also a drag source onto the queue, which a custom
+            // preview stops from lifting out of the open menu (as for a track's menu).
             content.contextMenu { menuItems }
-#endif
         } else {
             content
         }
