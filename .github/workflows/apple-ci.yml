@@ -1192,6 +1192,9 @@ jobs:
           # Extracted to a file; see the script header. It stays inside this step, whose shell
           # owns the disposable server. $IPAD_UDID comes from this step's env, deliberately.
           tools/ci/run-app-host-library-sync-proof simulators "$IPAD_UDID"
+          # The counted reader proofs on the iPhone and the iPad, through the fault proxy started
+          # above. In a file for the same reason.
+          tools/ci/run-app-host-reader-proof counted-simulators "$IPAD_UDID"
           # A macOS host test does not inherit xcodebuild's shell environment. Build its launch
           # manifest, inject only the disposable loopback contract, then execute that manifest.
           xcodebuild build-for-testing \
@@ -2539,6 +2542,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-reader-conf76-junit" \
             "$RUNNER_TEMP/dulcet-mac-reader-conf77-junit" \
             "$RUNNER_TEMP/dulcet-mac-reader-conf86-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-conf76-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-conf77-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-conf86-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-conf76-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-conf77-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-conf86-junit" \
             "$RUNNER_TEMP/dulcet-ipados-reader-junit" \
             "$RUNNER_TEMP/dulcet-ios-reader-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \

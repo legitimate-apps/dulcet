@@ -690,12 +690,7 @@
           "reason": "The macOS app-host proof runs the production reader session, Kotlin facade and database against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier. Its credential store is in memory, because an ad-hoc signed host cannot reach the data-protection Keychain, so what it proves starts at the store boundary. It reads publications at the facade boundary and renders one tile through the production root; it does not drive the library screens by keyboard or pointer. CONF-76, CONF-77 and CONF-86 are counted through the hosted app at the fault proxy in front of the disposable server. CONF-82 and CONF-87 run as the core reader's own conformance tests on macOS (macosArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "ios": {
-          "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-76": "The iPhone proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
-            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on the iPhone simulator (compact, tab navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
@@ -714,22 +709,30 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
+            },
+            {
+              "conformance": "CONF-76",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPhone"
+            },
+            {
+              "conformance": "CONF-77",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPhone"
+            },
+            {
+              "conformance": "CONF-86",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPhone"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
-          },
-          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
+          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-76, CONF-77 and CONF-86 are counted through this app on the iPhone simulator at the fault proxy in front of the disposable server, by the app-hosted reader tests. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "ipados": {
-          "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-76": "The iPad proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
-            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on the iPad simulator (regular width, sidebar navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
@@ -748,14 +751,27 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
+            },
+            {
+              "conformance": "CONF-76",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPadOS"
+            },
+            {
+              "conformance": "CONF-77",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPadOS"
+            },
+            {
+              "conformance": "CONF-86",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPadOS"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
-          },
-          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64, the universal target this iPad app runs): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
+          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-76, CONF-77 and CONF-86 are counted through this app on the iPad simulator at the fault proxy in front of the disposable server, by the app-hosted reader tests. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64, the universal target this iPad app runs): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "tvos": {
           "status": "planned",
