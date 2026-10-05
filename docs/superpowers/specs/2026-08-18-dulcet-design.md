@@ -1910,8 +1910,10 @@ assumed, because the protocol does not expose the cap:
 the preloaded session (`preloadNext(sessionId)`) only once the current session has reported
 `PlaybackProgressBegan` — current playback is established before its successor competes for the
 server. That ordering is the **shell's** obligation; the core checks only that the session is
-current. The core declines under repeat-one, when nothing follows, and when the next item has a saved
-resume position (a preloaded item starts at zero). When the current attempt reports `EndedNaturally`
+current. The core declines under repeat-one and when nothing follows. A preloaded item starts at
+zero, as every start but a resume does (§15.5), so a next item with a saved resume position is
+preloaded too, and `AdvancedToPreloaded` clears that position after the outgoing session's own
+write, as a start does. When the current attempt reports `EndedNaturally`
 while a registered preload is still the entry that plays next, the core **starts nothing** and waits
 for the engine's `AdvancedToPreloaded`, which moves the selection; issuing a start there would stop
 and re-prepare an item that is already playing. The shell must discard a preload that it has not yet
@@ -7603,6 +7605,15 @@ an own-name match now leads; the tier still leads overall, so an exact credited 
 own-name prefix. OBSERVED by `SearchTest.aResultNamedByTheQueryRanksAheadOfTheRowsThatOnlyCarryThatName`,
 which fails against the previous ranker (the artist came after the track and album crediting it).
 Both the server and device halves share the ranker, so Apple and Android change together.
+
+**2026-10-05 — A next item with a saved resume position is preloaded, and the handover clears that
+position (§12.8, §15.5).** Since the 2026-10-04 change that made every start but a resume play from
+the top, `preloadNext` still declined a next item with a saved position, because the advance onto a
+preloaded item did not clear it the way a start does. A song skipped part-way through therefore lost
+its gapless start once. The core now clears the item's saved position on `AdvancedToPreloaded`, after
+the outgoing session's own effects, and no longer declines. Android registers no preload, so only
+Apple changes. OBSERVED by `aNextItemWithASavedPositionIsPreloadedAndTheHandoverClearsThatPosition`,
+which fails with the decline restored and with the clear removed (each mutant run separately).
 
 **2026-10-05 — Apple retries a reader setup that failed, and `isOnline` redraws on reachability
 alone (§16.18, §16.15).** Two shell defects, OBSERVED by reading `DulcetLibrarySession`:

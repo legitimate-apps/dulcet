@@ -258,14 +258,37 @@ class PlaybackQueueEditingTest {
     }
 
     @Test
-    fun preloadDeclinesWhenNothingFollowsUnderRepeatOneAndForAResumePosition() {
+    fun aNextItemWithASavedPositionIsPreloadedAndTheHandoverClearsThatPosition() {
         val fixture = fixture()
         val started = fixture.controller.replaceAndStart(request(listOf("a", "b")))
         val first = assertNotNull(started.startDirective)
+        val b = ProviderItemId(SERVER.value, "b")
+        // "b" was skipped part-way through earlier: its saved position must not cost it the gapless start.
+        fixture.resumePositions.save(b, 41.seconds)
 
-        fixture.resumePositions.save(ProviderItemId(SERVER.value, "b"), 41.seconds)
-        assertNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
-        fixture.resumePositions.clear(ProviderItemId(SERVER.value, "b"))
+        val preload = assertNotNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
+        assertEquals("b", preload.itemId.rawId)
+        assertNull(preload.resumePosition, "a preloaded item plays from the top")
+
+        val advanced = fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.AdvancedToPreloaded(first.attemptId, preload.attemptId),
+        )
+        assertEquals(1, advanced.snapshot.currentIndex)
+        val clears = advanced.effects.filterIsInstance<PlaybackCoreEffect.ClearResumePosition>()
+        assertEquals(listOf(b), clears.map { it.itemId }, "the handover clears the position it did not resume")
+        assertEquals(
+            advanced.effects.lastIndex,
+            advanced.effects.indexOf(clears.single()),
+            "the clear follows the outgoing session's own effects",
+        )
+        fixture.driver.close()
+    }
+
+    @Test
+    fun preloadDeclinesWhenNothingFollowsAndUnderRepeatOne() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "b")))
+        val first = assertNotNull(started.startDirective)
 
         fixture.controller.cycleRepeatMode() // all
         fixture.controller.cycleRepeatMode() // one
