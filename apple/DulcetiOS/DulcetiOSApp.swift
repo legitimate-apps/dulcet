@@ -23,6 +23,7 @@ final class DulcetDebugScrobbleDeliveryMarker {
             + " failures=\(report.submittedPlayFailedAttempts)"
             + " now-playing=\(report.nowPlayingSent)"
             + " now-playing-dropped=\(report.nowPlayingDropped)"
+            + " refused-dropped=\(report.submittedPlaysRefusedDropped)"
     }
 }
 #endif

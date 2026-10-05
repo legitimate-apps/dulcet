@@ -3146,6 +3146,51 @@ and a drain that starts inside the wait neither sends early nor starts a second 
 outbox is stopped by no other outbox's 429 (§18.6), and it tells the person nothing: a refusal is a
 diagnostic count, so "once per run" has nothing to apply to here.
 
+**What a failed send says about the play it carried.** Two classes, decided from the answer alone.
+
+- **Retryable — the failure is not this play's.** No answer, a timeout, a 5xx, a 429, a body that is
+  not an envelope, the generic error 0, a missing parameter (10: the request's shape, the same for
+  every play), an upgrade request (20, 30) and every refusal of the account — credentials refused (40),
+  token auth unsupported (41), not authorised (50), trial over (60), a TLS or redirect refusal. The
+  worker stops at the first, keeps every play in order and backs off as above. Account refusals are
+  retryable because a reconnect or a new password fixes them, and the plays are kept for it (30 days);
+  dropping on one would lose every play behind it for a fault that is not theirs.
+- **Refused as its own — error 70, "the requested data was not found"** (the OpenSubsonic error
+  table: the track is gone from the server). The server answered, and what it said is about this play
+  alone, so the plays behind it go on being sent in the same drain, in order. The play is tried again
+  one minute later and five minutes after that (both ASSUMED: a server mid-rescan can answer 70 for a
+  track that is back a moment later). **A third refusal drops it only if the server has accepted some
+  other play since this one's first refusal, or in the drain that first refused it.** A server that
+  answers 70 for every track (a library not mounted or scanning, a restored database, ids regenerated
+  by a rescan, 70 for a scrobble it does not implement) is the server's fault, not every play's; with
+  nothing accepted the play is held at its second refusal, five minutes between tries, and nothing is
+  dropped however long that lasts, until another play gets through (then its next refusal drops it).
+  Three refusals in a row inside one drain with nothing accepted between them end the drain and back
+  off as for any retryable failure, so a systemic 70 costs at most three requests per backoff, not one
+  per queued play. The drop is a `RefusedDropped` diagnostic event and is recorded in a diagnostic
+  counter (the Apple delivery report's `submittedPlaysRefusedDropped`, which only the debug delivery
+  marker shows, and Android's `refusedPlaysDropped`, which only tests read); the person is not told.
+  It loses user-authored play history exactly as a retention drop does. The count is the worker's, per
+  process, and kept across a retryable failure of the same play (70, 5xx, 70 is two refusals); a
+  restart gives the play three more tries, at one request each. A play refused and not yet dropped
+  waits its own time, so a drain inside the wait leaves it alone; the global backoff after a
+  retryable failure holds it with the rest. A one-shot send at sign-out refuses it at most once,
+  which never drops a play, so the person is still offered it. **Accepted trade-off:** a server that
+  answers 0 or 10 rather than 70 for a bad id is classed retryable, so such a play holds the queue in
+  order until the 30-day retention drop, one request per backoff; only 70 is item-scoped by the
+  error table.
+
+OBSERVED 2026-10-04 against Navidrome 0.63.2 (a disposable local instance; CONF-93 and a probe that
+deleted a track and rescanned): `scrobble` for an id the server does not hold — never-existed, an id
+whose file was deleted and the library rescanned, an empty id, an album id — answers **`status="ok"`**,
+with `submission=true` and `submission=false` alike, and logs "Cannot find track for scrobbling" on the
+server; `getSong` for the same id answers error 70. A missing `id` is error 10, wrong credentials are
+error 40 for a bad password and for an unknown user alike, and an unparseable `time` is ignored (the
+server stamps the play now). So the reference server never refuses a play as its own: the rule above
+is for the Subsonic-compatible servers that answer 70, ASSUMED to exist (the error table defines the
+code, no such server was observed), and a deleted track on Navidrome costs one request and no queue
+position.
+
 **The local uniqueness key `(server_id, raw_id, session_start_wall_clock)` prevents two local rows. It
 does not make the network call idempotent.** If the request reaches the server but the response is
 lost, a retry can increment the play count twice unless that server deduplicates. Revision 1 claimed
@@ -6279,6 +6324,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-90 | a positional edit whose base another client changed is refused with no write and no song removed; the unchanged-list control removes exactly the intended entry (§18.6) |
 | CONF-91 | another user's playlist is not editable to the reader, the editor or the server (code 50/70); the admin override recorded; the own-playlist control saved (§18.6, §10.4) |
 | CONF-92 | a streaming-quality cap is transcoded on both delivery paths: the legacy stream carries `maxBitRate` with a named format and returns that format, a source already within the cap streams as the original, the extension's `ClientInfo` cap turns direct play into a transcode, each capped body is no larger than the cap allows, and *Original* is the untouched control; the server's transcoding capability asserted first (§12.5) |
+| CONF-93 | `scrobble` for an id the server does not hold (error 70 on `getSong`) is answered `ok` for `submission=true` and `false`, and moves no other track's play count (§15.3) |
 | CONF-52 | offline playback plan: after all conformance network clients close, a live item promoted to the destination yields a `LocalPlaybackPlan` whose local load returns identical bytes (§14.5) |
 
 ### 20.5 Facade header review
@@ -7509,6 +7555,26 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — A play the server says is gone stops being retried and no longer holds the plays behind it (§15.3).**
+The retry loop above made a play the server will never take cost a request every 256 s for thirty
+days, and the worker stopped at the first refused play, so every later play waited behind it until the
+drop. The outcome of a send is now classified (§15.3): error 70
+alone is refused-as-its-own — the queue goes on past it, it is retried one and then five minutes
+later, and a third refusal drops it, but only while the server has accepted some other play since the
+first refusal (a server that answers 70 for everything drops nothing; three refusals in a row in one
+drain end it), with a `RefusedDropped` diagnostic recorded in a counter, `submittedPlaysRefusedDropped`
+on Apple (shown only by the debug marker) and `refusedPlaysDropped` on Android (read only by tests),
+not surfaced to the person; every other failure, account refusals included, holds
+the queue in order on the existing backoff and never drops. OBSERVED, and the reason this is defensive
+rather than a fix for a seen failure: Navidrome 0.63.2 answers `ok` to a scrobble for an unknown or
+deleted track (CONF-93), so the reference server cannot form such a row; error 70 is the code the error
+table defines for it and other servers are ASSUMED to send it. Counts are per process (a relaunch
+gives the play three more tries) because persisting them needs a schema column the case does not
+justify. Red without the change: `ScrobbleOutboxTest` (one play gone, two behind it: the unclassified
+worker stops at the first), `ApplePlaybackQueueFacadeTest` and `AndroidPlaybackControllerTest`; red
+when every `Known` code is treated as a refusal (the classification table), when the first refusal
+drops (the rescan case) and when the refused play's wait is ignored.
 
 **2026-10-04 — A connectivity blip no longer turns a reachable library offline (§16.14).**
 Conformance run 37229956675 showed an iPhone album page offline for 4.5 s — every track "Unavailable

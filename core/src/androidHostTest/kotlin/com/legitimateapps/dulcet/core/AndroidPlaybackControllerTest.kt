@@ -1548,8 +1548,59 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * A play the server says is gone (error 70) is refused at once, a minute later and five minutes
+     * after that, and then dropped, but only because the server took another play meanwhile (one
+     * seeded after the first refusal): the outbox row goes, nothing more is sent for it, and the
+     * controller counts it (spec §15.3). Real socket, the controller's own consumer, worker and
+     * sender; virtual time on both clocks the retry reads, as above.
+     */
+    @Test fun aSubmittedPlayTheServerSaysIsGoneIsDroppedAfterThreeRefusalsWhileAnotherGetsThrough() {
+        ScrobbleReceiver(goneId = "gone-song").use { receiver ->
+            Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
+                f.controller.playSong(OWNER, "gone-song", "Gone song")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                repeat(46) {
+                    f.probe.position += 500
+                    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+                }
+                val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20)
+                fun goneSubmissions() = receiver.requests.count { it["submission"] == "true" && it["id"] == "gone-song" }
+                // Sockets answer on real time and the waits on virtual time: step the virtual clock
+                // five seconds a turn (the longest wait is five minutes) until the condition holds.
+                fun step() {
+                    mainScheduler.advanceTimeBy(5_000)
+                    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(5_000))
+                    Thread.sleep(10)
+                }
+                while (goneSubmissions() < 1 && System.nanoTime() < deadline) step()
+                assertEquals(1, goneSubmissions(), "The first refusal")
+                // Another play arrives after it, and the server will take it.
+                outbox.persistSynchronously(RecordedPlaybackEvent.SubmittedPlay(
+                    ProviderItemId(OWNER, "live-song"), PlaybackWallClockTime(System.currentTimeMillis() + 1)))
+                while (f.controller.refusedPlaysDropped == 0L && System.nanoTime() < deadline) step()
+                assertEquals(1L, f.controller.refusedPlaysDropped, "The refused play is dropped and counted")
+                assertEquals(3, goneSubmissions(), "Refused three times, then no more")
+                assertEquals(1, receiver.requests.count { it["submission"] == "true" && it["id"] == "live-song" },
+                    "The other play was taken once")
+                assertTrue(outbox.pending(ServerId(OWNER)).isEmpty(), "Neither play is left in the outbox")
+                repeat(120) {
+                    mainScheduler.advanceTimeBy(30_000)
+                    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(30_000))
+                }
+                Thread.sleep(200)
+                assertEquals(3, goneSubmissions(), "An hour later nothing has been sent for the dropped play")
+            }
+        }
+    }
+
     /** Receives real HTTP from the production sender. No controller handoff or sender is replaced. */
-    private class ScrobbleReceiver(private val refuseFirstSubmissions: Int = 0) : AutoCloseable {
+    private class ScrobbleReceiver(
+        private val refuseFirstSubmissions: Int = 0,
+        private val goneId: String? = null,
+    ) : AutoCloseable {
         private val refused = java.util.concurrent.atomic.AtomicInteger()
         private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
@@ -1574,7 +1625,9 @@ class AndroidPlaybackControllerTest {
                             }
                             requests += query
                             val refuse = query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
-                            val body = (if (refuse) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"unavailable"}}}"""
+                            val gone = query["submission"] == "true" && query["id"] == goneId
+                            val body = (if (gone) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
+                                else if (refuse) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"unavailable"}}}"""
                                 else """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""").toByteArray()
                             client.getOutputStream().apply {
                                 write(("HTTP/1.1 ${if (refuse) "503 Service Unavailable" else "200 OK"}\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray())

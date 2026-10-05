@@ -138,6 +138,12 @@ public class ApplePlaybackDeliveryReportDto internal constructor(
     public val submittedPlayFailedAttempts: Long,
     public val nowPlayingSent: Long,
     public val nowPlayingDropped: Long,
+    /**
+     * Plays the server refused as its own (error 70, the track is gone) three times while it went on
+     * accepting others, which the outbox therefore dropped (spec §15.3). Each is also counted in
+     * `submittedPlayFailedAttempts`. A diagnostic counter: only the debug delivery marker shows it.
+     */
+    public val submittedPlaysRefusedDropped: Long = 0,
 )
 
 /**
@@ -269,10 +275,17 @@ public class ApplePlaybackQueueClient private constructor(
             wallClock = wallClock,
             monotonicClock = monotonicClock ?: OutboxMonotonicClock { monotonicOrigin.elapsedNow() },
             diagnosticSink = ScrobbleOutboxDiagnosticSink { event ->
-                if (event is ScrobbleOutboxDiagnosticEvent.DeliveryFailed) {
-                    updateDeliveryReport {
+                when (event) {
+                    is ScrobbleOutboxDiagnosticEvent.DeliveryFailed -> updateDeliveryReport {
                         copy(submittedPlayFailedAttempts = submittedPlayFailedAttempts + 1)
                     }
+                    is ScrobbleOutboxDiagnosticEvent.RefusedDropped -> updateDeliveryReport {
+                        copy(
+                            submittedPlayFailedAttempts = submittedPlayFailedAttempts + 1,
+                            submittedPlaysRefusedDropped = submittedPlaysRefusedDropped + 1,
+                        )
+                    }
+                    else -> Unit
                 }
             },
         )
@@ -879,6 +892,7 @@ private data class ApplePlaybackDeliveryCounts(
     val submittedPlayFailedAttempts: Long = 0,
     val nowPlayingSent: Long = 0,
     val nowPlayingDropped: Long = 0,
+    val submittedPlaysRefusedDropped: Long = 0,
 ) {
     fun toDto(pending: Long): ApplePlaybackDeliveryReportDto = ApplePlaybackDeliveryReportDto(
         submittedPlaysPersisted = submittedPlaysPersisted,
@@ -887,6 +901,7 @@ private data class ApplePlaybackDeliveryCounts(
         submittedPlayFailedAttempts = submittedPlayFailedAttempts,
         nowPlayingSent = nowPlayingSent,
         nowPlayingDropped = nowPlayingDropped,
+        submittedPlaysRefusedDropped = submittedPlaysRefusedDropped,
     )
 }
 

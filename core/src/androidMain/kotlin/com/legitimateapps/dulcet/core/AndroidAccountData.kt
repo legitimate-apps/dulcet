@@ -80,8 +80,11 @@ public class AndroidAccountData internal constructor(
 
     /**
      * Sends the account's unsent plays once, oldest first, and returns those still unsent afterwards
-     * (null when that cannot be read). Delivery stops at the first play the server does not accept;
-     * that play and every later one stay unsent.
+     * (null when that cannot be read). Delivery stops at the first play the server fails to take
+     * (no answer, a 5xx, a rate limit, a refused account); that play and every later one stay unsent.
+     * A play the server says is gone (error 70) stays unsent too, but the plays behind it are still
+     * sent: this one-shot worker refuses it at most once, which never drops a play, so the person is still
+     * offered it (spec §15.3).
      */
     public suspend fun submitPlays(account: PlaybackEndpointAccount): Set<String>? {
         require(account.providerInstanceId == serverId) { "the account must be the one being signed out" }
