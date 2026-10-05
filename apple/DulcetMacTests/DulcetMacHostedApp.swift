@@ -484,6 +484,9 @@ final class HostedApp {
         _ = object.perform(press)
     }
 
+    /// The window's content area in screen coordinates, the space `frame(_:)` reports in.
+    var contentScreenFrame: NSRect { window.convertToScreen(window.contentLayoutRect) }
+
     func frame(_ element: Any) throws -> NSRect {
         let accessible = try XCTUnwrap(element as? any NSAccessibilityElementProtocol, "no frame on \(type(of: element))")
         return accessible.accessibilityFrame()

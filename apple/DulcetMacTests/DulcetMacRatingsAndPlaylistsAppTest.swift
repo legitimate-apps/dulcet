@@ -115,9 +115,14 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             .filter { (try? app.frame($0)).map { $0.midY > rowFrame.minY && $0.midY < rowFrame.maxY } ?? false }
         XCTAssertEqual(rowHearts.count, 1, "Exactly one heart must sit beside \(track)'s row; row=\(rowFrame)")
         let rowHeart = try XCTUnwrap(rowHearts.first, "No heart beside \(track)'s row")
+        // The click below is posted to the window directly, so it would land even on a heart the
+        // window clips; the heart must lie wholly inside the window's content to be one a person sees.
+        let heartFrame = try app.frame(rowHeart)
+        let content = app.contentScreenFrame
+        XCTAssertTrue(content.contains(heartFrame), "\(track)'s row heart \(heartFrame) must lie inside the window \(content)")
         try await toggleAndProve(rowHeart, named: "\(track)'s row heart", songID: songID, on: server, in: app)
         print("DULCET MAC HEARTS PROOF PASS track=\(track.debugDescription) toolbar=true->false row=true->false"
-            + " row-heart=\(try app.frame(rowHeart)) window-width=\(app.hostingView.bounds.width)")
+            + " row-heart=\(heartFrame) content=\(content)")
     }
 
     /// Every playlist edit the Mac offers, made through the rendered views and read back from the
