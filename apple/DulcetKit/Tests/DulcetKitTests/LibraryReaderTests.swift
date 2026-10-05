@@ -174,6 +174,41 @@ private final class ManualReachability: DulcetReachabilityMonitoring {
     }
 }
 
+/// Virtual time for the session's delays: nothing runs until the test advances the clock.
+@MainActor
+private final class ManualDelays: DulcetDelayScheduling {
+    private final class Entry: DulcetLibraryReaderCancellable {
+        let due: Duration
+        var action: (@MainActor () -> Void)?
+        init(due: Duration, action: @escaping @MainActor () -> Void) {
+            self.due = due
+            self.action = action
+        }
+        func cancel() { action = nil }
+    }
+
+    private(set) var now: Duration = .zero
+    private var entries: [Entry] = []
+
+    var pending: Int { entries.filter { $0.action != nil }.count }
+
+    func schedule(after delay: Duration, _ action: @escaping @MainActor () -> Void) -> any DulcetLibraryReaderCancellable {
+        let entry = Entry(due: now + delay, action: action)
+        entries.append(entry)
+        return entry
+    }
+
+    func advance(by step: Duration) {
+        now += step
+        while let next = entries.filter({ $0.action != nil && $0.due <= now }).min(by: { $0.due < $1.due }) {
+            let action = next.action
+            next.action = nil
+            action?()
+        }
+        entries.removeAll { $0.action == nil }
+    }
+}
+
 @MainActor
 private final class ReaderTestConnector: DulcetAccountConnecting {
     private(set) var requests: [DulcetAccountConnectRequest] = []
@@ -423,7 +458,8 @@ func aSavedAccountIsReadFromTheDeviceBeforeAnyScreenSubscribes() throws {
 func reconnectingTheSameAccountKeepsItsReaderAndItsScreens() throws {
     let factory = RecordingReaderFactory()
     let reachability = ManualReachability()
-    let session = DulcetLibrarySession(factory: factory, reachability: reachability)
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
     session.open(account: readerAccount, mode: .deviceOnly)
     let model = DulcetLibraryWindowModel(query: .artists)
     model.open(in: session)
@@ -436,7 +472,86 @@ func reconnectingTheSameAccountKeepsItsReaderAndItsScreens() throws {
     #expect(Array(reader.events.suffix(2)) == ["setOnline(true)", "reconnect"])
     #expect(reachability.started == 1)
     reachability.report(reachable: false)
+    #expect(reader.events.last(where: { $0.hasPrefix("setOnline") }) == "setOnline(true)", "an unreachable report waits out the grace")
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
     #expect(reader.events.last == "setOnline(false)")
+}
+
+/// A connected session over a reader whose connect succeeded, with reachability and virtual time
+/// in the test's hands. `events` is what the reader is told from then on, constraint reports aside.
+@MainActor
+private func connectedSessionWithManualTime() throws -> (DulcetLibrarySession, ManualReachability, ManualDelays, events: () -> [String], log: () -> [String]) {
+    let factory = RecordingReaderFactory()
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    var lines: [String] = []
+    let session = DulcetLibrarySession(
+        factory: factory, reachability: reachability, delays: delays, reachabilityLog: { lines.append($0) })
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: true, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: nil))
+    reachability.report(reachable: true)
+    let mark = reader.events.count
+    return (session, reachability, delays, { reader.events.dropFirst(mark).filter { !$0.hasPrefix("setNetworkConstrained") } }, { lines })
+}
+
+// §16.14 "A reachability report is a hint": the CI album page that went offline for 4.5 s while
+// its server answered (conformance run 37229956675).
+@Test @MainActor
+func aReachabilityBlipShorterThanTheGraceNeverTakesTheReaderOffline() throws {
+    let (session, reachability, delays, events, log) = try connectedSessionWithManualTime()
+    #expect(session.isOnline, "control: connected and reachable")
+
+    reachability.report(reachable: false)
+    delays.advance(by: .milliseconds(4_900))
+    #expect(session.isOnline, "4.9 s into the blip the library still reads as online")
+    #expect(!events().contains("setOnline(false)"), "the reader is not told during the grace: \(events())")
+    reachability.report(reachable: true)
+    delays.advance(by: .seconds(60))
+
+    #expect(events().isEmpty, "a withdrawn report reaches the reader as nothing at all: \(events())")
+    #expect(session.isOnline)
+    #expect(delays.pending == 0, "the held report's timer is gone")
+    #expect(log().contains { $0.hasPrefix("unreachable reported; held for 5000 ms") }, "\(log())")
+    #expect(log().contains { $0.hasPrefix("reachable again after") && $0.hasSuffix("the reader stayed online") }, "\(log())")
+}
+
+@Test @MainActor
+func anUnreachableReportThatOutlastsTheGraceTakesTheReaderOfflineAndRecoveryReconnects() throws {
+    let (session, reachability, delays, events, log) = try connectedSessionWithManualTime()
+
+    reachability.report(reachable: false)
+    reachability.report(reachable: false) // a repeated report starts no second grace
+    delays.advance(by: .milliseconds(4_999))
+    #expect(events().isEmpty)
+    delays.advance(by: .milliseconds(1))
+    #expect(events() == ["setOnline(false)"], "a real loss is told when the grace ends: \(events())")
+    #expect(!session.isOnline, "and the session says offline")
+    #expect(log().contains { $0.contains("the reader is told and goes offline") }, "\(log())")
+
+    reachability.report(reachable: false)
+    delays.advance(by: .seconds(60))
+    #expect(events() == ["setOnline(false)"], "already offline: nothing more")
+
+    reachability.report(reachable: true)
+    #expect(events() == ["setOnline(false)", "setOnline(true)"], "reachable again is told at once")
+    #expect(log().last == "reachable; the reader is told and reconnects")
+    for line in log() {
+        #expect(!line.contains("http") && !line.contains(readerAccount.username) && !line.contains(readerAccount.password),
+                "a reachability line names no server or credential: \(line)")
+    }
+}
+
+@Test @MainActor
+func aHeldUnreachableReportDiesWithTheConnection() throws {
+    let (session, reachability, delays, events, _) = try connectedSessionWithManualTime()
+    reachability.report(reachable: false)
+    session.disconnect()
+    #expect(events() == ["setOnline(false)"], "the disconnect's own offline")
+    delays.advance(by: .seconds(60))
+    #expect(events() == ["setOnline(false)"], "a report held for a connection that ended is never told: \(events())")
+    #expect(delays.pending == 0)
 }
 
 @Test @MainActor

@@ -6,6 +6,8 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeField
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
@@ -55,6 +57,10 @@ import kotlinx.coroutines.flow.update
  * goes around it: the platform's default-network callback reports reachability with
  * [AndroidLibraryReader.setOnline] — whose `true`, while offline, REQUESTS a reconnect rather than
  * flipping any state — and [start] reconnects when the app comes to the foreground with a network.
+ * A loss the callback reports is a hint, not a verdict: it is told to the reader only once it has stood
+ * for [UNREACHABLE_GRACE_MILLIS], and a network arriving inside the grace withdraws it, so a blip (a
+ * Wi-Fi handoff, a VPN reconnect) leaves every screen and Play as they were. Each transition is logged
+ * under the tag [REACHABILITY_LOG_TAG], with no server, URL or credential.
  * **Foreground** is this session's host being started (§16.11): the reader, if this session creates
  * it, starts in the state the constructor was given, and [start] and [stop] tell it every change —
  * including a start of a host already started when this session was made, which the lifecycle
@@ -446,6 +452,7 @@ public class LibrarySession internal constructor(
         if (!started) return
         started = false
         unregisterNetworkCallback()
+        releaseHeldLoss()
         reader.setForeground(false)
     }
 
@@ -478,6 +485,7 @@ public class LibrarySession internal constructor(
     override fun close() {
         if (closed) return
         stop()
+        releaseHeldLoss()
         closed = true
         outcomeRegistration.close()
         playlistRegistration.close()
@@ -497,8 +505,13 @@ public class LibrarySession internal constructor(
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            heldLossSince?.let { since ->
+                releaseHeldLoss()
+                log("network available again after ${SystemClock.uptimeMillis() - since} ms without one; the reader stayed online")
+            }
             if (network == defaultNetwork) return
             defaultNetwork = network
+            log("default network available")
             report(true)
         }
 
@@ -506,7 +519,12 @@ public class LibrarySession internal constructor(
             // A default network that another has already replaced is not a loss of reachability.
             if (network != defaultNetwork) return
             defaultNetwork = null
-            report(networkAvailable())
+            if (networkAvailable()) {
+                log("default network lost, another active")
+                report(true)
+            } else {
+                holdLoss()
+            }
         }
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -543,6 +561,44 @@ public class LibrarySession internal constructor(
     }
 
     private var lastReport: Boolean? = null
+
+    /** The main-thread handler the unreachable grace waits on: virtual time under Robolectric. */
+    private val graceHandler = Handler(Looper.getMainLooper())
+
+    /** When a loss not yet told to the reader was reported, by the monotonic clock; null when none is held. */
+    private var heldLossSince: Long? = null
+
+    private val confirmLoss = Runnable {
+        val since = heldLossSince ?: return@Runnable
+        heldLossSince = null
+        if (closed || !started) return@Runnable
+        if (networkAvailable()) {
+            log("no network for ${SystemClock.uptimeMillis() - since} ms, but one is active now; the reader stays online")
+            return@Runnable
+        }
+        log("no network for ${SystemClock.uptimeMillis() - since} ms; the reader is told and goes offline")
+        report(false)
+    }
+
+    /**
+     * The platform reported no default network. Told to the reader only once that has stood for the
+     * grace (§16.14, "A reachability report is a hint"); a repeated loss starts no second grace.
+     */
+    private fun holdLoss() {
+        if (heldLossSince != null || lastReport == false) return
+        heldLossSince = SystemClock.uptimeMillis()
+        log("default network lost; held for $UNREACHABLE_GRACE_MILLIS ms before the reader is told")
+        graceHandler.postDelayed(confirmLoss, UNREACHABLE_GRACE_MILLIS)
+    }
+
+    private fun releaseHeldLoss() {
+        heldLossSince = null
+        graceHandler.removeCallbacks(confirmLoss)
+    }
+
+    private fun log(line: String) {
+        runCatching { Log.i(REACHABILITY_LOG_TAG, line) }
+    }
 
     /**
      * The platform's report, forwarded as is. Reachable while the reader is offline REQUESTS a
@@ -692,6 +748,16 @@ public class LibrarySession internal constructor(
             AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Frequent),
             AndroidLibraryHomeRow.Favourites,
         )
+
+        /**
+         * How long a reported loss of every network must stand before the reader is told (§16.14).
+         * ASSUMED: it covers a Wi-Fi handoff, a VPN reconnect or an emulator's network churn, and is
+         * short enough that a real loss is said soon. The same figure as the Apple shell's.
+         */
+        public const val UNREACHABLE_GRACE_MILLIS: Long = 5_000
+
+        /** The log tag of every reachability transition. */
+        public const val REACHABILITY_LOG_TAG: String = "DulcetReachability"
 
         private const val MAX_FRAMES = 200
     }

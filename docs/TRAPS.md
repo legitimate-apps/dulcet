@@ -279,6 +279,12 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     (`tapAlbumPlay`). The failure-diagnostics artifact's `.xcresult` carries a screen recording; read
     its frames (`ffprobe -show_entries frame=pts_time` lists one frame per screen change) before
     theorising about a UI failure.
+    Since 2026-10-04 the shells hold an unreachable report for 5 s before telling the reader (spec
+    §16.14), so a blip no longer disables Play; a loss that outlasts it still does, and the wait for
+    `isEnabled` stays. Reachability is now logged: Apple's unified log, category `reachability`
+    (`xcrun simctl spawn <udid> log show --predicate 'category == "reachability"'`), and Android's
+    `DulcetReachability` tag. In a Robolectric test the grace runs on the paused main looper's clock:
+    `PlatformNetwork.lose()` passes it, `drop()` does not.
 
 48. **On iOS, an open context menu on a row that is also a drag source keeps the app from ever going
     idle, and a custom menu preview kills the drag.** UIKit keeps the drag's lift armed while the

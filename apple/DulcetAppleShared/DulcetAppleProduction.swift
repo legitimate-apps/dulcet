@@ -1169,7 +1169,11 @@ final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
         monitor.pathUpdateHandler = { path in
             let reachable = path.status == .satisfied
             let constrained = path.isConstrained || path.isExpensive
-            Task { @MainActor in handler(reachable, constrained) }
+            let report = Self.describe(path)
+            Task { @MainActor in
+                DulcetReachabilityLog.write("path \(report)")
+                handler(reachable, constrained)
+            }
         }
         monitor.start(queue: .main)
         self.monitor = monitor
@@ -1178,5 +1182,37 @@ final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
     func stop() {
         monitor?.cancel()
         monitor = nil
+    }
+
+    /// The path in words for the log: its status, why it is unsatisfied, and the kinds of
+    /// interface it uses — never an address or a name.
+    private nonisolated static func describe(_ path: NWPath) -> String {
+        let status: String
+        switch path.status {
+        case .satisfied: status = "satisfied"
+        case .unsatisfied: status = "unsatisfied"
+        case .requiresConnection: status = "requiresConnection"
+        @unknown default: status = "unknown"
+        }
+        var words = ["status=\(status)"]
+        if path.status != .satisfied {
+            let reason: String
+            switch path.unsatisfiedReason {
+            case .notAvailable: reason = "notAvailable"
+            case .cellularDenied: reason = "cellularDenied"
+            case .wifiDenied: reason = "wifiDenied"
+            case .localNetworkDenied: reason = "localNetworkDenied"
+            case .vpnInactive: reason = "vpnInactive"
+            @unknown default: reason = "other"
+            }
+            words.append("reason=\(reason)")
+        }
+        let kinds: [(NWInterface.InterfaceType, String)] = [
+            (.wifi, "wifi"), (.wiredEthernet, "wired"), (.cellular, "cellular"), (.loopback, "loopback"), (.other, "other"),
+        ]
+        let used = kinds.filter { path.usesInterfaceType($0.0) }.map(\.1)
+        words.append("interfaces=\(used.isEmpty ? "none" : used.joined(separator: ","))")
+        words.append("constrained=\(path.isConstrained) expensive=\(path.isExpensive)")
+        return words.joined(separator: " ")
     }
 }

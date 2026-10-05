@@ -4285,8 +4285,8 @@ passes every test that only checks the end.
 **As implemented — one reachability model (R2a review, §28 revision 104 item 29).** A reconnect is the
 **only** way back online. For a reader that was offline, steps 1 and 2 run while it is still offline —
 every screen keeps saying so and nothing reads the server — and only a successful epoch reading marks
-it online and goes on to step 3. A platform report that the server is unreachable takes the reader
-offline at once and cancels a reconnect in flight; a report that it is reachable, while offline,
+it online and goes on to step 3. A platform report that the server is unreachable, once the shell
+tells it (after the grace below), takes the reader offline at once and cancels a reconnect in flight; a report that it is reachable, while offline,
 *requests* a reconnect rather than marking the reader online. A reconnect already running is joined,
 so two never run the steps at once. So a shell reports reachability on every change and reconnects on
 foreground, in either order or only one of them, and for a reader coming back from offline nothing is
@@ -4294,6 +4294,36 @@ read before the flush. **That holds for the offline-to-online transition only** 
 item 29): a foreground reconnect of a reader that is already online leaves it online throughout, its
 screens and searches keep reading, and a read can go out before the flush's send — a change made while
 connected can be overtaken (§18.3).
+
+**A reachability report is a hint, and "unreachable" waits out a grace** (§28, 2026-10-04 "A
+connectivity blip no longer turns a reachable library offline"). The platform's monitor — Apple's
+`NWPathMonitor`, Android's default-network callback — reports false negatives: a Wi-Fi handoff, a VPN
+reconnect or a simulator's host-network churn reports no path for a moment while the server goes on
+answering, and Apple's own guidance is to treat path reports as hints and not to preflight requests
+on them (Apple Developer Forums threads 105822 and 748686, OBSERVED). So the shell, not the core,
+holds a report that nothing is reachable for **5 s** (ASSUMED; one figure on both platforms) before
+it tells the reader:
+
+- a report that the network is back, inside the grace, withdraws it: the reader is told nothing, so
+  every screen, every row's playability and Play stay exactly as they were;
+- a report that still stands when the grace ends is told then, and the reader goes offline at once,
+  as above; a repeated report starts no second grace, and a held report dies with the connection
+  (a disconnect, a sign-out, the app leaving the foreground on Android);
+- during the grace the reader is online, so a read or a play made then is sent; on a real loss it
+  fails and says what failed by itself, so the grace never shows a working library over a dead one;
+- a report that the network is reachable is told at once, and so is the absence of any network that
+  the shell reads for itself at a foreground start or a "Try again" — that is a settled state, not a
+  monitor's transition.
+
+Each transition is logged on the device — the platform's report (Apple: status, why it is
+unsatisfied, interface kinds, constrained and expensive), the hold, the withdrawal with how long the
+loss lasted by the monotonic clock, and the loss told — under the reachability category (Apple's
+unified log) or tag (`DulcetReachability`, Android). A line names no server, URL or credential.
+OBSERVED by `aReachabilityBlipShorterThanTheGraceNeverTakesTheReaderOffline`,
+`anUnreachableReportThatOutlastsTheGraceTakesTheReaderOfflineAndRecoveryReconnects` and
+`aHeldUnreachableReportDiesWithTheConnection` (DulcetKit, virtual time) and
+`LibraryReachabilityGraceTest` (Android phone app, production session, Robolectric's connectivity
+shadow and virtual main-looper clock); each fails when the report is told at once.
 
 A reconnect whose epoch reading fails stops there — the flush of step 1 may already have sent
 changes, but a reader that was offline stays offline and nothing is revalidated — and says which
@@ -7479,6 +7509,26 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — A connectivity blip no longer turns a reachable library offline (§16.14).**
+Conformance run 37229956675 showed an iPhone album page offline for 4.5 s — every track "Unavailable
+offline", Play disabled — about two seconds after it opened, while the disposable server answered
+throughout (OBSERVED, the job's screen recording). What both shells did, OBSERVED by reading them:
+Apple forwarded every `NWPathMonitor` change to `setOnline` at once
+(`DulcetLibrarySession.startReachability`), Android forwarded a lost default network with none to
+replace it at once (`LibrarySession.onLost`), and the core takes the reader offline on that report
+alone; nothing logged any of it, so the path monitor's report as the cause remains ASSUMED. Three
+rules were weighed: confirming with the server before going offline (a probe the reader has no
+request for, and on a real loss it only adds a timeout), keeping Play enabled offline (§16.14's
+playability states are a product line, and other surfaces would still flip), and a grace on the
+shell's report. The grace was chosen: the shell holds an unreachable report for 5 s (ASSUMED) and a
+reachable report inside it withdraws it unseen; the core's contract is unchanged, so its "unreachable
+is offline at once" holds for what the shell tells it. A real loss is told 5 s late at most, and a
+read made meanwhile fails by itself. Transitions are now logged with no server, URL or credential.
+The Android conformance helper's `lose()` passes the grace on the virtual main-looper clock, so a
+scenario's loss is still a real one; `drop()` is a loss with no time passing. Not shown: that the
+CI excursion was a path report (the new log lines will say on the next one), and whether the unified
+log reaches the uploaded `.xcresult`.
 
 **2026-10-04 — A play the server refused is retried while the app stays open (§15.3).** CI run
 37235449008 (iPad, a heavily loaded runner) logged `dulcet-scrobble persisted=1 delivered=0 pending=1
