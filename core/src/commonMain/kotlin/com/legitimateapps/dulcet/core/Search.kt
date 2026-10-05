@@ -278,9 +278,9 @@ internal data class LibrarySearchPublication(
  *   the server's answer replaces in place and appends. Across a keystroke the list is ranked again,
  *   over everything this device now holds — including rows the previous query's server answer wrote
  *   through — so a row appended at the bottom for one query takes its ranked place on the next. The
- *   ranker is total ([rankResultsStably]: match tier, then type, then normalized title, then id), so
- *   two rows kept across a keystroke keep their relative order unless their match tiers change, and
- *   never reorder by arrival.
+ *   ranker is total ([rankResultsStably]: match tier with own-name matches first, then type, then
+ *   normalized title, then id), so two rows kept across a keystroke keep their relative order
+ *   unless their match tiers change, and never reorder by arrival.
  * - **One label while the server is unreachable.** Once `search3` has failed as unreachable, the
  *   device's rows for later keystrokes are published as `deviceOffline` at once rather than
  *   `deviceWhileServerPending`, so the label does not alternate on every keystroke; the server is
@@ -774,20 +774,33 @@ internal fun rankResultsStably(query: String, results: List<SearchResultItem>): 
     )
 }
 
-private fun matchRank(query: String, result: SearchResultItem): Int = buildList {
-    add(result.title)
-    result.albumTitle?.let(::add)
-    addAll(result.credits.map(Credit::name))
-}.minOfOrNull { candidate ->
+/**
+ * The match tier -- exact, prefix, word start, substring, none -- doubled, plus one when the best
+ * match is on the result's album or credits rather than its own title. A result named by the query
+ * thus ranks ahead of the rows that merely carry that name: an artist searched by its exact name
+ * comes before every track credited to it, an album before its own tracks.
+ */
+private fun matchRank(query: String, result: SearchResultItem): Int {
+    val ownTier = matchTier(query, result.title)
+    val carriedTier = buildList {
+        result.albumTitle?.let(::add)
+        addAll(result.credits.map(Credit::name))
+    }.minOfOrNull { matchTier(query, it) } ?: NO_MATCH_TIER
+    return if (ownTier <= carriedTier) ownTier * 2 else carriedTier * 2 + 1
+}
+
+private fun matchTier(query: String, candidate: String): Int {
     val value = normalizeSearchText(candidate)
-    when {
+    return when {
         value == query -> 0
         value.startsWith(query) -> 1
         value.hasWordStartingWith(query) -> 2
         value.contains(query) -> 3
-        else -> 4
+        else -> NO_MATCH_TIER
     }
-} ?: 4
+}
+
+private const val NO_MATCH_TIER = 4
 
 private fun String.hasWordStartingWith(query: String): Boolean {
     var atWordStart = true

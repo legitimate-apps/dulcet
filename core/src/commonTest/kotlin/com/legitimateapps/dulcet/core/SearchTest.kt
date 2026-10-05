@@ -223,6 +223,35 @@ class SearchTest {
     }
 
     @Test
+    fun aResultNamedByTheQueryRanksAheadOfTheRowsThatOnlyCarryThatName() = runTest {
+        // The artist and the first album match by their own names; the credited track and album
+        // match the same query only through the artist they credit or the album they sit on.
+        val body = """{"subsonic-response":{"status":"ok","searchResult3":{
+            "artist":[{"id":"artist-named","name":"Dulcet Fixtures"}],
+            "album":[
+                {"id":"album-credited","name":"Another Record","artist":"Dulcet Fixtures"},
+                {"id":"album-named","name":"Threshold","artist":"Someone Else"}
+            ],
+            "song":[
+                {"id":"track-credited","title":"Alpha","artist":"Dulcet Fixtures","album":"Another Record"},
+                {"id":"track-on-album","title":"Beta","artist":"Someone Else","album":"Threshold"},
+                {"id":"track-prefix","title":"Dulcet Fixtures Live","artist":"Someone Else","album":"Gamma"}
+            ]
+        }}}""".trimIndent()
+        suspend fun ranked(query: String) = assertIs<SearchPageResult.Loaded>(
+            ServerSearch(SearchEndpointTransport { success(body) }).search(request().copy(query = query)),
+        ).page.results.map { it.id.rawId }
+
+        // An exact name on the result itself leads; exact names it only carries follow, by type;
+        // an own-title prefix comes after them, because the match tier still leads.
+        assertEquals(
+            listOf("artist-named", "track-credited", "album-credited", "track-prefix"),
+            ranked("Dulcet Fixtures").take(4),
+        )
+        assertEquals(listOf("album-named", "track-on-album"), ranked("Threshold").take(2))
+    }
+
+    @Test
     fun cancellationStopsTheInFlightTransport() = runTest {
         val entered = CompletableDeferred<Unit>()
         var transportCancelled = false
