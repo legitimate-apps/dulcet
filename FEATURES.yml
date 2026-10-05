@@ -901,14 +901,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacRatingsAndPlaylistsAppTest/nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp"
+            },
+            {
+              "conformance": "CONF-84",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"
+            },
+            {
+              "observes": "the core's production reader session in the macosArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "mac-heart-ui-proof-and-conf84-star-half",
-            "reason": "The Mac rating proof executed and passed, so the rating UI proof no longer blocks the cell. Two things remain. No test drives the Mac app's heart, the toolbar's or a row's, against the server, so favouriting itself is not driven through the Mac app. And the cell cites no a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it."
+            "blocked_on": "mac-heart-ui-proof",
+            "reason": "The Mac rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's macosArm64 core-conformance runtime in apple-ci against the disposable server. What remains: no test drives the Mac app's heart, the toolbar's or a row's, against the server, so favouriting itself is not driven through the Mac app."
           },
-          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. No test drives the Mac app's heart against the server and no row labelled CONF-84 is cited, so the cell is partial."
+          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. No test drives the Mac app's heart against the server, so the cell is partial."
         },
         "ios": {
           "status": "partial",
@@ -936,14 +948,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone"
+            },
+            {
+              "conformance": "CONF-84",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"
+            },
+            {
+              "observes": "the core's production reader session in the iosSimulatorArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "conf84-star-half-evidence-on-apple",
-            "reason": "The iPhone rating proof executed and passed, so the rating UI proof no longer blocks the cell. What remains is a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it. Artist and track-row hearts are driven by no wired UI proof."
+            "blocked_on": "iphone-artist-and-track-row-hearts-ui-proof",
+            "reason": "The iPhone rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's iosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: artist and track-row hearts are driven by no wired UI proof; only the album's heart and Now Playing's are."
           },
-          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Artist and track-row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main."
+          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. Artist and track-row hearts are not driven by a wired UI proof, so the cell is partial. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main."
         },
         "ipados": {
           "status": "partial",
@@ -965,14 +989,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS"
+            },
+            {
+              "conformance": "CONF-84",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"
+            },
+            {
+              "observes": "the core's production reader session in the iosSimulatorArm64 (the iOS and iPadOS runtime) core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "conf84-star-half-evidence-on-apple",
-            "reason": "The iPad rating proof executed and passed, so the rating UI proof no longer blocks the cell. What remains is a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it. Artist and track-row hearts are driven by no wired UI proof."
+            "blocked_on": "ipad-artist-and-track-row-hearts-ui-proof",
+            "reason": "The iPad rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's iosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: artist and track-row hearts are driven by no wired UI proof; only the album's heart and Now Playing's are."
           },
-          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Artist and track-row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. Resolved on main, as the iPhone proof is."
+          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. Artist and track-row hearts are not driven by a wired UI proof, so the cell is partial. Resolved on main, as the iPhone proof is."
         },
         "tvos": {
           "status": "partial",
@@ -980,10 +1016,14 @@
             {"observes": "on Apple TV, driven by the remote against the disposable server, Down from the transport reaches the playing track's heart, Select fills it at once and the star reaches the server for that track, and Select again empties it and unstars the track, with focus kept on the heart; and Right from the heart moves across the five stars in order, Select on the third rates the track 3 and the server's own userRating reads back 3, and Select on the star shown removes the rating and the server reads back 0", "workflow": "apple-ci", "job": "apple-ci",
              "test": "DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote"},
             {"observes": "the Apple TV player's footer offers the heart, its stars, then Lyrics, and neither heart nor stars while the reader does not hold the playing track's account", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "DulcetKitTVOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"}
+             "test": "DulcetKitTVOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"},
+            {"conformance": "CONF-84", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"},
+            {"observes": "the core's production reader session in the tvosSimulatorArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"}
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "tvos-conf84-row-and-row-hearts-ui-proof", "reason": "The Apple TV remote proof now covers both halves of what the player offers: the heart (star and unstar read back) and the stars (a press rates the track and the server's userRating reads back, a second press on the star shown reads back 0). It executed and passed in three green apple-ci runs on main (the apple-conformance job, junit written by the tvos-now-playing phase, one testcase, no failure and none skipped, with the test's own rating line reporting rated=3 before=0). The cell stays partial for two reasons that remain. It cites no row labelled CONF-84, which a shipped cell must for every declared id: the core's RatingConformanceTest runs in the tvOS simulator's core-conformance runtime, but it is not cited here, and nothing yet says which test evidences the star half of CONF-84 on Apple TV. And album, artist and row hearts are not driven by a wired UI proof on Apple TV; only the Now Playing heart and stars are."},
-          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server, and the five stars are crossed in order, one pressed and the server's userRating read back as 3, then the same star pressed again and read back as 0. It is the rows' heart through the same session. Album, artist and row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. Resolved on main."
+          "promotion_condition": {"status": "blocked", "blocked_on": "tvos-row-hearts-ui-proof", "reason": "The Apple TV remote proof now covers both halves of what the player offers: the heart (star and unstar read back) and the stars (a press rates the track and the server's userRating reads back, a second press on the star shown reads back 0). It executed and passed in three green apple-ci runs on main (the apple-conformance job, junit written by the tvos-now-playing phase, one testcase, no failure and none skipped, with the test's own rating line reporting rated=3 before=0). The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's tvosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: album, artist and row hearts are not driven by a wired UI proof on Apple TV; only the Now Playing heart and stars are."},
+          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server, and the five stars are crossed in order, one pressed and the server's userRating read back as 3, then the same star pressed again and read back as 0. It is the rows' heart through the same session. The CONF-84 row is the core's star and rating conformance in the tvOS simulator's core-conformance runtime. Album, artist and row hearts are not driven by a wired UI proof, so the cell is partial. Resolved on main."
         },
         "android": {
           "status": "shipped",
