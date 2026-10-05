@@ -516,7 +516,8 @@ internal class LibraryReader(
             revalidateSurfaces()
         } else {
             // A window whose stamp kept moving is re-read at the next quiet reading, or its
-            // `unverified(changing)` label would outlive the change that caused it.
+            // `unverified(changing)` label would outlive the change that caused it; so is anything
+            // read during a scan whose end a page's reading saw first, if that re-read was missed.
             visibleHandles().filter { it.awaitsQuietEpoch() }.forEach { it.revalidate(RevalidateCause.EpochChanged) }
         }
         if (changed) recheckDownloadedAlbums()
@@ -933,9 +934,30 @@ internal class LibraryReader(
      * newest thing known about the server, and it is the next page's *before* — keeping the folder
      * set of the last full reading, which is checked only at window open (§16.12's recorded exposure).
      */
-    internal fun adoptScanStatus(after: ScanStatusReading): CatalogEpoch {
+    internal fun adoptScanStatus(after: ScanStatusReading, readBy: ReaderHandle? = null): CatalogEpoch {
         val folders = sessionEpoch?.folderIds ?: emptySet()
-        return CatalogEpoch(after.lastScan, folders, after.scanning).also(::adoptEpoch)
+        val wasScanning = sessionEpoch?.scanning == true
+        return CatalogEpoch(after.lastScan, folders, after.scanning).also { epoch ->
+            adoptEpoch(epoch)
+            if (wasScanning && !epoch.scanning && sessionEpoch == epoch) reReadWhatTheScanLeftUnverified(readBy)
+        }
+    }
+
+    /**
+     * A page's reading was the first to show the scan over (§16.12: the first reading that shows
+     * it must rebase every window read while it ran). The window that read it, [readBy], rebases
+     * itself; every OTHER visible handle read during the scan is re-read here, once the current
+     * read lets go — the next epoch reading would not, for it sees no scanning change left to act on.
+     */
+    private fun reReadWhatTheScanLeftUnverified(readBy: ReaderHandle?) {
+        scope.launch {
+            for (handle in visibleHandles()) {
+                if (handle === readBy) continue
+                if (!online) return@launch
+                // Judged again under each handle's lock: one rebased meanwhile reads nothing.
+                if (handle.awaitsQuietEpoch()) handle.revalidate(RevalidateCause.EpochChanged)
+            }
+        }
     }
 
     /**

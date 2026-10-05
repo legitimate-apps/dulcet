@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
  * | tears on a stored-epoch mismatch at the first live read (rule 2) | `82.2a` (extend first), `82.2b` (open), `82.2c` (the extend is the first live read) |
  * | tears on a folder-set change (rule 3) | `82.3`, control `82.3c` |
  * | rebases only the viewport's pages | `82.4` |
- * | appends unguarded while scanning, rebases when the scan ends | `82.5a` (by an extend, stamp unchanged), `82.5b` (by a reconnect), `82.5c` (the scan ends inside the first page's bracket), `82.5d` (another list saw the scan end) |
+ * | appends unguarded while scanning, rebases when the scan ends | `82.5a` (by an extend, stamp unchanged), `82.5b` (by a reconnect), `82.5c` (the scan ends inside the first page's bracket), `82.5d` (another list saw the scan end, its re-read failed), `82.5e` (another list saw the scan end: the grid and an album re-read at once) |
  * | keeps the anchor by id | `82.4` (by id), `82.6` (nearest surviving predecessor) |
  * | the sentinel and an absent `lastScan` are no epoch whatever `scanning` says | `82.7` × 4, control `82.7c` |
  * | a failed `getScanStatus` is unread — never no epoch, never unchanged | `82.8a` (extend), `82.8b` (scanning window), `82.8c` (connect), `82.8d` (rebase) |
@@ -306,10 +306,13 @@ class ReaderWindowConformanceTest {
             assertEquals(LibraryCoverage.UnverifiedScanning, pubs.last.coverage)
             // Another list's read observes the scan's end, so this window's next page is bracketed
             // by two idle readings under its own stamp: guarded on its own, yet the window holds
-            // unguarded pages, so it must rebase rather than append.
+            // unguarded pages, so it must rebase rather than append. The re-read that end starts
+            // (82.5e) fails here, so this window still holds them when the person scrolls.
             env.server.scanning = false
+            env.server.failing += "getAlbumList2[type=alphabeticalByName]"
             reader.open(LibraryQuery.AlbumList(AlbumListType.Newest), Publications(env.server))
             advanceUntilIdle()
+            env.server.failing.clear()
             handle.setViewport(90, 99)
             val before = env.server.log.size
             handle.loadMore()
@@ -321,6 +324,44 @@ class ReaderWindowConformanceTest {
             )
             assertEquals((0 until 100).map(::albumId), pubs.ids())
             assertEquals(LibraryCoverage.Open, pubs.last.coverage)
+        }
+
+        clause("82.5e when another list's read is the first to see the scan end, what was read during the scan is re-read at once") { env ->
+            env.server.scanning = true
+            env.server.lastScan = STAMP_AFTER_SCAN
+            val reader = env.reader(NO_LOOK_AHEAD)
+            reader.connect()
+            val pubs = Publications(env.server)
+            reader.open(grid, pubs)
+            val album = Publications(env.server)
+            reader.open(LibraryQuery.Album(albumId(3)), album)
+            advanceUntilIdle()
+            assertEquals(LibraryCoverage.UnverifiedScanning, pubs.last.coverage, "fixture: the grid was read during the scan")
+            assertEquals(LibraryCoverage.UnverifiedScanning, album.last.coverage, "fixture: the album was read during the scan")
+
+            env.server.scanning = false
+            val before = env.server.log.size
+            reader.open(LibraryQuery.AlbumList(AlbumListType.Newest), Publications(env.server))
+            advanceUntilIdle()
+            // Newest reads its page twice: its first page's bracket opened during the scan, so it
+            // rebases itself (82.5c). The grid and the album are re-read once each, unprompted; the
+            // two screens' reads interleave as the scheduler runs them, so they are compared as a set.
+            val newest = "getAlbumList2[offset=0][type=newest]"
+            assertEquals(
+                listOf(newest, STATUS, newest, STATUS, PAGE_0, STATUS, "getAlbum[id=${albumId(3)}]").sorted(),
+                env.server.log.drop(before).map(Any::toString).sorted(),
+                "the screens read during the scan waited for a reading that sees no scanning change",
+            )
+            assertEquals(LibraryCoverage.Open, pubs.last.coverage)
+            assertEquals(LibraryFreshness.Live, pubs.last.freshness)
+            assertNull(album.last.coverage, "the album still says the server is updating")
+
+            // Nothing is left for the epoch cadence: its reading finds both screens current.
+            env.clock.now += reader.config.epochIntervalMillis
+            val cadence = env.server.log.size
+            reader.refreshEpoch()
+            advanceUntilIdle()
+            assertEquals(listOf("getMusicFolders", "getScanStatus"), env.server.log.drop(cadence).map { it.endpoint }.sorted())
         }
 
         // ---- 82.6 Anchor: the first visible item is gone -------------------------------------------
