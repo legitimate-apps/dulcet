@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 // The Swift face of the library reader (spec §16.18, the Apple paragraph).
 //
@@ -113,6 +114,35 @@ public protocol DulcetReachabilityMonitoring: AnyObject {
     func stop()
 }
 
+/// Runs an action once, after a delay measured by the monotonic clock, on the main actor. The
+/// session's unreachable grace (§16.14) waits through it; tests advance it by hand.
+@MainActor
+public protocol DulcetDelayScheduling: AnyObject {
+    func schedule(after delay: Duration, _ action: @escaping @MainActor () -> Void) -> any DulcetLibraryReaderCancellable
+}
+
+/// The production scheduler: a main-actor task that sleeps on the continuous clock.
+@MainActor
+public final class DulcetTaskDelayScheduler: DulcetDelayScheduling {
+    public init() {}
+
+    public func schedule(after delay: Duration, _ action: @escaping @MainActor () -> Void) -> any DulcetLibraryReaderCancellable {
+        let task = Task { @MainActor in
+            try? await Task.sleep(for: delay, clock: .continuous)
+            guard !Task.isCancelled else { return }
+            action()
+        }
+        return DulcetTaskCancellable(task)
+    }
+}
+
+@MainActor
+private final class DulcetTaskCancellable: DulcetLibraryReaderCancellable {
+    private let task: Task<Void, Never>
+    init(_ task: Task<Void, Never>) { self.task = task }
+    func cancel() { task.cancel() }
+}
+
 /// Optional capability of a data source: the library reader session its Library and Search
 /// surfaces read from.
 @MainActor
@@ -150,6 +180,11 @@ public final class DulcetLibrarySession {
     @ObservationIgnored private var windows = NSHashTable<DulcetLibraryWindowModel>.weakObjects()
     @ObservationIgnored private var foreground: Bool
     @ObservationIgnored private var lastReachable: Bool?
+    @ObservationIgnored private let delays: any DulcetDelayScheduling
+    @ObservationIgnored private let unreachableGrace: Duration
+    @ObservationIgnored private let reachabilityLog: @MainActor (String) -> Void
+    /// An unreachable report not yet acted on, and when it arrived (for the log only).
+    @ObservationIgnored private var heldUnreachable: (timer: any DulcetLibraryReaderCancellable, since: ContinuousClock.Instant)?
     @ObservationIgnored private var noticeSequence = 0
     /// The reader to make once the previous one has closed.
     @ObservationIgnored private var awaitingOpen: OpenRequest?
@@ -203,12 +238,23 @@ public final class DulcetLibrarySession {
     public init(
         factory: (any DulcetLibraryReaderMaking)?,
         reachability: (any DulcetReachabilityMonitoring)? = nil,
-        foreground: Bool = true
+        foreground: Bool = true,
+        delays: any DulcetDelayScheduling = DulcetTaskDelayScheduler(),
+        unreachableGrace: Duration = DulcetLibrarySession.defaultUnreachableGrace,
+        reachabilityLog: @escaping @MainActor (String) -> Void = { DulcetReachabilityLog.write($0) }
     ) {
+        self.reachabilityLog = reachabilityLog
         self.factory = factory
         self.reachability = reachability
         self.foreground = foreground
+        self.delays = delays
+        self.unreachableGrace = unreachableGrace
     }
+
+    /// How long a platform report that nothing is reachable must stand before the reader is told
+    /// (§16.14, "A reachability report is a hint"). ASSUMED: it covers a Wi-Fi handoff, a VPN
+    /// reconnect or a simulator's network churn, and is short enough that a real loss is said soon.
+    public nonisolated static let defaultUnreachableGrace: Duration = .seconds(5)
 
     /// Whether this app reads its library through a reader at all.
     public var isAvailable: Bool { factory != nil }
@@ -405,17 +451,65 @@ public final class DulcetLibrarySession {
 
     private func startReachability() {
         guard let reachability else { return }
+        releaseHeldUnreachable()
         reachability.start { [weak self] reachable, constrained in
             guard let self, self.mode == .connected, let reader = self.reader else { return }
             reader.setNetworkConstrained(constrained)
-            guard reachable != self.lastReachable else { return }
-            self.lastReachable = reachable
-            reader.setOnline(reachable)
+            self.receiveReachability(reachable, reader: reader)
         }
+    }
+
+    /// A reachability report is a hint (§16.14): "unreachable" is told to the reader only once it
+    /// has stood for `unreachableGrace`, and a "reachable" inside the grace withdraws it, so a blip
+    /// leaves the reader — and every screen and Play — exactly as they were. A real loss is still
+    /// told when the grace ends; a read made meanwhile fails and says so by itself.
+    private func receiveReachability(_ reachable: Bool, reader: any DulcetLibraryReading) {
+        if reachable {
+            if let held = heldUnreachable {
+                releaseHeldUnreachable()
+                reachabilityLog(
+                    "reachable again after \(Self.milliseconds(since: held.since)) ms unreachable; the reader stayed online")
+                return
+            }
+            guard lastReachable != true else { return }
+            reachabilityLog(lastReachable == false
+                ? "reachable; the reader is told and reconnects" : "reachable")
+            lastReachable = true
+            reader.setOnline(true)
+            return
+        }
+        guard lastReachable != false, heldUnreachable == nil else { return }
+        reachabilityLog("unreachable reported; held for \(Self.milliseconds(unreachableGrace)) ms before the reader is told")
+        let generation = readerGeneration
+        let timer = delays.schedule(after: unreachableGrace) { [weak self] in
+            guard let self, let held = self.heldUnreachable else { return }
+            self.heldUnreachable = nil
+            guard self.mode == .connected, self.readerGeneration == generation, let reader = self.reader else { return }
+            self.reachabilityLog(
+                "unreachable for \(Self.milliseconds(since: held.since)) ms; the reader is told and goes offline")
+            self.lastReachable = false
+            reader.setOnline(false)
+        }
+        heldUnreachable = (timer, ContinuousClock.now)
+    }
+
+    private func releaseHeldUnreachable() {
+        heldUnreachable?.timer.cancel()
+        heldUnreachable = nil
+    }
+
+    private static func milliseconds(since instant: ContinuousClock.Instant) -> Int64 {
+        milliseconds(ContinuousClock.now - instant)
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Int64 {
+        let parts = duration.components
+        return parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000
     }
 
     private func stopReachability() {
         reachability?.stop()
+        releaseHeldUnreachable()
         lastReachable = nil
     }
 
@@ -956,5 +1050,17 @@ public final class DulcetReaderSearchModel {
         } else {
             reconnect()
         }
+    }
+}
+
+/// Reachability transitions (§16.14), in the unified log under the app's bundle identifier,
+/// category `reachability`: the platform's reports and what the session did with each. A line names
+/// the transition and a duration, never a server, a URL or a credential, so it is logged public.
+@MainActor
+public enum DulcetReachabilityLog {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Dulcet", category: "reachability")
+
+    public static func write(_ line: String) {
+        logger.notice("\(line, privacy: .public)")
     }
 }

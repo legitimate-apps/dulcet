@@ -6,6 +6,7 @@ import android.net.NetworkInfo
 import android.os.Looper
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
@@ -133,7 +134,16 @@ class PlatformNetwork(app: Application) {
     /** The default network the callbacks were last told of: the host's own, or one switched to. */
     private var reported: android.net.Network? = null
 
+    /** The default network goes and stays gone past the session's grace: a real loss. */
     fun lose() {
+        drop()
+        // A loss is told to the reader only once it has stood for the session's grace (§16.14); the
+        // main looper's clock is virtual here, so the grace is passed rather than waited for.
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(LibrarySession.UNREACHABLE_GRACE_MILLIS))
+    }
+
+    /** The default network goes, and no time passes: the start of a blip, or of a loss. */
+    fun drop() {
         check(!lost)
         val network = checkNotNull(reported ?: manager.activeNetwork) { "setup: the host must start with a network" }
         check(shadow.networkCallbacks.isNotEmpty()) { "setup: the session registered no network callback" }
