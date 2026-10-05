@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the Apple rating and playlist-editing UI proofs (spec §16.20, §18.6; CONF-84, CONF-88..91)
+# Run the Apple rating, heart and playlist-editing UI proofs (spec §16.20, §18.6; CONF-84, CONF-88..91)
 # against the disposable server and turn each result bundle into cited evidence.
 #
 # A file rather than inline YAML for the reason tools/ci/run-app-host-reader-proof gives: the
@@ -105,6 +105,19 @@ macos)
         "$RUNNER_TEMP/dulcet-mac-playlist-edits.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-playlist-edits-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
         DulcetMacRatingsAndPlaylistsAppTest
+    # The Mac's hearts, the toolbar's and a track row's, each clicked and read back (spec §16.20).
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-hearts.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-hearts.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-hearts.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-hearts.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-hearts-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
+        DulcetMacRatingsAndPlaylistsAppTest
     ;;
 iphone)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-iphone --keep-name "iPhone 17 Pro"
@@ -133,6 +146,20 @@ iphone)
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-ios-playlist-edits.xcresult" \
         "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    # A track row's heart and an artist page's heart, each tapped and read back (spec §16.20).
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-row-hearts.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-row-hearts.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-row-hearts.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-row-hearts.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-row-hearts-junit/TEST-DulcetiOSUITests.xml" \
         DulcetiOSUITests
     # Beside the playlist proof because it opens the same album and the same row menu: a track
     # dragged out of its open context menu onto the now-playing bar joins Up Next (spec §3.1). It
@@ -205,6 +232,20 @@ ipados)
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-ipados-playlist-edits.xcresult" \
         "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    # The same hearts on the iPad.
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-row-hearts.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-row-hearts.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-row-hearts.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-row-hearts.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-row-hearts-junit/TEST-DulcetiOSUITests.xml" \
         DulcetiOSUITests
     # The library's album tile and playlist row dragged out of their open menus onto the bar add
     # their tracks to Up Next in order (spec §3.1); no feature cell, so no JUnit.

@@ -275,12 +275,17 @@ private struct DulcetTVSectionNavigation: View {
         .onChange(of: store.selectedDestination) { _, destination in
             arrivalFocus.sectionChanged(to: destination)
         }
-        // The exit button is how a person leaves a surface on this platform, so it returns focus
-        // to the bar -- deterministically, rather than relying on the focus engine to find a
-        // control several scroll views away. From the bar itself it stays unhandled, because
-        // there the platform's own meaning is to leave the app, and consuming it would strand
-        // the person inside.
+        // The exit button is how a person leaves a surface on this platform. On a pushed Library
+        // page it goes back one page, as the platform's own stacks do; on a section's root it
+        // returns focus to the bar -- deterministically, rather than relying on the focus engine
+        // to find a control several scroll views away. From the bar itself it stays unhandled,
+        // because there the platform's own meaning is to leave the app, and consuming it would
+        // strand the person inside.
         .dulcetOnExitCommand(perform: focusedSection == nil ? {
+            if store.canGoBackInLibrary {
+                store.goBackInLibrary()
+                return
+            }
             arrivalFocus.settle()
             focusedSection = selected
         } : nil)

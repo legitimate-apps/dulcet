@@ -3643,6 +3643,139 @@ final class DulcetiOSUITests: XCTestCase {
         return observed
     }
 
+    /// A track row's heart and an artist page's heart (spec §16.20) on iPhone.
+    @MainActor
+    func testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone() {
+        proveTrackRowAndArtistHeartsReachTheServer(compact: true)
+    }
+
+    /// The same hearts on iPad, through the sidebar.
+    @MainActor
+    func testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS() {
+        proveTrackRowAndArtistHeartsReachTheServer(compact: false)
+    }
+
+    /// The heart beside a track on an album page, then the heart on that album's artist page: each
+    /// fills with the tap, before the server answers, and the star reaches the server for that
+    /// track or artist; taking it off empties it at once and unstars it, so the server ends as it
+    /// started. The artist page is reached through the album page's artist link, the way a person
+    /// reaches it. Each destination has its own test, and each fails on the other's window class.
+    @MainActor
+    private func proveTrackRowAndArtistHeartsReachTheServer(compact expectedCompact: Bool) {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        let artist = "Dulcet Fixtures"
+        guard let app = launchConnected(
+            serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact
+        ) else { return }
+        guard openLibraryAlbum(album, in: app, compact: expectedCompact) else { return }
+
+        // 1. The track row's heart: the one beside the row, by the row's own frame.
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
+        guard row.waitForExistence(timeout: 15), scrollIntoView(row, in: app) else {
+            XCTFail("\(album) must list \(track): " + app.debugDescription)
+            return
+        }
+        let rowHearts = app.buttons.matching(identifier: "dulcet.reader.favorite").allElementsBoundByIndex
+            .filter { $0.frame.midY > row.frame.minY && $0.frame.midY < row.frame.maxY }
+        guard rowHearts.count == 1, let rowHeart = rowHearts.first else {
+            XCTFail("Exactly one heart must sit beside \(track)'s row; found \(rowHearts.count): " + app.debugDescription)
+            return
+        }
+        let songStarred = { self.readServerSongStarred(track, album: album, configuration: configuration) }
+        let awaitSong = { (expected: Bool) in
+            self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: expected, timeout: 30)
+        }
+        guard toggleHeartAndProve(rowHeart, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
+
+        // 2. The artist page's heart, reached through the album's artist link.
+        let link = app.buttons.matching(NSPredicate(format: "label == %@", artist)).firstMatch
+        guard link.waitForExistence(timeout: 10), scrollIntoView(link, in: app) else {
+            XCTFail("The album page must link its artist \(artist): " + app.debugDescription)
+            return
+        }
+        link.tap()
+        let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        guard artistTitle.waitForExistence(timeout: 15), artistTitle.label == artist else {
+            XCTFail("The artist link must open \(artist)'s page: " + app.debugDescription)
+            return
+        }
+        let artistHeart = app.buttons["dulcet.artist.favorite"].firstMatch
+        guard artistHeart.waitForExistence(timeout: 10) else {
+            XCTFail("The artist page must offer its heart: " + app.debugDescription)
+            return
+        }
+        let artistStarred = { self.readServerArtistStarred(artist, configuration: configuration) }
+        let awaitArtist = { (expected: Bool) -> Bool? in
+            let deadline = Date().addingTimeInterval(30)
+            var observed = artistStarred()
+            while observed != nil, observed != expected, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(1))
+                observed = artistStarred()
+            }
+            return observed
+        }
+        guard toggleHeartAndProve(artistHeart, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
+        print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
+    }
+
+    /// From a known starting point whatever an earlier run left: the heart fills with the tap, the
+    /// star reaches the server, and a second tap empties it at once and unstars it there.
+    @MainActor
+    private func toggleHeartAndProve(
+        _ heart: XCUIElement,
+        what: String,
+        read: () -> Bool?,
+        awaitServer: (Bool) -> Bool?
+    ) -> Bool {
+        if heart.label == "Remove Favorite" {
+            heart.tap()
+            guard waitForLabel("Favorite", of: heart, timeout: 5), awaitServer(false) == false else {
+                XCTFail("An earlier run's favourite on \(what) could not be cleared first")
+                return false
+            }
+        }
+        guard read() == false else {
+            XCTFail("The control: the server must not already hold the favourite on \(what) this proof makes")
+            return false
+        }
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "\(what): the heart must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServer(true), true, "\(what): the star must reach the server")
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(what): the heart must empty at once")
+        XCTAssertEqual(awaitServer(false), false, "\(what): removing the favourite must reach the server")
+        return true
+    }
+
+    /// Whether the server holds the named artist as a favourite, read over `/rest/search3`. Nil,
+    /// with the reason printed, unless exactly one artist matches.
+    @MainActor
+    private func readServerArtistStarred(_ artist: String, configuration: LivePlaybackConfiguration) -> Bool? {
+        guard let envelope = restCall("search3", [
+            URLQueryItem(name: "query", value: artist),
+            URLQueryItem(name: "songCount", value: "0"),
+            URLQueryItem(name: "albumCount", value: "0"),
+            URLQueryItem(name: "artistCount", value: "20"),
+        ], configuration: configuration) else { return nil }
+        let artists = (envelope["searchResult3"] as? [String: Any])?["artist"] as? [[String: Any]] ?? []
+        let matches = artists.filter { $0["name"] as? String == artist }
+        guard matches.count == 1, let match = matches.first else {
+            print("DULCET REST search3 matched \(matches.count) artists named \(artist); exactly one is required")
+            return nil
+        }
+        // Subsonic carries `starred` only on a favourite.
+        return match["starred"] != nil
+    }
+
     /// Now Playing's stars for the playing track (spec §16.20, CONF-84) on iPhone, in the sheet.
     @MainActor
     func testNowPlayingStarsRateTheTrackOnTheServerOnIPhone() {

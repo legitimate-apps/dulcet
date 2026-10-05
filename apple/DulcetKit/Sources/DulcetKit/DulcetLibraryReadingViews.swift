@@ -1540,6 +1540,7 @@ struct DulcetReaderArtistPage: View {
                                     .font(.largeTitle.weight(.bold))
                                     .lineLimit(nil)
                                     .accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier("dulcet.artist.title")
                                 if let count = header.albumCount {
                                     Text(DulcetStrings.readerCount(.albums, count))
                                         .font(.subheadline)
@@ -1548,9 +1549,20 @@ struct DulcetReaderArtistPage: View {
                             }
                             Spacer(minLength: 0)
                             if let target = header.favouriteTarget {
-                                DulcetFavouriteButton(target: target, published: header.isFavourite, title: header.displayTitle, size: .title2)
+                                DulcetFavouriteButton(
+                                    target: target,
+                                    published: header.isFavourite,
+                                    title: header.displayTitle,
+                                    size: .title2,
+                                    identifier: "dulcet.artist.favorite"
+                                )
                             }
                         }
+#if os(tvOS)
+                        // The heart is the header's only control and sits past the last album
+                        // tile, so Up from the grid finds it only when the whole row is a section.
+                        .focusSection()
+#endif
                     }
                     DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { _ in
                         DulcetReaderGrid(model: model, width: width) { item in

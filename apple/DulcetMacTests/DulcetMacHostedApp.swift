@@ -667,6 +667,18 @@ struct LiveServer {
         return song?["userRating"] as? Int ?? 0
     }
 
+    /// Whether the server holds one song as a favourite: Subsonic carries `starred` only then.
+    func starred(_ songID: String) async throws -> Bool {
+        let song = try await call("getSong", [URLQueryItem(name: "id", value: songID)])["song"] as? [String: Any]
+        _ = try XCTUnwrap(song, "getSong must return the song")
+        return song?["starred"] != nil
+    }
+
+    /// Stars or unstars one song as another client would.
+    func setStarred(_ songID: String, _ starred: Bool) async throws {
+        _ = try await call(starred ? "star" : "unstar", [URLQueryItem(name: "id", value: songID)])
+    }
+
     /// Writes a rating as another client would.
     func setRating(_ songID: String, _ rating: Int) async throws {
         _ = try await call("setRating", [URLQueryItem(name: "id", value: songID), URLQueryItem(name: "rating", value: String(rating))])

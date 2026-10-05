@@ -1581,6 +1581,29 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # The album page's heart, a track row's and the artist page's on Apple TV, each reached
+          # and pressed by remote and read back from the server (spec §16.20). Each is left unstarred.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-hearts.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-hearts-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote, last on this device (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
@@ -2532,4 +2555,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-ratings-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ratings-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit"
+            "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit" \
+            "$RUNNER_TEMP/dulcet-mac-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-ios-row-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-row-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-hearts-junit"
