@@ -374,6 +374,7 @@ public final class DulcetLibrarySession {
             guard failed, let self, self.readerGeneration == generation, self.reader === made else { return }
             self.readerSetupFailed = true
         }
+        reachabilityLog("reader opened generation=\(readerGeneration) mode=\(requested)")
         outcomeSubscription = made.subscribeFavouriteOutcomes { [weak self] outcome in
             self?.receive(outcome)
         }
@@ -430,6 +431,7 @@ public final class DulcetLibrarySession {
         tappedRatings = [:]
         knownRatings = [:]
         readerGeneration += 1
+        reachabilityLog("reader closed generation=\(readerGeneration)")
         for window in windows.allObjects {
             window.readerChanged()
         }

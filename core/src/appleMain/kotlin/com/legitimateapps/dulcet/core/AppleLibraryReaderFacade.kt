@@ -126,9 +126,10 @@ public class AppleLibraryReaderClient internal constructor(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (failure: Throwable) {
                 // Every entry point answers a missing session with a closed failure; the throwable's
                 // text is dropped here, because it may carry the address or credentials.
+                AppleReaderDiagnostics.failed("setup", failure)
                 null
             }
         }
@@ -788,6 +789,7 @@ public class AppleLibraryWindowSubscription internal constructor(
         if (listener.load() == null) return
         client.register(this)
         if (composition == null) {
+            AppleReaderDiagnostics.failed("window open")
             emit(readerFailurePublication(sequence + 1, emitted, errorKind = null))
             return
         }
@@ -807,7 +809,8 @@ public class AppleLibraryWindowSubscription internal constructor(
             throw cancelled
         } catch (_: IllegalArgumentException) {
             emit(readerFailurePublication(sequence + 1, emitted, errorKind = "input"))
-        } catch (_: Throwable) {
+        } catch (failure: Throwable) {
+            AppleReaderDiagnostics.failed("window open", failure)
             emit(readerFailurePublication(sequence + 1, emitted, errorKind = null))
         }
     }
@@ -845,7 +848,12 @@ public class AppleLibraryWindowSubscription internal constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                if (publishFailure) emit(failurePublication()) else client.uncaughtFailures += failure
+                if (publishFailure) {
+                    AppleReaderDiagnostics.failed("window call", failure)
+                    emit(failurePublication())
+                } else {
+                    client.uncaughtFailures += failure
+                }
             }
         }
     }
@@ -856,7 +864,8 @@ public class AppleLibraryWindowSubscription internal constructor(
     private fun publish(publication: LibraryPublication) {
         val converted = try {
             publication.toApple(providerInstanceId, sequence + 1)
-        } catch (_: Throwable) {
+        } catch (failure: Throwable) {
+            AppleReaderDiagnostics.failed("window publication", failure)
             failurePublication()
         }
         emit(converted)
@@ -952,6 +961,7 @@ public class AppleLibrarySearchSubscription internal constructor(
         if (listener.load() == null) return
         client.register(this)
         if (composition == null) {
+            AppleReaderDiagnostics.failed("search open")
             emit(searchFailurePublication("internalFailure"))
             return
         }
@@ -959,7 +969,8 @@ public class AppleLibrarySearchSubscription internal constructor(
             session = composition.session.openSearch(composition.searchConfig, ::publish)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (failure: Throwable) {
+            AppleReaderDiagnostics.failed("search open", failure)
             emit(searchFailurePublication("internalFailure"))
         }
     }
@@ -993,6 +1004,7 @@ public class AppleLibrarySearchSubscription internal constructor(
             if (typed != null) memory.type(typed)
             val current = session
             if (current == null) {
+                AppleReaderDiagnostics.failed("search call")
                 emit(searchFailurePublication("internalFailure"))
                 return@onReader
             }
@@ -1000,7 +1012,8 @@ public class AppleLibrarySearchSubscription internal constructor(
                 action(current)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
+            } catch (failure: Throwable) {
+                AppleReaderDiagnostics.failed("search call", failure)
                 emit(searchFailurePublication("internalFailure"))
             }
         }
@@ -1010,7 +1023,8 @@ public class AppleLibrarySearchSubscription internal constructor(
     private fun publish(publication: LibrarySearchPublication) {
         val converted = try {
             publication.toApple()
-        } catch (_: Throwable) {
+        } catch (failure: Throwable) {
+            AppleReaderDiagnostics.failed("search publication", failure)
             searchFailurePublication("internalFailure")
         }
         emit(converted)
@@ -1049,6 +1063,7 @@ public class AppleLibrarySearchSubscription internal constructor(
 
     /** Made on a closed client: one statement of fact, never silence. */
     internal fun openedOnClosedClient() {
+        AppleReaderDiagnostics.failed("search on a closed reader")
         bornClosed.store(true)
         emitClosed()
     }
