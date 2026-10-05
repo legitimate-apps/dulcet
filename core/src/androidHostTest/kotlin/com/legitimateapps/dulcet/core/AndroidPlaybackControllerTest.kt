@@ -1550,11 +1550,12 @@ class AndroidPlaybackControllerTest {
 
     /**
      * A play the server says is gone (error 70) is refused at once, a minute later and five minutes
-     * after that, and then dropped: the outbox row goes, nothing more is sent for it, and the
-     * controller says so (spec §15.3). Real socket, the controller's own consumer, worker and
+     * after that, and then dropped, but only because the server took another play meanwhile (one
+     * seeded after the first refusal): the outbox row goes, nothing more is sent for it, and the
+     * controller counts it (spec §15.3). Real socket, the controller's own consumer, worker and
      * sender; virtual time on both clocks the retry reads, as above.
      */
-    @Test fun aSubmittedPlayTheServerSaysIsGoneIsDroppedAfterThreeRefusalsAndCounted() {
+    @Test fun aSubmittedPlayTheServerSaysIsGoneIsDroppedAfterThreeRefusalsWhileAnotherGetsThrough() {
         ScrobbleReceiver(goneId = "gone-song").use { receiver ->
             Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
                 f.controller.playSong(OWNER, "gone-song", "Gone song")
@@ -1566,23 +1567,31 @@ class AndroidPlaybackControllerTest {
                 }
                 val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
                 val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20)
-                fun submissions() = receiver.requests.count { it["submission"] == "true" }
+                fun goneSubmissions() = receiver.requests.count { it["submission"] == "true" && it["id"] == "gone-song" }
                 // Sockets answer on real time and the waits on virtual time: step the virtual clock
-                // five seconds a turn (the longest wait is five minutes) until the play is dropped.
-                while (f.controller.refusedPlaysDropped == 0L && System.nanoTime() < deadline) {
+                // five seconds a turn (the longest wait is five minutes) until the condition holds.
+                fun step() {
                     mainScheduler.advanceTimeBy(5_000)
                     shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(5_000))
                     Thread.sleep(10)
                 }
+                while (goneSubmissions() < 1 && System.nanoTime() < deadline) step()
+                assertEquals(1, goneSubmissions(), "The first refusal")
+                // Another play arrives after it, and the server will take it.
+                outbox.persistSynchronously(RecordedPlaybackEvent.SubmittedPlay(
+                    ProviderItemId(OWNER, "live-song"), PlaybackWallClockTime(System.currentTimeMillis() + 1)))
+                while (f.controller.refusedPlaysDropped == 0L && System.nanoTime() < deadline) step()
                 assertEquals(1L, f.controller.refusedPlaysDropped, "The refused play is dropped and counted")
-                assertEquals(3, submissions(), "Refused three times, then no more")
-                assertTrue(outbox.pending(ServerId(OWNER)).isEmpty(), "The dropped play leaves the outbox")
+                assertEquals(3, goneSubmissions(), "Refused three times, then no more")
+                assertEquals(1, receiver.requests.count { it["submission"] == "true" && it["id"] == "live-song" },
+                    "The other play was taken once")
+                assertTrue(outbox.pending(ServerId(OWNER)).isEmpty(), "Neither play is left in the outbox")
                 repeat(120) {
                     mainScheduler.advanceTimeBy(30_000)
                     shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(30_000))
                 }
                 Thread.sleep(200)
-                assertEquals(3, submissions(), "An hour later nothing has been sent for the dropped play")
+                assertEquals(3, goneSubmissions(), "An hour later nothing has been sent for the dropped play")
             }
         }
     }

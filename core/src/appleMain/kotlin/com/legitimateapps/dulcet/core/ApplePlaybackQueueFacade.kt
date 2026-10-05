@@ -139,8 +139,9 @@ public class ApplePlaybackDeliveryReportDto internal constructor(
     public val nowPlayingSent: Long,
     public val nowPlayingDropped: Long,
     /**
-     * Plays the server refused as its own (error 70, the track is gone) three times and the outbox
-     * therefore dropped (spec §15.3). Each is also counted in `submittedPlayFailedAttempts`.
+     * Plays the server refused as its own (error 70, the track is gone) three times while it went on
+     * accepting others, which the outbox therefore dropped (spec §15.3). Each is also counted in
+     * `submittedPlayFailedAttempts`. A diagnostic counter: only the debug delivery marker shows it.
      */
     public val submittedPlaysRefusedDropped: Long = 0,
 )

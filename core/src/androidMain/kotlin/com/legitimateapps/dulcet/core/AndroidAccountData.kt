@@ -83,7 +83,7 @@ public class AndroidAccountData internal constructor(
      * (null when that cannot be read). Delivery stops at the first play the server fails to take
      * (no answer, a 5xx, a rate limit, a refused account); that play and every later one stay unsent.
      * A play the server says is gone (error 70) stays unsent too, but the plays behind it are still
-     * sent: this one-shot worker refuses it once, which never drops a play, so the person is still
+     * sent: this one-shot worker refuses it at most once, which never drops a play, so the person is still
      * offered it (spec §15.3).
      */
     public suspend fun submitPlays(account: PlaybackEndpointAccount): Set<String>? {

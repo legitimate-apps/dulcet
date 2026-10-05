@@ -28,7 +28,8 @@ struct DulcetScrobbleDeliveryReport: Equatable, Sendable {
     let submittedPlayFailedAttempts: Int
     let nowPlayingSent: Int
     let nowPlayingDropped: Int
-    /// Plays the server refused as its own three times (the track is gone) and the outbox dropped.
+    /// Plays the server refused as its own three times (the track is gone) while it accepted others,
+    /// and the outbox dropped. A diagnostic counter: only the debug marker shows it.
     let submittedPlaysRefusedDropped: Int
 
     init(_ dto: ApplePlaybackDeliveryReportDto) {

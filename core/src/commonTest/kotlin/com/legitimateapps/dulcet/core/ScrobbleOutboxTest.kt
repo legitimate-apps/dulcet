@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -643,6 +644,117 @@ class ScrobbleOutboxTest {
         val outcome = OneOutcome(transport.ids.toList(), result.deliveredCount, result.refusedDropCount, fixture.outbox.count().toInt())
         fixture.close()
         return outcome
+    }
+
+    @Test
+    fun aServerThatAnswers70ForEverythingDropsNothingHoweverLongItLastsAndRecovers() = runTest {
+        val fixture = fixture()
+        val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }
+        var serverTakesPlays = false
+        val transport = recordingTransport(clock) { _, _ -> if (serverTakesPlays) okResponse() else notFound() }
+        listOf("a", "b", "c", "d").forEachIndexed { i, id ->
+            fixture.outbox.persistForAtLeastOnceDelivery(play(id, i + 1L))
+        }
+        val loop = retryLoop(fixture, transport, clock)
+
+        loop.drainNow()
+        assertEquals(OUTBOX_REFUSED_RUN_LIMIT, transport.times.size, "The first pass stops after a run of refusals")
+        advanceTimeBy(1.days.inWholeMilliseconds)
+        runCurrent()
+
+        assertEquals(4, fixture.outbox.count(), "Every play survives a day of the server refusing every track")
+        assertTrue(fixture.diagnostics.events.none { it is ScrobbleOutboxDiagnosticEvent.RefusedDropped })
+        // Bounded: a held play is asked again at most once per retry ceiling (five minutes).
+        val bound = 4 * (1.days / OUTBOX_RETRY_CEILING).toInt() + 4 * 5
+        assertTrue(transport.times.size <= bound, "${transport.times.size} requests in a day, bound $bound")
+
+        serverTakesPlays = true
+        advanceTimeBy(10.minutes.inWholeMilliseconds)
+        runCurrent()
+        assertEquals(0, fixture.outbox.count(), "Once the server takes plays again every one is delivered")
+        assertTrue(fixture.diagnostics.events.none { it is ScrobbleOutboxDiagnosticEvent.RefusedDropped })
+        fixture.close()
+    }
+
+    @Test
+    fun aGonePlayRefusedWhileNothingElseIsAcceptedIsHeldUntilAnotherPlayGetsThrough() = runTest {
+        val fixture = fixture()
+        val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }
+        val transport = recordingTransport(clock) { _, parameters ->
+            if (parameters["id"] == GONE_ID) notFound() else okResponse()
+        }
+        fixture.outbox.persistForAtLeastOnceDelivery(play(GONE_ID, 1))
+        val loop = retryLoop(fixture, transport, clock)
+
+        loop.drainNow()
+        advanceTimeBy(1.hours.inWholeMilliseconds)
+        runCurrent()
+        assertEquals(1, fixture.outbox.count(), "Alone, with nothing else accepted, it is held, not dropped")
+        assertTrue(fixture.diagnostics.events.none { it is ScrobbleOutboxDiagnosticEvent.RefusedDropped })
+        val heldRequests = transport.times.size
+        assertTrue(heldRequests in 3..15, "Held at one request per five minutes after the second: $heldRequests")
+
+        fixture.outbox.persistForAtLeastOnceDelivery(play("later", 99))
+        advanceTimeBy(11.minutes.inWholeMilliseconds)
+        runCurrent()
+
+        assertEquals(0, fixture.outbox.count(), "Another play got through, so the next refusal drops the gone one")
+        assertEquals(1, fixture.diagnostics.events.count { it is ScrobbleOutboxDiagnosticEvent.RefusedDropped })
+        fixture.close()
+    }
+
+    @Test
+    fun theRefusalStateIsPerPlayNotPerTrackWhenTwoSessionsShareATrackId() = runTest {
+        val fixture = fixture()
+        val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }
+        val refusedSession = (SESSION_START + 1).toString()
+        val sessions = mutableListOf<Pair<String, Duration>>()
+        val transport = recordingTransport(clock) { _, parameters ->
+            sessions += parameters.getValue("time") to clock.now()
+            if (parameters["time"] == refusedSession) notFound() else okResponse()
+        }
+        fixture.outbox.persistForAtLeastOnceDelivery(play("same-track", 1))
+        fixture.outbox.persistForAtLeastOnceDelivery(play("same-track", 2))
+        val loop = retryLoop(fixture, transport, clock)
+
+        loop.drainNow()
+        advanceTimeBy(1.days.inWholeMilliseconds)
+        runCurrent()
+
+        assertEquals(
+            listOf(0.milliseconds, 1.minutes, 6.minutes),
+            sessions.filter { it.first == refusedSession }.map { it.second },
+            "The accepted session of the same track does not reset the refused one's count",
+        )
+        assertEquals(1, sessions.count { it.first != refusedSession }, "The other session was sent once, at once")
+        assertEquals(0, fixture.outbox.count())
+        assertEquals(1, fixture.diagnostics.events.count { it is ScrobbleOutboxDiagnosticEvent.RefusedDropped })
+        fixture.close()
+    }
+
+    @Test
+    fun aRetryableFailureBetweenTwoRefusalsOfOnePlayDoesNotResetItsCount() = runTest {
+        val fixture = fixture()
+        val clock = fixture.monotonic
+        val answersForGone = ArrayDeque(listOf(notFound(), errorResponse(), notFound(), notFound()))
+        val transport = recordingTransport(clock) { _, parameters ->
+            if (parameters["id"] == GONE_ID) answersForGone.removeFirst() else okResponse()
+        }
+        fixture.outbox.persistForAtLeastOnceDelivery(play(GONE_ID, 1))
+        fixture.outbox.persistForAtLeastOnceDelivery(play("behind", 2))
+        val worker = worker(fixture.outbox, transport, clock, fixture.diagnostics)
+
+        assertEquals(1, worker.onForeground().deliveredCount)      // 70 (first refusal); the other play is accepted
+        clock.advanceBy(1.minutes)
+        assertEquals(1, worker.onForeground().attemptedCount)      // 5xx: held, the refusal count stays at 1
+        clock.advanceBy(2.seconds)
+        assertEquals(0, worker.onForeground().refusedDropCount)    // 70 (second refusal), not dropped
+        clock.advanceBy(5.minutes)
+        val third = worker.onForeground()                          // 70 (third refusal): dropped
+        assertEquals(1, third.refusedDropCount, "70, 5xx, 70, 70 is three refusals: the count accumulates across the 5xx")
+        assertEquals(4, transport.ids.count { it == GONE_ID })
+        assertEquals(0, fixture.outbox.count())
+        fixture.close()
     }
 
     @Test

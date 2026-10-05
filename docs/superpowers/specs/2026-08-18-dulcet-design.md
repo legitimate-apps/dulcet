@@ -3159,13 +3159,26 @@ diagnostic count, so "once per run" has nothing to apply to here.
   table: the track is gone from the server). The server answered, and what it said is about this play
   alone, so the plays behind it go on being sent in the same drain, in order. The play is tried again
   one minute later and five minutes after that (both ASSUMED: a server mid-rescan can answer 70 for a
-  track that is back a moment later); a third refusal **drops it**, and the drop is a
-  `RefusedDropped` diagnostic event, the Apple delivery report's `submittedPlaysRefusedDropped` and
-  Android's `refusedPlaysDropped`, never silent: it loses user-authored play history exactly as a
-  retention drop does. The count is the worker's, per process; a restart gives the play three more
-  tries, at one request each. A play refused and not yet dropped is neither held back by the global
-  backoff nor a reason for it; a drain inside its wait leaves it alone. A one-shot send at sign-out
-  refuses it once, which never drops a play, so the person is still offered it.
+  track that is back a moment later). **A third refusal drops it only if the server has accepted some
+  other play since this one's first refusal, or in the drain that first refused it.** A server that
+  answers 70 for every track (a library not mounted or scanning, a restored database, ids regenerated
+  by a rescan, 70 for a scrobble it does not implement) is the server's fault, not every play's; with
+  nothing accepted the play is held at its second refusal, five minutes between tries, and nothing is
+  dropped however long that lasts, until another play gets through (then its next refusal drops it).
+  Three refusals in a row inside one drain with nothing accepted between them end the drain and back
+  off as for any retryable failure, so a systemic 70 costs at most three requests per backoff, not one
+  per queued play. The drop is a `RefusedDropped` diagnostic event and is recorded in a diagnostic
+  counter (the Apple delivery report's `submittedPlaysRefusedDropped`, which only the debug delivery
+  marker shows, and Android's `refusedPlaysDropped`, which only tests read); the person is not told.
+  It loses user-authored play history exactly as a retention drop does. The count is the worker's, per
+  process, and kept across a retryable failure of the same play (70, 5xx, 70 is two refusals); a
+  restart gives the play three more tries, at one request each. A play refused and not yet dropped
+  waits its own time, so a drain inside the wait leaves it alone; the global backoff after a
+  retryable failure holds it with the rest. A one-shot send at sign-out refuses it at most once,
+  which never drops a play, so the person is still offered it. **Accepted trade-off:** a server that
+  answers 0 or 10 rather than 70 for a bad id is classed retryable, so such a play holds the queue in
+  order until the 30-day retention drop, one request per backoff; only 70 is item-scoped by the
+  error table.
 
 OBSERVED 2026-10-04 against Navidrome 0.63.2 (a disposable local instance; CONF-93 and a probe that
 deleted a track and rescanned): `scrobble` for an id the server does not hold — never-existed, an id
@@ -7548,8 +7561,11 @@ The retry loop above made a play the server will never take cost a request every
 days, and the worker stopped at the first refused play, so every later play waited behind it until the
 drop. The outcome of a send is now classified (§15.3): error 70
 alone is refused-as-its-own — the queue goes on past it, it is retried one and then five minutes
-later, and a third refusal drops it with a `RefusedDropped` diagnostic, `submittedPlaysRefusedDropped`
-on Apple and `refusedPlaysDropped` on Android; every other failure, account refusals included, holds
+later, and a third refusal drops it, but only while the server has accepted some other play since the
+first refusal (a server that answers 70 for everything drops nothing; three refusals in a row in one
+drain end it), with a `RefusedDropped` diagnostic recorded in a counter, `submittedPlaysRefusedDropped`
+on Apple (shown only by the debug marker) and `refusedPlaysDropped` on Android (read only by tests),
+not surfaced to the person; every other failure, account refusals included, holds
 the queue in order on the existing backoff and never drops. OBSERVED, and the reason this is defensive
 rather than a fix for a seen failure: Navidrome 0.63.2 answers `ok` to a scrobble for an unknown or
 deleted track (CONF-93), so the reference server cannot form such a row; error 70 is the code the error

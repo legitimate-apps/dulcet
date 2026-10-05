@@ -147,9 +147,9 @@ public class AndroidPlaybackController internal constructor(
             if (event is ScrobbleOutboxDiagnosticEvent.RefusedDropped) refusedDrops.incrementAndGet()
         })
     /**
-     * Plays the server refused as its own (error 70, the track is gone) three times, which the
-     * outbox therefore dropped since this controller was created (spec §15.3). Dropping user-authored
-     * play history is never silent; this is where it shows.
+     * Plays the server refused as its own (error 70, the track is gone) three times while it went on
+     * accepting others, which the outbox therefore dropped since this controller was created (spec
+     * §15.3). A diagnostic counter only: nothing reads it yet but tests, and the person is not told.
      */
     public val refusedPlaysDropped: Long get() = refusedDrops.get()
     private val deliveries = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)

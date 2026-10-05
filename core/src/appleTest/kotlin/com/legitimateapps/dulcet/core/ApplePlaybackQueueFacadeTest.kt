@@ -340,13 +340,16 @@ class ApplePlaybackQueueFacadeTest {
     }
 
     @Test
-    fun aSubmittedPlayTheServerSaysIsGoneIsDroppedAfterThreeRefusalsAndTheReportSaysSo() {
-        // Error 70 for the submission, every time: the track no longer exists on the server. The
-        // play is refused at once, a minute later and five minutes after that, and then dropped;
-        // nothing is sent for it afterwards, and the report names the drop (spec §15.3).
+    fun aSubmittedPlayTheServerSaysIsGoneIsDroppedAfterThreeRefusalsWhileOthersGetThroughAndTheReportSaysSo() {
+        // Error 70 for the first play, every time: the track no longer exists on the server. It is
+        // refused at once, a minute later and five minutes after that. It is dropped only because the
+        // server accepted another play meanwhile (one seeded behind it after its first refusal); the
+        // report names the drop (spec §15.3).
         val scheduler = TestCoroutineScheduler()
         val transport = QueuedScrobbleTransport(
-            ArrayDeque(listOf(okEnvelope(), notFoundEnvelope(), notFoundEnvelope(), notFoundEnvelope())),
+            ArrayDeque(
+                listOf(okEnvelope(), notFoundEnvelope(), notFoundEnvelope(), okEnvelope(), notFoundEnvelope()),
+            ),
         )
         val delivery = deliveryFixture(
             transport,
@@ -369,27 +372,40 @@ class ApplePlaybackQueueFacadeTest {
             assertEquals(1, first.submittedPlayFailedAttempts)
             assertEquals(0, first.submittedPlaysRefusedDropped, "One refusal never drops a play")
 
+            // Another play arrives after the first refusal; the server will take it.
+            PersistentScrobbleOutbox(delivery.database, OutboxWallClock { 1_788_000_000_000 })
+                .persistSynchronously(
+                    RecordedPlaybackEvent.SubmittedPlay(
+                        ProviderItemId("server", "another-track"),
+                        PlaybackWallClockTime(1_788_000_100_000),
+                    ),
+                )
+
             scheduler.advanceTimeBy(59_999)
             scheduler.runCurrent()
             assertEquals(2, transport.parameters.size, "The first retry waits the whole minute")
             scheduler.advanceTimeBy(1)
             scheduler.runCurrent()
-            assertEquals(3, transport.parameters.size)
+            assertEquals(4, transport.parameters.size, "The refused play and the new one, in that order")
+            assertEquals(1, client.deliveryReport().submittedPlaysDelivered)
             scheduler.advanceTimeBy(5 * 60_000 - 1)
             scheduler.runCurrent()
-            assertEquals(3, transport.parameters.size, "The second retry waits the whole five minutes")
+            assertEquals(4, transport.parameters.size, "The second retry waits the whole five minutes")
             scheduler.advanceTimeBy(1)
             scheduler.runCurrent()
 
-            assertEquals(listOf("false", "true", "true", "true"), transport.parameters.map { it["submission"] })
+            assertEquals(
+                listOf("false", "true", "true", "true", "true"),
+                transport.parameters.map { it["submission"] },
+            )
             val dropped = client.deliveryReport()
             assertEquals(1, dropped.submittedPlaysRefusedDropped)
             assertEquals(0, dropped.submittedPlaysPending, "The refused play is gone, not waiting")
-            assertEquals(0, dropped.submittedPlaysDelivered)
+            assertEquals(1, dropped.submittedPlaysDelivered, "Only the other play was delivered")
             assertEquals(3, dropped.submittedPlayFailedAttempts)
             scheduler.advanceTimeBy(3_600_000)
             scheduler.runCurrent()
-            assertEquals(4, transport.parameters.size, "Nothing is sent for a dropped play")
+            assertEquals(5, transport.parameters.size, "Nothing is sent for a dropped play")
         } finally {
             delivery.close()
         }
@@ -428,13 +444,14 @@ class ApplePlaybackQueueFacadeTest {
             wallClock = wallClock,
             monotonicClock = monotonicClock,
         )
-        return DeliveryFixture(driver, client, reports)
+        return DeliveryFixture(driver, client, reports, database)
     }
 
     private class DeliveryFixture(
         private val driver: app.cash.sqldelight.db.SqlDriver,
         val client: ApplePlaybackQueueClient,
         val reports: MutableList<ApplePlaybackDeliveryReportDto>,
+        val database: com.legitimateapps.dulcet.database.DulcetDatabase,
     ) {
         fun closeDriver() {
             driver.close()
