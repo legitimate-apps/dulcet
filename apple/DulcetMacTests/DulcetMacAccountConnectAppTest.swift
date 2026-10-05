@@ -1483,11 +1483,27 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         accessibilityObjectValue("accessibilityValue", of: element)
     }
 
+    /// The hit view and its ancestors, innermost first: what a click at that point would reach.
+    private func viewChain(_ view: NSView?) -> String {
+        var names: [String] = []
+        var current = view
+        while let next = current, names.count < 8 {
+            names.append("\(type(of: next))\(next.frame)")
+            current = next.superview
+        }
+        return names.isEmpty ? "nothing" : names.joined(separator: " < ")
+    }
+
     private func selectAccessibilityTableRow(_ element: Any, in window: NSWindow) throws -> NSTableView {
         let point = try accessibilityWindowPoint(element, in: window)
         let content = try XCTUnwrap(window.contentView, "Hosted window has no content")
-        let table = try XCTUnwrap(content.hitTest(content.convert(point, from: nil)) as? NSTableView,
-            "Expected table at \(point) for \(accessibilityIdentifier(element) ?? "nil")")
+        // A click lands in the table whether it reaches the table itself or a cell's own hosting
+        // view inside one of its rows (OBSERVED: an album row's cell takes the hit on macOS 26), so
+        // the table is the hit view's nearest enclosing one, and the row is still the point's.
+        let hit = content.hitTest(content.convert(point, from: nil))
+        let table = try XCTUnwrap(
+            sequence(first: hit, next: { $0?.superview }).lazy.compactMap { $0 as? NSTableView }.first,
+            "Expected table at \(point) for \(accessibilityIdentifier(element) ?? "nil"); hit \(viewChain(hit))")
         let index = table.row(at: table.convert(point, from: nil))
         // The SDK types this as [NSAccessibilityRow], but AppKit actually returns NSOutlineRow
         // objects that fail Swift's protocol-array bridge. Preserve the Objective-C object array.
