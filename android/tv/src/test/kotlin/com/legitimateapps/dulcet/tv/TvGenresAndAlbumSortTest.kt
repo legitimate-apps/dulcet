@@ -16,7 +16,10 @@ import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
+import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import com.legitimateapps.dulcet.library.AlbumSort
+import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import com.legitimateapps.dulcet.search.conformance.PlatformNetwork
@@ -46,8 +49,10 @@ class TvGenresAndAlbumSortTest {
     private val context = RuntimeEnvironment.getApplication()
     private val server = LoopbackLibraryServer()
     private val account = SearchAccount("provider:tv-genres", server.url, "u", "p", true)
+    private var controller: AndroidPlaybackController? = null
 
     @After fun close() {
+        controller?.close()
         var closed = false
         AndroidLibraryReader.closeCurrent { closed = true }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
@@ -87,6 +92,59 @@ class TvGenresAndAlbumSortTest {
         await("Back to the genres, on the genre that was opened") { focused("library.genres.item.1") }
         back()
         await("Back to the library, on Genres") { focused("library.view.genres") }
+    }
+
+    /**
+     * A genre plays from the remote through the playback service's real controller: Play queues its
+     * songs in order from the first, Shuffle queues the same songs shuffled, and a song's row queues
+     * them from itself. Each is a library queue named for the genre, and each opens Now Playing.
+     */
+    @Test fun aGenresPlayAndShuffleQueueAllItsSongsAndARowQueuesThemFromItself() {
+        // Made before the screens start, as the service makes it before it binds (TvPlayBeforeBindTest).
+        server.holdStreams = true
+        val playback = AndroidPlaybackController(context,
+            PlaybackEndpointAccount(account.providerInstanceId, server.url, "u", "p", true)).also { controller = it }
+        compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
+        compose.waitForIdle()
+        await("the first home card to take focus") { focused("library.home.0.item.0") }
+        focus("library.view.genres")
+        key(Key.DirectionCenter)
+        await("the genres, focus on Jazz") { focused("library.genres.item.0") }
+        key(Key.DirectionCenter)
+        await("Jazz's songs, focus on Play") { exists("genre.track.1") && focused("genre.play") }
+        val songs = listOf("jazz-song-1", "jazz-song-2")
+        fun queued() = playback.state.value.queue.map { it.track.rawId }
+        // The server never answers the stream, so no failure moves the queue past the song a press
+        // started from; the current entry stays that song. A play reaches the controller through the
+        // main looper, which only waiting for Compose to idle does not run (TvPlayBeforeBindTest).
+        fun awaitState(what: String, condition: () -> Boolean) = try {
+            await(what) { shadowOf(Looper.getMainLooper()).idle(); condition() }
+        } catch (timeout: AssertionError) {
+            val state = playback.state.value
+            throw AssertionError("${timeout.message}; queue=${queued()} index=${state.currentIndex} shuffle=${state.shuffle} " +
+                "phase=${state.phase} error=${state.error}", timeout)
+        }
+        fun current() = playback.state.value.let { state -> state.currentIndex?.let { state.queue.getOrNull(it) }?.track?.rawId }
+
+        key(Key.DirectionCenter)
+        awaitState("Play to queue Jazz from its first song") { queued() == songs && current() == "jazz-song-1" }
+        assertEquals(false, playback.state.value.shuffle)
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Play opens Now Playing")
+
+        key(Key.DirectionRight)
+        assertFocused("genre.shuffle")
+        key(Key.DirectionCenter)
+        awaitState("Shuffle to queue Jazz shuffled") { playback.state.value.shuffle }
+        assertEquals(songs.sorted(), queued().sorted(), "Shuffle queues every song of the genre: ${queued()}")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Shuffle opens Now Playing")
+
+        focus("genre.track.1")
+        key(Key.DirectionCenter)
+        awaitState("the row to queue Jazz in order from its own song") {
+            !playback.state.value.shuffle && queued() == songs && current() == "jazz-song-2"
+        }
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "a row opens Now Playing")
+        assertTrue(server.requests("getSong").all { it["id"] in songs }, "only Jazz's songs were asked for")
     }
 
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {
