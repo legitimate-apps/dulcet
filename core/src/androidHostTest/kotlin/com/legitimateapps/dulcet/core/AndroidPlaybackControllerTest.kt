@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet.core
 import android.os.Looper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -24,7 +25,9 @@ import kotlin.time.Duration.Companion.seconds
 @Config(sdk = [35])
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class AndroidPlaybackControllerTest {
-    @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
+    /** The main dispatcher's clock: the controller's delays (the delivery retry timer) run on it. */
+    private val mainScheduler = TestCoroutineScheduler()
+    @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher(mainScheduler)) }
     @After fun resetDispatcher() { Dispatchers.resetMain() }
 
     @Test fun lateMetadataAfterNewSelectionCannotReplaceTheNewQueue() {
@@ -1507,8 +1510,47 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * A play the server refuses while the service stays open is sent again with no new play, no
+     * foreground and no reachability event to prompt it (spec §15.3). The server here is a real
+     * socket that answers the first submission with 503; the controller's own consumer, worker and
+     * sender run unreplaced. Time is virtual on both clocks the retry reads: the main dispatcher's
+     * scheduler (the timer) and the looper's (`SystemClock`, the worker's gate).
+     */
+    @Test fun aSubmittedPlayTheServerRefusedIsRetriedWhileTheServiceStaysOpen() {
+        ScrobbleReceiver(refuseFirstSubmissions = 1).use { receiver ->
+            Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
+                f.controller.playSong(OWNER, "retry-song", "Retry song")
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                repeat(46) {
+                    f.probe.position += 500
+                    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+                }
+                val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                // Real sockets answer on real time; the retry waits on virtual time, so advance it
+                // a tenth of a second per turn until the server has seen the second submission.
+                while (receiver.requests.count { it["submission"] == "true" } < 2 && System.nanoTime() < deadline) {
+                    mainScheduler.advanceTimeBy(100)
+                    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
+                    Thread.sleep(10)
+                }
+                while (outbox.pending(ServerId(OWNER)).isNotEmpty() && System.nanoTime() < deadline) {
+                    shadowOf(Looper.getMainLooper()).idle()
+                    Thread.sleep(10)
+                }
+                val submitted = receiver.requests.filter { it["submission"] == "true" }
+                assertEquals(2, submitted.size, "The refused submission is sent again, once")
+                assertEquals(submitted[0]["time"], submitted[1]["time"], "The retry is the same play")
+                assertTrue(outbox.pending(ServerId(OWNER)).isEmpty(), "The retry's acknowledgement clears the outbox row")
+            }
+        }
+    }
+
     /** Receives real HTTP from the production sender. No controller handoff or sender is replaced. */
-    private class ScrobbleReceiver : AutoCloseable {
+    private class ScrobbleReceiver(private val refuseFirstSubmissions: Int = 0) : AutoCloseable {
+        private val refused = java.util.concurrent.atomic.AtomicInteger()
         private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
         val requests = java.util.concurrent.CopyOnWriteArrayList<Map<String, String>>()
@@ -1531,9 +1573,11 @@ class AndroidPlaybackControllerTest {
                                 java.net.URLDecoder.decode(pair[0], "UTF-8") to java.net.URLDecoder.decode(pair[1], "UTF-8")
                             }
                             requests += query
-                            val body = """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""".toByteArray()
+                            val refuse = query["submission"] == "true" && refused.getAndIncrement() < refuseFirstSubmissions
+                            val body = (if (refuse) """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"unavailable"}}}"""
+                                else """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""").toByteArray()
                             client.getOutputStream().apply {
-                                write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray())
+                                write(("HTTP/1.1 ${if (refuse) "503 Service Unavailable" else "200 OK"}\r\nContent-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray())
                                 write(body); flush()
                             }
                         }

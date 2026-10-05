@@ -3136,7 +3136,15 @@ emitted at most once per session.
 ### 15.3 Offline queue and honest delivery semantics
 
 Unsubmitted completed plays go to `scrobble_outbox` with the session's wall-clock start time, retried
-with exponential backoff on reachability and on foreground.
+with exponential backoff **by the process's own timer while it runs**, and also on reachability and on
+foreground. The timer is the floor, not the other two: an app that stays in the foreground on a
+reachable server, with no event of either kind to come, still sends again. The wait after a failed
+send is the backoff — 1 s doubling to 256 s, counted per failed attempt of the play — or, after a 429,
+the server's `Retry-After` when that is longer (the §18.6 rule: `max(Retry-After, backoff)`), and
+never more than five minutes. Each platform that holds the outbox arms one such timer per account
+and a drain that starts inside the wait neither sends early nor starts a second timer. The scrobble
+outbox is stopped by no other outbox's 429 (§18.6), and it tells the person nothing: a refusal is a
+diagnostic count, so "once per run" has nothing to apply to here.
 
 **The local uniqueness key `(server_id, raw_id, session_start_wall_clock)` prevents two local rows. It
 does not make the network call idempotent.** If the request reaches the server but the response is
@@ -7471,6 +7479,29 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-04 — A play the server refused is retried while the app stays open (§15.3).** CI run
+37235449008 (iPad, a heavily loaded runner) logged `dulcet-scrobble persisted=1 delivered=0 pending=1
+failures=1` and nothing sent the play again in the next 30 s, with the app in the foreground and
+Navidrome answering. §15.3 said "retried with exponential backoff on reachability and on foreground",
+which a reader could take to mean there is no retry between those events. What the code did,
+OBSERVED by reading it and by the tests named: Android's playback service already re-armed a
+`delay(nextRetryAfter)` after each drain (`AndroidPlaybackController.drain`) and so retried; the
+Apple facade drained once at configuration and once per submitted play and never again, and the
+Apple shell sends no foreground or reachability event to the facade, so a refused play waited for
+the next launch or the next submitted play (`ApplePlaybackQueueFacadeTest`, red without the change).
+Neither platform read `Retry-After` for a scrobble. Now both run one shared
+`ScrobbleOutboxRetryLoop` (an in-process timer on the platform's main dispatcher, one per outbox),
+the worker waits `max(backoff, Retry-After)` up to five minutes, and a drain that threw (a storage
+failure) is reported and retried on the same backoff instead of ending the chain. Delivery stays at-least-once, the 30-day
+retention drop still runs at every drain, and nothing is surfaced to the person. OBSERVED by
+`ScrobbleOutboxTest` (virtual time, on the JVM and on macOS native), `ApplePlaybackQueueFacadeTest`
+and `AndroidPlaybackControllerTest`; each fails when the timer is removed, and the three Retry-After
+cases fail when `Retry-After` is ignored. The iPad UI proof waited 30 s for the one submission; it
+now waits 60 s, which holds the first request and five retries, and no longer requires that no
+attempt failed, only that no play is left pending. ASSUMED, not shown: a foreground or reachability
+trigger from the Apple shell (the timer is the floor on both platforms; the shell hook would only
+shorten a wait of at most five minutes).
 
 **2026-10-04 — An explicit Play always wins over a restoration, written down (§14.1).** Conformance
 run 37229956675 failed the iPhone lyrics proof: after a relaunch restored "Thirty One Seconds" paused,
