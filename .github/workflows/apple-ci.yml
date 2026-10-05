@@ -1488,6 +1488,42 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # Apple TV playback (spec §15.2): the remote plays the canary from Search past the
+          # threshold and the test returns once the app's debug marker reports the play delivered;
+          # the server's count is read here, outside the test. The baseline is recorded rather than
+          # assumed -- the macOS proofs above play the same canary on this server -- and the
+          # after-read must be exactly one more on the same song. It reuses the search build.
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --record "$RUNNER_TEMP/tvos-canary-before.json"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testTVSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playback.log"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --recorded "$RUNNER_TEMP/tvos-canary-before.json" \
+            --expect-recorded-plus 1 \
+            --await-seconds 15
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testTVSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Now Playing on Apple TV by remote (spec §16.20, §18.4): Down reaches the heart, Select
           # stars the playing track on the server and Select again unstars it; Right reaches Lyrics,
           # whose synced English layer lights a line. It reuses the search phase's build and device.
@@ -1987,6 +2023,45 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-search.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-search-junit/TEST-DulcetiOSUITests.xml" \
             DulcetiOSUITests
+          # ---- iPhone playback evidence -------------------------------------------------------
+          # The iPad proof's shape on a phone: the app plays the canary from the library past the
+          # §15.2 threshold and returns once its debug marker reports the play delivered; the
+          # server's count is read here, outside the test, either side of it. The baseline is
+          # recorded rather than assumed, because the iPad phases above played the same canary on
+          # this server, and the after-read must be exactly one more on the same song.
+          # After the iPhone search proof, which stays the first iPhone launch on this runner.
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --record "$RUNNER_TEMP/iphone-canary-before.json"
+          python3 tools/ci/isolate-simulator --phase playback-iphone --keep-name "iPhone 17 Pro"
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-playback.log"
+          python3 tools/read-play-count \
+            --base-url http://127.0.0.1:4533 \
+            --title "UI Playback Canary" \
+            --recorded "$RUNNER_TEMP/iphone-canary-before.json" \
+            --expect-recorded-plus 1 \
+            --await-seconds 15
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-playback.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           # Playlists and lyrics on iPhone (spec §18.6, §18.4). The playlist proof makes its own
           # playlist over /rest, opens it from Library > Playlists, plays it in its own order,
           # renames it from its page and reads the new name back from the server, then deletes it:
@@ -2320,6 +2395,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit" \
             "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit" \
             "$RUNNER_TEMP/dulcet-ipados-playback-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playback-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playback-junit" \
             "$RUNNER_TEMP/dulcet-ios-search-junit" \
             "$RUNNER_TEMP/dulcet-ipados-search-junit" \
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \

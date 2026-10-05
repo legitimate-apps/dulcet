@@ -3,31 +3,6 @@ import Foundation
 import SwiftUI
 import UIKit
 
-#if DEBUG
-/// Text the UI proofs read to learn that a scrobble REACHED the server. The threshold is visible
-/// in Now Playing; delivery is not, and a proof that returns on the threshold alone lets the test
-/// runner kill the app before the request leaves (or before the accumulator, which counts from
-/// the first sampled position, has crossed at all). Enabled only by its launch argument.
-@Observable
-final class DulcetDebugScrobbleDeliveryMarker {
-    static let launchArgument = "-dulcet-debug-scrobble-delivery-marker"
-    static let accessibilityIdentifier = "dulcet.debug.scrobble-delivery"
-
-    var text = "dulcet-scrobble awaiting-report"
-
-    func record(_ report: DulcetScrobbleDeliveryReport) {
-        text = "dulcet-scrobble"
-            + " persisted=\(report.submittedPlaysPersisted)"
-            + " delivered=\(report.submittedPlaysDelivered)"
-            + " pending=\(report.submittedPlaysPending)"
-            + " failures=\(report.submittedPlayFailedAttempts)"
-            + " now-playing=\(report.nowPlayingSent)"
-            + " now-playing-dropped=\(report.nowPlayingDropped)"
-            + " refused-dropped=\(report.submittedPlaysRefusedDropped)"
-    }
-}
-#endif
-
 /// Gives Command-F to the app's Search shortcut. UIKit's standard menu claims Command-F for
 /// Find, which Dulcet does not offer, and that claim wins over a shortcut declared in SwiftUI --
 /// so pressing it did nothing at all. Removing the unused Find menu leaves the key to Search.

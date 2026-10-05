@@ -1,4 +1,5 @@
 import CryptoKit
+import UIKit
 import XCTest
 
 final class DulcetTVUITests: XCTestCase {
@@ -783,6 +784,103 @@ final class DulcetTVUITests: XCTestCase {
     // MARK: - Lyrics and streaming-quality helpers
 
     private typealias Server = (url: String, username: String, password: String)
+
+    /// Production playback on Apple TV, driven by the remote, crossing the scrobble threshold
+    /// (§15.2) until the app reports the play delivered. The workflow reads the canary's server
+    /// play count either side of this test; the test never reads or writes one itself, so a count
+    /// that moves can only have come from the app. The app's debug delivery marker is why this
+    /// returns on delivery rather than on the displayed threshold: returning on the threshold let
+    /// the runner kill the app before its play left (the iPad proof, 2026-09-06 and 2026-09-11).
+    @MainActor
+    func testTVSimulatorPlaybackAdvancesPastScrobbleThreshold() throws {
+        let udid = try XCTUnwrap(ProcessInfo.processInfo.environment["SIMULATOR_UDID"])
+        XCTAssertNotNil(UUID(uuidString: udid), "Playback evidence requires a simulator, never a device")
+        // The runtime idiom names the device family; it rejects iPhone and iPad, which window
+        // size alone cannot.
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .tv, "Only Apple TV is valid evidence")
+        let server = try disposableServer()
+        let canary = "UI Playback Canary"
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-dulcet-debug-scrobble-delivery-marker",
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", server.url,
+            "-dulcet-debug-account-username", server.username,
+            "-dulcet-debug-account-password", server.password,
+        ]
+        app.launch()
+        _ = try awaitLaunchAndLiveConnection(app)
+
+        // Before any playback the marker must read three zeros, each excluding a different way a
+        // later delivered=1 could be credited to the wrong play: nothing delivered by this launch,
+        // nothing left in the durable outbox by an earlier one, nothing persisted yet.
+        let marker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
+        XCTAssertTrue(marker.waitForExistence(timeout: 10), "The delivery marker must exist when its launch argument is passed")
+        let baseline = try XCTUnwrap(
+            waitForScrobbleDeliveryCounts(in: marker, timeout: 10) { $0["delivered"] != nil },
+            "The delivery marker must report counts; last label: \(marker.label)"
+        )
+        XCTAssertEqual(baseline["delivered"], 0, "No play may be delivered before playback starts")
+        XCTAssertEqual(baseline["pending"], 0, "No play may be waiting from an earlier launch")
+        XCTAssertEqual(baseline["persisted"], 0, "No play may be persisted before playback")
+        guard baseline["delivered"] == 0, baseline["pending"] == 0, baseline["persisted"] == 0 else { return }
+
+        try playFromSearch(app, query: canary, track: canary)
+        let progress = app.progressIndicators["Now Playing"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 30), "Real playback must expose progressing media time")
+        var first: String?
+        var last: String?
+        let pastThreshold = NSPredicate { _, _ in
+            // One snapshot per read: an element redrawn between `exists` and `value` throws.
+            guard let value = (try? progress.snapshot())?.value as? String else { return false }
+            if first == nil { first = value }
+            last = value
+            let parts = value.components(separatedBy: " of ")
+            guard parts.count == 2, parts[1] == "0:31", value != first else { return false }
+            let clock = parts[0].split(separator: ":").compactMap { Double($0) }
+            guard clock.count == 2 else { return false }
+            // §15.2: the 31-second canary is eligible at 15.5 s; the next whole second is beyond it.
+            return clock[0] * 60 + clock[1] >= 16
+        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: pastThreshold, object: nil)], timeout: 90),
+            .completed,
+            "Media time must progress past the canary's 15.5 s threshold; first=\(first ?? "nil") last=\(last ?? "nil")"
+        )
+        let delivered = try XCTUnwrap(
+            waitForScrobbleDeliveryCounts(in: marker, timeout: 60) { ($0["delivered"] ?? 0) >= 1 },
+            "The app must report the play delivered before this proof returns; last marker: \(marker.label)"
+        )
+        XCTAssertEqual(delivered["delivered"], 1, "Exactly one play is expected for one crossing")
+        XCTAssertEqual(delivered["pending"], 0, "No play may be left unsent once it is delivered")
+        print("DULCET TV PLAYBACK PASS simulator=\(udid) idiom=tv first=\(first ?? "nil") last=\(last ?? "nil")"
+            + " marker=\(marker.label)")
+    }
+
+    private func waitForScrobbleDeliveryCounts(
+        in marker: XCUIElement,
+        timeout: TimeInterval,
+        until accepted: ([String: Int]) -> Bool
+    ) -> [String: Int]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let counts = scrobbleDeliveryCounts(from: marker.label), accepted(counts) { return counts }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        return nil
+    }
+
+    private func scrobbleDeliveryCounts(from label: String) -> [String: Int]? {
+        let words = label.split(separator: " ")
+        guard words.first == "dulcet-scrobble" else { return nil }
+        var counts: [String: Int] = [:]
+        for word in words.dropFirst() {
+            let pair = word.split(separator: "=", maxSplits: 1)
+            guard pair.count == 2, let value = Int(pair[1]) else { return nil }
+            counts[String(pair[0])] = value
+        }
+        return counts.isEmpty ? nil : counts
+    }
 
     private struct DisposableServerRefused: Error {}
 

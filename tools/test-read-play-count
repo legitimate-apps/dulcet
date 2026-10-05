@@ -80,6 +80,36 @@ r = run([dict(CANARY, playCount="1")], "--expect", "1")
 expect("non-integer playCount is REJECTED",
        r.returncode != 0 and "not an integer" in (r.stdout + r.stderr), r.stdout + r.stderr)
 
+print("RECORDED-BASELINE CONTROLS")
+with tempfile.TemporaryDirectory() as scratch:
+    baseline = os.path.join(scratch, "before.json")
+    r = run([dict(CANARY, playCount=4)], "--record", baseline)
+    recorded = json.load(open(baseline)) if os.path.exists(baseline) else {}
+    expect("a recording writes id and count and never prints a pass",
+           r.returncode == 0 and recorded == {"title": "UI Playback Canary", "id": "abc123", "count": 4}
+           and "RECORDED" in r.stdout and "PASS" not in r.stdout, r.stdout + r.stderr)
+    r = run([dict(CANARY, playCount=5)], "--recorded", baseline, "--expect-recorded-plus", "1")
+    expect("baseline plus one passes and says what it asserted",
+           r.returncode == 0 and "observed=5 expected=5" in r.stdout and "ASSERTION PASS" in r.stdout,
+           r.stdout + r.stderr)
+    r = run([dict(CANARY, playCount=4)], "--recorded", baseline, "--expect-recorded-plus", "1")
+    expect("an unchanged count is REJECTED",
+           r.returncode != 0 and "fewer than expected" in (r.stdout + r.stderr), r.stdout + r.stderr)
+    r = run([dict(CANARY, playCount=6)], "--recorded", baseline, "--expect-recorded-plus", "1")
+    expect("baseline plus two is REJECTED as another actor",
+           r.returncode != 0 and "something other than the app under test" in (r.stdout + r.stderr),
+           r.stdout + r.stderr)
+    r = run([dict(CANARY, id="other", playCount=5)], "--recorded", baseline, "--expect-recorded-plus", "1")
+    expect("a different song id is REJECTED",
+           r.returncode != 0 and "not the recorded abc123" in (r.stdout + r.stderr), r.stdout + r.stderr)
+    r = run([dict(CANARY, playCount=5)], "--recorded", os.path.join(scratch, "absent.json"),
+            "--expect-recorded-plus", "1")
+    expect("a missing baseline is REJECTED",
+           r.returncode != 0 and "no usable recorded baseline" in (r.stdout + r.stderr), r.stdout + r.stderr)
+    r = run([dict(CANARY, playCount=5)], "--expect-recorded-plus", "1")
+    expect("plus-one without a baseline is REJECTED",
+           r.returncode != 0 and "requires --recorded" in (r.stdout + r.stderr), r.stdout + r.stderr)
+
 # The fixture path must not be a way to bypass envelope validation.
 with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
     json.dump({"subsonic-response": {"status": "failed", "error": {"code": 40}}}, handle)
@@ -94,4 +124,4 @@ expect("a non-ok envelope is REJECTED even on the fixture path",
 print()
 if failures:
     raise SystemExit(f"{len(failures)} control(s) failed: {failures}")
-print("ALL CONTROLS PASS (2 fail-open, 2 positive, 6 negative)")
+print("ALL CONTROLS PASS (2 fail-open, 2 positive, 6 negative, 7 recorded-baseline)")

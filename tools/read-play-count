@@ -16,6 +16,16 @@ scrobble was delivered; a count change alone does not show *our app* caused it.
 An expectation is MANDATORY. There is no read-only mode: a run that asserted nothing must never be
 able to print a line that reads like a pass.
 
+Where earlier phases on the same server may already have played the canary, the baseline is
+recorded rather than assumed, and the after-read asserts exactly one more, on the same song id:
+
+    read-play-count --title 'UI Playback Canary' --record "$RUNNER_TEMP/canary-before.json"
+    <run the XCUITest>
+    read-play-count --title 'UI Playback Canary' --recorded "$RUNNER_TEMP/canary-before.json" \
+        --expect-recorded-plus 1
+
+A recording prints `PLAY COUNT RECORDED`, never a pass; only the after-read can pass.
+
 Fails closed. Zero matches, more than one match, a missing id, an HTTP error and an unreachable
 server all exit non-zero -- a reader that cannot find its track must never be mistaken for a track
 with no plays.
@@ -132,11 +142,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--title", required=True, help="exact song title of the canary")
-    parser.add_argument(
-        "--expect", type=int, required=True,
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--expect", type=int,
         help="required play count. Exact, never 'at least': a higher count means something other "
              "than the app under test also scrobbled, and the attribution is gone.",
     )
+    mode.add_argument(
+        "--record", metavar="PATH",
+        help="baseline read: write the song's id and count to PATH for a later "
+             "--expect-recorded-plus. Asserts nothing and never prints a pass.",
+    )
+    mode.add_argument(
+        "--expect-recorded-plus", type=int, metavar="N",
+        help="required play count is exactly the --recorded baseline plus N, on the same song id.",
+    )
+    parser.add_argument("--recorded", metavar="PATH", help="the file a --record read wrote")
     parser.add_argument(
         "--await-seconds", type=float, default=0.0,
         help="poll up to this long for the expected count before failing. Scrobble delivery is "
@@ -146,11 +167,39 @@ def main() -> None:
     parser.add_argument("--search-json", help=argparse.SUPPRESS)  # controls only; see test-read-play-count
     arguments = parser.parse_args()
 
+    if arguments.record:
+        song, observed = observe(arguments)
+        with open(arguments.record, "w") as handle:
+            json.dump({"title": arguments.title, "id": song["id"], "count": observed}, handle)
+        print(f"PLAY COUNT RECORDED title={arguments.title!r} id={song['id']} count={observed}")
+        return
+
+    recorded_id = None
+    if arguments.expect_recorded_plus is not None:
+        if not arguments.recorded:
+            parser.error("--expect-recorded-plus requires --recorded PATH")
+        try:
+            with open(arguments.recorded) as handle:
+                baseline = json.load(handle)
+        except (OSError, json.JSONDecodeError) as error:
+            raise SystemExit(f"no usable recorded baseline at {arguments.recorded}: {error}")
+        if baseline.get("title") != arguments.title or not isinstance(baseline.get("count"), int):
+            raise SystemExit(f"the recorded baseline is for {baseline.get('title')!r}, not {arguments.title!r}")
+        recorded_id = baseline.get("id")
+        arguments.expect = baseline["count"] + arguments.expect_recorded_plus
+    elif arguments.recorded:
+        parser.error("--recorded is read only with --expect-recorded-plus")
+
     deadline = time.monotonic() + max(arguments.await_seconds, 0.0)
     attempts = 0
     while True:
         attempts += 1
         song, observed = observe(arguments)
+        if recorded_id is not None and song["id"] != recorded_id:
+            raise SystemExit(
+                f"{arguments.title!r} is now song {song['id']}, not the recorded {recorded_id}; "
+                "a different song cannot carry the baseline"
+            )
         if observed == arguments.expect or time.monotonic() >= deadline:
             break
         time.sleep(0.25)
