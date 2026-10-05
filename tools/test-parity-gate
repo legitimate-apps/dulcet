@@ -1116,6 +1116,14 @@ passing_cases = """\
             name="everyPlaylistEditReachesTheServerThroughTheHostedMacApp" time="0.1" />
   <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
             name="nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
+            name="aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testAStreamingQualityChosenByRemoteCapsTheStream" time="0.1" />
   <testcase classname="DulcetTVUITests"
