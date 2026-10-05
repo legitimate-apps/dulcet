@@ -2126,7 +2126,9 @@ final class DulcetiOSUITests: XCTestCase {
     /// Drags `source` onto the now-playing bar until Up Next holds `count` more entries than
     /// `before`, at most twice (one local run in ten of the track proof lifted without following
     /// the synthesized touch). A drag that never lifted leaves the menu it opened under the touch,
-    /// which `menuMarker` names; it is closed so Up Next can be read, and counted. Under a custom
+    /// which `menuMarker` names; it is closed so Up Next can be read, and counted. A drag that
+    /// dropped queues only after its deferred read, which took over 10 s on a loaded CI host, so
+    /// each drag gets 30 s before the next: a retry sooner queues the source twice. Under a custom
     /// menu preview, or with no drag source at all, both drags queue nothing, so the retry cannot
     /// hide the defect.
     @MainActor
@@ -2153,7 +2155,7 @@ final class DulcetiOSUITests: XCTestCase {
                 withoutIdleWaits(app) { app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.25)).tap() }
                 _ = menu.waitForNonExistence(timeout: 10)
             }
-            let deadline = Date().addingTimeInterval(10)
+            let deadline = Date().addingTimeInterval(30)
             repeat {
                 RunLoop.current.run(until: Date().addingTimeInterval(1))
                 guard let read = upNextLabels(openingFrom: bar, in: app, compact: compact) else { return nil }
