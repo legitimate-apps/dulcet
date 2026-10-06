@@ -739,10 +739,20 @@ final class DulcetiOSUITests: XCTestCase {
     /// lands on the library; a launch with a saved account opens straight into that account's
     /// library (CONF-10b) and connects there. Either way Connection is opened the way a person
     /// opens it, and opened again if a connection still in flight moves the app to the library.
+    ///
+    /// A connection that reached account setup's 30-second request limit is retried the way a
+    /// person retries it, with Try Again, at most twice; the form keeps the account, so the retry
+    /// sends the same one. Run 37519277991 ended there on a starved runner (load 567 on three
+    /// cores, 749 MB swapped out, the app itself among the swapped processes) before any request
+    /// reached the server, and this proof is about what comes after connecting. Any other
+    /// connection failure still fails the proof.
     @MainActor
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
         if signOut.waitForExistence(timeout: 5) { return true }
+        let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
+        let tryAgain = app.buttons["Try Again"].firstMatch
+        var retries = 0
         let deadline = Date().addingTimeInterval(35)
         repeat {
             guard openDestination(
@@ -752,6 +762,13 @@ final class DulcetiOSUITests: XCTestCase {
                 compact: compact
             ) else { return false }
             if signOut.waitForExistence(timeout: 10) { return true }
+            while retries < 2, timedOut.exists, tryAgain.exists {
+                retries += 1
+                print("ACCOUNT CONNECT RETRY \(retries): account setup reached its request limit")
+                tryAgain.tap()
+                // One more request limit, and the time a loaded host takes to show the outcome.
+                if signOut.waitForExistence(timeout: 45) { return true }
+            }
         } while Date() < deadline
         return false
     }
