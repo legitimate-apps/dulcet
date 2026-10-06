@@ -7611,6 +7611,32 @@ time 12 s after its 201 s first boot, at load1 567 with 749 MB swapped out, and 
 request ran out its 30-second limit before reaching the server. That proof's connect now also takes
 Try Again, as a person does, for that timeout only.
 
+**2026-10-06 — On Apple TV, Back goes back one Library page and focus returns to what opened it;
+a page opened takes focus on its first control (§16.18, §18.9).** Driven by the remote against the
+disposable server (OBSERVED in the new tvOS proof before each fix), four things kept a person from
+browsing the library the way the platform's own Music app does. (1) Menu on an album the Library
+had pushed was consumed by the app's exit handler, which moved focus to the app's section bar
+instead of going back; a second Menu left the app. While the Library has a page to go back to, the
+app now leaves Menu to the navigation stack, which pops one page; elsewhere Menu still returns focus
+to the bar, and from the bar it still leaves the app. (2) After going back, focus landed on the
+Library's own section bar (Home), and the person had lost their place in the grid. The store now
+records the page Back landed on and the item that page had opened (`readerReturn`), and that tile
+or row takes focus. (3) On an artist's page the albums could not be reached: Down from the artist's
+heart, at the trailing edge, found nothing below it. The albums grid is now one full-width focus
+section, so Down enters it from anywhere above. (4) An album opened from an artist's page -- the
+300-track fixture album, none of whose tracks has a length, so Play and Shuffle are disabled -- was
+shown with focus still on the app's Library tab (and once on nothing), and Back there did not go
+back. The page publishes after it is pushed, and when the focus engine settles first nothing moves
+focus onto the page when its content arrives. A page just opened (`readerArrival`) now puts focus on
+its first control once that control can hold it: Play, or the album's heart when nothing is
+playable, or the artist's heart. (4) is a race with the host's speed: it was OBSERVED on two loaded
+runs, and the proof passed once on an idle host with the claim disabled, so the proof catches it
+only when the host is slow; the store test covers the arrival record. Red without the change: the
+proof `testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt`, which reads every list it
+walks from the server and asserts where focus is after each press, for (1), (2) and (3); and the
+store test `aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened` for the records (2)
+and (4) rest on.
+
 **2026-10-05 — A connection made on Connection lands on the library (§10.2).**
 A successful connect submitted from Connection (the Settings destination) published "connected" and
 left the window there; only a connect started from the library's own Reconnect opened the library.

@@ -265,6 +265,7 @@ private struct DulcetTVSectionNavigation: View {
                 DulcetStateSurface(store: store)
                     .navigationDestination(for: DulcetReaderRoute.self) { route in
                         DulcetReaderRouteView(route: route)
+                            .environment(\.dulcetReaderPage, route)
                     }
             }
         }
@@ -275,12 +276,15 @@ private struct DulcetTVSectionNavigation: View {
         .onChange(of: store.selectedDestination) { _, destination in
             arrivalFocus.sectionChanged(to: destination)
         }
-        // The exit button is how a person leaves a surface on this platform, so it returns focus
-        // to the bar -- deterministically, rather than relying on the focus engine to find a
-        // control several scroll views away. From the bar itself it stays unhandled, because
-        // there the platform's own meaning is to leave the app, and consuming it would strand
-        // the person inside.
-        .dulcetOnExitCommand(perform: focusedSection == nil ? {
+        // The exit button is how a person leaves a surface on this platform. On a page the
+        // Library pushed -- an album, an artist, a See All -- it goes back one page, as Back does
+        // in the platform's own Music app: the handler is nil there, so the navigation stack below
+        // pops itself (a non-nil handler here consumes every press, and the stack would never
+        // pop). Anywhere else it returns focus to the bar -- deterministically, rather than
+        // relying on the focus engine to find a control several scroll views away. From the bar
+        // itself it stays unhandled, because there the platform's own meaning is to leave the
+        // app, and consuming it would strand the person inside.
+        .dulcetOnExitCommand(perform: focusedSection == nil && !store.canGoBackInLibrary ? {
             arrivalFocus.settle()
             focusedSection = selected
         } : nil)
@@ -628,6 +632,7 @@ struct DulcetDestinationStack: View {
                 .modifier(bar(drawsNotices: showing && store.readerPath.isEmpty))
                 .navigationDestination(for: DulcetReaderRoute.self) { route in
                     DulcetReaderRouteView(route: route)
+                        .environment(\.dulcetReaderPage, route)
                         .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
                 }
         }

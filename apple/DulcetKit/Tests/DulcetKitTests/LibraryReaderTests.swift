@@ -1292,6 +1292,53 @@ func aReaderPageFromAnotherDestinationOpensLibraryOnIt() {
 }
 
 @Test @MainActor
+func aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened() {
+    let factory = RecordingReaderFactory()
+    let (store, _, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader",
+        factory: factory
+    )
+    let artist = DulcetReaderRoute.artist(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1"))
+    let album = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-9"))
+    store.navigate(to: .library)
+    store.pushReaderPage(artist)
+    #expect(store.readerArrival == artist, "a page just opened is owed focus")
+    store.readerArrivalFocused()
+    #expect(store.readerArrival == nil)
+    store.pushReaderPage(album)
+    #expect(store.readerArrival == album)
+    #expect(store.readerReturn == nil, "nothing has been returned to while pages only open")
+
+    // Back from the album lands on the artist, whose album item opened it.
+    store.goBackInLibrary()
+    #expect(store.readerReturn == DulcetReaderReturn(page: artist, opened: album))
+    #expect(store.readerArrival == nil, "Back is a return, not an arrival")
+    store.readerReturnFocused()
+    #expect(store.readerReturn == nil)
+
+    // Back from the artist lands on the section at the root, on the artist.
+    store.goBackInLibrary()
+    #expect(store.readerReturn == DulcetReaderReturn(page: nil, opened: artist))
+
+    // Opening another page or choosing a section is not a return.
+    store.pushReaderPage(album)
+    #expect(store.readerReturn == nil)
+    store.goBackInLibrary()
+    #expect(store.readerReturn == DulcetReaderReturn(page: nil, opened: album))
+    store.selectLibrarySection(.artists)
+    #expect(store.readerReturn == nil)
+
+    // A pop of several pages at once names the page it lands on and the one that page opened.
+    store.pushReaderPage(artist)
+    store.pushReaderPage(album)
+    store.popReader(to: [])
+    #expect(store.readerReturn == DulcetReaderReturn(page: nil, opened: artist))
+}
+
+@Test @MainActor
 func signingOutOffersTheChangesThatHaveNotReachedTheServer() throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()

@@ -1581,6 +1581,33 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # The library on Apple TV by remote (spec §16.18): Home's shelf, Albums walked tile by tile
+          # in the server's order, an album's tracks as the server lists them, a track played from
+          # the album, Back to the grid on the album opened, then Artists -> an artist -> an album
+          # and Back twice, each time on what opened the page. Every expectation is read from the
+          # server first. It plays only the playback canary, so the lyrics proofs below still find
+          # their tracks unplayed.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-library.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-library.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-library.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-library.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-library-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote, last on this device (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
@@ -2502,6 +2529,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-ipados-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-library-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \

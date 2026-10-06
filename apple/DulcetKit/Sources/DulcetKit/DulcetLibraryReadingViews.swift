@@ -502,6 +502,110 @@ extension DulcetReaderItem {
 
 // MARK: - Rows and tiles
 
+private struct DulcetReaderPageKey: EnvironmentKey {
+    static let defaultValue: DulcetReaderRoute? = nil
+}
+
+extension EnvironmentValues {
+    /// The Library page a view is drawn on: the route that pushed it, or nil for the section at
+    /// the stack's root.
+    var dulcetReaderPage: DulcetReaderRoute? {
+        get { self[DulcetReaderPageKey.self] }
+        set { self[DulcetReaderPageKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// On a remote, this control takes focus when Back returns to its page from the page it
+    /// opened (``DulcetPresentationStore/readerReturn``). Elsewhere it does nothing.
+    func dulcetTakesFocusOnReturn(to route: DulcetReaderRoute?) -> some View {
+#if os(tvOS)
+        modifier(DulcetReturnFocus(route: route))
+#else
+        self
+#endif
+    }
+}
+
+extension View {
+    /// On a remote, this control takes focus when its page has just been opened and nothing on
+    /// it holds focus yet (``DulcetPresentationStore/readerArrival``), once `isEnabled` -- a
+    /// disabled control cannot hold focus. Elsewhere it does nothing.
+    func dulcetTakesFocusOnArrival(isEnabled: Bool = true) -> some View {
+#if os(tvOS)
+        modifier(DulcetArrivalFocusClaim(isEnabled: isEnabled))
+#else
+        self
+#endif
+    }
+}
+
+#if os(tvOS)
+/// A page opened on a remote puts focus on its first control, as the platform's own Music app
+/// does. A page publishes its content after it is pushed; when the focus engine settles first it
+/// finds nothing on the page and leaves focus on the app's section bar -- where Back does not go
+/// back -- and nothing moves it again when the content arrives. Whether it settles first depends
+/// on the host's speed (OBSERVED on a loaded simulator, not on an idle one).
+private struct DulcetArrivalFocusClaim: ViewModifier {
+    @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.dulcetReaderPage) private var page
+    let isEnabled: Bool
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($focused)
+            .onAppear(perform: claim)
+            .onChange(of: isEnabled) { _, _ in claim() }
+            .onChange(of: focused) { _, isFocused in
+                if isFocused, isArrivalTarget { store.readerArrivalFocused() }
+            }
+    }
+
+    private var isArrivalTarget: Bool {
+        guard let page else { return false }
+        return store.readerArrival == page && store.readerPath.last == page
+    }
+
+    private func claim() {
+        guard isEnabled, isArrivalTarget else { return }
+        focused = true
+    }
+}
+
+/// Back on a remote puts focus on the item that opened the page left, as in the platform's own
+/// Music app. Without this the focus engine places it on the first control of the page that
+/// returns -- the Library's section bar -- and the person has lost their place in the grid.
+/// The page is matched as well as the route, because the pages under it in the stack stay drawn
+/// and may hold an item for the same route.
+private struct DulcetReturnFocus: ViewModifier {
+    @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.dulcetReaderPage) private var page
+    let route: DulcetReaderRoute?
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($focused)
+            .onAppear(perform: claim)
+            .onChange(of: store.readerReturn) { _, _ in claim() }
+            .onChange(of: focused) { _, isFocused in
+                if isFocused, isReturnTarget { store.readerReturnFocused() }
+            }
+    }
+
+    private var isReturnTarget: Bool {
+        guard let route, let landed = store.readerReturn else { return false }
+        return landed.opened == route && landed.page == page && store.readerPath.last == page
+    }
+
+    private func claim() {
+        guard isReturnTarget else { return }
+        focused = true
+    }
+}
+#endif
+
 /// An album, artist or playlist on a grid or a shelf. Opens its page.
 struct DulcetReaderTile: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -541,6 +645,7 @@ struct DulcetReaderTile: View {
             .contentShape(Rectangle())
         }
         .dulcetMediaButtonStyle(hover: .lift)
+        .dulcetTakesFocusOnReturn(to: item.route)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
@@ -610,6 +715,7 @@ struct DulcetReaderListRow: View {
                 .contentShape(Rectangle())
             }
             .dulcetRowButtonStyle()
+            .dulcetTakesFocusOnReturn(to: item.route)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(subtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, subtitle))
             .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
@@ -871,6 +977,14 @@ struct DulcetReaderGrid: View {
                     .dulcetReaderRow(index, in: model)
             }
         }
+#if os(tvOS)
+        // The remote moves focus by geometry, and the tiles fill only the grid's leading
+        // columns: a control above them at the trailing edge -- an artist's heart -- has nothing
+        // under it, so Down from it went nowhere and the artist's albums could not be reached.
+        // A focus section as wide as the page takes a move from anywhere above into the grid.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .focusSection()
+#endif
     }
 }
 
@@ -1431,13 +1545,13 @@ struct DulcetReaderTrackListPage: View {
             HStack(spacing: DulcetSpacing.xs) {
                 playButton(window, fills: false)
                 shuffleButton(window, fills: false)
-                favouriteButton(item)
+                favouriteButton(item, window: window)
             }
             .lineLimit(1)
             VStack(spacing: DulcetSpacing.xs) {
                 playButton(window, fills: true)
                 shuffleButton(window, fills: true)
-                favouriteButton(item)
+                favouriteButton(item, window: window)
             }
         }
     }
@@ -1452,6 +1566,7 @@ struct DulcetReaderTrackListPage: View {
         ) {
             store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
         }
+        .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
         .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
     }
 
@@ -1469,7 +1584,7 @@ struct DulcetReaderTrackListPage: View {
     }
 
     @ViewBuilder
-    private func favouriteButton(_ item: DulcetReaderItem?) -> some View {
+    private func favouriteButton(_ item: DulcetReaderItem?, window: DulcetLibraryWindow) -> some View {
         if let item, let target = item.favouriteTarget {
             DulcetFavouriteButton(
                 target: target,
@@ -1478,6 +1593,8 @@ struct DulcetReaderTrackListPage: View {
                 size: .title3,
                 identifier: "dulcet.\(kind.rawValue).favorite"
             )
+            // A page with nothing to play -- every track without a length -- opens on its heart.
+            .dulcetTakesFocusOnArrival(isEnabled: window.playableTracks.isEmpty)
         }
     }
 
@@ -1549,6 +1666,7 @@ struct DulcetReaderArtistPage: View {
                             Spacer(minLength: 0)
                             if let target = header.favouriteTarget {
                                 DulcetFavouriteButton(target: target, published: header.isFavourite, title: header.displayTitle, size: .title2)
+                                    .dulcetTakesFocusOnArrival()
                             }
                         }
                     }
