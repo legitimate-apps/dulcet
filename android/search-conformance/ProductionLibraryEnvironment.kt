@@ -68,7 +68,13 @@ internal fun closeProcessReader() {
  * points at the proxy, which forwards every request unchanged and counts it. Nothing in the app is
  * replaced — the reader, the session, the transport and the database are the production ones.
  */
-class ProductionLibraryEnvironment : ExternalResource() {
+class ProductionLibraryEnvironment(
+    /**
+     * Parks the proxy before the app launches (see [CountingProxy.park]), for an app that opens on
+     * the library and so reads before a test body runs; the test unparks it once its rules are in.
+     */
+    private val parkLaunchRequests: Boolean = false,
+) : ExternalResource() {
     lateinit var proxy: CountingProxy
         private set
     lateinit var server: DisposableServer
@@ -92,11 +98,13 @@ class ProductionLibraryEnvironment : ExternalResource() {
         server.deletePlaylistsNamed(TEST_PLAYLIST_PREFIX)
         runCatching { otherUser().deleteOwnPlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         proxy = CountingProxy(target)
+        if (parkLaunchRequests) proxy.park()
         AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
     }
 
     override fun after() {
         val app = RuntimeEnvironment.getApplication()
+        val parkedOut = proxy.parkCeilingsReached()
         runCatching { network.restoreIfLost() }
         runCatching { closeProcessReader() }
         proxy.close()
@@ -105,6 +113,10 @@ class ProductionLibraryEnvironment : ExternalResource() {
         runCatching { otherUser().deleteOwnPlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         AndroidAccountCredentialStore(app).delete()
         app.deleteDatabase("dulcet.db")
+        check(parkedOut == 0) {
+            "$parkedOut launch request(s) waited out the proxy's park ceiling: a test run with " +
+                "parkLaunchRequests must unpark the proxy before it waits on the library"
+        }
     }
 
     companion object {
