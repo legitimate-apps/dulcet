@@ -597,6 +597,40 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /**
+     * Spec §16.13: a restored queue's downloaded entry is named from what its download kept. Offline,
+     * the song's own read fails; it is never asked for the downloaded entry, which still has its title,
+     * artist and album, while the streamed entry beside it — the control — stays untitled.
+     */
+    @Test fun aRestoredDownloadedEntryIsNamedFromItsDownloadOfflineWithNoSongRead() {
+        val songReads = mutableListOf<String>()
+        val file = java.io.File.createTempFile("dulcet-local", ".wav")
+        val downloads = object : AndroidLocalPlaybackSource {
+            override suspend fun localPlan(rawId: String) = if (rawId != "down") null else LocalPlaybackPlan(
+                DownloadId("download:down"), DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE),
+                AudioContainer.Wav, 44, file.path)
+            override suspend fun localTrack(rawId: String) = if (rawId != "down") null else
+                AndroidTrack(OWNER, "down", "Kept title", "Kept artist", "Kept album", 40_000, "cover-kept")
+        }
+        try {
+            Fixture(savedOwner = OWNER, savedSongs = listOf("down", "net"), localPlans = downloads, loadSong = { id ->
+                songReads += id
+                throw AndroidPlaybackIOException(DomainError.Transport.Unreachable)
+            }).use { f ->
+                shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId }, "control: the restored entry plays from its file")
+                val state = f.controller.state.value
+                assertEquals("Kept title", state.title)
+                assertEquals("Kept artist", state.artist)
+                assertEquals("Kept album", state.album)
+                assertEquals(listOf("Kept title", ""), state.queue.map { it.track.title })
+                assertEquals(listOf("net"), songReads, "only the streamed entry's song is read; the downloaded one never is")
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
     @Test fun anEndedQueueReportsNoSessionAndNoStalePosition() {
         Fixture().use { f ->
             f.controller.playQueue(album("only"), 0, AndroidQueueSource.Album, "Album", "album-id")

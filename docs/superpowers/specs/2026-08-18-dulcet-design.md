@@ -2884,7 +2884,10 @@ and reconciliation against a changed server item. The platform owns the **execut
 - **Relaunch reconciliation** runs before anything else touches the subsystem: enumerate the platform's
   outstanding tasks, match them to rows, mark rows with no task as interrupted, and mark tasks with no
   row for cancellation. Duplicate delivery after relaunch is harmless because promotion is keyed on the
-  destination path.
+  destination path. It deletes every temporary file no outstanding task owns, except one the platform
+  says it resumes, and it asks only about a row whose transfer ended and was recorded (`queued` or
+  `interrupted`); a row still `downloading` with no task died mid-write, and its file is always
+  deleted (§28, 2026-10-05). Apple resumes none; Android resumes a row that holds `Range` resume data.
 - **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
   table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
   before the file is atomically renamed and the row marked complete. An estimated length is never an
@@ -2931,6 +2934,11 @@ and reconciliation against a changed server item. The platform owns the **execut
   launch. The Android executor (§28, 2026-09-30) keeps both: `download` inserts the row, and pins
   the track's metadata, before any task starts, and a transfer writes only
   `.tmp/<downloadId>.partial` before the core promotes it to the row's `file_relative_path`.
+  The pin comes with an identity-only track row, and a track the seen-cache holds no metadata for —
+  one asked for by its id alone — has it read with `getSong` when its task runs, before the
+  transfer, and written as a song lookup (§16.11 rule 4: it never clears `gone`). A failed read fails
+  the run as a transfer failure would. The player names a downloaded song from that row, with no
+  request: a restored queue entry, or one played offline (§28, 2026-10-05).
 - **The Android executor (§28, 2026-09-30).** `AndroidDownloadController` (core `androidMain`) runs
   this policy for the saved account; the shells reach it through one per-process registry, because
   `reconcile` must run once per launch before anything else. Its platform tasks are WorkManager
@@ -2955,8 +2963,10 @@ and reconciliation against a changed server item. The platform owns the **execut
   well as the time limit, and each run makes progress however short it is. `/rest` has no
   validators (§16.11), so a file changed on the server to the *same* length between two runs is not
   detected by the range check; the promoted file is still signature- and length-checked. A
-  connection failure keeps the partial file for the retry; a refusal, a rejected body or an `Error`
-  discards it. A downloaded song plays through the same validating
+  connection failure keeps the partial file for the retry, across a relaunch too: the worker reports
+  a failed run as finished, so the next launch finds no task for the row, and reconciliation keeps the
+  partial file of an `interrupted` row that holds `Range` resume data (§28, 2026-10-05). A refusal,
+  a rejected body or an `Error` discards it. A downloaded song plays through the same validating
   Media3 data source as a stream (§12.4), over the promoted file, so a file changed since promotion
   is refused rather than played. The playback controller asks for the local plan before any server
   read, including the queue's own song read, which offline would otherwise fail first. The library
@@ -7651,6 +7661,40 @@ reading `DulcetAVPlayerEngine.preload`, not run). OBSERVED by
 `aNextItemWithASavedPositionIsPreloadedAndTheHandoverClearsThatPosition`, which fails with the
 decline restored and with the clear removed (each mutant run separately), and by
 `theSameSongQueuedTwiceIsPreloadedAfterItsOwnSavedPositionAndTheHandoverClearsIt`.
+
+**2026-10-05 — A relaunch keeps a resumable partial download, and an Android download reads and
+keeps its track's metadata (§14.5, §16.13).** Two Android defects kept `downloads.offline` partial
+on phone and TV, each reproduced on main by a test before the fix:
+
+1. **A relaunch deleted a kept partial file.** A connection failure keeps
+   `.tmp/<downloadId>.partial` and records the failure, and the worker then returns success, so
+   WorkManager holds no task for the row. At the next launch `reconcile` deleted every temporary
+   file no outstanding task owned, and the retry started from zero. `reconcile` now takes
+   `resumesTemporaryFile`, asked only for a `queued` or `interrupted` row with no destination file
+   and no credential change; a `downloading` row with no task is never asked, so a file a crash left
+   mid-write is still deleted. The default answers no, which keeps Apple's behaviour; Android answers
+   yes for a row that holds `Range` resume data.
+2. **A track downloaded by its id alone had no title offline.** `download` wrote a bare pin with no
+   track row and nothing read the track's metadata, so a downloaded song that no screen had read
+   showed a blank title in the player after a relaunch, on TV always (it fills no restored title
+   from the library). The pin now comes with an identity-only track row (`BoundSeenCache.pin`); a
+   run reads `getSong` before the transfer when the cache holds no metadata, writing it as a song
+   lookup; and `AndroidLocalPlaybackSource.localTrack` gives the player the kept metadata, asked
+   before any song read when an entry is restored or starts from its file.
+
+OBSERVED by host tests that fail with their part undone (mutants):
+`AndroidDownloadControllerTest.aPartialFileKeptAfterATransportFailureSurvivesARelaunchAndResumesWithARangeRequest`,
+`…aTrackDownloadedByIdAloneHasItsMetadataReadOnceAndKeptForOffline`,
+`…aTrackTheLibraryReadIsNotLookedUpAndAFailedLookupPromotesNothing`,
+`AndroidPlaybackControllerTest.aRestoredDownloadedEntryIsNamedFromItsDownloadOfflineWithNoSongRead`,
+`DownloadPolicyTest.relaunchKeepsATemporaryFileOnlyForAnEndedTransferThePlatformResumes`, and in
+each app's Robolectric runtime through the production registry, WorkManager worker and playback
+service: `DownloadRelaunchResumeTest`/`TvDownloadRelaunchResumeTest` (transfers `[none,
+bytes=16384-]`, the file byte-identical) and `DownloadedTitleOfflineTest`/`TvDownloadedTitleOfflineTest`
+(the player's title node shows the song's title after an offline relaunch, one `getSong`).
+**Not done here:** §16.13 also pins the album with credits and its artwork; Android pins the track
+only. The emulator proofs (CONF-51, CONF-52) now make one `getSong` before the transfer; that they
+still pass is ASSUMED until core-ci runs them.
 
 **2026-10-05 — Apple retries a reader setup that failed, and `isOnline` redraws on reachability
 alone (§16.18, §16.15).** Two shell defects, OBSERVED by reading `DulcetLibrarySession`:

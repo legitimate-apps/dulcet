@@ -845,6 +845,16 @@ internal fun parseReaderSongsByGenre(body: String): List<CacheTrackRecord> {
     return container.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }
 }
 
+/**
+ * `getSong`'s one track, for a download's own metadata (spec §16.13). Its answer is not evidence the
+ * file still exists (§16.11 rule 4), so it is written as a song lookup, which never clears `gone`.
+ */
+internal fun parseReaderSong(body: String): CacheTrackRecord {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val song = payload["song"] as? JsonObject ?: malformed()
+    return song.readerTrack(null)
+}
+
 private fun JsonObject.readerUserState(withPlays: Boolean): CacheUserState {
     val starredAt = string("starred")?.takeIf(String::isNotBlank)
     return CacheUserState(

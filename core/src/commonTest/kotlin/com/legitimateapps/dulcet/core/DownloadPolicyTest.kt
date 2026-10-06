@@ -59,6 +59,39 @@ class DownloadPolicyTest {
             assertFalse(FileSystem.SYSTEM.exists(relaunched.temporaryFilePath(row.downloadId).toPath()))
         }
 
+    /**
+     * A temporary file no task owns survives relaunch only for a row whose transfer ENDED and was
+     * recorded, and only when the platform says it resumes it; the default (Apple's) keeps none. A
+     * row still downloading with no task died mid-write: its file is never offered, whatever the
+     * platform answers.
+     */
+    @Test
+    fun relaunchKeepsATemporaryFileOnlyForAnEndedTransferThePlatformResumes() = withFixture { fixture ->
+        fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        val ended = fixture.engine.enqueue(request())
+        assertEquals(ended.downloadId, assertIs<DownloadScheduleResult.Start>(fixture.engine.schedule(scheduleContext())).record.downloadId)
+        fixture.engine.writeCompletedTemporaryFile(ended.downloadId, MP3_BYTES)
+        fixture.engine.recordFailure(ended.downloadId, DomainError.Transport.Unreachable, NOW)
+        val crashed = fixture.engine.enqueue(request(identity = DownloadIdentity(SERVER_ID, "raw:crashed", DownloadIdentity.ORIGINAL_PROFILE)))
+        assertEquals(crashed.downloadId, assertIs<DownloadScheduleResult.Start>(fixture.engine.schedule(scheduleContext())).record.downloadId)
+        fixture.engine.writeCompletedTemporaryFile(crashed.downloadId, MP3_BYTES)
+        val offered = mutableListOf<DownloadId>()
+
+        val resuming = DownloadPolicyEngine(fixture.database.database, fixture.files)
+        val first = resuming.reconcile(emptyList(), mapOf(SERVER_ID to 1L)) { row -> offered += row.downloadId; true }
+
+        assertEquals(listOf(ended.downloadId), offered, "only the ended transfer's row is asked")
+        assertEquals(setOf(crashed.downloadId), first.deletedTemporaryFiles)
+        assertTrue(FileSystem.SYSTEM.exists(resuming.temporaryFilePath(ended.downloadId).toPath()))
+        assertFalse(FileSystem.SYSTEM.exists(resuming.temporaryFilePath(crashed.downloadId).toPath()))
+        assertEquals(DownloadState.Interrupted, resuming.record(ended.downloadId)?.state)
+
+        val byDefault = DownloadPolicyEngine(fixture.database.database, fixture.files)
+        val second = byDefault.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+        assertEquals(setOf(ended.downloadId), second.deletedTemporaryFiles, "the default keeps no temporary file")
+        assertFalse(FileSystem.SYSTEM.exists(byDefault.temporaryFilePath(ended.downloadId).toPath()))
+    }
+
     @Test
     fun credentialGenerationChangeCancelsAndRequeuesOutstandingTask() = withFixture { fixture ->
         fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))

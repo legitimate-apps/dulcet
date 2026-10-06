@@ -92,6 +92,69 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    /**
+     * Spec §16.13: a downloaded track keeps its metadata. One asked for by its id alone — never read
+     * by the library — is pinned as an identity when the row is written, has its metadata read with
+     * `getSong` once, before its transfer, and names itself offline from the device alone.
+     */
+    @Test fun aTrackDownloadedByIdAloneHasItsMetadataReadOnceAndKeptForOffline() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val pinned = assertNotNull(track(RAW_ID), "the pin's track row is written with the row")
+            assertEquals(1L, pinned.metadata_missing, "an identity alone until its metadata is read")
+            assertEquals(listOf("track" to RAW_ID), pins())
+            assertTrue(server.lookups.isEmpty(), "nothing is read before the task runs")
+
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+
+            assertEquals(listOf(listOf(RAW_ID)), server.lookups.map { it.query["id"] }, "getSong is asked once, for the track")
+            assertTrue(server.lookups.single().query.keys.containsAll(setOf("u", "t", "s")), "the lookup is signed")
+            assertEquals(1, server.requests.size, "and the file transferred once")
+            val stored = assertNotNull(track(RAW_ID))
+            assertEquals(0L, stored.metadata_missing)
+            assertEquals(TITLE, stored.title)
+            assertEquals(0L, stored.gone)
+            assertEquals(listOf("track" to RAW_ID), pins(), "still pinned against eviction")
+
+            // Offline: the network clients are closed and the server is gone.
+            controller.closeNetworkAccess()
+            server.close()
+            assertEquals(AndroidTrack(SERVER_ID, RAW_ID, TITLE, "Canary Artist", "Canary Album", 3_000, "cover:opaque"),
+                controller.localTrack(RAW_ID))
+            assertNull(controller.localTrack("song:never-downloaded"), "only a downloaded track is answered")
+        }
+    }
+
+    /** The control: a track the library already read costs no lookup, and a failed lookup promotes nothing. */
+    @Test fun aTrackTheLibraryReadIsNotLookedUpAndAFailedLookupPromotesNothing() = runBlocking {
+        val refuse = java.util.concurrent.atomic.AtomicBoolean(false)
+        WireServer(lookup = { request -> if (refuse.get()) WireReply(500, byteArrayOf(), contentType = "text/plain")
+            else songReply(request.query["id"].orEmpty().single()) }) { WireReply(200, AUDIO) }.use { server ->
+            val read = "song:read-by-the-library"
+            SeenCacheStore(inspect(), SeenCacheWallClock { NOW }).bind(CacheBinding(SERVER_ID, server.url, USER)).let { cache ->
+                cache.writeEntities(CacheWriteStamp(cache.issue(), NOW, null), CacheEntitySource.ListPage,
+                    CacheEntities(tracks = listOf(parseReaderSong(String(songReply(read).bytes)))))
+            }
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(read, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            assertTrue(server.lookups.isEmpty(), "a track whose metadata is held is never read again")
+            assertEquals(TITLE, controller.localTrack(read)?.title)
+
+            refuse.set(true)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, controller.runTask(tasks.started.last()))
+            assertEquals(1, server.lookups.size, "the refused lookup was made")
+            assertEquals(1, server.requests.size, "no transfer follows a failed lookup")
+            assertEquals("interrupted", rows().single { it.raw_id == RAW_ID }.state)
+            assertEquals(1, files().size, "only the first track's file exists")
+            assertNull(controller.localTrack(RAW_ID))
+        }
+    }
+
     @Test fun anErrorEnvelopeDeliveredWithHttp200IsRejectedAndNothingIsPromoted() = runBlocking {
         val envelope = """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Song not found"}}}"""
         WireServer { WireReply(200, envelope.toByteArray(), contentType = "audio/wav") }.use { server ->
@@ -231,6 +294,59 @@ class AndroidDownloadControllerTest {
             delay(400)
             assertEquals(kept, partial.length(), "nothing is written after the wait returns")
             assertTrue(kept < AUDIO.size, "the closed controller stopped before the whole body")
+        }
+    }
+
+    /**
+     * Spec §14.5: a transport failure keeps the partial file for the retry, and a relaunch — the
+     * worker reported its run finished, so WorkManager no longer holds a task for it — keeps it too,
+     * and the retry asks for the rest with a Range request rather than the whole file again.
+     */
+    @Test fun aPartialFileKeptAfterATransportFailureSurvivesARelaunchAndResumesWithARangeRequest() = runBlocking {
+        val partialPath = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val first = java.util.concurrent.atomic.AtomicBoolean(true)
+        WireServer { request ->
+            if (request.headers["range"] == null && first.getAndSet(false)) {
+                // The first transfer: STOP_AT bytes, held until they are on disk, then the connection drops.
+                WireReply(200, AUDIO, pauseAfter = STOP_AT, resetAfterPause = true, pause = {
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                    while ((partialPath.get()?.let(::File)?.length() ?: 0L) < STOP_AT) {
+                        check(System.nanoTime() < deadline) { "the executor never wrote the first bytes" }
+                        Thread.sleep(5)
+                    }
+                })
+            } else rangeAware(request, CountDownLatch(0))
+        }.use { server ->
+            var now = NOW
+            val tasks = RecordingTasks()
+            val before = controller(server, tasks, wall = { now })
+            before.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val partial = File(before.temporaryPathForTest(task)).also { partialPath.set(it.path) }
+
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, before.runTask(task))
+            assertEquals(STOP_AT.toLong(), partial.length(), "the transport failure kept the bytes so far")
+            assertEquals("interrupted", rows().single().state)
+            val boundary = assertNotNull(before.statuses.value.getValue(RAW_ID).retryNotBeforeWallClock)
+            before.close()
+
+            // Relaunched after the boundary, with no task outstanding: WorkManager finished the run.
+            now = boundary
+            val none = RecordingTasks(outstanding = emptyList())
+            val relaunched = controller(server, none, wall = { now })
+            assertTrue(relaunched.awaitReconciled())
+            assertEquals(STOP_AT.toLong(), partial.length(), "relaunch reconciliation keeps the resumable partial file")
+            withTimeout(10_000) { while (none.started.isEmpty()) delay(20) }
+            assertEquals(listOf(task), none.started, "the interrupted row is started again at launch")
+
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, relaunched.runTask(task))
+
+            assertEquals(listOf(null, "bytes=$STOP_AT-"), server.requests.map { it.headers["range"] },
+                "the retry after the relaunch asks only for the rest, never from zero")
+            val row = rows().single()
+            assertEquals("complete", row.state)
+            assertContentEquals(AUDIO, File(root, row.file_relative_path).readBytes(), "prefix and rest form the original")
+            assertFalse(partial.exists())
         }
     }
 
@@ -455,6 +571,8 @@ class AndroidDownloadControllerTest {
 
     private fun files(): List<File> = root.walkTopDown().filter { it.isFile }.toList()
 
+    private fun track(rawId: String) = inspect().database.seenCacheQueries.selectTrack(SERVER_ID, rawId).executeAsOneOrNull()
+
     private open class RecordingTasks(private val outstanding: List<String> = emptyList()) : AndroidDownloadTasks {
         val started = CopyOnWriteArrayList<String>()
         val cancelled = CopyOnWriteArrayList<String>()
@@ -484,12 +602,18 @@ class AndroidDownloadControllerTest {
         /** Bytes sent before [pause] runs; the next [STOP_CHUNK] follow at once, the rest later. */
         val pauseAfter: Int? = null,
         val pause: () -> Unit = {},
+        /** After [pause], the connection is reset (RST) instead of sending the rest: a transport failure. */
+        val resetAfterPause: Boolean = false,
     )
 
-    private class WireServer(private val respond: (WireRequest) -> WireReply) : AutoCloseable {
+    private class WireServer(
+        private val lookup: (WireRequest) -> WireReply = { songReply(it.query["id"].orEmpty().single()) },
+        private val respond: (WireRequest) -> WireReply,
+    ) : AutoCloseable {
         private val socket = ServerSocket().apply { bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0)) }
         val url = "http://127.0.0.1:${socket.localPort}"
         val requests = CopyOnWriteArrayList<WireRequest>()
+        val lookups = CopyOnWriteArrayList<WireRequest>()
         private val executor = Executors.newSingleThreadExecutor()
         private var closed = false
         init {
@@ -506,8 +630,15 @@ class AndroidDownloadControllerTest {
             val headers = generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
                 .associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
             val request = WireRequest(line.split(' ')[1], headers)
-            requests += request
-            val reply = respond(request)
+            // The track's own read (spec §16.13: a download keeps its metadata) is answered here and
+            // counted apart, so every transfer assertion still counts only the transfer's requests.
+            val reply = if (request.path.startsWith("/rest/getSong")) {
+                lookups += request
+                lookup(request)
+            } else {
+                requests += request
+                respond(request)
+            }
             val header = "HTTP/1.1 ${reply.code} Fixture\r\nContent-Type: ${reply.contentType}\r\n" +
                 "Content-Length: ${reply.declaredLength}\r\nConnection: close\r\n" +
                 (reply.retryAfter?.let { "Retry-After: $it\r\n" } ?: "") +
@@ -521,6 +652,11 @@ class AndroidDownloadControllerTest {
             }
             output.write(reply.bytes, 0, pauseAt); output.flush()
             reply.pause()
+            if (reply.resetAfterPause) {
+                // A zero linger makes the close an RST: the client's next read fails, as on a dropped network.
+                client.setSoLinger(true, 0)
+                return
+            }
             output.write(reply.bytes, pauseAt, STOP_CHUNK); output.flush()
             // The stopped executor closes its end; the rest may or may not find a reader.
             Thread.sleep(300)
@@ -536,6 +672,14 @@ class AndroidDownloadControllerTest {
     }
 
     private companion object {
+        const val TITLE = "Canary Title Read Online"
+
+        /** `getSong`'s answer for [rawId]: the track's catalog metadata, as the server sends it. */
+        fun songReply(rawId: String): WireReply = WireReply(200, ("""{"subsonic-response":{"status":"ok","version":"1.16.1",""" +
+            """"song":{"id":"$rawId","title":"$TITLE","album":"Canary Album","albumId":"album:opaque","artist":"Canary Artist",""" +
+            """"artistId":"artist:opaque","duration":3,"suffix":"wav","contentType":"audio/wav","coverArt":"cover:opaque"}}}""")
+            .toByteArray(), contentType = "application/json")
+
         const val SERVER_ID = "provider:opaque"
         const val RAW_ID = "song:opaque-01HX"
         const val USER = "download-user"

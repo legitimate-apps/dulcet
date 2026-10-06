@@ -69,6 +69,9 @@ dependencies {
     // The album-play proof binds the production playback service, a Media3 session service.
     testImplementation(libs.media3.session)
     testImplementation(libs.robolectric)
+    // The downloaded-title proof runs the production download worker over a test WorkManager.
+    testImplementation(libs.androidx.work.runtime)
+    testImplementation(libs.androidx.work.testing)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
 }

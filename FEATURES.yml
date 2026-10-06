@@ -1354,12 +1354,7 @@
         },
         "tvos": {"status": "n/a", "reason": "tvOS has no durable user-managed media download contract in v1."},
         "android": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-download-offline-metadata-and-relaunch-partials",
-            "reason": "CONF-51 and CONF-52 are observed on the emulator (core-ci run 36706956659). The cell stays partial on two gaps: a downloaded track whose metadata was never read online has no title offline; and a relaunch deletes a kept partial file instead of resuming it. It promotes when both are fixed and evidenced."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on the phone app's unit-test runtime, the saved account's download controller from the process registry starts a WorkManager task tagged with the account and the row's download id; the task waits for a network, then its worker transfers the file from a loopback server and the core promotes exactly one file with the served bytes",
@@ -1398,6 +1393,18 @@
               "test": "PhoneDownloadControlsTest/aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist"
             },
             {
+              "observes": "on the phone app's unit-test runtime, a transfer whose connection is reset part-way keeps its partial file while WorkManager records the run as finished; after the process dies, the relaunched controller keeps that file and its retry task asks only for the rest with a Range request, promoting a file byte-identical to the original",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "DownloadRelaunchResumeTest/aPartialFileKeptAfterADroppedConnectionIsResumedWithARangeRequestAfterARelaunch"
+            },
+            {
+              "observes": "a song downloaded by its id alone, which no screen read, has its metadata read once with the download; after an offline relaunch, the restored queue entry's title shows on the phone's Now Playing, through the production playback service, with no request",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "DownloadedTitleOfflineTest/aSongDownloadedByIdAloneIsNamedOnNowPlayingAfterAnOfflineRelaunch"
+            },
+            {
               "conformance": "CONF-51",
               "workflow": "core-ci",
               "job": "core-ci",
@@ -1410,15 +1417,10 @@
               "test": "AndroidEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"
             }
           ],
-          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and — in core's Android host tests, which core-ci runs but does not upload — of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server executed and passed on an API 34 phone emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656; the cell stays partial on the two gaps its promotion condition names. Downloads request the original file with format=raw, validation reads a bounded prefix plus the on-disk length, and a transfer stopped mid-body resumes with a Range request (host tests only, including a changed file restarting from zero); a track never read by the library has no title offline."
+          "reason": "The phone app downloads an album or a track and removes a download from the album page, shows a downloaded marker and progress, plays a downloaded song from its file through the validating data source (a local plan is asked for before any server read), keeps downloads across process death through WorkManager and the core's relaunch reconciliation, and deletes an account's tasks and files at sign-out. OBSERVED on host runtimes only: Robolectric runs of the executor over a real test WorkManager and a loopback server, of the controls, and — in core's Android host tests, which core-ci runs but does not upload — of validated atomic promotion, an HTTP 200 error envelope rejected, short and grown files refused, and a downloaded file read identically through the data source after the controller's network clients close. The emulator proofs of CONF-51 and CONF-52 against the disposable server executed and passed on an API 34 phone emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656, before a download read its track's metadata (that the proofs still pass with that one getSong added is ASSUMED until core-ci runs them). Downloads request the original file with format=raw, validation reads a bounded prefix plus the on-disk length, and a transfer stopped mid-body resumes with a Range request (host tests only, including a changed file restarting from zero) — after a relaunch too: a partial file kept by a connection failure survives relaunch reconciliation and the retry asks only for the rest (DownloadRelaunchResumeTest). A track downloaded by its id alone has its metadata read with getSong before its transfer and kept pinned, and the player names a downloaded song from it with no request, so a restored entry is titled offline (DownloadedTitleOfflineTest, on the phone's own Now Playing). Both were reproduced on main by these tests before the fix and fail again with it undone. Not covered: §16.13 also pins the downloaded track's album with credits and its artwork; Android pins the track row only, which carries the album title and artwork key."
         },
         "androidtv": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-download-offline-metadata-and-relaunch-partials",
-            "reason": "CONF-51 and CONF-52 are observed on the emulator (core-ci run 36706956659). The cell stays partial on two gaps: a downloaded track whose metadata was never read online has no title offline; and a relaunch deletes a kept partial file instead of resuming it. It promotes when both are fixed and evidenced."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on the TV app, a track row's own download button, reached by focus and pressed with the remote's centre key, requests the track's download",
@@ -1439,6 +1441,18 @@
               "test": "TvDownloadControlsTest/aTransferUnderWayShowsItsProgressOnTheRow"
             },
             {
+              "observes": "on the TV app's unit-test runtime, a transfer whose connection is reset part-way keeps its partial file while WorkManager records the run as finished; after the process dies, the relaunched controller keeps that file and its retry task asks only for the rest with a Range request, promoting a file byte-identical to the original",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvDownloadRelaunchResumeTest/aPartialFileKeptAfterADroppedConnectionIsResumedWithARangeRequestAfterARelaunch"
+            },
+            {
+              "observes": "a song downloaded by its id alone, which no screen read, has its metadata read once with the download; after an offline relaunch, the restored queue entry's title shows on the TV player, through the production playback service, with no request",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvDownloadedTitleOfflineTest/aSongDownloadedByIdAloneIsNamedOnTheTvPlayerAfterAnOfflineRelaunch"
+            },
+            {
               "conformance": "CONF-51",
               "workflow": "core-ci",
               "job": "core-ci",
@@ -1451,7 +1465,7 @@
               "test": "AndroidTvEmulatorDownloadConformanceTest/conf52ADownloadedSongPlaysTheIdenticalFileWithTheServerUnreachable"
             }
           ],
-          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 executed and passed on an API 34 Android TV emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656; the cell stays partial on the two gaps its promotion condition names."
+          "reason": "The TV app uses the phone's download executor, registry and playback path unchanged, with an album Download or Remove download action, a download button beside each track's heart, a downloaded marker and progress. OBSERVED on host runtimes: the TV controls under Robolectric with the remote's keys; the shared executor's other behaviour is observed only through the phone app's unit tests. The TV emulator proofs of CONF-51 and CONF-52 executed and passed on an API 34 Android TV emulator, one testcase each with no failure and none skipped, in main's core-ci push run on 054b6656, before a download read its track's metadata (that they still pass with that one getSong added is ASSUMED until core-ci runs them). In the TV app's own Robolectric runtime, through the shared registry, WorkManager worker and playback service: a partial file kept by a dropped connection survives a relaunch and is resumed with a Range request (TvDownloadRelaunchResumeTest), and a song downloaded by its id alone is titled on the TV player after an offline relaunch, which the TV app can take only from what the download kept, since it fills no restored title from the library (TvDownloadedTitleOfflineTest). Both were reproduced on main by these tests before the fix and fail again with it undone. Not covered: §16.13 also pins the downloaded track's album with credits and its artwork; Android pins the track row only."
         }
       }
     },
