@@ -6421,16 +6421,18 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
    iOS/iPadOS-simulator and tvOS shells and their presentation, capture and compact-shell legs;
    `apple-conformance-core` runs `macosArm64Test`, the §12.4 measurement and the half of the native
    Darwin conformance composite that holds the `core-conformance` suites; `apple-conformance-ipad-iphone`
-   runs the other half, the iPadOS and iPhone app proofs, against its own server; the job named
-   `apple-ci` runs on Linux and passes only when every leg the run planned succeeds. There is no
-   Apple matrix. A fourth macOS leg, or any other Apple job or matrix axis, is a design decision that
-   belongs in §21.5, not a workflow convenience.
+   runs the other half, the iPadOS and iPhone app proofs, as a two-member device matrix
+   (`apple-conformance-ipad`, `apple-conformance-iphone`), each member against its own server; the
+   job named `apple-ci` runs on Linux and passes only when every leg the run planned succeeds. That
+   device axis is the only Apple matrix, and the run holds four hosted macOS slots. A fifth slot, or
+   any other Apple job or matrix axis, is a design decision that belongs in §21.5, not a workflow
+   convenience.
 
 | workflow | runner | contents |
 |---|---|---|
 | `core-ci.yml` | `ubuntu-latest` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `macos-26` for the three legs; `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`: the same closure, corpus and preconditions on its own server, the iOS-simulator framework and the iPhone and iPadOS schemes, then the play-count canary, the iPadOS proofs, the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fourth macOS job without a §21.5 change |
+| `apple-ci.yml` | pinned standard `macos-26` for the three legs (four slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fifth macOS slot without a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `android-test-soak.yml` | `ubuntu-latest` | `workflow_dispatch` only: repeats one `--tests` filter of an Android host-test task N times, counting each repetition from its JUnit XML; fails on any failing repetition or on a filter that executes zero tests. A measurement instrument, never a gate |
 | `apple-core-test-soak.yml` | `macos-26` | `workflow_dispatch` only: the same instrument for a Kotlin/Native core test task (default `:core:macosArm64Test`) on apple-ci's macOS image, with optional busy loops (`cpu_load`) because apple-ci runs these tests while linking every framework. A measurement instrument, never a gate |
@@ -6450,7 +6452,7 @@ concurrency:
 
 with per-job `timeout-minutes`: 20 `core-ci`, 25 `android-ci`, 30 `apple-ci` (**superseded: 120 from
  2026-09-06, then per leg since the split — 80 `apple-platform`, 120 `apple-conformance-core`, 115
-`apple-conformance-ipad-iphone`, 5 for the aggregator — with per-step caps on the heavy steps; see
+`apple-conformance-ipad-iphone` per member, 5 for the aggregator — with per-step caps on the heavy steps; see
 §21.5**), 5 `parity-gate`, 60
 `release`. **OBSERVED 2026-08-21:** the first complete combined standard-hosted `macos-26` job ran
 from `06:03:23Z` to `06:09:41Z`, 378 seconds wall-clock. It exercised the five Kotlin/Native
@@ -6621,9 +6623,11 @@ because the median is above 75 minutes. Either reading adopts the split.
    the macOS app-host proofs, the library-sync, playback-integration and download proofs on every
    platform, every `core-conformance` suite that talks to the native fixtures with its cold restarts,
    and the tvOS UI proofs. `apple-conformance-ipad-iphone` runs the other half
-   as one chain: the play-count canary (which must read 0 before anything streams on its server), the
-   iPadOS proofs, then the iPhone search proof and the iPhone proofs ending in the skip probe (which must follow everything that
-   counts the corpus) and the streaming-quality cap. The job named **exactly** `apple-ci`
+   as two parallel members of a device matrix, each on its own server *since 2026-10-06*. The iPad
+   member reads the play-count canary (which must read 0 before anything streams on its server) and
+   then runs the iPadOS proofs. The iPhone member runs the iPhone search proof first and the iPhone
+   proofs ending in the skip probe (which must follow everything that counts the corpus) and the
+   streaming-quality cap; its playback proof records its canary baseline rather than assuming one. The job named **exactly** `apple-ci`
    runs on `ubuntu-latest`. Branch protection matches it by name and `FEATURES.yml` cites it by job
    id. It runs `if: always()` and `needs:` every leg, and it fails unless each leg's result equals
    `success`: `failure`, `cancelled` (a timeout reports as cancelled) and `skipped` all fail it. It
@@ -7578,6 +7582,24 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
+`apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at
+90 minutes. Green runs spent 74 to 82 minutes in it (runs 37375260936, 37379563022, 37388349181,
+37388698250, OBSERVED from their job logs), and main's run 37483187883 hit the cap during the
+iPhone streaming-quality proof. The cap's cleanup stopped that job's server, so the proof reported
+"Couldn't play" with no product defect behind it. Every new device proof lengthened the chain. The
+job is now a matrix over `device: [ipad, iphone]`, with the check runs `apple-conformance-ipad` and
+`apple-conformance-iphone`. Each member builds only its own scheme, first-boots only its own
+simulator and runs its half of the chain against its own disposable server. The legs share no
+server state: the iPhone playback proof already recorded its canary baseline. Each member uploads
+its own evidence artifact, reports its own guarded attempt output, and is downloaded by name by
+`apple-ci`. The release gate (`tools/release_plan.py`) now requires both member check runs.
+`tools/verify_ci_policy.py` reads a matrix Apple leg's members, and it counts each member as a
+hosted macOS slot. The per-run limit rises from three to four slots, which leaves one of the
+account's five for a pull request's fast check. The cost is a second copy of the job's setup, about
+15 minutes (ASSUMED from the single job's setup times). The gain is a run bounded by
+`apple-conformance-core` (60 to 83 minutes in those runs) rather than this job's 83 to 98.
 
 **2026-10-05 — A connection made on Connection lands on the library (§10.2).**
 A successful connect submitted from Connection (the Settings destination) published "connected" and

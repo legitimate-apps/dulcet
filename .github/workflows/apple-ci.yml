@@ -683,10 +683,11 @@ jobs:
   # `core-conformance` suites on macOS, iOS and tvOS with their three cold restarts, and the tvOS UI
   # proofs. The restart arms stay in one job and in their measured order.
   #
-  # apple-conformance-ipad-iphone (below): the play-count canary and the iPadOS proofs, then the
-  # iPhone search proof (the first iPhone launch, as before the split) and the iPhone proofs ending in the skip probe and the iPhone streaming-quality cap -- one chain, because
-  # the canary must read 0 before anything streams on that server and the skip probe must come after
-  # everything that counts the corpus.
+  # apple-conformance-ipad-iphone (below), one matrix member per device, each on its own server:
+  # the iPad member reads the play-count canary (0 before anything streams on that server) and runs
+  # the iPadOS proofs; the iPhone member runs the iPhone search proof (its first launch) and the
+  # iPhone proofs ending in the skip probe, which must come after everything that counts the
+  # corpus, and the iPhone streaming-quality cap.
   #
   # 120 = ceil(1.5 x 77 / 5) x 5. 77 minutes is this job's MEASURED maximum over its first four green
   # runs (70, 70, 77 and 69 minutes: 37125098942, 37133427531 and 37138000923 on the split's branch,
@@ -1695,14 +1696,28 @@ jobs:
   # job cap stays above the composite's 90 plus the rest of the job: 12.7 of setup, 6.3 for the
   # devices' first boots, and 4 more when an ffmpeg cache miss (estimated at 8) replaces the old
   # closure install's 4.0 -- 90 + 12.7 + 6.3 + 4 = 113.0, under 115.
+  # One leg per device, in parallel, each against its own disposable server. As one job the iPad
+  # proofs and then the iPhone proofs ran in a single 90-minute step that took 74 to 82 minutes
+  # when green (runs 37375260936, 37379563022, 37388349181, 37388698250) and was cancelled at 90 on
+  # main in run 37483187883, during its last proof. Every new device proof lengthened it. The legs
+  # share no server state: the iPhone playback proof records its canary baseline rather than
+  # assuming the iPad's plays. The job id stays, so `needs` and the artifact names keep it; the
+  # check runs are named apple-conformance-ipad and apple-conformance-iphone.
   apple-conformance-ipad-iphone:
-    name: apple-conformance-ipad-iphone
+    name: apple-conformance-${{ matrix.device }}
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: macos-26
     timeout-minutes: 115
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [ipad, iphone]
+    # A matrix job combines its members' outputs into one set, so each member reports its own
+    # attempt under its own name, as core-ci's emulator legs do.
     outputs:
-      attempt: ${{ github.run_attempt }}
+      attempt-ipad: ${{ matrix.device == 'ipad' && github.run_attempt || '' }}
+      attempt-iphone: ${{ matrix.device == 'iphone' && github.run_attempt || '' }}
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -1774,6 +1789,7 @@ jobs:
       # attempts it made when that expires. It is this job's first, cold xcodebuild call, so the step
       # cap is the 6 minutes of the platform step that hosts the same call.
       - name: Resolve the iPadOS simulator the conformance legs use
+        if: ${{ matrix.device == 'ipad' }}
         id: ipados_conformance_destination
         timeout-minutes: 6
         run: |
@@ -1785,6 +1801,7 @@ jobs:
       # roots it names. Nothing is tested by these steps and a build boots no simulator. 10 bounds a
       # hang; the same builds took 3.1 and 1.7 minutes in run 37105472578.
       - name: Build the iOS shell for the iPhone conformance legs
+        if: ${{ matrix.device == 'iphone' }}
         timeout-minutes: 10
         run: >-
           xcodebuild build-for-testing
@@ -1794,6 +1811,7 @@ jobs:
           -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
           -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
       - name: Build the iOS shell for the iPadOS conformance legs
+        if: ${{ matrix.device == 'ipad' }}
         timeout-minutes: 10
         env:
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
@@ -1836,29 +1854,41 @@ jobs:
       # not dismiss in time. Attempt 1's iPad proof ran after the iPad's first boot at load1 up to
       # 497 with 2.1 GB swapped out. Its scrobble never arrived. 15 bounds two first boots (158 to
       # 219 s each, OBSERVED) plus the tool's own 120 s shutdown bound.
-      - name: First-boot the iPadOS and iPhone simulators before the timed proofs
+      - name: First-boot this leg's simulator before the timed proofs
         timeout-minutes: 15
         env:
+          DULCET_DEVICE: ${{ matrix.device }}
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
-          python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
-          python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro"
+          if [ "$DULCET_DEVICE" = ipad ]; then
+            python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
+          else
+            python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro"
+          fi
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
-      - name: Assert iPadOS and iPhone conformance proofs
+      - name: Assert this leg's conformance proofs
         # 90 = ceil(1.5 x 59.6 / 5) x 5, rule 5's leg formula applied to this step. 59.6 minutes is
         # what these phases took inside the single composite of run 37105472578 -- the canary and
         # iPadOS proofs 27.8, the iPhone proofs from the playlist proof on 27.8, the server start and
         # preconditions 0.6. The iPad's and the iPhone's FIRST boots are paid in the step above, so
         # these phases pay re-boots as they did there (61 and 58 s). Run 37125098942, which paid
         # both first boots inside this step, finished the iPad proofs and the iPhone search in 43 m.
+        # Since the device split each member runs one half of that chain, so 90 is now headroom, not
+        # a fit: the whole chain took 74 to 82 of it when green, and ran out on main in run
+        # 37483187883. Re-derive the cap from the members' own times once they are measured.
         timeout-minutes: 90
         id: darwin_conformance
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
           DULCET_CONFORMANCE_DISPOSABLE: "true"
+          DULCET_DEVICE: ${{ matrix.device }}
         run: |
           set -o pipefail
+          case "$DULCET_DEVICE" in
+            ipad|iphone) ;;
+            *) echo "unknown conformance leg device: '$DULCET_DEVICE'" >&2; exit 1 ;;
+          esac
           # This job's own disposable server and the one fixture its phases use: the Apple lyrics
           # proofs' fault proxy (tools/ci/run-lyrics-quality-proofs), which forwards every request to
           # this server unchanged except a lyrics read a proof arms it to fail. The redirect, TLS and
@@ -1889,6 +1919,7 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          if [ "$DULCET_DEVICE" = ipad ]; then
           # ---- iPadOS playback + scrobble evidence -------------------------------------------
           # INSIDE this step because Navidrome's lifetime IS this step's shell: `trap cleanup EXIT`
           # kills it, so a later step finds nothing on 127.0.0.1:4533.
@@ -2030,6 +2061,8 @@ jobs:
           # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
           # the iPad (see the script header).
           tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
+          fi
+          if [ "$DULCET_DEVICE" = iphone ]; then
           # ---- iPhone search-activation evidence ---------------------------------------------
           # The typed query, the ranked render and the activation-to-Now-Playing assertions all live
           # in the UI test; this file supplies only the disposable fixture coordinates. This run
@@ -2262,6 +2295,7 @@ jobs:
           # and a cap left by a failed run must not reach any proof that streams after it. It reads
           # no library count, so the skip probe's albums do not disturb it.
           tools/ci/run-lyrics-quality-proofs iphone-quality
+          fi
       # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
@@ -2269,7 +2303,7 @@ jobs:
       - name: Upload Apple parity evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dulcet-apple-parity-evidence-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: dulcet-apple-parity-evidence-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dulcet-*-junit
           if-no-files-found: error
           retention-days: 14
@@ -2317,7 +2351,7 @@ jobs:
         if: ${{ !success() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/*.xcresult
             ${{ runner.temp }}/*.log
@@ -2399,11 +2433,19 @@ jobs:
         with:
           name: dulcet-apple-parity-evidence-apple-conformance-core-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
           path: ${{ runner.temp }}
-      - name: Download iPadOS and iPhone conformance parity evidence
+      # One artifact per device leg, each named by the attempt that leg reported: re-running one
+      # failed leg leaves the other's artifact on its earlier attempt.
+      - name: Download iPadOS conformance parity evidence
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          name: dulcet-apple-parity-evidence-apple-conformance-ipad-iphone-${{ github.run_id }}-${{ needs.apple-conformance-ipad-iphone.outputs.attempt }}
+          name: dulcet-apple-parity-evidence-apple-conformance-ipad-iphone-ipad-${{ github.run_id }}-${{ needs.apple-conformance-ipad-iphone.outputs.attempt-ipad }}
+          path: ${{ runner.temp }}
+      - name: Download iPhone conformance parity evidence
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-apple-parity-evidence-apple-conformance-ipad-iphone-iphone-${{ github.run_id }}-${{ needs.apple-conformance-ipad-iphone.outputs.attempt-iphone }}
           path: ${{ runner.temp }}
       - name: Download macosArm64 core-conformance JUnit results
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}

@@ -244,8 +244,9 @@ failure or skip and passes only when the evidence verification succeeds and both
 `conformance-env-linux` report `success`. `.github/workflows/apple-ci.yml` has the same shape (spec
 §21.5): the Darwin preconditions and the macOS, iOS simulator, and tvOS simulator native conformance
 tasks run serially in hosted-macOS job `apple-conformance-core`; the play-count canary and the iPadOS
-and iPhone app proofs run in a second hosted-macOS job, `apple-conformance-ipad-iphone`, against its
-own disposable server; both run in parallel with the platform legs in `apple-platform`, and the
+and iPhone app proofs run in a second hosted-macOS job, `apple-conformance-ipad-iphone`, a matrix
+whose `apple-conformance-ipad` and `apple-conformance-iphone` members each run against their own
+disposable server; both run in parallel with the platform legs in `apple-platform`, and the
 required `apple-ci` context is a Linux aggregator. Since spec §21.6 the conformance jobs run on pushes
 to `main` and manual dispatches, not on pull requests, and the platform job runs on a pull request
 only when it changes an Apple input; the aggregator passes only when every leg the run planned
