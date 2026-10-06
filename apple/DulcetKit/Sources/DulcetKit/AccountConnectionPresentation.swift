@@ -882,8 +882,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                         form: request,
                         status: .connected(account)
                     )
-                    if origin == .library {
-                        // A connection was just established, so anything held is another session's.
+                    // A connection the person asked for lands on their library, from Connection as
+                    // from the library's own Reconnect: staying on a page that only says
+                    // "Connected" read as an app that had not moved. Android's phone and TV apps
+                    // replace their connect screen with the library the same way. A connection was
+                    // just established, so anything held is another session's.
+                    if origin == .library || origin == .settings {
                         self.openLibrary(reason: .connected)
                     }
                 } catch {

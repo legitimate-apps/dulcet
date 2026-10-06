@@ -1092,6 +1092,7 @@ jobs:
               -resultBundlePath "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
               -parallel-testing-enabled NO \
               -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/searchQueryRanksAndActivatesTrackThroughHostedAppUI \
+              -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/connectFromConnectionLandsOnTheLibraryInTheHostedApp \
               CODE_SIGN_STYLE=Manual \
               CODE_SIGN_IDENTITY=- \
               CODE_SIGN_ENTITLEMENTS= \
@@ -1104,6 +1105,11 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
             DulcetMacTests.DulcetMacAccountConnectAppTest \
             searchQueryRanksAndActivatesTrackThroughHostedAppUI
+          # A connection made on Connection lands on the library (the founding report).
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
+            DulcetMacTests.DulcetMacAccountConnectAppTest \
+            connectFromConnectionLandsOnTheLibraryInTheHostedApp
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test.xcresult" \
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit/TEST-DulcetMacAccountConnectAppTest.xml" \

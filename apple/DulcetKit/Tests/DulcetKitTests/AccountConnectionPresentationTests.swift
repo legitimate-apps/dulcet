@@ -84,7 +84,11 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
     #expect(connector.requests == [request])
     #expect(store.snapshot.state == .accountConnecting)
     connector.complete(success)
-    #expect(store.snapshot.state == .accountConnected)
+    // A connection asked for on Connection lands on the library; this source has no library
+    // browser, so the library it lands on is the connected empty one.
+    #expect(store.snapshot.state == .emptyLibraryConnected)
+    #expect(store.snapshot.selectedDestination == .library)
+    #expect(store.snapshot.accountConnected)
     #expect(credentials.saved == [request])
 
     // Reconstruct from credentials actually saved by the successful production submission.
@@ -1441,7 +1445,8 @@ func replacementSubmissionCancelsThePreviousOperationAndOwnsTheOutcome() {
         normalizedServerURL: second.serverURL
     )), at: 1)
     #expect(credentials.saved == [second])
-    #expect(source.currentSnapshot.state == .accountConnected)
+    #expect(source.currentSnapshot.accountConnected)
+    #expect(source.currentSnapshot.selectedDestination == .library)
     #expect(source.currentSnapshot.accountForm == second)
 }
 
@@ -2682,17 +2687,16 @@ func connectingFromSettingsInvalidatesTheHeldLibrary() throws {
     ))
     #expect(libraryBrowser.requests.count == 1)
 
-    // Connect again from Settings, which does not open the library.
+    // Connect again from Settings: the connection lands on Library, which reads the new server
+    // rather than showing the library held from the old one.
     store.selectDestination(.settings)
     store.submitAccountConnection()
     connector.complete(.connected(DulcetConnectedAccountSummary(
         serverName: "Other",
         normalizedServerURL: "https://other.example.invalid"
     )))
-    #expect(libraryBrowser.requests.count == 1)
-
-    store.selectDestination(.library)
     #expect(libraryBrowser.requests.count == 2)
+    #expect(store.snapshot.selectedDestination == .library)
     #expect(store.snapshot.state == .libraryLoading)
 }
 
