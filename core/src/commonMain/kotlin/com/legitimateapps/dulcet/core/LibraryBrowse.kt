@@ -846,13 +846,38 @@ internal fun parseReaderSongsByGenre(body: String): List<CacheTrackRecord> {
 }
 
 /**
- * `getSong`'s one track, for a download's own metadata (spec §16.13). Its answer is not evidence the
- * file still exists (§16.11 rule 4), so it is written as a song lookup, which never clears `gone`.
+ * What `getSong` says about [rawId], for a download's own metadata (spec §16.13), or null when it
+ * names no usable title. Tolerant where the library's strict parsers are not: a download needs only
+ * `stream`, so an untagged file or a server's empty field must never make this lookup fail. Each
+ * field is kept when it reads and dropped when it does not; a blank `albumId` or `coverArt` is
+ * absent, not malformed. The answer is not evidence the file still exists (§16.11 rule 4), so it is
+ * written as a song lookup, which never clears `gone`.
  */
-internal fun parseReaderSong(body: String): CacheTrackRecord {
-    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
-    val song = payload["song"] as? JsonObject ?: malformed()
-    return song.readerTrack(null)
+internal fun parseLookupSong(body: String, rawId: String): CacheTrackRecord? {
+    val envelope = parseLibraryEnvelope(body)?.takeIf { it.status == "ok" } ?: return null
+    val song = envelope.payload["song"] as? JsonObject ?: return null
+    if (song.string("id") != rawId) return null
+    val title = song.string("title")?.takeIf(String::isNotBlank) ?: return null
+    fun lenientId(name: String): String? =
+        (song[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf(String::isNotBlank)
+    fun <T> tolerant(read: () -> T): T? = try { read() } catch (_: Exception) { null }
+    val credits = tolerant { song.readerCredits(CreditRole.Artist) }
+        ?: song.string("artist")?.takeIf(String::isNotBlank)
+            ?.let { listOf(CacheCredit(CreditRole.Artist, it, lenientId("artistId"))) }
+        ?: emptyList()
+    return CacheTrackRecord(
+        rawId = rawId,
+        albumRawId = lenientId("albumId"),
+        title = title,
+        albumTitle = song.string("album")?.takeIf(String::isNotBlank),
+        credits = credits,
+        discNumber = song.int("discNumber"),
+        trackNumber = song.int("track"),
+        durationMilliseconds = tolerant { song.optionalDuration() }?.inWholeMilliseconds,
+        sourceContainer = tolerant { song.libraryAudioContainer() },
+        artworkKey = lenientId("coverArt"),
+        userState = tolerant { song.readerUserState(withPlays = true) } ?: CacheUserState(),
+    )
 }
 
 private fun JsonObject.readerUserState(withPlays: Boolean): CacheUserState {

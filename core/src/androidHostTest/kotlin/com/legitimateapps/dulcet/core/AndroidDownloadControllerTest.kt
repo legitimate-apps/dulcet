@@ -127,15 +127,18 @@ class AndroidDownloadControllerTest {
         }
     }
 
-    /** The control: a track the library already read costs no lookup, and a failed lookup promotes nothing. */
-    @Test fun aTrackTheLibraryReadIsNotLookedUpAndAFailedLookupPromotesNothing() = runBlocking {
+    /**
+     * The control: a track the library already read costs no lookup, and a failed lookup is not the
+     * download — the file still transfers and the track keeps its placeholder.
+     */
+    @Test fun aTrackTheLibraryReadIsNotLookedUpAndAFailedLookupStillDownloads() = runBlocking {
         val refuse = java.util.concurrent.atomic.AtomicBoolean(false)
         WireServer(lookup = { request -> if (refuse.get()) WireReply(500, byteArrayOf(), contentType = "text/plain")
             else songReply(request.query["id"].orEmpty().single()) }) { WireReply(200, AUDIO) }.use { server ->
             val read = "song:read-by-the-library"
             SeenCacheStore(inspect(), SeenCacheWallClock { NOW }).bind(CacheBinding(SERVER_ID, server.url, USER)).let { cache ->
                 cache.writeEntities(CacheWriteStamp(cache.issue(), NOW, null), CacheEntitySource.ListPage,
-                    CacheEntities(tracks = listOf(parseReaderSong(String(songReply(read).bytes)))))
+                    CacheEntities(tracks = listOf(assertNotNull(parseLookupSong(String(songReply(read).bytes), read)))))
             }
             val tasks = RecordingTasks()
             val controller = controller(server, tasks)
@@ -146,11 +149,12 @@ class AndroidDownloadControllerTest {
 
             refuse.set(true)
             controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
-            assertEquals(AndroidDownloadRunOutcome.WillRetry, controller.runTask(tasks.started.last()))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.last()))
             assertEquals(1, server.lookups.size, "the refused lookup was made")
-            assertEquals(1, server.requests.size, "no transfer follows a failed lookup")
-            assertEquals("interrupted", rows().single { it.raw_id == RAW_ID }.state)
-            assertEquals(1, files().size, "only the first track's file exists")
+            assertEquals(2, server.requests.size, "the transfer follows a failed lookup")
+            assertEquals("complete", rows().single { it.raw_id == RAW_ID }.state)
+            assertEquals(2, files().size, "both tracks' files exist")
+            assertEquals(1L, assertNotNull(track(RAW_ID)).metadata_missing, "the failed lookup left the placeholder")
             assertNull(controller.localTrack(RAW_ID))
         }
     }
@@ -350,6 +354,168 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    /**
+     * The lookup is best effort (spec §16.13): a download needs only `stream`. A song with a blank
+     * title leaves the identity-only row; one with an empty `coverArt` and `albumId` keeps what reads.
+     * Each file downloads, once, either way.
+     */
+    @Test fun aLookupTheStrictParserWouldRefuseNeverStopsTheDownload() = runBlocking {
+        val blank = "song:untagged"
+        val sparse = "song:sparse-fields"
+        WireServer(lookup = { request ->
+            val id = request.query["id"].orEmpty().single()
+            val song = if (id == blank) """{"id":"$id","title":"","suffix":"wav"}"""
+                else """{"id":"$id","title":"$TITLE","album":"","albumId":"","coverArt":"","artist":"Canary Artist","duration":3,"suffix":"wav"}"""
+            WireReply(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","song":$song}}""".toByteArray(),
+                contentType = "application/json")
+        }) { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(blank, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            controller.download(listOf(AndroidDownloadItem(sparse, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.last()))
+
+            assertEquals(2, server.lookups.size, "each track's metadata was asked for once")
+            assertEquals(2, server.requests.size, "and each file transferred once")
+            assertEquals(listOf("complete", "complete"), rows().map { it.state })
+            assertEquals(1L, assertNotNull(track(blank)).metadata_missing, "a blank title leaves the placeholder")
+            assertNull(controller.localTrack(blank))
+            val kept = assertNotNull(controller.localTrack(sparse))
+            assertEquals(AndroidTrack(SERVER_ID, sparse, TITLE, "Canary Artist", null, 3_000, null), kept,
+                "empty optional fields are absent, and the rest is kept")
+        }
+    }
+
+    /**
+     * A refused lookup never touches a kept partial file. The first run's lookup names no title, so
+     * the track keeps its placeholder, as a partial started before downloads read metadata does; its
+     * transfer is cut off and keeps resume data. The relaunched run's lookup is refused with a 503 or
+     * a 429, and the partial is still there for the run's `Range` request, which completes it.
+     */
+    @Test fun aLookupRefusedWith503LeavesTheKeptPartialFileToResume() = refusedLookupResumes(WireReply(503, byteArrayOf(), contentType = "text/plain"))
+
+    @Test fun aLookupRefusedWith429LeavesTheKeptPartialFileToResume() =
+        refusedLookupResumes(WireReply(429, byteArrayOf(), contentType = "text/plain", retryAfter = "30"))
+
+    private fun refusedLookupResumes(refusal: WireReply) = runBlocking {
+        val partialPath = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val first = java.util.concurrent.atomic.AtomicBoolean(true)
+        val lookups = java.util.concurrent.atomic.AtomicInteger(0)
+        WireServer(lookup = {
+            if (lookups.getAndIncrement() == 0) WireReply(200,
+                """{"subsonic-response":{"status":"ok","version":"1.16.1","song":{"id":"$RAW_ID","title":" "}}}""".toByteArray(),
+                contentType = "application/json")
+            else refusal
+        }) { request ->
+            if (request.headers["range"] == null && first.getAndSet(false)) {
+                WireReply(200, AUDIO, pauseAfter = STOP_AT, resetAfterPause = true, pause = {
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                    while ((partialPath.get()?.let(::File)?.length() ?: 0L) < STOP_AT) {
+                        check(System.nanoTime() < deadline) { "the executor never wrote the first bytes" }
+                        Thread.sleep(5)
+                    }
+                })
+            } else rangeAware(request, CountDownLatch(0))
+        }.use { server ->
+            var now = NOW
+            val tasks = RecordingTasks()
+            val before = controller(server, tasks, wall = { now })
+            before.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val partial = File(before.temporaryPathForTest(task)).also { partialPath.set(it.path) }
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, before.runTask(task))
+            assertEquals(STOP_AT.toLong(), partial.length(), "the connection failure kept the bytes so far")
+            val boundary = assertNotNull(before.statuses.value.getValue(RAW_ID).retryNotBeforeWallClock)
+            before.close()
+
+            now = boundary
+            val none = RecordingTasks(outstanding = emptyList())
+            val relaunched = controller(server, none, wall = { now })
+            assertTrue(relaunched.awaitReconciled())
+            withTimeout(10_000) { while (none.started.isEmpty()) delay(20) }
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, relaunched.runTask(task))
+
+            assertEquals(2, server.lookups.size, "both runs asked for the metadata; the second was refused")
+            assertEquals(listOf(null, "bytes=$STOP_AT-"), server.requests.map { it.headers["range"] },
+                "the refused lookup left the partial file for the Range request")
+            assertContentEquals(AUDIO, File(root, rows().single().file_relative_path).readBytes())
+            assertEquals(1L, assertNotNull(track(RAW_ID)).metadata_missing, "the placeholder stays")
+        }
+    }
+
+    /**
+     * The negative: a partial file whose first response declared no length has no resume data, so a
+     * relaunch deletes it and the retry starts from zero — it cannot be checked against a total.
+     */
+    @Test fun aPartialFileWithoutResumeDataIsNotKeptAcrossARelaunch() = runBlocking {
+        val partialPath = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val first = java.util.concurrent.atomic.AtomicBoolean(true)
+        WireServer { request ->
+            if (first.getAndSet(false)) {
+                WireReply(200, AUDIO, omitLength = true, pauseAfter = STOP_AT, resetAfterPause = true, pause = {
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                    while ((partialPath.get()?.let(::File)?.length() ?: 0L) < STOP_AT) {
+                        check(System.nanoTime() < deadline) { "the executor never wrote the first bytes" }
+                        Thread.sleep(5)
+                    }
+                })
+            } else WireReply(200, AUDIO)
+        }.use { server ->
+            var now = NOW
+            val tasks = RecordingTasks()
+            val before = controller(server, tasks, wall = { now })
+            before.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val partial = File(before.temporaryPathForTest(task)).also { partialPath.set(it.path) }
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, before.runTask(task))
+            assertEquals(STOP_AT.toLong(), partial.length(), "control: the connection failure kept the bytes so far")
+            assertNull(rows().single().platform_resume_data, "control: an undeclared length records no resume data")
+            val boundary = assertNotNull(before.statuses.value.getValue(RAW_ID).retryNotBeforeWallClock)
+            before.close()
+
+            now = boundary
+            val none = RecordingTasks(outstanding = emptyList())
+            val relaunched = controller(server, none, wall = { now })
+            assertTrue(relaunched.awaitReconciled())
+            assertFalse(partial.exists(), "a partial file without resume data is deleted at relaunch")
+            withTimeout(10_000) { while (none.started.isEmpty()) delay(20) }
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, relaunched.runTask(task))
+            assertEquals(listOf<String?>(null, null), server.requests.map { it.headers["range"] }, "the retry starts from zero")
+        }
+    }
+
+    /** A partial file with resume data is kept only for its own account's controller. */
+    @Test fun anotherAccountsResumablePartialFileIsNotKeptAtRelaunch() = runBlocking {
+        val partialPath = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val first = java.util.concurrent.atomic.AtomicBoolean(true)
+        WireServer { request ->
+            if (request.headers["range"] == null && first.getAndSet(false)) {
+                WireReply(200, AUDIO, pauseAfter = STOP_AT, resetAfterPause = true, pause = {
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                    while ((partialPath.get()?.let(::File)?.length() ?: 0L) < STOP_AT) {
+                        check(System.nanoTime() < deadline) { "the executor never wrote the first bytes" }
+                        Thread.sleep(5)
+                    }
+                })
+            } else rangeAware(request, CountDownLatch(0))
+        }.use { server ->
+            val tasks = RecordingTasks()
+            val before = controller(server, tasks)
+            before.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val task = tasks.started.single()
+            val partial = File(before.temporaryPathForTest(task)).also { partialPath.set(it.path) }
+            assertEquals(AndroidDownloadRunOutcome.WillRetry, before.runTask(task))
+            assertEquals(STOP_AT.toLong(), partial.length(), "control: the connection failure kept the bytes so far")
+            assertNotNull(rows().single().platform_resume_data, "control: the row holds resume data")
+            before.close()
+
+            val other = controller(server, RecordingTasks(outstanding = emptyList()), serverId = "server:another-account")
+            assertTrue(other.awaitReconciled())
+            assertFalse(partial.exists(), "another account's controller keeps no partial file of this account")
+        }
+    }
+
     /** The whole file, pausing after [STOP_AT] bytes until [stopped]; the rest for a range request. */
     private fun rangeAware(request: WireRequest, stopped: CountDownLatch): WireReply {
         val range = request.headers["range"] ?: return WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
@@ -545,8 +711,9 @@ class AndroidDownloadControllerTest {
         wall: () -> Long = { NOW },
         onChanged: (Set<String>) -> Unit = {},
         fileSystem: FileSystem = FileSystem.SYSTEM,
+        serverId: String = SERVER_ID,
     ): AndroidDownloadController = AndroidDownloadController(
-        account = PlaybackEndpointAccount(SERVER_ID, server.url, USER, PASSWORD, allowLocalHttp = true),
+        account = PlaybackEndpointAccount(serverId, server.url, USER, PASSWORD, allowLocalHttp = true),
         openStore = { openStore() },
         downloadRoot = root,
         tasks = tasks,
@@ -604,6 +771,8 @@ class AndroidDownloadControllerTest {
         val pause: () -> Unit = {},
         /** After [pause], the connection is reset (RST) instead of sending the rest: a transport failure. */
         val resetAfterPause: Boolean = false,
+        /** No `Content-Length` header: the body's length is not declared. */
+        val omitLength: Boolean = false,
     )
 
     private class WireServer(
@@ -640,7 +809,7 @@ class AndroidDownloadControllerTest {
                 respond(request)
             }
             val header = "HTTP/1.1 ${reply.code} Fixture\r\nContent-Type: ${reply.contentType}\r\n" +
-                "Content-Length: ${reply.declaredLength}\r\nConnection: close\r\n" +
+                (if (reply.omitLength) "" else "Content-Length: ${reply.declaredLength}\r\n") + "Connection: close\r\n" +
                 (reply.retryAfter?.let { "Retry-After: $it\r\n" } ?: "") +
                 reply.headers.entries.joinToString("") { "${it.key}: ${it.value}\r\n" } + "\r\n"
             val output = client.getOutputStream()

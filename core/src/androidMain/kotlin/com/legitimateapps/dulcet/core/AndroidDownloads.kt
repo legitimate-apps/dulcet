@@ -183,10 +183,15 @@ public class AndroidDownloadController internal constructor(
                         // Account ids are never reused and an account's credentials never change
                         // under its id on Android, so its generation is constant.
                         mapOf(account.providerInstanceId to CREDENTIAL_GENERATION),
-                        // A transfer that ended in a transport failure kept its partial file and
-                        // the length its response declared; the worker then finished, so no task
-                        // owns the file at relaunch. It is kept for the retry's Range request.
-                        resumesTemporaryFile = { row -> row.platformResumeData?.let(::decodeRangeResume) != null },
+                        // A row of this account holding Range resume data — the exact length its
+                        // first response declared — has a partial file the next run continues with
+                        // a Range request. The worker that recorded its end has finished, so no
+                        // task owns the file at relaunch; the run's own rules decide whether the
+                        // file is still usable (a mismatched answer restarts from zero).
+                        resumesTemporaryFile = { row ->
+                            row.identity.serverId == account.providerInstanceId &&
+                                row.platformResumeData?.let(::decodeRangeResume) != null
+                        },
                     )
                 }
                 result.taskIdsToCancel.forEach { tasks.cancel(it.value) }
@@ -341,8 +346,10 @@ public class AndroidDownloadController internal constructor(
             ?.takeIf { it.state == DownloadState.Downloading && it.identity.serverId == account.providerInstanceId }
             ?: return AndroidDownloadRunOutcome.NotRunnable
         val temporary = File(withContext(database) { engine.temporaryFilePath(id) })
+        // Best effort and outside the transfer's failure handling: no lookup outcome fails the run or
+        // reaches the catch below, which deletes a partial file the failure does not keep.
+        ensureTrackMetadata(row.identity.rawId)
         val outcome = try {
-            ensureTrackMetadata(row.identity.rawId)
             val metadata = transfer(row, temporary)
             withContext(database) {
                 when (val promoted = engine.promote(id, metadata)) {
@@ -438,43 +445,27 @@ public class AndroidDownloadController internal constructor(
 
     /**
      * Reads [rawId]'s own metadata with `getSong` when the seen-cache holds none (spec §16.13), and
-     * writes it as a song lookup, which never clears `gone`. Nothing is read for a track the library
-     * already read. A failure fails the run as a transfer failure would, so the file is never
-     * promoted without the metadata that names it offline; a connection failure keeps the partial file.
+     * writes what it learns as a song lookup, which never clears `gone`. Nothing is read for a track
+     * the library already read. Best effort: the download needs only `stream`, so a refused,
+     * unreadable or failed lookup leaves the identity-only row and the transfer runs as before; only
+     * a cancellation leaves here.
      */
     private suspend fun ensureTrackMetadata(rawId: String) {
-        val issueSeq = withContext(database) {
-            val cached = cache().track(rawId)
-            if (cached?.record != null && !cached.metadataMissing) null else cache().issue()
-        } ?: return
-        val client = requests ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled)
-        val response = try {
-            client.request("getSong", mapOf("id" to rawId))
+        try {
+            val issueSeq = withContext(database) {
+                val cached = cache().track(rawId)
+                if (cached?.record != null && !cached.metadataMissing) null else cache().issue()
+            } ?: return
+            val response = (requests ?: return).request("getSong", mapOf("id" to rawId))
+            if (response.statusCode !in 200..299) return
+            val track = parseLookupSong(response.body.decodeToString(), rawId) ?: return
+            withContext(database) {
+                cache().writeEntities(CacheWriteStamp(issueSeq, wall(), null), CacheEntitySource.SongLookup, CacheEntities(tracks = listOf(track)))
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (failure: AuthenticatedEndpointFailure) {
-            throw AndroidDownloadTransferFailure(failure.error)
         } catch (_: Exception) {
-            throw AndroidDownloadTransferFailure(DomainError.Transport.Unreachable)
-        }
-        if (response.statusCode == 429) {
-            throw AndroidDownloadTransferFailure(DomainError.Server.Busy(parseRetryAfterSeconds(response.headers.retryAfter)))
-        }
-        if (response.statusCode !in 200..299) throw AndroidDownloadTransferFailure(DomainError.Server.Unknown(response.statusCode))
-        val body = response.body.decodeToString()
-        val envelope = parseLibraryEnvelope(body)
-        if (envelope?.status == "failed") {
-            val error = envelope.payload["error"] as? kotlinx.serialization.json.JsonObject
-            val code = (error?.get("code") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: -1
-            throw AndroidDownloadTransferFailure(AccountConnectionContract.mapSubsonicError(code, "", response.redactedUrl))
-        }
-        val track = try {
-            if (envelope?.status != "ok") null else parseReaderSong(body)
-        } catch (_: Exception) {
-            null
-        }?.takeIf { it.rawId == rawId } ?: throw AndroidDownloadTransferFailure(DomainError.Protocol.MalformedEnvelope)
-        withContext(database) {
-            cache().writeEntities(CacheWriteStamp(issueSeq, wall(), null), CacheEntitySource.SongLookup, CacheEntities(tracks = listOf(track)))
+            // The lookup is never the download: its failure leaves the placeholder.
         }
     }
 

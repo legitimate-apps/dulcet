@@ -2887,7 +2887,8 @@ and reconciliation against a changed server item. The platform owns the **execut
   destination path. It deletes every temporary file no outstanding task owns, except one the platform
   says it resumes, and it asks only about a row whose transfer ended and was recorded (`queued` or
   `interrupted`); a row still `downloading` with no task died mid-write, and its file is always
-  deleted (§28, 2026-10-05). Apple resumes none; Android resumes a row that holds `Range` resume data.
+  deleted (§28, 2026-10-05). Apple resumes none; Android resumes a row of its own account that holds
+  `Range` resume data.
 - **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
   table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
   before the file is atomically renamed and the row marked complete. An estimated length is never an
@@ -2936,8 +2937,11 @@ and reconciliation against a changed server item. The platform owns the **execut
   `.tmp/<downloadId>.partial` before the core promotes it to the row's `file_relative_path`.
   The pin comes with an identity-only track row, and a track the seen-cache holds no metadata for —
   one asked for by its id alone — has it read with `getSong` when its task runs, before the
-  transfer, and written as a song lookup (§16.11 rule 4: it never clears `gone`). A failed read fails
-  the run as a transfer failure would. The player names a downloaded song from that row, with no
+  transfer, and written as a song lookup (§16.11 rule 4: it never clears `gone`). The read is best
+  effort and never the download: a refused, failed or unreadable answer leaves the identity-only row
+  and the transfer runs; a blank `coverArt` or `albumId` is absent, not malformed; an answer with no
+  title writes nothing. The read sits outside the transfer's failure handling, so no outcome of it
+  deletes a kept partial file. The player names a downloaded song from that row, with no
   request: a restored queue entry, or one played offline (§28, 2026-10-05).
 - **The Android executor (§28, 2026-09-30).** `AndroidDownloadController` (core `androidMain`) runs
   this policy for the saved account; the shells reach it through one per-process registry, because
@@ -2965,7 +2969,8 @@ and reconciliation against a changed server item. The platform owns the **execut
   detected by the range check; the promoted file is still signature- and length-checked. A
   connection failure keeps the partial file for the retry, across a relaunch too: the worker reports
   a failed run as finished, so the next launch finds no task for the row, and reconciliation keeps the
-  partial file of an `interrupted` row that holds `Range` resume data (§28, 2026-10-05). A refusal,
+  partial file of an `interrupted` row of its own account that holds `Range` resume data (§28,
+  2026-10-05). A refusal,
   a rejected body or an `Error` discards it. A downloaded song plays through the same validating
   Media3 data source as a stream (§12.4), over the promoted file, so a file changed since promotion
   is refused rather than played. The playback controller asks for the local plan before any server
@@ -7673,7 +7678,7 @@ on phone and TV, each reproduced on main by a test before the fix:
    `resumesTemporaryFile`, asked only for a `queued` or `interrupted` row with no destination file
    and no credential change; a `downloading` row with no task is never asked, so a file a crash left
    mid-write is still deleted. The default answers no, which keeps Apple's behaviour; Android answers
-   yes for a row that holds `Range` resume data.
+   yes for a row of its own account that holds `Range` resume data.
 2. **A track downloaded by its id alone had no title offline.** `download` wrote a bare pin with no
    track row and nothing read the track's metadata, so a downloaded song that no screen had read
    showed a blank title in the player after a relaunch, on TV always (it fills no restored title
@@ -7685,7 +7690,7 @@ on phone and TV, each reproduced on main by a test before the fix:
 OBSERVED by host tests that fail with their part undone (mutants):
 `AndroidDownloadControllerTest.aPartialFileKeptAfterATransportFailureSurvivesARelaunchAndResumesWithARangeRequest`,
 `…aTrackDownloadedByIdAloneHasItsMetadataReadOnceAndKeptForOffline`,
-`…aTrackTheLibraryReadIsNotLookedUpAndAFailedLookupPromotesNothing`,
+`…aTrackTheLibraryReadIsNotLookedUpAndAFailedLookupStillDownloads`,
 `AndroidPlaybackControllerTest.aRestoredDownloadedEntryIsNamedFromItsDownloadOfflineWithNoSongRead`,
 `DownloadPolicyTest.relaunchKeepsATemporaryFileOnlyForAnEndedTransferThePlatformResumes`, and in
 each app's Robolectric runtime through the production registry, WorkManager worker and playback
@@ -7695,6 +7700,20 @@ bytes=16384-]`, the file byte-identical) and `DownloadedTitleOfflineTest`/`TvDow
 **Not done here:** §16.13 also pins the album with credits and its artwork; Android pins the track
 only. The emulator proofs (CONF-51, CONF-52) now make one `getSong` before the transfer; that they
 still pass is ASSUMED until core-ci runs them.
+
+**Corrected in review the same day: the lookup is best effort.** As first landed, a run's `getSong`
+read used the library's strict parser and sat inside the transfer's failure handling, so a song with
+a blank title or an empty `coverArt` failed every run with `MalformedEnvelope`, and a 5xx or 429 on
+the lookup deleted a kept partial file. A failed, refused or unreadable lookup now never fails the
+run: the transfer proceeds and the track keeps its placeholder, or what could be read
+(`parseLookupSong` drops a blank optional id instead of refusing the answer). The read runs before,
+and outside, the transfer's failure handling. The keep rule also requires the row to belong to the
+controller's account. OBSERVED by host tests that fail with their part undone:
+`…aLookupTheStrictParserWouldRefuseNeverStopsTheDownload`,
+`…aLookupRefusedWith503LeavesTheKeptPartialFileToResume`,
+`…aLookupRefusedWith429LeavesTheKeptPartialFileToResume`,
+`…aPartialFileWithoutResumeDataIsNotKeptAcrossARelaunch` and
+`…anotherAccountsResumablePartialFileIsNotKeptAtRelaunch`.
 
 **2026-10-05 — Apple retries a reader setup that failed, and `isOnline` redraws on reachability
 alone (§16.18, §16.15).** Two shell defects, OBSERVED by reading `DulcetLibrarySession`:
