@@ -4445,10 +4445,21 @@ final class DulcetiOSUITests: XCTestCase {
         proveLivePlaybackAdvancesPastScrobbleThreshold(usingInjectedAccount: true)
     }
 
+    /// The same proof on a phone: a compact window, the library reached through the tab bar, and
+    /// the workflow's server play-count reads either side of it. A phone and an iPad run the same
+    /// engine, but only a run on each shows the shell drives it there.
+    @MainActor
+    func testIPhoneSimulatorPlaybackAdvancesPastScrobbleThreshold() {
+        guard requireSimulator(.phone, "The iPhone playback proof") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        proveLivePlaybackAdvancesPastScrobbleThreshold(usingInjectedAccount: true, compact: true)
+    }
+
     @MainActor
     private func proveLivePlaybackAdvancesPastScrobbleThreshold(
         usingInjectedAccount: Bool = false,
-        allowingDisposableHost: Bool = false
+        allowingDisposableHost: Bool = false,
+        compact: Bool = false
     ) {
         guard let configuration = livePlaybackConfiguration(allowingDisposableHost: allowingDisposableHost) else { return }
 
@@ -4477,11 +4488,13 @@ final class DulcetiOSUITests: XCTestCase {
 
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        XCTAssertGreaterThan(
-            window.frame.width,
-            700,
-            "This playback proof requires a regular-width iPad window; an iPhone is invalid evidence"
-        )
+        if !compact {
+            XCTAssertGreaterThan(
+                window.frame.width,
+                700,
+                "This playback proof requires a regular-width iPad window; an iPhone is invalid evidence"
+            )
+        }
 
         if !usingInjectedAccount {
             let serverField = app.textFields["dulcet.account-connect.server-address"].firstMatch
@@ -4548,7 +4561,7 @@ final class DulcetiOSUITests: XCTestCase {
             allowLocalNetworkAccessIfRequested()
         }
 
-        guard awaitLiveAccountConnection(in: app, compact: false) else {
+        guard awaitLiveAccountConnection(in: app, compact: compact) else {
             XCTFail("The live account connection must succeed before playback is attempted")
             return
         }
@@ -4582,33 +4595,38 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        guard openDestination(
-            "Library",
-            sidebarIdentifier: "dulcet.sidebar.library",
-            in: app,
-            compact: false
-        ), openSidebarLibrarySection("albums", in: app) else { return }
+        if compact {
+            // The phone's library grid, scrolled to the album, as a person reaches it.
+            guard openLibraryAlbum("Threshold Boundary", in: app, compact: true) else { return }
+        } else {
+            guard openDestination(
+                "Library",
+                sidebarIdentifier: "dulcet.sidebar.library",
+                in: app,
+                compact: false
+            ), openSidebarLibrarySection("albums", in: app) else { return }
 
-        // A queue restored from an earlier run on this simulator puts the canary in the
-        // now-playing bar at launch, and the bar's label names the track. Every label query here
-        // excludes the bar, or it resolves to the bar and opens the player instead of the album.
-        let thresholdAlbum = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@ AND identifier != %@",
-                        "Threshold Boundary", "dulcet.mini-player.open")
-        ).firstMatch
-        guard thresholdAlbum.waitForExistence(timeout: 30) else {
-            XCTFail("The disposable server must expose the Threshold Boundary album")
-            return
+            // A queue restored from an earlier run on this simulator puts the canary in the
+            // now-playing bar at launch, and the bar's label names the track. Every label query here
+            // excludes the bar, or it resolves to the bar and opens the player instead of the album.
+            let thresholdAlbum = app.buttons.matching(
+                NSPredicate(format: "label CONTAINS %@ AND identifier != %@",
+                            "Threshold Boundary", "dulcet.mini-player.open")
+            ).firstMatch
+            guard thresholdAlbum.waitForExistence(timeout: 30) else {
+                XCTFail("The disposable server must expose the Threshold Boundary album")
+                return
+            }
+            guard scrollIntoView(
+                thresholdAlbum,
+                in: app,
+                probingBlockingSystemAlerts: !usingInjectedAccount
+            ) else {
+                XCTFail("The threshold canary album must be reachable in the library")
+                return
+            }
+            thresholdAlbum.tap()
         }
-        guard scrollIntoView(
-            thresholdAlbum,
-            in: app,
-            probingBlockingSystemAlerts: !usingInjectedAccount
-        ) else {
-            XCTFail("The threshold canary album must be reachable in the library")
-            return
-        }
-        thresholdAlbum.tap()
 
         let thresholdTrack = app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@ AND identifier != %@",

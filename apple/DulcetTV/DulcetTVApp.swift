@@ -5,11 +5,22 @@ import SwiftUI
 @main
 struct DulcetTVApp: App {
     @State private var presentation: DulcetPresentationStore
+#if DEBUG
+    @State private var scrobbleDeliveryMarker: DulcetDebugScrobbleDeliveryMarker?
+#endif
 
     init() {
-        let store = DulcetAppleProduction.makePresentationStore()
+        let composition = DulcetAppleProduction.makeTVComposition()
+        let store = composition.store
 #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains(DulcetDebugScrobbleDeliveryMarker.launchArgument) {
+            let marker = DulcetDebugScrobbleDeliveryMarker()
+            composition.playbackController.setScrobbleDeliveryHandler { report in
+                marker.record(report)
+            }
+            _scrobbleDeliveryMarker = State(initialValue: marker)
+        }
         // Published disposable credentials only: launch arguments appear in public test logs.
         // Restrict this account hook to a disposable server on the loopback interface -- the
         // conformance fixture, or the design tour's own server on another port -- and compile it
@@ -50,6 +61,21 @@ struct DulcetTVApp: App {
     var body: some Scene {
         WindowGroup {
             DulcetRootView(store: presentation)
+#if DEBUG
+                .overlay(alignment: .top) {
+                    if let scrobbleDeliveryMarker {
+                        // Read-only evidence for the playback proof; never focusable.
+                        Text(scrobbleDeliveryMarker.text)
+                            .font(.caption2.monospaced())
+                            .padding(.horizontal, 6)
+                            .background(.thinMaterial, in: Capsule())
+                            .allowsHitTesting(false)
+                            .accessibilityIdentifier(
+                                DulcetDebugScrobbleDeliveryMarker.accessibilityIdentifier
+                            )
+                    }
+                }
+#endif
         }
     }
 }

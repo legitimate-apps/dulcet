@@ -3,6 +3,7 @@ import DulcetKit
 import Foundation
 import ImageIO
 import Network
+import Observation
 
 /// Shared production account composition for every native Apple shell.
 @MainActor
@@ -12,6 +13,8 @@ enum DulcetAppleProduction {
         return makeMacComposition().store
         #elseif os(iOS)
         return makeIOSComposition().store
+        #elseif os(tvOS)
+        return makeTVComposition().store
         #else
         let credentialStore = DulcetKeychainCredentialStore()
         let downloads: (any DulcetDownloadControlling)? = nil
@@ -47,6 +50,26 @@ enum DulcetAppleProduction {
                 artworkFetcher: artworkFetcher
             ),
             downloads: downloads,
+            playbackController: playbackController
+        )
+    }
+    #endif
+
+    #if os(tvOS)
+    static func makeTVComposition() -> DulcetTVProductionComposition {
+        let credentialStore = DulcetKeychainCredentialStore()
+        let artworkFetcher = DulcetCoreArtworkFetcher()
+        let playbackController = DulcetCorePlaybackController(
+            downloadController: nil,
+            artworkFetcher: artworkFetcher
+        )
+        return DulcetTVProductionComposition(
+            store: makeStore(
+                credentialStore: credentialStore,
+                downloads: nil,
+                playbackController: playbackController,
+                artworkFetcher: artworkFetcher
+            ),
             playbackController: playbackController
         )
     }
@@ -113,6 +136,41 @@ struct DulcetiOSProductionComposition {
     /// The same controller the store drives, exposed so the shell's debug hooks can observe
     /// scrobble delivery without a presentation field the product never needs.
     let playbackController: DulcetCorePlaybackController
+}
+#endif
+
+#if os(tvOS)
+@MainActor
+struct DulcetTVProductionComposition {
+    let store: DulcetPresentationStore
+    /// The same controller the store drives, exposed for the shell's debug hooks, as on iOS.
+    let playbackController: DulcetCorePlaybackController
+}
+#endif
+
+#if DEBUG
+/// Shared by the iPhone, iPad and Apple TV shells.
+/// Text the UI proofs read to learn that a scrobble REACHED the server. The threshold is visible
+/// in Now Playing; delivery is not, and a proof that returns on the threshold alone lets the test
+/// runner kill the app before the request leaves (or before the accumulator, which counts from
+/// the first sampled position, has crossed at all). Enabled only by its launch argument.
+@Observable
+final class DulcetDebugScrobbleDeliveryMarker {
+    static let launchArgument = "-dulcet-debug-scrobble-delivery-marker"
+    static let accessibilityIdentifier = "dulcet.debug.scrobble-delivery"
+
+    var text = "dulcet-scrobble awaiting-report"
+
+    func record(_ report: DulcetScrobbleDeliveryReport) {
+        text = "dulcet-scrobble"
+            + " persisted=\(report.submittedPlaysPersisted)"
+            + " delivered=\(report.submittedPlaysDelivered)"
+            + " pending=\(report.submittedPlaysPending)"
+            + " failures=\(report.submittedPlayFailedAttempts)"
+            + " now-playing=\(report.nowPlayingSent)"
+            + " now-playing-dropped=\(report.nowPlayingDropped)"
+            + " refused-dropped=\(report.submittedPlaysRefusedDropped)"
+    }
 }
 #endif
 
