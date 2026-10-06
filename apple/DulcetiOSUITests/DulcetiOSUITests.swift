@@ -2394,8 +2394,17 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The edit list must offer a reorder handle on each entry: " + app.debugDescription)
             return
         }
-        handle.press(forDuration: 0.6, thenDragTo: three[0])
+        // Slow, with a hold at the drop, as the queue drags above. A fast synthesized drag can be
+        // lost before the list lifts the row: run 37483248578's recording shows the edit list
+        // unmoved after one, so nothing was sent. Only a drag the screen never showed is repeated,
+        // once; a screen that moved without the server following still fails below.
         let reordered = [albumOrder[2], albumOrder[0], albumOrder[1]]
+        for attempt in 1...2 {
+            handle.press(forDuration: 0.8, thenDragTo: three[0], withVelocity: XCUIGestureVelocity(200),
+                thenHoldForDuration: 1.0)
+            if attempt == 2 || playlistEditEntryTitles(in: app) != albumOrder { break }
+        }
+        XCTAssertEqual(playlistEditEntryTitles(in: app), reordered, "The edit list must show the dragged order")
         XCTAssertEqual(awaitServerPlaylistEntries(playlistID, reordered, configuration: configuration), reordered,
             "Dragging the third entry to the top must reorder the playlist on the server")
         app.buttons["dulcet.playlist.done"].firstMatch.tap()
@@ -2598,6 +2607,16 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         return (0..<count).map { cells.element(boundBy: $0) }
+    }
+
+    /// The edit list's entry titles, top to bottom, after the list settles for a moment. The
+    /// identifier reaches both of an entry's texts; the title is the first.
+    @MainActor
+    private func playlistEditEntryTitles(in app: XCUIApplication) -> [String] {
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        let cells = app.cells.containing(.staticText, identifier: "dulcet.playlist.entry").allElementsBoundByIndex
+        return cells.sorted { $0.frame.minY < $1.frame.minY }
+            .map { $0.staticTexts.matching(identifier: "dulcet.playlist.entry").firstMatch.label }
     }
 
     /// Deletes one entry of the edit list: its leading delete control, then the Delete it
