@@ -815,7 +815,7 @@
           "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; genre play is observed at the action the screen calls, not in the playback service. CONF-82 and CONF-87 run as the core reader's own conformance tests on the Android host runtime (testAndroidHostTest): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "androidtv": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
@@ -862,6 +862,9 @@
             {"observes": "an album order chosen earlier on the device is the one the TV's Albums screen opens in, with focus on its first album",
              "workflow": "core-ci", "job": "core-ci",
              "test": "TvGenresAndAlbumSortTest/theOrderChosenEarlierOnThisDeviceIsTheOneTheAlbumsOpenIn"},
+            {"observes": "from the remote, a genre's Play queues its songs in order from the first through the playback service's real controller, Shuffle queues the same songs shuffled, and a song's row queues them in order from itself, each opening Now Playing",
+             "workflow": "core-ci", "job": "core-ci",
+             "test": "TvGenresAndAlbumSortTest/aGenresPlayAndShuffleQueueAllItsSongsAndARowQueuesThemFromItself"},
             {"observes": "with the platform reporting no network, an album order never read chosen on the TV shows the albums the device has seen, labelled Available offline, and reads nothing for that order",
              "workflow": "core-ci", "job": "core-ci",
              "test": "TvGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"},
@@ -873,12 +876,7 @@
             {"conformance": "CONF-87", "workflow": "core-ci", "job": "core-ci",
              "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"}
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-genre-play-proof",
-            "reason": "Every declared conformance id is evidenced. Playing a genre on the TV is exercised by no test, so the cell stays partial until one drives a genre's play from the TV app to the queue it builds, as the phone proof does; until then no test can be named."
-          },
-          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; playing a genre on the TV is not exercised by any test. CONF-82 and CONF-87 run as the core reader's own conformance tests on the Android host runtime (testAndroidHostTest): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
+          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre. Playing a genre from the remote is host evidence too: the queue the playback service's real controller builds, not audio. CONF-82 and CONF-87 run as the core reader's own conformance tests on the Android host runtime (testAndroidHostTest): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         }
       }
     },

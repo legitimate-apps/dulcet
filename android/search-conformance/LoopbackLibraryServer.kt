@@ -45,6 +45,10 @@ class LoopbackLibraryServer : AutoCloseable {
 
     fun releaseSongs() = songsReleased.countDown()
 
+    /** When set, `stream` is not answered until the server closes: a play stays on the song it started. */
+    @Volatile var holdStreams = false
+    private val streamsReleased = CountDownLatch(1)
+
     private val log = CopyOnWriteArrayList<Pair<String, Map<String, String>>>()
     private val connections = Executors.newCachedThreadPool()
 
@@ -85,6 +89,7 @@ class LoopbackLibraryServer : AutoCloseable {
         }
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
+        if (endpoint == "stream" && holdStreams) streamsReleased.await(30, TimeUnit.SECONDS)
         respond(client, 200, envelope(endpoint, parameters))
     }
 
@@ -116,15 +121,20 @@ class LoopbackLibraryServer : AutoCloseable {
             }
             "getSongsByGenre" -> {
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
-                val songs = if (offset > 0) "" else songsByGenre[parameters["genre"]].orEmpty().joinToString(",") { (id, title) ->
-                    """{"id":"$id","title":${quote(title)},"album":"Genre Album","albumId":"genre-album","artist":"Fixture Artist","duration":120,"suffix":"mp3","contentType":"audio/mpeg"}"""
-                }
+                val songs = if (offset > 0) "" else songsByGenre[parameters["genre"]].orEmpty().joinToString(",") { (id, title) -> genreSong(id, title) }
                 """"songsByGenre":{"song":[$songs]}"""
             }
+            // A genre's songs, as a play re-reads each before queueing it; any other id stays the empty
+            // envelope it always was.
+            "getSong" -> songsByGenre.values.flatten().firstOrNull { it.first == parameters["id"] }
+                ?.let { (id, title) -> """"song":${genreSong(id, title)}""" }
             else -> null
         }
         return """{"subsonic-response":{"status":"ok","version":"1.16.1"${payload?.let { ",$it" }.orEmpty()}}}"""
     }
+
+    private fun genreSong(id: String, title: String) =
+        """{"id":"$id","title":${quote(title)},"album":"Genre Album","albumId":"genre-album","artist":"Fixture Artist","duration":120,"suffix":"mp3","contentType":"audio/mpeg"}"""
 
     private fun quote(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -140,6 +150,7 @@ class LoopbackLibraryServer : AutoCloseable {
 
     override fun close() {
         genresReleased.countDown()
+        streamsReleased.countDown()
         socket.close()
         connections.shutdownNow()
     }
