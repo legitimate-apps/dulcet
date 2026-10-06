@@ -1232,11 +1232,38 @@ for missing in sorted(read - written):
 # thing branch protection sees. Every property below is one whose loss would let a red or absent
 # leg merge, or would break the evidence handoff only at the end of a 70-minute run.
 APPLE_AGGREGATOR = "apple-ci"
-# §21.5 adopts three macOS legs since 2026-10-03: the platform leg and the two conformance jobs the
-# composite was divided into. Hosted macOS concurrency is shared by every run on the account (5 on
-# the Free, Pro and Team plans): main's post-merge run takes three slots and a pull request's fast
-# check one. A fourth leg is a spec change that lands in §21.5 first, then here.
-MAX_APPLE_MACOS_JOBS = 3
+# §21.5 adopts four hosted macOS slots since 2026-10-06: the platform leg, apple-conformance-core,
+# and apple-conformance-ipad-iphone's two device members. A matrix member holds a slot as a job
+# does, so slots are counted per member. Hosted macOS concurrency is shared by every run on the
+# account (5 on the Free, Pro and Team plans): main's post-merge run takes four slots and a pull
+# request's fast check one. A fifth is a spec change that lands in §21.5 first, then here.
+MAX_APPLE_MACOS_JOBS = 4
+def apple_matrix_values(job_lines: list[str]) -> dict[str, list[str]] | str | None:
+    """An Apple leg's matrix as {key: [values]}, None for a leg without one, or why it is not read.
+
+    Only the shape the handoff check reasons about: one key with a flow list of plain values.
+    """
+    for index, line in enumerate(job_lines):
+        entry = mapping_entry(line)
+        if entry is None or entry[1] != "matrix":
+            continue
+        rows = []
+        for inner in job_lines[index + 1:]:
+            if not inner.strip() or inner.lstrip().startswith("#"):
+                continue
+            inner_entry = mapping_entry(inner)
+            if inner_entry is None or inner_entry[0] <= entry[0]:
+                break
+            rows.append(inner_entry)
+        flow = re.fullmatch(r"\[\s*([\w-]+(?:\s*,\s*[\w-]+)*)\s*\]", rows[0][2].strip()) \
+            if len(rows) == 1 else None
+        if flow is None:
+            return ("has a matrix the evidence handoff check does not read; use one key with a "
+                    "flow list, such as `device: [ipad, iphone]`")
+        return {rows[0][1]: [value.strip() for value in flow[1].split(",")]}
+    return None
+
+
 VERIFY_CALL = re.compile(r"(?m)^\s*(?:-\s+)?(?:run:\s*)?python3\s+tools/verify-parity-evidence\b")
 if apple_ci:
     apple_lines = apple_ci.splitlines()
@@ -1244,10 +1271,18 @@ if apple_ci:
     apple_runners = dict(job_runner_values(apple_lines))
     macos_jobs = sorted(name for name in apple_jobs
                         if re.match(r"macos-", apple_runners.get(name, "").strip()))
-    if len(macos_jobs) > MAX_APPLE_MACOS_JOBS:
+
+    def macos_slots(name: str) -> int:
+        start, end = apple_jobs[name]
+        values = apple_matrix_values(apple_lines[start + 1:end])
+        return len(next(iter(values.values()))) if isinstance(values, dict) else 1
+
+    slots = sum(macos_slots(name) for name in macos_jobs)
+    if slots > MAX_APPLE_MACOS_JOBS:
         errors.append(
-            f"{apple_ci_path}: {len(macos_jobs)} macOS jobs {macos_jobs}; at most "
-            f"{MAX_APPLE_MACOS_JOBS} per run (spec §21.5), because every one holds a hosted slot",
+            f"{apple_ci_path}: {slots} macOS slots across {macos_jobs}; at most "
+            f"{MAX_APPLE_MACOS_JOBS} per run (spec §21.5), because every job and every matrix "
+            "member holds a hosted slot",
         )
     legs = sorted(set(apple_jobs) - {APPLE_AGGREGATOR})
 
@@ -1320,48 +1355,85 @@ if apple_ci:
     for leg in legs:
         start, end = apple_jobs[leg]
         leg_steps = job_steps(apple_lines, start, end)
-        attempt = expression(str((job_properties(apple_lines, start, end).get("outputs") or {})
-                                 .get("attempt", "")))
+        leg_outputs = job_properties(apple_lines, start, end).get("outputs") or {}
+        # Who reports an attempt: a plain leg, through `attempt`; a matrix leg, each member through
+        # its own guarded output (attempt_output_bindings), since a matrix combines its members'
+        # outputs into one set. Each member is (its matrix bindings, the output naming its attempt).
+        matrix_values = apple_matrix_values(apple_lines[start + 1:end])
+        members: list[tuple[dict[str, object], str]] = []
+        if matrix_values is None:
+            members.append(({}, "attempt"))
+        elif isinstance(matrix_values, str):
+            errors.append(f"{apple_ci_path}: leg {leg} {matrix_values}")
+        else:
+            reported: dict[str, str] = {}
+            if isinstance(leg_outputs, dict):
+                for output, value in leg_outputs.items():
+                    bindings = attempt_output_bindings(str(value), True)
+                    if isinstance(bindings, dict) and len(bindings) == 1:
+                        reported[str(next(iter(bindings.values())))] = output
+            key = next(iter(matrix_values))
+            for value in matrix_values[key]:
+                if value not in reported:
+                    errors.append(
+                        f"{apple_ci_path}: matrix leg {leg} has no attempt output guarded to "
+                        f"matrix.{key} == '{value}', so the aggregator cannot name that member's "
+                        "artifact",
+                    )
+                    continue
+                members.append(({f"matrix.{key}": value}, reported[value]))
+
+        def member_name(name: str, bindings: dict[str, object]) -> str:
+            name = name.replace("${{ github.job }}", leg)
+            for context, value in bindings.items():
+                name = name.replace(f"${{{{ {context} }}}}", str(value))
+            return name
+
         for step in leg_steps:
             if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
                 name = expression(str((step.get("with") or {}).get("name", "")))
-                name = name.replace("${{ github.job }}", leg)
-                produced[name.replace("${{ github.run_attempt }}",
-                                      f"${{{{ needs.{leg}.outputs.attempt }}}}")] = leg
+                for bindings, output in members:
+                    produced[member_name(name, bindings).replace(
+                        "${{ github.run_attempt }}",
+                        f"${{{{ needs.{leg}.outputs.{output} }}}}")] = leg
         written_here = set(re.findall(r"\$RUNNER_TEMP/([\w-]+-junit)/", job_scope(leg)))
         for directory, source in junit_sources(leg):
             writers.setdefault(directory, []).append((leg, source))
         if not written_here:
             continue
-        if attempt != "${{ github.run_attempt }}":
+        if matrix_values is None and expression(str(
+                leg_outputs.get("attempt", "") if isinstance(leg_outputs, dict) else "")) \
+                != "${{ github.run_attempt }}":
             errors.append(
                 f"{apple_ci_path}: leg {leg} writes parity evidence but has no output "
                 "attempt: ${{ github.run_attempt }}, so the aggregator cannot name the artifact a "
                 "re-run of failed jobs left in place",
             )
-        evidence_name = (f"dulcet-apple-parity-evidence-{leg}-${{{{ github.run_id }}}}-"
-                         f"${{{{ github.run_attempt }}}}")
-        uploads = [step for step in leg_steps
-                   if str(step.get("uses", "")).startswith("actions/upload-artifact@")
-                   and expression(str((step.get("with") or {}).get("name", "")))
-                   .replace("${{ github.job }}", leg) == evidence_name]
-        patterns = [line.strip() for step in uploads
-                    for line in str((step.get("with") or {}).get("path", "")).splitlines()]
-        for directory in sorted(written_here):
-            if not any(pattern.startswith("${{ runner.temp }}/")
-                       and fnmatch.fnmatchcase(directory, pattern.split("/", 1)[1])
-                       for pattern in patterns):
+        for bindings, output in members:
+            suffix = "".join(f"-{value}" for value in bindings.values())
+            evidence_name = (f"dulcet-apple-parity-evidence-{leg}{suffix}-${{{{ github.run_id }}}}-"
+                             f"${{{{ github.run_attempt }}}}")
+            uploads = [step for step in leg_steps
+                       if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+                       and member_name(expression(str((step.get("with") or {}).get("name", ""))),
+                                       bindings) == evidence_name]
+            patterns = [line.strip() for step in uploads
+                        for line in str((step.get("with") or {}).get("path", "")).splitlines()]
+            for directory in sorted(written_here):
+                if not any(pattern.startswith("${{ runner.temp }}/")
+                           and fnmatch.fnmatchcase(directory, pattern.split("/", 1)[1])
+                           for pattern in patterns):
+                    errors.append(
+                        f"{apple_ci_path}: leg {leg} writes JUnit directory {directory} but no "
+                        f"upload named {evidence_name} carries it to {APPLE_AGGREGATOR}",
+                    )
+            wanted = (f"dulcet-apple-parity-evidence-{leg}{suffix}-${{{{ github.run_id }}}}-"
+                      f"${{{{ needs.{leg}.outputs.{output} }}}}")
+            if download_names.get(wanted) != "${{ runner.temp }}":
                 errors.append(
-                    f"{apple_ci_path}: leg {leg} writes JUnit directory {directory} but no "
-                    f"upload named {evidence_name} carries it to {APPLE_AGGREGATOR}",
+                    f"{apple_ci_path}: {APPLE_AGGREGATOR} must download {wanted} to "
+                    "${{ runner.temp }}, where the verify call reads the JUnit directories",
                 )
-        wanted = (f"dulcet-apple-parity-evidence-{leg}-${{{{ github.run_id }}}}-"
-                  f"${{{{ needs.{leg}.outputs.attempt }}}}")
-        if download_names.get(wanted) != "${{ runner.temp }}":
-            errors.append(
-                f"{apple_ci_path}: {APPLE_AGGREGATOR} must download {wanted} to "
-                "${{ runner.temp }}, where the verify call reads the JUnit directories",
-            )
     # Two legs may reach one directory's text only through ONE shared script that they invoke
     # with different first arguments, and only when that script spells the directory out exactly
     # once, so a single mode writes it. Anything else -- the directory in a leg's own YAML, two

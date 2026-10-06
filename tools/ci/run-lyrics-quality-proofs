@@ -76,6 +76,10 @@ ui_proof() {
     slug="$6"
 
     result_bundle="$RUNNER_TEMP/dulcet-$slug.xcresult"
+    # The app's own reader and reachability lines, printed after the proof whatever its outcome
+    # (tools/ci/app-log): "something went wrong on this device" on a screen names no step.
+    python3 tools/ci/app-log start "$slug"
+    status=0
     TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
         TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
         TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -91,7 +95,9 @@ ui_proof() {
             -parallel-testing-enabled NO \
             "${allowance[@]}" \
             -only-testing:"$target/$target/$test_method" 2>&1 |
-        tee "$RUNNER_TEMP/dulcet-$slug.log"
+        tee "$RUNNER_TEMP/dulcet-$slug.log" || status=$?
+    python3 tools/ci/app-log stop "$slug"
+    [ "$status" -eq 0 ] || exit "$status"
     python3 tools/verify-xcode-test-execution "$result_bundle" "$target.$target" "$test_method"
 }
 

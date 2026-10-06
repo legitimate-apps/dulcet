@@ -13,6 +13,7 @@ Usage:
   isolate-simulator --phase NAME --none
   isolate-simulator --phase NAME --keep UDID
   isolate-simulator --phase NAME --keep-name "iPhone 17 Pro"     # newest runtime, as OS=latest does
+  isolate-simulator --phase NAME --keep UDID --settle             # and wait out the post-boot burst
   isolate-simulator --devices-json FILE --plan ...               # offline: print the plan, touch nothing
 
 Prints `SIMULATOR ISOLATION phase=... keep=... shut_down=N booted_after=[...] isolated=true|false`.
@@ -29,6 +30,15 @@ import sys
 import time
 
 BOOT_TIMEOUT_SECONDS = 300
+# A booted device keeps starting its widget, poster and News extensions after `bootstatus` returns,
+# and that burst is what swaps. OBSERVED in run 37519277991: the iPhone's first boot took 201 s, the
+# step shut it down 12 s later, the proof booted it again, and its first test ran at load1 567 with
+# 749 MB swapped out until the app's own account request timed out. --settle waits until the
+# device's running services hold steady for SETTLE_WINDOW polls, SETTLE_POLL_SECONDS apart.
+SETTLE_TIMEOUT_SECONDS = 300
+SETTLE_POLL_SECONDS = 10
+SETTLE_WINDOW = 3
+SETTLE_TOLERANCE = 2
 
 
 def simctl(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
@@ -63,6 +73,41 @@ def resolve_name(all_devices: dict, name: str) -> str:
     return max(found, key=lambda item: runtime_version(item[0]))[1]
 
 
+def settled(counts: list, window: int = SETTLE_WINDOW, tolerance: int = SETTLE_TOLERANCE) -> bool:
+    """True once the last `window` counts were all read and differ by at most `tolerance`."""
+    recent = counts[-window:]
+    if len(recent) < window or None in recent:
+        return False
+    return max(recent) - min(recent) <= tolerance
+
+
+def running_services(udid: str):
+    """How many of the device's launchd services have a process, or None when it cannot be read."""
+    try:
+        listing = simctl("spawn", udid, "launchctl", "list", timeout=60)
+    except subprocess.TimeoutExpired:
+        return None
+    if listing.returncode != 0:
+        return None
+    return sum(1 for line in listing.stdout.splitlines()[1:] if line.split("\t", 1)[0].isdigit())
+
+
+def settle(phase: str, udid: str) -> None:
+    """Waits for the post-boot burst to end. Reported, never raised: an unsettled device only
+    restores the behaviour before this wait existed."""
+    started = time.monotonic()
+    counts = []
+    while True:
+        counts.append(running_services(udid))
+        if settled(counts) or time.monotonic() - started >= SETTLE_TIMEOUT_SECONDS:
+            break
+        time.sleep(SETTLE_POLL_SECONDS)
+    shown = ",".join("?" if c is None else str(c) for c in counts)
+    print(f"SIMULATOR SETTLE phase={phase} udid={udid} running={shown} "
+          f"settled={'true' if settled(counts) else 'false'} "
+          f"seconds={time.monotonic() - started:.1f}", flush=True)
+
+
 def booted(all_devices: dict) -> list[str]:
     return sorted(d["udid"] for ds in all_devices.values() for d in ds if d.get("state") == "Booted")
 
@@ -76,7 +121,11 @@ def main() -> int:
     target.add_argument("--none", action="store_true")
     parser.add_argument("--devices-json", help="offline device list (simctl list devices -j)")
     parser.add_argument("--plan", action="store_true", help="print the plan and change nothing")
+    parser.add_argument("--settle", action="store_true",
+                        help="after booting the kept device, wait for its services to hold steady")
     args = parser.parse_args()
+    if args.settle and args.none:
+        parser.error("--settle needs a device to keep")
 
     started = time.monotonic()
     before = devices(args.devices_json)
@@ -84,7 +133,7 @@ def main() -> int:
     to_shut = [udid for udid in booted(before) if udid != keep]
     if args.plan:
         print(f"SIMULATOR ISOLATION PLAN phase={args.phase} keep={keep or 'none'} "
-              f"shut_down={','.join(to_shut) or 'none'}")
+              f"shut_down={','.join(to_shut) or 'none'} settle={'yes' if args.settle else 'no'}")
         return 0
 
     for udid in to_shut:
@@ -102,6 +151,8 @@ def main() -> int:
             print(f"SIMULATOR ISOLATION FAILED phase={args.phase} keep={keep} "
                   f"bootstatus_exit={status.returncode}: {status.stderr.strip()[-300:]}")
             return 1
+        if args.settle:
+            settle(args.phase, keep)
     after = booted(devices(None))
     expected = [keep] if keep else []
     print(f"SIMULATOR ISOLATION phase={args.phase} keep={keep or 'none'} shut_down={len(to_shut)} "

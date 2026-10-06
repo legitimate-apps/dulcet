@@ -177,7 +177,9 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
 # live-server conformance ran. What a build ships must: every required check AND every Apple leg --
 # the platform leg and both conformance jobs -- green on the exact commit. A skipped leg reports
 # `skipped`, never `success`, so a run that planned less than everything cannot satisfy this.
-FULL_RUN_JOBS = {"apple-platform", "apple-conformance-core", "apple-conformance-ipad-iphone"}
+# The iPad/iPhone job is a matrix whose check runs carry its members' names, one per device.
+FULL_RUN_JOBS = {"apple-platform", "apple-conformance-core", "apple-conformance-ipad",
+                 "apple-conformance-iphone"}
 
 
 def require_green(check_runs: list[dict[str, str]], names: set[str], reason: str) -> None:

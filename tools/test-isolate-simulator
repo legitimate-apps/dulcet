@@ -62,3 +62,29 @@ with tempfile.TemporaryDirectory() as tmp:
     result = plan("--keep-name", "iPhone 99")
     assert result.returncode != 0 and "no available simulator named" in (result.stdout + result.stderr), result
     print("NEGATIVE CONTROL PASS unknown device name refused")
+
+    result = plan("--keep", "IPAD-264", "--settle")
+    assert result.returncode == 0 and "keep=IPAD-264 " in result.stdout and "settle=yes" in result.stdout, result
+    print("POSITIVE CONTROL PASS " + result.stdout.strip())
+
+    result = plan("--none", "--settle")
+    assert result.returncode != 0 and "--settle needs a device to keep" in result.stderr, result
+    print("NEGATIVE CONTROL PASS --settle without a device refused")
+
+# The settle decision, read from the tool itself: a burst still starting services is not settled,
+# a count that holds within the tolerance is, and an unreadable poll never counts as steady.
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+loader = SourceFileLoader("isolate_simulator", TOOL)
+tool = module_from_spec(spec_from_loader("isolate_simulator", loader))
+loader.exec_module(tool)
+for counts, expected in [
+    ([40, 61, 88, 112], False),   # the burst: still rising
+    ([88, 112, 113, 112], True),  # holding within 2 over the last three polls
+    ([112, 113], False),          # too few polls to say
+    ([112, None, 112], False),    # a poll that could not be read
+    ([100, 103, 100], False),     # wider than the tolerance
+    ([70, 71, 72], True),
+]:
+    assert tool.settled(counts) is expected, (counts, expected)
+print("SETTLE DECISION CONTROLS PASS 6/6")

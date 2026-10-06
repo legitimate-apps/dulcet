@@ -880,8 +880,27 @@ def edit(old: str, new: str, count: int = 1):
     return apply
 
 
-def extra_macos_legs(text: str) -> str:
-    for name in ("apple-leg-2", "apple-leg-3", "apple-leg-4"):
+def matrix_leg(text: str) -> str:
+    """Make apple-leg a two-member matrix, wired the way apple-conformance-ipad-iphone is."""
+    text = edit("    outputs:\n      attempt: ${{ github.run_attempt }}\n",
+                "    strategy:\n      fail-fast: false\n      matrix:\n        device: [a, b]\n"
+                "    outputs:\n"
+                "      attempt-a: ${{ matrix.device == 'a' && github.run_attempt || '' }}\n"
+                "      attempt-b: ${{ matrix.device == 'b' && github.run_attempt || '' }}\n")(text)
+    text = edit("evidence-${{ github.job }}-${{ github.run_id }}",
+                "evidence-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}")(text)
+    download = text[text.index("      - name: Download parity evidence\n"):
+                    text.index("      - name: Verify evidence\n")]
+    members = "".join(
+        download.replace("apple-leg-${{ github.run_id }}", f"apple-leg-{member}-${{{{ github.run_id }}}}")
+        .replace("outputs.attempt }}", f"outputs.attempt-{member} }}}}")
+        .replace("Download parity evidence", f"Download parity evidence {member}")
+        for member in ("a", "b"))
+    return text.replace(download, members)
+
+
+def extra_macos_legs(text: str, names=("apple-leg-2", "apple-leg-3", "apple-leg-4", "apple-leg-5")) -> str:
+    for name in names:
         text = text.replace(AGGREGATOR_START, f"  {name}:\n    runs-on: macos-latest\n"
                             "    timeout-minutes: 5\n    steps:\n      - run: true\n"
                             + AGGREGATOR_START)
@@ -988,7 +1007,12 @@ SHAPE_CASES = (
          "    timeout-minutes: 10\n",
          "    timeout-minutes: 10\n    concurrency:\n      group: leg\n      cancel-in-progress: true\n"),
      "missing cancel-in-progress: true in a top-level concurrency block"),
-    ("a fourth macOS leg is rejected", extra_macos_legs, "4 macOS jobs"),
+    ("a fifth macOS leg is rejected", extra_macos_legs, "5 macOS slots"),
+    # A matrix member holds a hosted slot as a job does: a two-member leg and three plain ones
+    # are five slots in four jobs.
+    ("a matrix member counts as a macOS slot",
+     lambda t: extra_macos_legs(matrix_leg(t), ("apple-leg-2", "apple-leg-3", "apple-leg-4")),
+     "5 macOS slots"),
     ("a leg that writes evidence and uploads none is rejected",
      lambda t: t.replace(t[t.index("      - name: Upload Apple parity evidence\n"):
                            t.index(AGGREGATOR_START)], ""),
@@ -1075,8 +1099,27 @@ SHAPE_CASES = (
      planned_then(edit(f"      - name: Download parity evidence\n        if: {PLAN_GATE}\n",
                        "      - name: Download parity evidence\n        if: ${{ success() }}\n")),
      "step 'Download parity evidence' must be unconditional and blocking"),
+    # A matrix leg (apple-conformance-ipad-iphone) uploads one artifact per member. Its members
+    # share one set of outputs, so each needs an attempt output guarded to it and a download by it.
+    ("a matrix leg with an attempt output and a download per member is accepted", matrix_leg, ""),
+    ("a matrix leg reporting one unguarded attempt is rejected",
+     lambda t: edit("      attempt-a: ${{ matrix.device == 'a' && github.run_attempt || '' }}\n",
+                    "      attempt: ${{ github.run_attempt }}\n")(matrix_leg(t)),
+     "matrix leg apple-leg has no attempt output guarded to matrix.device == 'a'"),
+    ("a matrix member nobody downloads is rejected",
+     lambda t: (lambda m: m.replace(m[m.index("      - name: Download parity evidence b\n"):
+                                       m.index("      - name: Verify evidence\n")], ""))(matrix_leg(t)),
+     "apple-ci must download dulcet-apple-parity-evidence-apple-leg-b-"),
+    ("a matrix upload name without the member is rejected",
+     lambda t: edit("evidence-${{ github.job }}-${{ matrix.device }}-",
+                    "evidence-${{ github.job }}-")(matrix_leg(t)),
+     "but no upload named dulcet-apple-parity-evidence-apple-leg-a-"),
+    ("a matrix the handoff check cannot read is rejected",
+     lambda t: edit("        device: [a, b]\n",
+                    "        include:\n          - device: a\n          - device: b\n")(matrix_leg(t)),
+     "has a matrix the evidence handoff check does not read"),
 )
-EXPECTED_SHAPE_CASES = 39
+EXPECTED_SHAPE_CASES = 45
 shape_cases_run: list[str] = []
 
 

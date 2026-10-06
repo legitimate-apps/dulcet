@@ -739,10 +739,20 @@ final class DulcetiOSUITests: XCTestCase {
     /// lands on the library; a launch with a saved account opens straight into that account's
     /// library (CONF-10b) and connects there. Either way Connection is opened the way a person
     /// opens it, and opened again if a connection still in flight moves the app to the library.
+    ///
+    /// A connection that reached account setup's 30-second request limit is retried the way a
+    /// person retries it, with Try Again, at most twice; the form keeps the account, so the retry
+    /// sends the same one. Run 37519277991 ended there on a starved runner (load 567 on three
+    /// cores, 749 MB swapped out, the app itself among the swapped processes) before any request
+    /// reached the server, and this proof is about what comes after connecting. Any other
+    /// connection failure still fails the proof.
     @MainActor
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
         if signOut.waitForExistence(timeout: 5) { return true }
+        let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
+        let tryAgain = app.buttons["Try Again"].firstMatch
+        var retries = 0
         let deadline = Date().addingTimeInterval(35)
         repeat {
             guard openDestination(
@@ -752,6 +762,13 @@ final class DulcetiOSUITests: XCTestCase {
                 compact: compact
             ) else { return false }
             if signOut.waitForExistence(timeout: 10) { return true }
+            while retries < 2, timedOut.exists, tryAgain.exists {
+                retries += 1
+                print("ACCOUNT CONNECT RETRY \(retries): account setup reached its request limit")
+                tryAgain.tap()
+                // One more request limit, and the time a loaded host takes to show the outcome.
+                if signOut.waitForExistence(timeout: 45) { return true }
+            }
         } while Date() < deadline
         return false
     }
@@ -2394,8 +2411,17 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The edit list must offer a reorder handle on each entry: " + app.debugDescription)
             return
         }
-        handle.press(forDuration: 0.6, thenDragTo: three[0])
+        // Slow, with a hold at the drop, as the queue drags above. A fast synthesized drag can be
+        // lost before the list lifts the row: run 37483248578's recording shows the edit list
+        // unmoved after one, so nothing was sent. Only a drag the screen never showed is repeated,
+        // once; a screen that moved without the server following still fails below.
         let reordered = [albumOrder[2], albumOrder[0], albumOrder[1]]
+        for attempt in 1...2 {
+            handle.press(forDuration: 0.8, thenDragTo: three[0], withVelocity: XCUIGestureVelocity(200),
+                thenHoldForDuration: 1.0)
+            if attempt == 2 || playlistEditEntryTitles(in: app) != albumOrder { break }
+        }
+        XCTAssertEqual(playlistEditEntryTitles(in: app), reordered, "The edit list must show the dragged order")
         XCTAssertEqual(awaitServerPlaylistEntries(playlistID, reordered, configuration: configuration), reordered,
             "Dragging the third entry to the top must reorder the playlist on the server")
         app.buttons["dulcet.playlist.done"].firstMatch.tap()
@@ -2598,6 +2624,16 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         return (0..<count).map { cells.element(boundBy: $0) }
+    }
+
+    /// The edit list's entry titles, top to bottom, after the list settles for a moment. The
+    /// identifier reaches both of an entry's texts; the title is the first.
+    @MainActor
+    private func playlistEditEntryTitles(in app: XCUIApplication) -> [String] {
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        let cells = app.cells.containing(.staticText, identifier: "dulcet.playlist.entry").allElementsBoundByIndex
+        return cells.sorted { $0.frame.minY < $1.frame.minY }
+            .map { $0.staticTexts.matching(identifier: "dulcet.playlist.entry").firstMatch.label }
     }
 
     /// Deletes one entry of the edit list: its leading delete control, then the Delete it
