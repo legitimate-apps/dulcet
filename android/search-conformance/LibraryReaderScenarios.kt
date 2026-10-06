@@ -1593,7 +1593,14 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             ui.showListStatus()
             awaitQuiet()
             compose.onNodeWithTag("library.albums.coverage").assertTextEquals(scanning)
-            assertTrue(proxy.since(presented).filter { it.endpoint == "getScanStatus" }.let { reads -> reads.isNotEmpty() && reads.all { it.rewritten } }, "setup: every status read was presented as scanning")
+            // A read the app has not been answered yet presented nothing, so only answered reads
+            // count; one that reached the app unrewritten (a forwarding failure among them) fails.
+            val statusReads = proxy.since(presented).filter { it.endpoint == "getScanStatus" }
+            assertTrue(
+                statusReads.any { it.answered } && statusReads.filter { it.answered }.all { it.rewritten },
+                "setup: every status read was presented as scanning: " +
+                    statusReads.map { "#${it.sequence} answered=${it.answered} status=${it.status} rewritten=${it.rewritten}" },
+            )
 
             proxy.rewrite(null)
             assertEquals(stamp, server.scanStatus().getString("lastScan"), "setup: the stamp is the one the window was read under")

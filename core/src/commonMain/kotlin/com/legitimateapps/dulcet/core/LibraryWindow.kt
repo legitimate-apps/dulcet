@@ -113,7 +113,11 @@ internal abstract class ReaderHandle(
         guarded { lock.withLock { performRevalidate(cause) } }
     }
 
-    /** Whether this window is waiting for a reading with a stamp that holds still. */
+    /**
+     * Whether what this handle shows waits on a quiet server, which the session's reading now
+     * shows: a window whose stamp kept moving, or a read made while the server scanned once the scan
+     * has ended. Such a handle is re-read even though no stamp changed.
+     */
     open fun awaitsQuietEpoch(): Boolean = false
 
     /** Called with the window's lock held. */
@@ -561,7 +565,11 @@ internal class ListWindow(
 
     override fun mentionsAny(rawIds: Set<String>): Boolean = published.any { it.rawId in rawIds }
 
-    override fun awaitsQuietEpoch(): Boolean = cache.listState(spec.listKey)?.coverage == CacheCoverage.UnverifiedChanging
+    override fun awaitsQuietEpoch(): Boolean = when (cache.listState(spec.listKey)?.coverage) {
+        CacheCoverage.UnverifiedChanging -> true
+        CacheCoverage.UnverifiedScanning -> reader.sessionEpoch?.scanning == false
+        else -> false
+    }
 
     // ---- Revalidation -------------------------------------------------------------------------------
 
@@ -876,7 +884,7 @@ internal class ListWindow(
             afterError = thrown.asReaderError()
             null
         }
-        after?.let(reader::adoptScanStatus)
+        after?.let { reader.adoptScanStatus(it, readBy = this) }
         return PageRead(offset, pageSize, parsed, sent.response.totalCount, sent.before, after, afterError, sent.issueSeq)
     }
 
@@ -1259,6 +1267,9 @@ internal class AlbumDetailWindow(
         val cached = cache.album(album.rawId) ?: return true
         return !fresh(cached)
     }
+
+    override fun awaitsQuietEpoch(): Boolean =
+        album.rawId in reader.detailsReadWhileScanning && reader.sessionEpoch?.scanning == false
 
     override fun mentionsAny(rawIds: Set<String>): Boolean =
         album.rawId in rawIds || published.any { it.rawId in rawIds }

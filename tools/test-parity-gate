@@ -49,6 +49,9 @@ def materialize(root: Path) -> None:
         # Android TV has its own app/runtime and evidence class; copying only the mobile sources
         # would make this fixture reject a valid TV promotion before its mutation cases run.
         "android/tv/src",
+        # library.browse cites the core reader's own conformance tests for CONF-82 and CONF-87,
+        # whose rules the disposable corpus cannot reach; the gate looks their names up here.
+        "core/src/commonTest",
     )
     # Two branches adding the same directory here is a real merge outcome, and copytree's
     # FileExistsError names a temp path rather than the duplicate. Say which entry it is.
@@ -912,6 +915,10 @@ passing_cases = """\
             name="conf41ProductionQueryMergesAndRoutesOpaqueId" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf01UnauthenticatedExtensionDiscovery[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.core.ReaderWindowConformanceTest[macosArm64]"
+            name="conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.core.ReaderWindowConformanceTest[macosArm64]"
+            name="conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"
             name="conf02ReferenceServerExtensionSet[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.AccountConnectConformanceTest[macosArm64]"

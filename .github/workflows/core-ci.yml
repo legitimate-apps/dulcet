@@ -108,7 +108,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-android-app-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          # The core's Android host tests carry CONF-82 and CONF-87, whose reader rules the
+          # disposable corpus cannot reach; their server is scripted inside the test.
           path: |
+            core/build/test-results/testAndroidHostTest
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
             android/tv/build/test-results/testDebugUnitTest

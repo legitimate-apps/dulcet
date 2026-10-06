@@ -16,7 +16,17 @@ import kotlinx.coroutines.test.runTest
 internal fun readerTest(
     ceilings: SeenCacheCeilings = SeenCacheCeilings.DEFAULT,
     block: suspend TestScope.(ReaderEnv) -> Unit,
-) = runTest {
+) = runTest { withReaderEnv(ceilings, block) }
+
+/**
+ * [readerTest]'s body: one fresh server, database and reader scope for [block], torn down after it.
+ * A test that drives several independent scenarios calls it once per scenario, so no scenario can
+ * see another's server state, cache or pending coroutines.
+ */
+internal suspend fun TestScope.withReaderEnv(
+    ceilings: SeenCacheCeilings = SeenCacheCeilings.DEFAULT,
+    block: suspend TestScope.(ReaderEnv) -> Unit,
+) {
     val driver = CountingSqlDriver(createTestDriver())
     val uncaught = mutableListOf<Throwable>()
     // Not backgroundScope: advanceUntilIdle does not wait for background work, so reads launched

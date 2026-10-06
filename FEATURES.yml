@@ -652,9 +652,7 @@
           "unevidenced_conformance": {
             "CONF-76": "The macOS app-host proof observes the cached paint with no loading state, the grid-only header offline and online and the never-seen album unavailable, but counts no request, so publishing before any request is not observed.",
             "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader, which apple-ci runs in :core:macosArm64Test but whose results no evidence-verified job exports; no test drives them through this app.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test in :core:macosArm64Test, whose results no evidence-verified job exports; no test drives the home screen's rows through this app.",
-            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, whose results no evidence-verified job exports; no test drives it through this app."
+            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test in :core:macosArm64Test, which counts no request through this app; no test drives the home screen's rows through this app."
           },
           "evidence": [
             {
@@ -662,23 +660,33 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacAccountConnectAppTest/readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw"
+            },
+            {
+              "conformance": "CONF-82",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown"
+            },
+            {
+              "conformance": "CONF-87",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86), window tearing and rebasing (CONF-82) or look-ahead (CONF-87) through this app. Until such tests exist no workflow, job or test can be named."
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
           },
-          "reason": "The macOS app-host proof runs the production reader session, Kotlin facade and database against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier. Its credential store is in memory, because an ad-hoc signed host cannot reach the data-protection Keychain, so what it proves starts at the store boundary. It reads publications at the facade boundary and renders one tile through the production root; it does not drive the library screens by keyboard or pointer."
+          "reason": "The macOS app-host proof runs the production reader session, Kotlin facade and database against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier. Its credential store is in memory, because an ad-hoc signed host cannot reach the data-protection Keychain, so what it proves starts at the store boundary. It reads publications at the facade boundary and renders one tile through the production root; it does not drive the library screens by keyboard or pointer. CONF-82 and CONF-87 run as the core reader's own conformance tests on macOS (macosArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "ios": {
           "status": "partial",
           "unevidenced_conformance": {
             "CONF-76": "The iPhone proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
             "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives them through this app.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app.",
-            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives it through this app."
+            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app."
           },
           "evidence": [
             {
@@ -686,23 +694,33 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone"
+            },
+            {
+              "conformance": "CONF-82",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown"
+            },
+            {
+              "conformance": "CONF-87",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86), window tearing and rebasing (CONF-82) or look-ahead (CONF-87) through this app. Until such tests exist no workflow, job or test can be named."
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
           },
-          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications."
+          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "ipados": {
           "status": "partial",
           "unevidenced_conformance": {
             "CONF-76": "The iPad proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
             "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives them through this app.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app.",
-            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on an iOS simulator, and no test drives it through this app."
+            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app."
           },
           "evidence": [
             {
@@ -710,25 +728,33 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS"
+            },
+            {
+              "conformance": "CONF-82",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown"
+            },
+            {
+              "conformance": "CONF-87",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86), window tearing and rebasing (CONF-82) or look-ahead (CONF-87) through this app. Until such tests exist no workflow, job or test can be named."
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
           },
-          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications."
+          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64, the universal target this iPad app runs): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "tvos": {
           "status": "planned",
           "reason": "The Apple TV app reads the library through the reader (spec 16.18), but no test drives the TV library on the reader against a server, by the remote or otherwise, so no evidence exists for any declared id. The tvOS UI proofs in apple-ci cover search, the section bar and Now Playing, not library browse."
         },
         "android": {
-          "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader (LibraryWindowTest), whose results no evidence-verified job exports; no test drives them through this app. The albums window pages at 500 and the fixture holds eight albums, so no app test can span a second page.",
-            "CONF-87": "The app test drives the two-in-flight bound, the constrained-network skip, each album read once and a looked-ahead album opening with zero requests. Two bounds stay with the core's DetailLookAheadTest, whose results no evidence-verified job exports: that no more than 24 are read per settled viewport, which the eight-album fixture never reaches, and that a fling which never settles reads nothing, which the app test cannot make."
-          },
+          "status": "shipped",
           "evidence": [
             {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
@@ -780,21 +806,16 @@
              "test": "PhoneGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"},
             {"observes": "through the phone app's albums grid and the production reader against the disposable server, with the network reported constrained a settled grid reads no album detail; unconstrained with every getAlbum held, exactly two are in flight and no third starts while the grid stays still; released, each album is read once and no more than 24; and an album read ahead opens with no request, live and complete in its first publication",
              "workflow": "core-ci", "job": "core-ci",
-             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest"}
+             "test": "AndroidProductionLibraryReaderAppConformanceTest/conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest"},
+            {"conformance": "CONF-82", "workflow": "core-ci", "job": "core-ci",
+             "test": "ReaderWindowConformanceTest/conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown"},
+            {"conformance": "CONF-87", "workflow": "core-ci", "job": "core-ci",
+             "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"}
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "android-app-level-window-proof-and-two-lookahead-bounds",
-            "reason": "Two things remain. CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) has no app-level proof: the reader's albums window pages at 500 and the disposable corpus holds eight albums, so the phone app test needs either a fixture of more than one page or a settable page size, and the tear triggers are core tests only. CONF-87 is now driven through the phone app for the two-in-flight bound, the constrained-network skip and the zero-request open, but two of its bounds are core-only: no more than 24 per settled viewport, which eight albums never reach, and nothing read during a fling that never settles. No workflow, job or test can be named for either yet."
-          },
-          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 has no app-level evidence and CONF-87 has it only for the bounds the app test can reach. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; genre play is observed at the action the screen calls, not in the playback service."
+          "reason": "The conformance-env-linux job runs the phone app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; genre play is observed at the action the screen calls, not in the playback service. CONF-82 and CONF-87 run as the core reader's own conformance tests on the Android host runtime (testAndroidHostTest): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "androidtv": {
           "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader (LibraryWindowTest), whose results no evidence-verified job exports; no test drives them through this app. The albums window pages at 500 and the fixture holds eight albums, so no app test can span a second page.",
-            "CONF-87": "The app test drives the two-in-flight bound, the constrained-network skip, each album read once and a looked-ahead album opening with zero requests. Two bounds stay with the core's DetailLookAheadTest, whose results no evidence-verified job exports: that no more than 24 are read per settled viewport, which the eight-album fixture never reaches, and that a fling which never settles reads nothing, which the app test cannot make."
-          },
           "evidence": [
             {"conformance": "CONF-76", "workflow": "core-ci", "job": "core-ci",
              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline"},
@@ -846,14 +867,18 @@
              "test": "TvGenresAndAlbumSortTest/anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo"},
             {"observes": "through the TV app's albums grid and the production reader against the disposable server, with the network reported constrained a settled grid reads no album detail; unconstrained with every getAlbum held, exactly two are in flight and no third starts while the grid stays still; released, each album is read once and no more than 24; and an album read ahead opens with no request, live and complete in its first publication",
              "workflow": "core-ci", "job": "core-ci",
-             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest"}
+             "test": "AndroidTvProductionLibraryReaderAppConformanceTest/conf87LookAheadIsBoundedSkipsAConstrainedNetworkAndOpensALookedAheadAlbumWithNoRequest"},
+            {"conformance": "CONF-82", "workflow": "core-ci", "job": "core-ci",
+             "test": "ReaderWindowConformanceTest/conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown"},
+            {"conformance": "CONF-87", "workflow": "core-ci", "job": "core-ci",
+             "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"}
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "android-app-level-window-proof-and-two-lookahead-bounds",
-            "reason": "Two things remain. CONF-82 (window tearing, rebasing, scanning mode, anchor keeping) has no app-level proof: the reader's albums window pages at 500 and the disposable corpus holds eight albums, so the TV app test needs either a fixture of more than one page or a settable page size, and the tear triggers are core tests only. CONF-87 is now driven through the TV app for the two-in-flight bound, the constrained-network skip and the zero-request open, but two of its bounds are core-only: no more than 24 per settled viewport, which eight albums never reach, and nothing read during a fling that never settles. No workflow, job or test can be named for either yet."
+            "blocked_on": "androidtv-genre-play-proof",
+            "reason": "Every declared conformance id is evidenced. Playing a genre on the TV is exercised by no test, so the cell stays partial until one drives a genre's play from the TV app to the queue it builds, as the phone proof does; until then no test can be named."
           },
-          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. The cell is partial because CONF-82 has no app-level evidence and CONF-87 has it only for the bounds the app test can reach. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; playing a genre on the TV is not exercised by any test."
+          "reason": "The conformance-env-linux job runs the TV app's library proofs against the disposable server through the production activity, LibrarySession and AndroidLibraryReader, counting requests at a loopback forwarder, and exports their JUnit to the required core-ci execution verifier. This is executed Compose/Robolectric evidence with Keystore cryptography host-shadowed; it does not claim physical-device execution, and album play observes the queue, not audio. Genres and the album orders are host evidence over the production session and reader with a loopback server in place of Navidrome, whose fixture corpus carries no genres, so no live-server run opens a genre; playing a genre on the TV is not exercised by any test. CONF-82 and CONF-87 run as the core reader's own conformance tests on the Android host runtime (testAndroidHostTest): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         }
       }
     },

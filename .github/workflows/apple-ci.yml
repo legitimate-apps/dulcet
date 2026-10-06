@@ -1429,6 +1429,14 @@ jobs:
             --output "$RUNNER_TEMP" -- \
             ./gradlew --no-daemon :core-conformance:iosSimulatorArm64Test \
             -Pdulcet.iosSimulatorUdid="$conformance_sim"
+          # The core's own reader conformance tests (CONF-82, CONF-87) on the same simulator: the
+          # iOS evidence for the reader's window and look-ahead rules, which the disposable corpus
+          # cannot reach. Their server is scripted inside the test binary, so none is passed. Linked
+          # in its own Gradle JVM for the reason above.
+          ./gradlew --no-daemon :core:linkDebugTestIosSimulatorArm64
+          ./gradlew --no-daemon :core:iosSimulatorArm64Test \
+            --tests 'com.legitimateapps.dulcet.core.ReaderWindowConformanceTest' \
+            -Pdulcet.iosSimulatorUdid="$conformance_sim"
           xcrun simctl shutdown "$conformance_sim" || true
           xcrun simctl delete "$conformance_sim" || true
           # Same shared conformance suite again, this time compiled and executed
@@ -1631,6 +1639,16 @@ jobs:
         with:
           name: dulcet-core-conformance-iosSimulatorArm64-junit-${{ github.run_id }}-${{ github.run_attempt }}
           path: core-conformance/build/test-results/iosSimulatorArm64Test
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload core reader conformance JUnit results
+        if: ${{ always() && steps.darwin_conformance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-core-reader-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            core/build/test-results/macosArm64Test
+            core/build/test-results/iosSimulatorArm64Test
           if-no-files-found: error
           retention-days: 14
       - name: Upload tvosSimulatorArm64 core-conformance JUnit results
@@ -2381,10 +2399,19 @@ jobs:
         with:
           name: dulcet-core-conformance-tvosSimulatorArm64-junit-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
           path: core-conformance/build/test-results/tvosSimulatorArm64Test
+      # The core's own tests on macOS and the iOS simulator: CONF-82 and CONF-87, whose rules the
+      # disposable corpus cannot reach, run against a server scripted inside the test binary.
+      - name: Download core reader conformance JUnit results
+        if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: dulcet-core-reader-junit-${{ github.run_id }}-${{ needs.apple-conformance-core.outputs.attempt }}
+          path: core-reader-results
       - name: Verify Apple parity evidence executed and passed
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' }}
         run: |
           python3 tools/verify-parity-evidence \
+            core-reader-results \
             core-conformance/build/test-results/macosArm64Test \
             core-conformance/build/test-results/iosSimulatorArm64Test \
             core-conformance/build/test-results/tvosSimulatorArm64Test \
