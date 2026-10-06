@@ -1852,8 +1852,13 @@ jobs:
       # in run 37125098942 attempt 2: the iPhone's first boot took 218.6 s, and the search proof that
       # followed it ran at load1 up to 845. Its existence checks took 30 s each and the keyboard did
       # not dismiss in time. Attempt 1's iPad proof ran after the iPad's first boot at load1 up to
-      # 497 with 2.1 GB swapped out. Its scrobble never arrived. 15 bounds two first boots (158 to
-      # 219 s each, OBSERVED) plus the tool's own 120 s shutdown bound.
+      # 497 with 2.1 GB swapped out. Its scrobble never arrived.
+      #
+      # A member has one device, so it stays booted and settled for the first proof. OBSERVED in run
+      # 37519277991: shutting the iPhone down 12 s after its 201 s first boot had the first proof
+      # boot it again, and the extensions that start after a boot then swapped 749 MB under that
+      # proof (load1 567) until the app's account request timed out. 15 bounds one first boot
+      # (156 to 219 s, OBSERVED) plus the tool's 300 s settle cap.
       - name: First-boot this leg's simulator before the timed proofs
         timeout-minutes: 15
         env:
@@ -1861,11 +1866,10 @@ jobs:
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
           if [ "$DULCET_DEVICE" = ipad ]; then
-            python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
+            python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID" --settle
           else
-            python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro"
+            python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 17 Pro" --settle
           fi
-          python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert this leg's conformance proofs
         # 90 = ceil(1.5 x 59.6 / 5) x 5, rule 5's leg formula applied to this step. 59.6 minutes is
         # what these phases took inside the single composite of run 37105472578 -- the canary and

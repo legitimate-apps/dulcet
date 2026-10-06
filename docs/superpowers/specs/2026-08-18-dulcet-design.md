@@ -6587,7 +6587,10 @@ freshly booted simulator (SUPPORTED, n=23).
    The compact-shell launch that follows the iPhone, iPadOS and tvOS legs makes the same call,
    although it talks to no fixture. OBSERVED on run 35985802454: its runner launch took 579.9 s,
    with load1 196-562 on 3 CPUs and about 2 GB of swap, while nothing had shut the three legs'
-   devices down. That those devices caused the slow launch is ASSUMED.
+   devices down. That those devices caused the slow launch is ASSUMED. With `--settle` it also
+   waits, up to 300 s, until the kept device's running services hold steady, because a device keeps
+   starting extensions after `bootstatus` returns; it prints `SIMULATOR SETTLE … running=… settled=`.
+   A one-device leg first-boots its device with `--settle` and leaves it booted for the first proof.
 3. **A test binary is linked by a Gradle invocation that exits before the suite runs**, so the
    compiler's JVM is not resident while the tests execute on a 7 GB runner.
 4. **Every run records host pressure** (`tools/ci/host-pressure`, per phase, green or red). A stall
@@ -7600,6 +7603,13 @@ hosted macOS slot. The per-run limit rises from three to four slots, which leave
 account's five for a pull request's fast check. The cost is a second copy of the job's setup, about
 15 minutes (ASSUMED from the single job's setup times). The gain is a run bounded by
 `apple-conformance-core` (60 to 83 minutes in those runs) rather than this job's 83 to 98.
+
+Each member also keeps its one device booted after its first boot, settled (§21.5 rule 2), instead
+of shutting it down for the first proof to boot again. OBSERVED in the first matrix run, 37519277991:
+the iPad member passed in 49 minutes; the iPhone member's first proof ran on a device booted a second
+time 12 s after its 201 s first boot, at load1 567 with 749 MB swapped out, and the app's account
+request ran out its 30-second limit before reaching the server. That proof's connect now also takes
+Try Again, as a person does, for that timeout only.
 
 **2026-10-05 — A connection made on Connection lands on the library (§10.2).**
 A successful connect submitted from Connection (the Settings destination) published "connected" and
