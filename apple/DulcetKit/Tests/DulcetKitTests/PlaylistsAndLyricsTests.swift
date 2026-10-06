@@ -412,7 +412,8 @@ func aNewPlaylistFromAnAlbumAddsTheAlbumUnderTheLocalIDOnlyOnceCreated() {
     #expect(fake.edits.last == .appendAlbum(playlistID: "local-1", albumID: "album-7"))
 
     // A refused create adds nothing.
-    editor.createPlaylist(named: "", with: .album("album-8", title: "Other"))
+    editor.addition = .album("album-8", title: "Other")
+    editor.createPlaylist(named: "", with: editor.addition)
     fake.complete(2, record: "invalid")
     #expect(fake.edits.count == 3)
 }
@@ -425,6 +426,30 @@ func addingSongsAppendsInOrderAndClosesTheChooser() {
     editor.add(editor.addition!, to: "p1")
     #expect(editor.addition == nil)
     #expect(fake.edits == [.append(playlistID: "p1", songs: ["t2", "t1", "t2"])])
+}
+
+@Test @MainActor
+func theChooserTakesOneChoiceAndASecondTapWhileItClosesAddsNothing() {
+    let fake = RecordingPlaylists()
+    let editor = DulcetPlaylistEditor(editing: fake, session: nil)
+    let songs = DulcetPlaylistAddition.songs(["t1"], title: "Song")
+    editor.addition = songs
+    // The sheet holds its own copy of the addition until it has left the screen, so a quick
+    // second tap, on the same row or another, arrives with it after the first closed the chooser.
+    editor.add(songs, to: "p1")
+    editor.add(songs, to: "p1")
+    editor.add(songs, to: "p2")
+    editor.createPlaylist(named: "Mix", with: songs)
+    #expect(fake.edits == [.append(playlistID: "p1", songs: ["t1"])])
+
+    // Presented again, the same songs can be added again: that is a new choice.
+    editor.addition = songs
+    editor.add(songs, to: "p1")
+    #expect(fake.edits == [.append(playlistID: "p1", songs: ["t1"]), .append(playlistID: "p1", songs: ["t1"])])
+
+    // New Playlist from the playlists screen carries no addition and is never refused.
+    editor.createPlaylist(named: "Empty", with: nil)
+    #expect(fake.edits.last == .create(name: "Empty", songs: []))
 }
 
 // MARK: - The positional-edit context
