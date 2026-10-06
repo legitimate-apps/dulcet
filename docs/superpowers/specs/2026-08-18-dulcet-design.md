@@ -4524,7 +4524,7 @@ a transport may not observe cancellation. A `search3` that fails as unreachable 
 `search3` succeeds, so it does not alternate; every other failure is `deviceServerFailed(kind)`.
 Every row names its source (`server` or `device`). Within one query rows never move; across a
 keystroke the list is ranked again over everything the device now holds — including rows the
-previous answer wrote through — with a total order (match tier, type, normalized title, id), so rows
+previous answer wrote through — with a total order (match tier with own-name matches first, type, normalized title, id), so rows
 never reorder by arrival.
 
 **The wait for the server is bounded (2026-10-04).** A query whose server answer has not arrived
@@ -4944,8 +4944,10 @@ every result carries a scope — `serverAndDevice`, `deviceWhileServerPending`, 
   all**, not merely about order — and §18.1's merge rule lets a server result *replace* a local row, so
   that disagreement is user-visible. **CONF-43** issues a fixed query set against the pinned container
   and records the returned id sets, so the divergence is measured rather than assumed.
-- **Ranking** is explicit and identical in shape for both sources: exact, prefix, word-start, substring,
-  weighted by type (track > album > artist by default).
+- **Ranking** is explicit and identical in shape for both sources: exact, prefix, word-start, substring;
+  within a tier, a match on the result's own name before a match it only carries (its album's title or
+  an artist it credits); then weighted by type (track > album > artist by default). So an artist or
+  album searched by its exact name ranks before the tracks and albums that carry that name.
 - **Merging:** identity is the opaque id, so a server result **replaces** the local row of the same id
   (refreshing the cached object) rather than appearing twice. Late results never reorder items above the
   user's current scroll position; they append or replace in place.
@@ -7574,6 +7576,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-05 — A result named by the query ranks before the rows that only carry its name (§18.1).**
+The tier counted a match on a track's credited artist or its album's title the same as a match on a
+result's own name, and type then put tracks first, so searching an artist's exact name listed every
+track credited to it before the artist, and an album's exact name listed its tracks before the album.
+OBSERVED on Apple TV against the disposable server: "Dulcet Fixtures" showed only that artist's tracks
+on screen, and "Threshold Boundary" placed the album at rank 3 behind its three tracks. Within a tier
+an own-name match now leads; the tier still leads overall, so an exact credited match outranks an
+own-name prefix. OBSERVED by `SearchTest.aResultNamedByTheQueryRanksAheadOfTheRowsThatOnlyCarryThatName`,
+which fails against the previous ranker (the artist came after the track and album crediting it).
+Both the server and device halves share the ranker, so Apple and Android change together.
 
 **2026-10-05 — Apple retries a reader setup that failed, and `isOnline` redraws on reachability
 alone (§16.18, §16.15).** Two shell defects, OBSERVED by reading `DulcetLibrarySession`:
