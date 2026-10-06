@@ -297,10 +297,10 @@ internal class PlaybackQueueController(
      * returns its directive for the owner to resolve and hand to the engine's `preloadNext`.
      *
      * Declines — returns no directive — when nothing follows, under repeat-one (which restarts
-     * through a fresh start), when the named session is not current, and when the next item has a
-     * saved resume position. A preloaded item begins at zero, as every non-resuming start now does
-     * (§15.5), but the advance onto it does not clear that saved position the way a start does, so
-     * such an item takes the ordinary start instead.
+     * through a fresh start), and when the named session is not current. A preloaded item begins at
+     * zero, as every non-resuming start does (§15.5), and the advance onto it clears its saved
+     * position the way a start does, so a next item with a saved position -- one skipped part-way
+     * through, or the playing song queued again -- keeps its gapless start.
      */
     fun preloadNext(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition {
         if (!acceptsCommand(playbackSessionId)) return emptyTransition()
@@ -310,7 +310,7 @@ internal class PlaybackQueueController(
         val existing = registeredPreload
         if (existing != null && existing.queueEntryId == next?.queueEntryId) return emptyTransition()
         val discarded = discardRegisteredPreload()
-        if (next == null || resumePositions.restore(next.providerItemId) != null) {
+        if (next == null) {
             return emptyTransition().copy(discardedPreloadAttemptId = discarded)
         }
         val start = newStart(next)
@@ -749,6 +749,13 @@ internal class PlaybackQueueController(
                 it.queueEntryId == preload.queueEntryId
             }
             if (index >= 0) queues.setCurrentIndex(serverId, index)
+            // The handover is a start from the top (§15.5): clear the item's saved position after
+            // the outgoing session's own write, as beginSession does, so a relaunch cannot restore it.
+            return PlaybackQueueTransition(
+                snapshot(),
+                null,
+                effects + PlaybackCoreEffect.ClearResumePosition(preload.start.itemId),
+            )
         }
         return PlaybackQueueTransition(snapshot(), null, effects)
     }

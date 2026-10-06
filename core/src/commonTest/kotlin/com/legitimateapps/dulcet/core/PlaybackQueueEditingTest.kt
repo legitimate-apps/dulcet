@@ -258,14 +258,63 @@ class PlaybackQueueEditingTest {
     }
 
     @Test
-    fun preloadDeclinesWhenNothingFollowsUnderRepeatOneAndForAResumePosition() {
+    fun aNextItemWithASavedPositionIsPreloadedAndTheHandoverClearsThatPosition() {
         val fixture = fixture()
         val started = fixture.controller.replaceAndStart(request(listOf("a", "b")))
         val first = assertNotNull(started.startDirective)
+        val b = ProviderItemId(SERVER.value, "b")
+        // "b" was skipped part-way through earlier: its saved position must not cost it the gapless start.
+        fixture.resumePositions.save(b, 41.seconds)
 
-        fixture.resumePositions.save(ProviderItemId(SERVER.value, "b"), 41.seconds)
-        assertNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
-        fixture.resumePositions.clear(ProviderItemId(SERVER.value, "b"))
+        val preload = assertNotNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
+        assertEquals("b", preload.itemId.rawId)
+        assertNull(preload.resumePosition, "a preloaded item plays from the top")
+
+        val advanced = fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.AdvancedToPreloaded(first.attemptId, preload.attemptId),
+        )
+        assertEquals(1, advanced.snapshot.currentIndex)
+        val clears = advanced.effects.filterIsInstance<PlaybackCoreEffect.ClearResumePosition>()
+        assertEquals(listOf(b), clears.map { it.itemId }, "the handover clears the position it did not resume")
+        assertEquals(
+            advanced.effects.lastIndex,
+            advanced.effects.indexOf(clears.single()),
+            "the clear follows the outgoing session's own effects",
+        )
+        fixture.driver.close()
+    }
+
+    @Test
+    fun theSameSongQueuedTwiceIsPreloadedAfterItsOwnSavedPositionAndTheHandoverClearsIt() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "a")))
+        val first = assertNotNull(started.startDirective)
+        val a = ProviderItemId(SERVER.value, "a")
+        // The playing entry's own cadence save names the same item the next entry plays.
+        fixture.resumePositions.save(a, 30.seconds)
+
+        val preload = assertNotNull(fixture.controller.preloadNext(first.playbackSessionId).preloadDirective)
+        assertEquals("a", preload.itemId.rawId)
+        assertNotEquals(first.queueEntryId, preload.queueEntryId, "the preload is the second entry, not the first")
+        assertNull(preload.resumePosition)
+
+        val ended = fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.EndedNaturally(first.attemptId, 180.seconds))
+        val advanced = fixture.controller.recordPlaybackEvent(
+            PlaybackEngineEvent.AdvancedToPreloaded(first.attemptId, preload.attemptId),
+        )
+        assertEquals(1, advanced.snapshot.currentIndex)
+        val resumeEffects = (ended.effects + advanced.effects).filter {
+            it is PlaybackCoreEffect.ClearResumePosition || it is PlaybackCoreEffect.PersistResumePosition
+        }
+        assertEquals(PlaybackCoreEffect.ClearResumePosition(a), resumeEffects.last(), "the item ends cleared: $resumeEffects")
+        fixture.driver.close()
+    }
+
+    @Test
+    fun preloadDeclinesWhenNothingFollowsAndUnderRepeatOne() {
+        val fixture = fixture()
+        val started = fixture.controller.replaceAndStart(request(listOf("a", "b")))
+        val first = assertNotNull(started.startDirective)
 
         fixture.controller.cycleRepeatMode() // all
         fixture.controller.cycleRepeatMode() // one
