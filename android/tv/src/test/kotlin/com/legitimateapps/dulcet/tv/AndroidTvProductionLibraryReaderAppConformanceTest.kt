@@ -55,7 +55,10 @@ import kotlin.test.assertNotNull
 @Config(application = Application::class, shadows = [HostCredentialCipher::class],
     instrumentedPackages = ["com.legitimateapps.dulcet"], qualifiers = "w960dp-h540dp")
 class AndroidTvProductionLibraryReaderAppConformanceTest {
-    private val environment = ProductionLibraryEnvironment()
+    // The TV opens on the library, so it reads before a scenario installs its rules; its launch
+    // requests wait at the proxy until the test first opens a screen (or, outside the shared
+    // scenarios, unparks it itself), and meet the rules in force then.
+    private val environment = ProductionLibraryEnvironment(parkLaunchRequests = true)
     private val compose = createAndroidComposeRule<TvSearchActivity>()
     @get:Rule val rules: RuleChain = RuleChain.outerRule(environment).around(compose)
 
@@ -70,10 +73,14 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
              * and turn the press into opening an album.
              */
             override fun openLibrary() {
+                environment.proxy.unpark()
                 if (!exists("library.surface")) show("library.open")
             }
 
-            override fun openSearch() = show("search.open")
+            override fun openSearch() {
+                environment.proxy.unpark()
+                show("search.open")
+            }
 
             override fun backFromAlbum() = press("album.back")
 
@@ -256,6 +263,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
      * and every Back returns focus to the element that opened the screen it leaves.
      */
     @Test fun albumsAndArtistsOpenFromTheRemoteAndBackReturnsFocusToWhatOpenedThem() {
+        environment.proxy.unpark()
         // The app opens on the library: the first card takes focus when the rows arrive.
         await("the library at launch") { exists("library.surface") }
         await("the first home row's first card to take focus") { focused("library.home.0.item.0") }
@@ -304,6 +312,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
      * order.
      */
     @Test fun albumAndArtistPlayQueueEveryTrackAndNowPlayingIsReachableFromEveryScreen() {
+        environment.proxy.unpark()
         val app = RuntimeEnvironment.getApplication()
         val service = Robolectric.buildService(PlaybackService::class.java).create()
         try {

@@ -46,6 +46,8 @@ class CountingProxy(private val target: String) : AutoCloseable {
     private var rewriteRule: Pair<(Seen) -> Boolean, (ByteArray) -> ByteArray>? = null
     private var withoutHeaderRule: Pair<(Seen) -> Boolean, String>? = null
     private var gate = CountDownLatch(1)
+    private var parked: CountDownLatch? = null
+    private var parkCeilingsReached = 0
     private val executor = Executors.newFixedThreadPool(16)
     private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 64).apply {
         createContext("/") { exchange -> forward(exchange) }
@@ -73,6 +75,26 @@ class CountingProxy(private val target: String) : AutoCloseable {
     }
 
     fun holdAll() = hold { true }
+
+    /**
+     * Parks every request that arrives from now until [unpark]: each is logged at once, then waits,
+     * and only then meets the hold, fail, drop and rewrite rules in force when it is let go. An app
+     * that starts reading the moment it launches, before a test has installed its rules, so has its
+     * launch requests judged by the rules the test installs rather than racing them. A request parked
+     * longer than [PARK_CEILING_SECONDS] goes on alone, as an unparked one would.
+     */
+    fun park() = synchronized(lock) {
+        if (parked == null) parked = CountDownLatch(1)
+    }
+
+    /** How many requests waited out [PARK_CEILING_SECONDS] because nothing unparked them. */
+    fun parkCeilingsReached(): Int = synchronized(lock) { parkCeilingsReached }
+
+    /** Lets every parked request go, judged by the rules in force now. Idempotent. */
+    fun unpark() {
+        val open = synchronized(lock) { parked.also { parked = null } }
+        open?.countDown()
+    }
 
     fun release() {
         val open = synchronized(lock) {
@@ -120,6 +142,8 @@ class CountingProxy(private val target: String) : AutoCloseable {
                 .also { seen += it }
         }
         try {
+            val park = synchronized(lock) { parked }
+            if (park != null && !park.await(PARK_CEILING_SECONDS, TimeUnit.SECONDS)) synchronized(lock) { parkCeilingsReached++ }
             val (held, latch, failing) = synchronized(lock) {
                 Triple(holdRule?.invoke(entry) == true, gate, failRule?.invoke(entry) == true)
             }
@@ -175,6 +199,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
     }
 
     override fun close() {
+        unpark()
         release()
         server.stop(0)
         executor.shutdownNow()
@@ -185,6 +210,7 @@ class CountingProxy(private val target: String) : AutoCloseable {
         val CREDENTIAL_KEYS = setOf("u", "p", "t", "s", "apiKey")
         val HOP_HEADERS = setOf("connection", "keep-alive", "transfer-encoding", "content-length", "host")
         const val HOLD_CEILING_SECONDS = 120L
+        const val PARK_CEILING_SECONDS = 30L
 
         fun parse(query: String?): Map<String, String> = query.orEmpty().split('&').filter { it.isNotEmpty() }
             .associate { part ->
