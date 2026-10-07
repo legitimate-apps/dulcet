@@ -7,6 +7,16 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.plugins.api.createClientPlugin
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.plugin
+import io.ktor.http.URLProtocol
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.Socket
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
@@ -38,7 +48,59 @@ internal actual fun createAccountHttpClient(
         }
     })
     configure()
+}.also { client ->
+    if (transport is AccountClientTransport.ForwardProxy) {
+        // An HTTPS request through the proxy starts with a CONNECT, and CIO turns a 407 to that
+        // CONNECT into `IOException("Can not establish tunnel connection")` with no status, so the
+        // response observer above never sees it — and the same message covers a proxy that is down.
+        // After such a failure, ask the proxy the same CONNECT once, with no credentials, and read its
+        // status line: only a proxy that answers 407 is marked, and a dead one stays unreachable.
+        client.plugin(HttpSend).intercept { request ->
+            try {
+                execute(request)
+            } catch (failure: Throwable) {
+                if (failure !is CancellationException && request.url.protocol == URLProtocol.HTTPS &&
+                    proxyDemandsAuthenticationForTunnel(transport.proxy, request.url.host, request.url.port)
+                ) {
+                    transport.challengeTracker.markUnsupported()
+                }
+                throw failure
+            }
+        }
+    }
 }
+
+/**
+ * Whether [proxy] answers a credential-free `CONNECT host:port` with 407. Any failure to ask — a proxy
+ * that is down, slow or speaks something else — is false: only an observed 407 is a challenge.
+ */
+internal suspend fun proxyDemandsAuthenticationForTunnel(proxy: AccountForwardProxy, host: String, port: Int): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            Socket(Proxy.NO_PROXY).use { socket ->
+                socket.connect(InetSocketAddress(proxy.host, proxy.port), PROXY_PROBE_TIMEOUT_MILLIS)
+                socket.soTimeout = PROXY_PROBE_TIMEOUT_MILLIS
+                val authority = "$host:$port"
+                socket.getOutputStream().apply {
+                    write("CONNECT $authority HTTP/1.1\r\nHost: $authority\r\n\r\n".toByteArray(Charsets.US_ASCII))
+                    flush()
+                }
+                val statusLine = StringBuilder()
+                val input = socket.getInputStream()
+                while (statusLine.length < MAX_STATUS_LINE) {
+                    val byte = input.read()
+                    if (byte < 0 || byte == '\n'.code) break
+                    statusLine.append(byte.toChar())
+                }
+                statusLine.split(' ').getOrNull(1)?.trim() == "407"
+            }
+        } catch (_: IOException) {
+            false
+        }
+    }
+
+private const val PROXY_PROBE_TIMEOUT_MILLIS = 5_000
+private const val MAX_STATUS_LINE = 256
 
 /**
  * Explicit forward-proxy connector used by the hosted Android wire conformance control.
