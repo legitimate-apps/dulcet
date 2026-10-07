@@ -7601,6 +7601,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-06 — The Android TV asks about a create in doubt and says a playlist change that did not land (§18.6).** A create whose answer was lost waits in the device's outbox, and only that device can settle it, so
+the TV now asks rather than leaving it waiting for good. The question is a dialog over whatever
+screen is showing, the oldest first, as the tvOS shell's alert is, with the phone's choices: Yes,
+use that one (a lone candidate only), Not mine / None of these — create it, and Decide later; a
+create deleted here that may have been made gets Dismiss. Back is Decide later or Dismiss, and does
+nothing while an answer is out. A deferred create's playlist page says it waits, with Choose… to ask
+again; the page says a change that did not land, in the shared words, with Dismiss; and a page
+opened under a local id follows the playlist to the server's id. OBSERVED with remote keys over a
+fake core's outbox (`TvPlaylistQuestionTest`, as the phone's `PlaylistCreateInDoubtTest`); a mutant
+that let Back drop a question whose answer was out failed it. ASSUMED: the dialog presented by the
+library entry over a real session, and the page following to the server's id. This supersedes the
+entry below where it says the TV cannot resolve a create in doubt or say a change that did not land.
+
 **2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
 2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The
 queue button on a TV track row and on an album's header now offers Add to Playlist… after Play Next

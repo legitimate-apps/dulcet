@@ -190,7 +190,12 @@ private val routeSaver = listSaver<SnapshotStateList<String>, String>(
 )
 
 /** How a screen moves: to another route above it, and back to the one below. */
-internal class TvNavigator(val open: (String) -> Unit, val back: () -> Unit) {
+internal class TvNavigator(
+    val open: (String) -> Unit,
+    val back: () -> Unit,
+    /** Puts the route [to] where [from] is, for a playlist made under a local id that now has the server's. */
+    val replace: (from: String, to: String) -> Unit = { _, _ -> },
+) {
     fun openAlbum(rawId: String) = open(ALBUM + rawId)
     fun openArtist(rawId: String) = open(ARTIST + rawId)
 }
@@ -225,7 +230,13 @@ internal fun TvLibraryEntry(
         }
     }
     val navigator = remember(routes) {
-        TvNavigator(open = { route -> routes += route }, back = ::back)
+        TvNavigator(open = { route -> routes += route }, back = ::back, replace = { from, to ->
+            val index = routes.lastIndexOf(from)
+            if (index >= 0) {
+                routes[index] = to
+                if (from !in routes) { states.removeState(from); memory.forget(from) }
+            }
+        })
     }
     // Back walks down the routes, then from the search root to the library, the screen the app opens
     // on; from the library it leaves the app.
@@ -278,6 +289,8 @@ internal fun TvLibraryEntry(
     // launch the TV shows the library, whose home rows open as it composes; each publishes its cache
     // before its own read, as the phone's do.
     DroppedAdditionsNotice(playback, playbackState.droppedAdditions)
+    // A create in doubt is asked over whichever screen is showing, as the tvOS shell asks it.
+    TvPlaylistQuestion(session)
     LibraryLifecycle(session)
 }
 
@@ -1342,8 +1355,10 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
 }
 
 /**
- * One playlist, read-only here: its name, whose it is, and its entries in the playlist's order,
- * duplicates kept. Play and Shuffle queue the playable entries; an entry plays the playlist from it.
+ * One playlist: its name, whose it is, and its entries in the playlist's order, duplicates kept.
+ * Play and Shuffle queue the playable entries; an entry plays the playlist from it. A create waiting
+ * for the person's answer says so, with Choose… to ask again; a change that did not land is said,
+ * with Dismiss. A playlist made under a local id is followed to the server's id once it has one.
  */
 @Composable
 private fun TvPlaylistScreen(
@@ -1355,10 +1370,13 @@ private fun TvPlaylistScreen(
     navigator: TvNavigator,
 ) {
     EnterRoute()
+    val created by session.createdPlaylists.collectAsState()
+    LaunchedEffect(created[rawId]) { created[rawId]?.let { navigator.replace(PLAYLIST + rawId, PLAYLIST + it) } }
     val surface = rememberSurface(session, PLAYLIST + rawId) { openPlaylist(rawId) }
     val context = LocalContext.current
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
+    val outcomes by session.playlistOutcomes.collectAsState()
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
     TvAddToUpNext(adding, session) { adding = null }
@@ -1420,6 +1438,7 @@ private fun TvPlaylistScreen(
                                 }
                             }
                         }
+                        TvPlaylistNotices(session.playlistQuestions, rawId, outcomes[rawId]) { session.dismissPlaylistOutcome(rawId) }
                         note?.let { TvStatement(it, "playlist.note") }
                     }
                 }
@@ -1714,7 +1733,7 @@ internal fun TvArtwork(
 }
 
 @Composable
-private fun TvAction(
+internal fun TvAction(
     label: String,
     tag: String,
     description: String? = null,
@@ -1734,7 +1753,7 @@ private fun TvAction(
 }
 
 @Composable
-private fun TvStatement(text: String, tag: String) {
+internal fun TvStatement(text: String, tag: String) {
     Text(text, Modifier.testTag(tag), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
