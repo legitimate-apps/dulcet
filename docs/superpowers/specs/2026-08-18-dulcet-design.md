@@ -7663,8 +7663,9 @@ rules of §16.11 and §16.14 apply to a session connected in this process, and a
 now conforms: a launch into a saved account opens the library on what this device has seen, says the
 account on that server is saved and not connected, and sends nothing — no library read, no cover art
 (only what the device kept), no reconnect on reachability or the foreground — until the person
-chooses Reconnect (by touch, or with the remote: it sits under the bar, one DOWN from any place on it and the first place UP out of the library, wherever the bar's tabs fall) or Try again, which
-reconnects in place. Connect on the form connects the session that follows, and a session connected
+chooses Reconnect or Try again, which reconnects in place. On the TV, Reconnect sits under the bar,
+one DOWN from any place on it and the first place UP out of the library, wherever the bar's tabs
+fall; on the emulator's layout it had lined up with neither. Connect on the form connects the session that follows, and a session connected
 in this process reads in every later screen host. Each emulator has a CONF-10b proof that connects
 through the form, relaunches with the process's library reader closed, counts no connection at the
 relay for five seconds, then chooses Reconnect and observes the server reached in place.
