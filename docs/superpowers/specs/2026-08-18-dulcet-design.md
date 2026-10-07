@@ -7592,14 +7592,19 @@ focus engine owns the long press, but nothing recorded backed it, and the platfo
 (OBSERVED: SwiftUI `contextMenu` is available from tvOS 14, and the Human Interface Guidelines list
 context menus with no tvOS-specific considerations). Apple Music on tvOS adds a song to a playlist
 and creates playlists (OBSERVED: the Apple TV user guide on support.apple.com), so a TV that only
-read playlists fell below it. Track rows, album and playlist tiles now carry on tvOS the same menu
-they carry on iPhone, iPad and Mac: Play, Play Next and Add to Queue while the queue can be edited,
+read playlists fell below it. Track rows, album and playlist tiles now offer on tvOS the same menu
+they offer on iPhone, iPad and Mac: Play, Play Next and Add to Queue while the queue can be edited,
 Add to Playlist…, Rating or Favorite, Go to Album and Go to Artist, and Delete for the person's own
-playlist (confirmed first). Add to Playlist… opens the shared chooser, through the same
+playlist (confirmed first). Only Add to Playlist… is driven on tvOS; the rest are offered, not yet
+observed there. Add to Playlist… opens the shared chooser, through the same
 `DulcetPlaylistEditor` and the same one-choice-per-presentation rule. On tvOS, New Playlist… is a
 page pushed inside the chooser (a name field, which opens the system keyboard, then Create) rather
 than the name alert the other platforms use: driven by remote, Select on New Playlist… presented no
-alert from inside the chooser's sheet (OBSERVED on the tvOS 26.5 simulator). Rename, removal and reorder
+alert from inside the chooser's sheet (OBSERVED on the tvOS 26.5 simulator). Two alerts this makes
+reachable on tvOS are presented from the root rather than a sheet, and are ASSUMED to present there:
+the Delete confirmation (if it never shows, nothing is deleted) and the question a create in doubt
+asks. The second matters more, because the tvOS playlist page cannot ask it again, so a create in
+doubt could stay unresolved on the TV. A tvOS proof of that question is owed. Rename, removal and reorder
 stay on the playlist page of iPhone, iPad and Mac; the tvOS playlist page still lists and plays
 read-only. This supersedes the 2026-09-29 record's "tvOS lists and plays playlists read-only" for
 the menus. The new tvOS proof drives it by remote against the disposable server and reads each

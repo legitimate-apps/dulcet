@@ -6,7 +6,8 @@ import SwiftUI
 // Playlist" from a track's or album's context menu. Every edit is in the next publication of every
 // screen showing the playlist before any request (the core's overlay); what is still to reach the
 // server, and what could not, is said on the playlist itself. Another user's playlist is drawn
-// read-only with its owner, with no edit affordance at all. tvOS lists and plays playlists only.
+// read-only with its owner, with no edit affordance at all. tvOS lists and plays playlists, and adds
+// to one or creates one from a track's or album's menu; its playlist page edits nothing.
 
 private extension DulcetPresentationStore {
     var playlistEditor: DulcetPlaylistEditor? { librarySession?.playlists }

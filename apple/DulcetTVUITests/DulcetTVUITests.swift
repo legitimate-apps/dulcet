@@ -1083,8 +1083,12 @@ final class DulcetTVUITests: XCTestCase {
         let name = "TV Remote Playlist \(UUID().uuidString.prefix(6))"
         XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
         afterTest.append {
-            if let playlist = self.serverPlaylist(named: name, server: server) {
-                _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlist.id)], server: server)
+            // Every playlist of that name: a defect that creates two must not leave both behind.
+            let list = self.restCall("getPlaylists", [], server: server)?["playlists"] as? [String: Any]
+            for playlist in list?["playlist"] as? [[String: Any]] ?? [] where playlist["name"] as? String == name {
+                if let id = playlist["id"] as? String {
+                    _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: id)], server: server)
+                }
             }
         }
 
