@@ -7,6 +7,7 @@ import android.os.Looper
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
@@ -64,6 +65,18 @@ internal fun closeProcessReader() {
 }
 
 /**
+ * A cold start of a process in which the person has connected the saved account again, as Reconnect
+ * does (spec §13.1). A launch into a saved account sends nothing until then; that is proved on its own
+ * (SavedAccountLaunchTest, the emulator account-connect proofs, CONF-76's relaunch), so a scenario
+ * about a connected session's reads starts from one.
+ */
+internal fun closeProcessReaderAndReconnect() {
+    closeProcessReader()
+    AndroidAccountCredentialStore(RuntimeEnvironment.getApplication()).activeAccountId()
+        ?.let(SavedAccountConnection::connectedOnTheForm)
+}
+
+/**
  * The production app against the disposable server, through a [CountingProxy]: the saved account
  * points at the proxy, which forwards every request unchanged and counts it. Nothing in the app is
  * replaced — the reader, the session, the transport and the database are the production ones.
@@ -99,7 +112,10 @@ class ProductionLibraryEnvironment(
         runCatching { otherUser().deleteOwnPlaylistsNamed(TEST_PLAYLIST_PREFIX) }
         proxy = CountingProxy(target)
         if (parkLaunchRequests) proxy.park()
-        AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
+        val saved = AndroidAccountCredentialStore(app).save("Disposable", proxy.baseUrl, USERNAME, PASSWORD, true)
+        // As the connect form does once the server accepted the account and it was saved (spec §13.1):
+        // the session the app opens next is connected in this process, and reads.
+        SavedAccountConnection.connectedOnTheForm(saved.id)
     }
 
     override fun after() {

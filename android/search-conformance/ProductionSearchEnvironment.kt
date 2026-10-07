@@ -141,6 +141,8 @@ class ProductionSearchEnvironment : ExternalResource() {
         assertEquals(listOf(overlap.id.rawId, localOnly.id.rawId), rows.rows.map { it.item.id.rawId })
         probe.close()
         closeProcessReader()
+        // As the connect form does once the account is saved (spec §13.1): the app's session reads.
+        com.legitimateapps.dulcet.library.SavedAccountConnection.connectedOnTheForm(account.providerInstanceId)
         phase("seed-verified")
     }
     override fun after() {
