@@ -7632,6 +7632,25 @@ at least two) and a POST never, so a write sent without `formPost`
 may reach the server more than once below the core; the test pins that platform fact. The
 wording of §18.3 and §18.6 ("no connection at all") now says "a connection never made".
 
+**2026-10-06 — The Android TV asks about a create in doubt and says a playlist change that did not land (§18.6).** A create whose answer was lost waits in the device's outbox, and only that device can settle it, so
+the TV now asks rather than leaving it waiting for good. The question is a dialog over whatever
+screen is showing, the oldest first, as the tvOS shell's alert is, with the phone's choices: Yes,
+use that one (a lone candidate only), Not mine / None of these — create it, and Decide later; a
+create deleted here that may have been made gets Dismiss. Back is Decide later or Dismiss, and does
+nothing while an answer is out. A deferred create's playlist page says it waits, with Choose… to ask
+again; the page says a change that did not land, in the shared words, with Dismiss; and a page
+opened under a local id follows the playlist to the server's id. OBSERVED with D-pad and centre keys in the dialog,
+focus placed on the page's controls and Back sent to the dialog's dispatcher, over a fake core's
+outbox (`TvPlaylistQuestionTest`, as the phone's `PlaylistCreateInDoubtTest`); a mutant
+that let Back drop a question whose answer was out failed it. OBSERVED end to end over the TV's
+library entry and the production session, reader and editor, against a loopback server that makes the
+playlist without the song sent and answers the create 502 (`TvPlaylistCreateInDoubtSessionTest`): the
+question presented over the album once the app returns to the foreground, Decide later, Choose… from
+the page, Keep with no second create, and the page on the server's id, which a saved-state restore
+after the reader closes reopens; a mutant without the follow failed it, the restore showing the
+playlist as unavailable. This supersedes the
+entry below where it says the TV cannot resolve a create in doubt or say a change that did not land.
+
 **2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
 2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The
 queue button on a TV track row and on an album's header now offers Add to Playlist… after Play Next

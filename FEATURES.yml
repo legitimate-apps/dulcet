@@ -1883,13 +1883,43 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aTrackItsAlbumAndAnotherTrackGoIntoANewPlaylistWithTheRemoteAndTheServerHoldsEach"
+            },
+            {
+              "observes": "a create in doubt with one candidate is asked in a dialog with Yes, use that one focused; the remote walks its three controls, and the centre key on it gives the core that candidate and closes the question with nothing left waiting",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/aLoneCandidateIsKeptWithTheRemote"
+            },
+            {
+              "observes": "a create in doubt rebuilt from the outbox with two candidates offers neither as theirs; Decide later closes it sending nothing and the playlist's page then says it waits, and the centre key on its Choose… (focus placed on it) asks again, and None of these — create it gives the core no candidate and the page stops waiting",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/severalCandidatesAreNeverOfferedAndDecideLaterIsAskedAgainFromThePage"
+            },
+            {
+              "observes": "while an answer is out the question's three controls are disabled and Back (sent to the dialog's back dispatcher) keeps the question; an answer the core refuses is said in the dialog with the question kept and focus on Keep, and Back then decides later, sending nothing",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/whileAnAnswerIsOutBackDoesNothingAndARefusalIsSaidWithFocusKept"
+            },
+            {
+              "observes": "a playlist change that did not land is said on the playlist's page in the shared words, the centre key on Dismiss (focus placed on it) clears it, and a change that landed says nothing",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/aChangeThatDidNotLandIsSaidOnThePageAndDismissed"
+            },
+            {
+              "observes": "over the TV's library entry and the production session, reader and playlist editor, against a loopback server that makes the playlist without the song sent and answers the create 502: Create from a track row's Add to Playlist… sends one create, and once the app returns to the foreground the core's question is presented over the album with Keep focused; Decide later sends nothing and the playlist, opened from Library > Playlists, says it waits; Choose… asks again and Keep closes it with no second create, the page following to the server's playlist, which a saved-state restore after the reader is closed reopens on that id",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistCreateInDoubtSessionTest/aCreateWhoseAnswerWasLostIsAskedOverTheScreenAndKeepingItWritesNoSecondPlaylist"
             }
           ],
-          "reason": "The TV app browses and plays playlists: a Playlists grid in the Library and a read-only playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. It adds to playlists through the core editor: Add to Playlist… on a track row's and an album header's queue button opens a chooser of the playlists the account can edit, with New Playlist… first, which creates one from what is being added. Observed against the disposable server and read back from it: a new playlist made from a track, an album appended to it, and a track appended to it (Compose/Robolectric, not a physical-device claim). ASSUMED, not driven on the TV: a new playlist made from an album, the one-choice-per-presentation guard, a refused edit said in the chooser, and the chooser listing only editable playlists; they follow the phone sheet's code. Add to Playlist… is offered only where Play Next is, which needs a bound playback service and a queueable track. Not on the TV: rename, delete, remove and reorder; and a create whose answer was lost has no way to be resolved on the TV, so it stays waiting (the core neither adopts nor resends it), and a playlist change that did not land is not said.",
+          "reason": "The TV app browses and plays playlists: a Playlists grid in the Library and a read-only playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. It adds to playlists through the core editor: Add to Playlist… on a track row's and an album header's queue button opens a chooser of the playlists the account can edit, with New Playlist… first, which creates one from what is being added. Observed against the disposable server and read back from it: a new playlist made from a track, an album appended to it, and a track appended to it (Compose/Robolectric, not a physical-device claim). ASSUMED, not driven on the TV: a new playlist made from an album, the one-choice-per-presentation guard, a refused edit said in the chooser, and the chooser listing only editable playlists; they follow the phone sheet's code. Add to Playlist… is offered only where Play Next is, which needs a bound playback service and a queueable track. A create whose answer was lost is asked about in a dialog over whatever screen is showing, as the tvOS shell asks it, with the phone's choices; Decide later leaves it waiting on the playlist's page, which asks again on Choose…, and a change that did not land is said on the page with Dismiss. These are driven with the remote over a fake core's outbox, as the phone's are, and once end to end over the library entry and the production core against a loopback server that loses a create's answer: the question presented over the screen showing, Decide later, Choose… from the page, Keep, and the page following the local id to the server's. Not on the TV: rename, delete, remove and reorder.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "androidtv-playlist-in-doubt-question-and-remaining-edits",
-            "reason": "The TV adds and creates through the core editor, driven with key presses and read back from the server. The cell stays partial until the TV resolves a create in doubt and says a change that did not land, and until rename, delete, remove and reorder are offered on the TV or the row is split into add and full editing."
+            "blocked_on": "androidtv-playlist-remaining-edits",
+            "reason": "The TV adds and creates through the core editor, driven with key presses and read back from the server, and asks about a create in doubt and says a change that did not land. The cell stays partial until rename, delete, remove and reorder are offered on the TV or the row is split into add and full editing."
           }
         }
       }

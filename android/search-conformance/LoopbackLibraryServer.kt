@@ -16,6 +16,8 @@ import java.util.concurrent.TimeUnit
  * with one unchanging scan stamp, an album list per `getAlbumList2` type (each type its own albums, so
  * a screen shows which order it asked for), each album with one song from `getAlbum`, [genres] from
  * `getGenres`, and [songsByGenre] from `getSongsByGenre`. Every request is recorded, credentials and all, and never leaves the test.
+ * Given [playlists], it also keeps playlists owned by the signed-in user `u`: listed, read, created
+ * and appended to; [loseCreateAnswers] makes a create land without its songs and lose its answer.
  */
 class LoopbackLibraryServer : AutoCloseable {
     private val socket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
@@ -49,6 +51,25 @@ class LoopbackLibraryServer : AutoCloseable {
     @Volatile var holdStreams = false
     private val streamsReleased = CountDownLatch(1)
 
+    /**
+     * Playlists by id: name and song ids, in order. Null, the default, leaves every playlist endpoint
+     * answering the empty envelope it always did.
+     */
+    @Volatile var playlists: MutableMap<String, Pair<String, List<String>>>? = null
+    private var creates = 0
+
+    /**
+     * When set, a `createPlaylist` makes its playlist WITHOUT the songs it sent and is answered 502,
+     * as a proxy answers when the server behind it committed and then failed: a 5xx does not prove a
+     * write unapplied (spec §18.6), so the client cannot know it landed, and what landed is not what
+     * it sent.
+     */
+    @Volatile var loseCreateAnswers = false
+
+    /** The playlists named [name], by id. */
+    @Synchronized fun playlistsNamed(name: String): Map<String, List<String>> =
+        playlists.orEmpty().filterValues { it.first == name }.mapValues { it.value.second }
+
     private val log = CopyOnWriteArrayList<Pair<String, Map<String, String>>>()
     private val connections = Executors.newCachedThreadPool()
 
@@ -77,12 +98,19 @@ class LoopbackLibraryServer : AutoCloseable {
         val body = CharArray(length).also { var read = 0; while (read < length) read += input.read(it, read, length - read) }
         val uri = URI(line[1])
         val endpoint = uri.path.substringAfterLast('/').removeSuffix(".view")
-        val parameters = listOfNotNull(uri.rawQuery, String(body).takeIf { it.isNotEmpty() })
-            .flatMap { it.split('&') }.filter { it.isNotEmpty() }.associate {
+        val pairs = listOfNotNull(uri.rawQuery, String(body).takeIf { it.isNotEmpty() })
+            .flatMap { it.split('&') }.filter { it.isNotEmpty() }.map {
                 val pair = it.split('=', limit = 2)
                 URLDecoder.decode(pair[0], "UTF-8") to URLDecoder.decode(pair.getOrElse(1) { "" }, "UTF-8")
             }
+        val parameters = pairs.toMap()
         log += endpoint to parameters
+        if (endpoint == "createPlaylist" && loseCreateAnswers && playlists != null) {
+            synchronized(this) { playlists!!["created-${++creates}"] = parameters["name"].orEmpty() to emptyList() }
+            respond(client, 502, "<html>Bad Gateway</html>")
+            return@use
+        }
+        playlistWrite(endpoint, pairs)?.let { respond(client, 200, it); return@use }
         if (endpoint == "getCoverArt") {
             respond(client, 404, "")
             return@use
@@ -133,6 +161,37 @@ class LoopbackLibraryServer : AutoCloseable {
         return """{"subsonic-response":{"status":"ok","version":"1.16.1"${payload?.let { ",$it" }.orEmpty()}}}"""
     }
 
+    /** A playlist read or write, answered from [playlists]; null for any other endpoint, or without them. */
+    @Synchronized
+    private fun playlistWrite(endpoint: String, pairs: List<Pair<String, String>>): String? {
+        val lists = playlists ?: return null
+        fun one(name: String) = pairs.firstOrNull { it.first == name }?.second
+        fun all(name: String) = pairs.filter { it.first == name }.map { it.second }
+        fun playlist(id: String): String {
+            val (name, songs) = lists.getValue(id)
+            return """{"id":${quote(id)},"name":${quote(name)},"owner":"u","public":false,"readonly":false,""" +
+                """"songCount":${songs.size},"duration":${songs.size * 120},"entry":[${songs.joinToString(",") { genreSong(it, it) }}]}"""
+        }
+        fun ok(payload: String?) = """{"subsonic-response":{"status":"ok","version":"1.16.1"${payload?.let { ",$it" }.orEmpty()}}}"""
+        return when (endpoint) {
+            "getPlaylists" -> ok(""""playlists":{"playlist":[${lists.keys.joinToString(",", transform = ::playlist)}]}""")
+            "getPlaylist" -> one("id")?.takeIf { it in lists }?.let { ok(""""playlist":${playlist(it)}""") }
+                ?: """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Playlist not found"}}}"""
+            "createPlaylist" -> {
+                val id = "created-${++creates}"
+                lists[id] = one("name").orEmpty() to all("songId")
+                ok(""""playlist":${playlist(id)}""")
+            }
+            "updatePlaylist" -> {
+                val id = one("playlistId").orEmpty()
+                val (name, songs) = lists[id] ?: return ok(null)
+                lists[id] = (one("name") ?: name) to songs + all("songIdToAdd")
+                ok(null)
+            }
+            else -> null
+        }
+    }
+
     private fun genreSong(id: String, title: String) =
         """{"id":"$id","title":${quote(title)},"album":"Genre Album","albumId":"genre-album","artist":"Fixture Artist","duration":120,"suffix":"mp3","contentType":"audio/mpeg"}"""
 
@@ -141,7 +200,7 @@ class LoopbackLibraryServer : AutoCloseable {
     private fun respond(client: Socket, status: Int, body: String) {
         val bytes = body.toByteArray()
         client.getOutputStream().apply {
-            write(("HTTP/1.1 $status ${if (status == 200) "OK" else "Not Found"}\r\nContent-Type: application/json\r\n" +
+            write(("HTTP/1.1 $status ${when (status) { 200 -> "OK"; 502 -> "Bad Gateway"; else -> "Not Found" }}\r\nContent-Type: application/json\r\n" +
                 "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray())
             write(bytes)
             flush()
