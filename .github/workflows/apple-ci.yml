@@ -969,8 +969,9 @@ jobs:
           tls_pid=$!
           python3 tools/conformance-env/redirect-server --port 4543 --forward-proxy-auth &
           proxy_pid=$!
-          # The Apple lyrics proofs' fault proxy (tools/ci/run-lyrics-quality-proofs): forwards
-          # every request to this server unchanged, except a lyrics read a proof arms it to fail.
+          # The fault proxy (tools/ci/run-lyrics-quality-proofs, run-app-host-reader-proof): forwards
+          # every request to this server unchanged and logs it, except a read a proof arms it to
+          # fail or hold.
           python3 tools/conformance-env/lyrics-fault-proxy --port 4544 --upstream http://127.0.0.1:4533 &
           lyrics_proxy_pid=$!
           cleanup() {
@@ -1191,6 +1192,9 @@ jobs:
           # Extracted to a file; see the script header. It stays inside this step, whose shell
           # owns the disposable server. $IPAD_UDID comes from this step's env, deliberately.
           tools/ci/run-app-host-library-sync-proof simulators "$IPAD_UDID"
+          # The counted reader proofs on the iPhone and the iPad, through the fault proxy started
+          # above. In a file for the same reason.
+          tools/ci/run-app-host-reader-proof counted-simulators "$IPAD_UDID"
           # A macOS host test does not inherit xcodebuild's shell environment. Build its launch
           # manifest, inject only the disposable loopback contract, then execute that manifest.
           xcodebuild build-for-testing \
@@ -1581,6 +1585,29 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # The album page's heart, a track row's and the artist page's on Apple TV, each reached
+          # and pressed by remote and read back from the server (spec §16.20). Each is left unstarred.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-hearts.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-hearts-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote, last on this device (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
@@ -1893,9 +1920,10 @@ jobs:
             ipad|iphone) ;;
             *) echo "unknown conformance leg device: '$DULCET_DEVICE'" >&2; exit 1 ;;
           esac
-          # This job's own disposable server and the one fixture its phases use: the Apple lyrics
-          # proofs' fault proxy (tools/ci/run-lyrics-quality-proofs), which forwards every request to
-          # this server unchanged except a lyrics read a proof arms it to fail. The redirect, TLS and
+          # This job's own disposable server and the one fixture its phases use: the fault proxy,
+          # which forwards every request to this server unchanged except a lyrics read a proof arms it
+          # to fail (tools/ci/run-lyrics-quality-proofs) and every request during an outage a playlist
+          # proof switches on (tools/ci/run-ratings-playlists-proofs). The redirect, TLS and
           # forward-proxy fixtures serve only the core-conformance suites, which run in
           # apple-conformance-core. Navidrome logs where the failure upload below finds it; the proxy
           # writes no log file.
@@ -2511,6 +2539,15 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-search-ui-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-library-sync-test-junit" \
             "$RUNNER_TEMP/dulcet-mac-reader-test-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-conf76-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-conf77-junit" \
+            "$RUNNER_TEMP/dulcet-mac-reader-conf86-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-conf76-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-conf77-junit" \
+            "$RUNNER_TEMP/dulcet-ios-reader-conf86-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-conf76-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-conf77-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-reader-conf86-junit" \
             "$RUNNER_TEMP/dulcet-ipados-reader-junit" \
             "$RUNNER_TEMP/dulcet-ios-reader-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-sync-junit" \
@@ -2532,4 +2569,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-ratings-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-edits-junit" \
             "$RUNNER_TEMP/dulcet-ipados-ratings-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit"
+            "$RUNNER_TEMP/dulcet-ipados-playlist-edits-junit" \
+            "$RUNNER_TEMP/dulcet-mac-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-ios-row-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-row-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-hearts-junit" \
+            "$RUNNER_TEMP/dulcet-mac-playlist-play-junit" \
+            "$RUNNER_TEMP/dulcet-ios-playlist-pending-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playlist-play-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-playlist-pending-junit"

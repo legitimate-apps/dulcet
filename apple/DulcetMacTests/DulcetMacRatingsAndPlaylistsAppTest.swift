@@ -75,6 +75,95 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             + " other-client=\(elsewhere) shown-after-reopen=\(elsewhere) removed=0 frame=\(try reopened.frame(reread)) window-width=\(reopened.hostingView.bounds.width)")
     }
 
+    /// The Mac's hearts (spec §16.20, CONF-84), each clicked where it is drawn and read back from
+    /// the server:
+    ///
+    /// 1. the heart beside the stars in the window's toolbar, for the playing track;
+    /// 2. the heart beside a track's row on its album page.
+    ///
+    /// Each fills with the click, before the server answers, and the server's `starred` reads the
+    /// track starred; a second click empties it at once and the server reads it unstarred. Each
+    /// starts from what the server holds, so an earlier run's star cannot make a write
+    /// unobservable, and the server is left unstarred.
+    func toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp() async throws {
+        let server = try disposableServer()
+        let album = "Threshold Boundary"
+        let songID = try await server.songID(track, album: album)
+        if try await server.starred(songID) { try await server.setStarred(songID, false) }
+        addTeardownBlock { try? await server.setStarred(songID, false) }
+
+        let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, toolbar: true)
+        defer { app.close() }
+
+        // 1. The toolbar's heart, for the playing track.
+        try await app.play(query: "Twenty Nine", track: track)
+        let toolbarHeart = try await app.windowElement(identifiedBy: "dulcet.now-playing.favorite", timeout: .seconds(10))
+        try await toggleAndProve(toolbarHeart, named: "the toolbar's heart", songID: songID, on: server, in: app)
+        XCTAssertEqual(app.store.snapshot.nowPlaying?.current.title, track, "Starring must not change what is playing")
+
+        // 2. The heart beside the track's row on its album page.
+        try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.albums")
+        let tile = try await app.element(timeout: .seconds(30), described: "the \(album) tile") {
+            app.identifier($0) == "dulcet.library.album" && (app.label($0) ?? "").hasPrefix(album)
+        }
+        try app.press(tile, named: "the \(album) tile")
+        let row = try await app.element(timeout: .seconds(15), described: "the \(track) row") {
+            app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(track)
+        }
+        let rowFrame = try app.frame(row)
+        let rowHearts = app.windowElements { app.identifier($0) == "dulcet.reader.favorite" }
+            .filter { (try? app.frame($0)).map { $0.midY > rowFrame.minY && $0.midY < rowFrame.maxY } ?? false }
+        XCTAssertEqual(rowHearts.count, 1, "Exactly one heart must sit beside \(track)'s row; row=\(rowFrame)")
+        let rowHeart = try XCTUnwrap(rowHearts.first, "No heart beside \(track)'s row")
+        // The click below is posted to the window directly, so it would land even on a heart the
+        // window clips; the heart must lie wholly inside the window's content to be one a person sees.
+        let heartFrame = try app.frame(rowHeart)
+        let content = app.contentScreenFrame
+        XCTAssertTrue(content.contains(heartFrame), "\(track)'s row heart \(heartFrame) must lie inside the window \(content)")
+        try await toggleAndProve(rowHeart, named: "\(track)'s row heart", songID: songID, on: server, in: app)
+        print("DULCET MAC HEARTS PROOF PASS track=\(track.debugDescription) toolbar=true->false row=true->false"
+            + " row-heart=\(heartFrame) content=\(content)")
+    }
+
+    /// A playlist on the server opens from the sidebar's Playlists and its Play starts it in ITS
+    /// order (spec §18.6). The playlist is made for this run over `/rest` with "UI Playback Canary"
+    /// first and "Thirty One Seconds" second -- the reverse of their album order -- so the track
+    /// that starts, and the queue behind it, prove the playlist's order and not the album's. Play
+    /// is pressed as VoiceOver presses it, once the page has read the entries and enabled it. The
+    /// playlist is deleted afterwards, whatever the outcome.
+    func aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp() async throws {
+        let server = try disposableServer()
+        let album = "Threshold Boundary"
+        let order = [Self.albumOrder[2], Self.albumOrder[1]]
+        let name = "Dulcet Mac Play Proof " + UUID().uuidString.prefix(8)
+        let ids = [try await server.songID(order[0], album: album), try await server.songID(order[1], album: album)]
+        let playlistID = try await server.createPlaylist(name, songIDs: ids)
+        addTeardownBlock { try? await server.deletePlaylist(playlistID) }
+        let entries = try await server.playlistEntries(playlistID)
+        XCTAssertEqual(entries, order, "The control: the server must hold the run's playlist in the reverse of album order")
+
+        let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, toolbar: true)
+        defer { app.close() }
+        try await openPlaylist(name, in: app)
+        let play = try await app.element(identifiedBy: "dulcet.playlist.play", timeout: .seconds(10))
+        try await waitUntil(timeout: .seconds(15), "Play must be enabled once the entries are read") {
+            (play as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
+        }
+        XCTAssertNil(app.store.snapshot.nowPlaying, "The control: nothing plays before Play is pressed")
+        try app.press(play, named: "dulcet.playlist.play")
+        try await waitUntil(timeout: .seconds(20), "Play must start \(order[0]); now playing=\(String(describing: app.store.snapshot.nowPlaying?.current.title))") {
+            app.store.snapshot.nowPlaying?.current.title == order[0]
+        }
+        let nowPlaying = try XCTUnwrap(app.store.snapshot.nowPlaying)
+        XCTAssertEqual(nowPlaying.queue.map(\.title), order, "The queue must be the playlist's entries in its order")
+        XCTAssertEqual(nowPlaying.currentIndex, 0, "Play must start at the playlist's first entry")
+        try await waitUntil(timeout: .seconds(20), "playback must progress; phase=\(String(describing: app.store.snapshot.nowPlaying?.phase))") {
+            app.store.snapshot.nowPlaying?.progressBegan == true
+        }
+        print("DULCET MAC PLAYLIST PLAY PROOF PASS first=\(order[0].debugDescription)"
+            + " queue=\(nowPlaying.queue.map(\.title)) source=\((nowPlaying.sourceDisplayName ?? "nil").debugDescription)")
+    }
+
     /// Every playlist edit the Mac offers, made through the rendered views and read back from the
     /// disposable server after each step:
     ///
@@ -275,6 +364,32 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         XCTAssertGreaterThan(frame.width, 0, "Star \(star) must be drawn in the toolbar, not overflowed;"
             + " frame=\(frame) window-width=\(app.hostingView.bounds.width)")
         try app.click(atScreenPoint: NSPoint(x: frame.midX, y: frame.midY))
+    }
+
+    /// Clicks `heart` at its centre and proves the star reaches the server, then clicks it again
+    /// and proves it is taken off. The heart's own label says what it shows.
+    private func toggleAndProve(_ heart: Any, named name: String, songID: String, on server: LiveServer, in app: HostedApp) async throws {
+        try await waitUntil(timeout: .seconds(10), "\(name) must show the track unstarred; label=\(app.label(heart) ?? "nil")") {
+            app.label(heart) == "Favorite"
+        }
+        let starredBefore = try await server.starred(songID)
+        XCTAssertFalse(starredBefore, "The control: the server must not already hold the star \(name) makes")
+        for expected in [true, false] {
+            let frame = try app.frame(heart)
+            XCTAssertGreaterThan(frame.width, 0, "\(name) must be drawn; frame=\(frame)")
+            try app.click(atScreenPoint: NSPoint(x: frame.midX, y: frame.midY))
+            let label = expected ? "Remove Favorite" : "Favorite"
+            try await waitUntil(timeout: .seconds(3), "\(name) must show \(label) at once; label=\(app.label(heart) ?? "nil")") {
+                app.label(heart) == label
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+            var observed = try await server.starred(songID)
+            while observed != expected, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .seconds(1))
+                observed = try await server.starred(songID)
+            }
+            XCTAssertEqual(observed, expected, "\(name): the server must read the track \(expected ? "starred" : "unstarred")")
+        }
     }
 
     private func awaitRating(_ expected: Int, of songID: String, on server: LiveServer) async throws -> Int {
