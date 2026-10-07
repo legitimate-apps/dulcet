@@ -5699,6 +5699,14 @@ present one whose `editable` is false as read-only, with no edit controls. The c
 of one (`NotEditable`); the
 server's code 50 is told like any refusal.
 
+**On the TVs.** Apple TV and Android TV browse and play playlists, add to them, create them, and
+delete one the person may edit, asking first. Renaming a playlist and removing or reordering its
+entries are offered on iPhone, iPad, Mac and the Android phone, not on a TV. This follows what the
+Apple TV user guide describes for Apple Music on tvOS: adding a song to a playlist and creating one
+(OBSERVED on support.apple.com). That Apple Music on tvOS does not edit a playlist's entries in place
+is ASSUMED. On Android TV, Delete Playlist… sits beside Play and Shuffle on the playlist's page; on
+Apple TV, Delete is in a playlist tile's press-and-hold menu.
+
 **Failures.** An HTTP 429 is `Server.Busy`, named from the status whatever the body (the reference
 server's transcode limiter answers 429 with an envelope carrying only the generic code 0, §18.12), with its
 `Retry-After`. Any other status with an envelope is judged by the envelope, as in §18.3. An HTTP error
@@ -7614,6 +7622,24 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-07 — The TVs' playlist editing is browse, play, add, create and delete (§18.6).** The
+Android TV's `playlists.edit` cell stayed partial "until rename, delete, remove and reorder are
+offered on the TV", while the 2026-10-06 Apple TV record kept rename, removal and reorder on the
+larger screens. The two TVs now share one stated scope (§18.6, "On the TVs"): browse, play, add,
+create, and delete one the person may edit, confirmed first. The Android TV playlist page gains
+Delete Playlist… beside Play and Shuffle, shown only on a playlist the core marks editable. It opens
+a question naming the playlist, with focus on Cancel; Back is Cancel. Delete records the delete
+through the core editor, and the page goes Back once the delete is queued (or a local playlist that
+was never sent is simply gone); any other answer is said on the page. OBSERVED with D-pad and Centre
+presses against the disposable server
+(`AndroidTvProductionLibraryReaderAppConformanceTest.aPlaylistIsDeletedWithTheRemoteOnlyAfterItAsksAndCancelKeepsIt`):
+Cancel leaves the playlist on the server, and Delete, reached with Down, removes it there, with the
+grid shown again without it. A build where the button deletes without asking fails that test.
+Another user's public playlist opens on the TV naming its owner, with no Delete Playlist…, and the
+account's own playlist is the control. An addition made after the platform reported the network
+gone is shown at once on the playlist's page as "Not saved to your server yet" and is sent at the
+reconnect, the server holding nothing new until then (OBSERVED, same class).
 
 **2026-10-07 — A create waiting for the person's choice drops a candidate the server no longer
 lists (§18.6).** A waiting create was passed over by every flush, so a candidate another client
