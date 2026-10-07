@@ -103,9 +103,9 @@ class AndroidEmulatorAccountConnectProofTest {
 
                     // The server's own refusal of the password.
                     touch("account.submit", scenario)
-                    awaitNode("the server's refusal of the password") { cardSays("account.status.failed", R.string.error_auth_title) }
+                    awaitNode("the server's refusal of the password") { cardSays("account.status.failed", SharedR.string.error_auth_title) }
                     check(relay.serverAnsweredErrorCode(40)) { "The server must itself have refused the password (Subsonic error 40)" }
-                    check(!cardSays("account.status.failed", R.string.error_unreachable_title)) {
+                    check(!cardSays("account.status.failed", SharedR.string.error_unreachable_title)) {
                         "A wrong password must not read as a server that could not be reached"
                     }
                     requireNothingSaved(store, "after a refused password")
@@ -115,7 +115,7 @@ class AndroidEmulatorAccountConnectProofTest {
                     relay.makeUnreachable()
                     val refusedBefore = relay.refusedConnections.get()
                     touch("account.submit", scenario)
-                    awaitNode("the unreachable server said") { cardSays("account.status.failed", R.string.error_unreachable_title) }
+                    awaitNode("the unreachable server said") { cardSays("account.status.failed", SharedR.string.error_unreachable_title) }
                     check(relay.refusedConnections.get() > refusedBefore) { "The app must have tried the server" }
                     relay.makeReachable()
                     requireNothingSaved(store, "after an unreachable server")

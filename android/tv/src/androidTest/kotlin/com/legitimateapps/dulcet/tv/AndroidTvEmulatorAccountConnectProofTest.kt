@@ -100,7 +100,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
 
                     // The server's own refusal of the password.
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    awaitNode("the server's refusal of the password") { status() == text(R.string.tv_error_auth) }
+                    awaitNode("the server's refusal of the password") { status()?.startsWith(text(SharedR.string.error_auth_title)) == true }
                     check(relay.serverAnsweredErrorCode(40)) { "The server must itself have refused the password (Subsonic error 40)" }
                     check(focused("tv.connect.submit")) { "The remote stays on Connect after a failure" }
                     requireNothingSaved(store, "after a refused password")
@@ -110,7 +110,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     relay.makeUnreachable()
                     val refusedBefore = relay.refusedConnections.get()
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    awaitNode("the unreachable server said") { status() == text(R.string.tv_error_unreachable) }
+                    awaitNode("the unreachable server said") { status()?.startsWith(text(SharedR.string.error_unreachable_title)) == true }
                     check(relay.refusedConnections.get() > refusedBefore) { "The app must have tried the server" }
                     relay.makeReachable()
                     requireNothingSaved(store, "after an unreachable server")

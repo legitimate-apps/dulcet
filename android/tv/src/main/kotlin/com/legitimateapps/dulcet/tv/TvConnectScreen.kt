@@ -25,6 +25,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -59,12 +60,14 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.AccountConnectOutcome
+import com.legitimateapps.dulcet.AccountFailurePresentation
 import com.legitimateapps.dulcet.AccountCredentialStore
 import com.legitimateapps.dulcet.CredentialStoreException
+import com.legitimateapps.dulcet.accountFailurePresentation
 import com.legitimateapps.dulcet.connectAndSaveAccount
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
-import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.statement
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -86,6 +89,7 @@ internal fun TvConnectScreen(
     var attempt by remember { mutableStateOf<Job?>(null) }
     var generation by remember { mutableStateOf(0L) }
     var message by remember { mutableStateOf<Int?>(null) }
+    var failure by remember { mutableStateOf<AccountFailurePresentation?>(null) }
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
@@ -108,6 +112,7 @@ internal fun TvConnectScreen(
         generation += 1
         if (attempt?.isActive == true) { attempt?.cancel(); attempt = null; message = null; return }
         val mine = generation
+        failure = null
         message = R.string.tv_connecting
         attempt = scope.launch {
             val outcome = connectAndSaveAccount(AccountConnectionRequest(server, username, password, allowLocalHttp),
@@ -116,7 +121,7 @@ internal fun TvConnectScreen(
             attempt = null
             when (outcome) {
                 is AccountConnectOutcome.Connected -> { message = null; onConnected() }
-                is AccountConnectOutcome.Failed -> message = outcome.error.tvConnectMessage()
+                is AccountConnectOutcome.Failed -> { message = null; failure = outcome.error.accountFailurePresentation() }
                 AccountConnectOutcome.PersistenceFailed -> message = R.string.tv_error_persistence
                 AccountConnectOutcome.Superseded -> Unit
             }
@@ -156,9 +161,13 @@ internal fun TvConnectScreen(
                 Button(onClick = ::submitOrCancel, modifier = Modifier.testTag("tv.connect.submit")) {
                     Text(stringResource(if (connecting) R.string.tv_cancel else R.string.tv_connect))
                 }
-                (message ?: R.string.tv_error_unreadable.takeIf { unreadable })?.let {
-                    Text(stringResource(it), style = MaterialTheme.typography.bodyLarge,
-                        color = if (it == R.string.tv_connecting) MaterialTheme.colorScheme.onSurface
+                // A failure says what every Android shell says (CONF-09c): its title, what happened and
+                // what to do, with the decided remedies.
+                val resources = LocalContext.current.resources
+                (failure?.statement(resources) ?: (message ?: R.string.tv_error_unreadable.takeIf { unreadable })
+                    ?.let { stringResource(it) })?.let { said ->
+                    Text(said, style = MaterialTheme.typography.bodyLarge,
+                        color = if (failure == null && message == R.string.tv_connecting) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.error,
                         modifier = Modifier.testTag("tv.connect.status"))
                 }
@@ -238,22 +247,4 @@ internal fun TvField(
             )
         }
     }
-}
-
-/** Plain-language copy per failure class; server text and URLs are never shown. */
-private fun DomainError.tvConnectMessage(): Int = when (this) {
-    is DomainError.Input.InvalidServerUrl -> R.string.tv_error_address
-    DomainError.Transport.Unreachable, DomainError.Transport.Cancelled -> R.string.tv_error_unreachable
-    DomainError.Transport.Timeout -> R.string.tv_error_timeout
-    is DomainError.Security.TlsUntrusted -> R.string.tv_error_tls
-    DomainError.Security.LocalExceptionViolated, is DomainError.Security.RedirectRejected,
-    is DomainError.Auth.CrossOriginRedirectRejected -> R.string.tv_error_security
-    DomainError.Protocol.MalformedEnvelope, is DomainError.Protocol.UnexpectedContentType,
-    DomainError.Protocol.UnexpectedBinary, is DomainError.Protocol.Incompatible,
-    DomainError.Protocol.NotASubsonicServer, DomainError.Protocol.TooLarge -> R.string.tv_error_protocol
-    is DomainError.Server.Busy, is DomainError.Server.Known, is DomainError.Server.Unknown,
-    is DomainError.Server.HttpStatus, DomainError.Playback.NoPlayableSource -> R.string.tv_error_server
-    DomainError.Auth.InvalidCredentials, DomainError.Auth.TokenAuthUnsupported, DomainError.Auth.Forbidden,
-    DomainError.Auth.UnsupportedAuthenticationChallenge -> R.string.tv_error_auth
-    is DomainError.CapabilityUnsupported -> R.string.tv_error_capability
 }
