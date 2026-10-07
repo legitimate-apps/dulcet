@@ -7683,7 +7683,9 @@ valid request); connecting and its Cancel (a loopback port that never answers); 
 saved/disconnected; and the persistence error. On the simulators the connection is submitted
 through Connect's own path by the DEBUG launch hook, because a typed password that is then accepted
 raises the system's save-password prompt, and the persistence error is the real Keychain read
-answering a planted active-account pointer; a failing save has no simulator trigger. On the Mac the
+answering a planted active-account pointer; a failing save has no simulator trigger. The
+simulators observe each state as the screen renders it, its copy and controls; which presentation
+state the app classifies it as is read by the Mac proof and the DulcetKit tests. On the Mac the
 persistence error is reached both ways for real, through the unentitled host's Keychain, and
 connected and saved/disconnected are reached over an in-memory credential store, because that host's
 Keychain cannot hold an account; CONF-09b therefore stays a named gap on macOS until the entitled
