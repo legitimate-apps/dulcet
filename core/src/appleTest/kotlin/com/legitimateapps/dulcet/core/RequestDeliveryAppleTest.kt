@@ -20,8 +20,8 @@ import kotlin.test.assertTrue
  * had never gone. The JVM's counterpart is RequestDeliveryTransportTest.
  *
  * NSURLSession sends a GET again by itself when its connection closes without an answer, and a POST
- * never: OBSERVED here, a GET reached the fixture three times (it serves three connections) and a POST
- * once, both then failing NSURLErrorNetworkConnectionLost (-1005). Subsonic writes are GETs unless the
+ * never: OBSERVED here, a GET reached the fixture three times (it serves up to three connections;
+ * the test requires at least two) and a POST once, both then failing NSURLErrorNetworkConnectionLost (-1005). Subsonic writes are GETs unless the
  * server advertises `formPost` (§10.4), so the platform itself can send a write twice; the
  * classification below is therefore shown on a POST, as playlist writes travel with `formPost`.
  */

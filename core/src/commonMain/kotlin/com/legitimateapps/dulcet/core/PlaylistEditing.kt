@@ -2223,4 +2223,3 @@ private fun LibraryRequestFailure.provesNotApplied(): Boolean = when (val error 
     is DomainError.Server -> true
     else -> false
 }
-

@@ -19,8 +19,9 @@ internal actual fun provesNeverConnected(failure: Throwable): Boolean {
 }
 
 /**
- * NSURLErrorCannotFindHost, CannotConnectToHost, DNSLookupFailed, NotConnectedToInternet,
- * InternationalRoamingOff and DataNotAllowed: each is reported before a connection exists.
+ * NSURLErrorCannotFindHost, CannotConnectToHost and DNSLookupFailed: each names a connection that
+ * was never made. The no-network codes (-1009, -1018, -1020) are left out: a path that drops while a
+ * request is out may be reported with them, and an unproven "never sent" would send a write twice.
  */
-private val NEVER_CONNECTED = setOf(-1003L, -1004L, -1006L, -1009L, -1018L, -1020L)
+private val NEVER_CONNECTED = setOf(-1003L, -1004L, -1006L)
 private const val MAX_CAUSE_DEPTH = 16

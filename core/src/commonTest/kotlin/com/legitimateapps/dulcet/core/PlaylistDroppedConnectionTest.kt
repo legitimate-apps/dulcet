@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet.core
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -76,5 +77,17 @@ class PlaylistDroppedConnectionTest {
         val made = env.server.playlists.single()
         assertEquals(2, env.server.count("createPlaylist"))
         assertTrue(PlaylistEditOutcome.Created(localId, made.id) in env.outcomes, "${env.outcomes}")
+    }
+
+    /** The local-HTTP policy refuses before any socket opens: nothing left, so nothing is in doubt. */
+    @Test
+    fun aCreateTheLocalHttpPolicyStoppedIsNotInDoubt() = playlistTest { env ->
+        val session = env.session()
+        env.server.failWithThrowable["createPlaylist"] =
+            LocalHttpPolicyFailure(DomainError.Security.LocalExceptionViolated)
+        session.playlists.create("Road", listOf("song-1"))
+        advanceUntilIdle()
+        assertEquals(1, env.server.count("createPlaylist"), "fixture: the create was tried")
+        assertFalse(session.playlists.pendingChanges().single().inDoubt, "a create never sent was left in doubt")
     }
 }

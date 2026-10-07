@@ -816,7 +816,9 @@ internal class LibraryReader(
             throw failure
         } catch (failure: Throwable) {
             val error = failure.asReaderError()
-            throw LibraryRequestFailure(error, mayHaveArrived = error == DomainError.Transport.Unreachable && !provesNeverConnected(failure))
+            // The local-HTTP policy refuses before any socket opens, so nothing it stops was sent.
+            val neverSent = failure is LocalHttpPolicyFailure || provesNeverConnected(failure)
+            throw LibraryRequestFailure(error, mayHaveArrived = error == DomainError.Transport.Unreachable && !neverSent)
         }
         return SentResponse(seq, before, response)
     }
