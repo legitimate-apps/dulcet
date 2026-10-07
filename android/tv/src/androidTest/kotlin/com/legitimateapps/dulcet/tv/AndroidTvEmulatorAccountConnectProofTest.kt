@@ -290,17 +290,29 @@ class AndroidTvEmulatorAccountConnectProofTest {
             check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
             observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
 
-            // Reconnect lies between the bar and the rows: DOWN from the Library tab, UP from the first card.
+            // Reconnect lies between the bar and the rows: one DOWN from the Library tab; from the first
+            // card, UP past the row's own Try again (itself a reconnect for a saved account).
             val landing = if (focused("library.open")) "library-tab" else "first-card"
-            remote(if (landing == "library-tab") KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
-            awaitNode("the remote reaching Reconnect from the $landing") { focused("library.reconnect") }
+            var presses = 0
+            if (landing == "library-tab") {
+                remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                presses = 1
+            } else {
+                while (!focused("library.reconnect") && presses < 3) {
+                    remote(KeyEvent.KEYCODE_DPAD_UP)
+                    presses += 1
+                    compose.waitForIdle()
+                }
+            }
+            awaitNode("the remote reaching Reconnect from the $landing in $presses presses") { focused("library.reconnect") }
+            check(tried() == 0) { "Moving the remote to Reconnect contacted the server ${tried()} times" }
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
             awaitNode("Reconnect reaching the server, in place", 60_000) {
                 tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.surface")
             }
             check(!exists("tv.connect.submit")) { "Reconnect connects in place, without the form" }
             awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
-            observed += "reconnected(in-place, tried=${tried()}, from=$landing)"
+            observed += "reconnected(in-place, tried=${tried()}, from=$landing, presses=$presses)"
         }
     }
 
