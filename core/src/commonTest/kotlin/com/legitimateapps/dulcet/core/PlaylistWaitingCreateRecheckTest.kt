@@ -1,12 +1,14 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A create waiting for the person's choice is checked against the server's list at each flush
@@ -15,8 +17,11 @@ import kotlin.test.assertNull
  */
 class PlaylistWaitingCreateRecheckTest {
     /** A create whose answer was lost, waiting between what its send made and one another client made. */
-    private suspend fun TestScope.waitingBetweenTwo(env: PlaylistEnv): Triple<LibraryReaderSession, String, Pair<FakePlaylistServer.Playlist, FakePlaylistServer.Playlist>> {
-        val session = env.session()
+    private suspend fun TestScope.waitingBetweenTwo(
+        env: PlaylistEnv,
+        config: LibraryReaderConfig = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+    ): Triple<LibraryReaderSession, String, Pair<FakePlaylistServer.Playlist, FakePlaylistServer.Playlist>> {
+        val session = env.session(config = config)
         env.server.applyThenLose += "createPlaylist"
         val localId = assertNotNull(session.playlists.create("Once", listOf("song-1")).localId)
         advanceUntilIdle()
@@ -64,18 +69,72 @@ class PlaylistWaitingCreateRecheckTest {
     }
 
     @Test
-    fun aListingThatFailsLeavesTheChoiceAsItWas() = playlistTest { env ->
+    fun eachFlushListsOnceWhileACreateWaitsAndNotAtAllOtherwise() = playlistTest { env ->
+        val (session, _, _) = waitingBetweenTwo(env)
+        val before = env.server.count("getPlaylists")
+        session.playlists.flush()
+        advanceUntilIdle()
+        assertEquals(before + 1, env.server.count("getPlaylists"), "one listing serves the waiting create")
+        session.playlists.withdraw(session.playlists.pendingChanges().single().playlistId, PlaylistRowKind.Create)
+        advanceUntilIdle()
+        val idle = env.server.count("getPlaylists")
+        session.playlists.flush()
+        advanceUntilIdle()
+        assertEquals(idle, env.server.count("getPlaylists"), "nothing waits, so nothing is listed")
+    }
+
+    @Test
+    fun aListingThatTimesOutStopsTheFlushAndLeavesTheChoiceAsItWas() = playlistTest { env ->
         val (session, localId, pair) = waitingBetweenTwo(env)
         env.server.playlists.remove(pair.second)
         env.server.failWithError["getPlaylists"] = DomainError.Transport.Timeout
         val report = session.playlists.flush()
         advanceUntilIdle()
-        assertNull(report.stoppedBy)
+        assertEquals(DomainError.Transport.Timeout, report.stoppedBy, "stopped as a change's own timeout stops it")
         val waiting = session.playlists.pendingChanges().single()
+        assertEquals(localId, waiting.playlistId)
         assertEquals(listOf(pair.first.id, pair.second.id), waiting.candidates, "nothing is decided without the list")
         assertEquals(1, env.outcomes.size)
         assertIs<PlaylistEditOutcome.PossibleDuplicate>(env.outcomes.single())
-        assertEquals(localId, waiting.playlistId)
         assertEquals(1, env.server.count("createPlaylist"))
+    }
+
+    @Test
+    fun aListingAnswered429HoldsEveryChangeUntilItsRetryAfter() = playlistTest { env ->
+        val (session, localId, _) = waitingBetweenTwo(env, LibraryReaderConfig(lookAheadMaxPerViewport = 0, monotonic = testScheduler.timeSource))
+        val p = env.server.add("Mix", listOf("song-1"))
+        env.open(session, LibraryQuery.Playlist(p.id))
+        advanceUntilIdle()
+        env.server.httpStatus["getPlaylists"] = 429
+        env.server.retryAfter = "5"
+        // The rename's own flush lists for the waiting create first.
+        session.playlists.rename(p.id, "Evening")
+        runCurrent()
+        assertEquals(PlaylistEditOutcome.Held(localId, PlaylistRowKind.Create, DomainError.Server.Busy(5.seconds)), env.outcomes.last())
+        assertEquals(0, env.server.count("updatePlaylist"), "the rename queued behind it is not sent into the 429")
+        env.server.httpStatus.clear()
+        advanceTimeBy(2_000)
+        runCurrent()
+        val early = session.playlists.flush()
+        assertIs<DomainError.Server.Busy>(early.stoppedBy, "within the Retry-After nothing is sent")
+        assertEquals(0, env.server.count("updatePlaylist"))
+        advanceTimeBy(3_001)
+        runCurrent()
+        advanceUntilIdle()
+        assertEquals("Evening", p.name, "sent once the server takes changes again")
+    }
+
+    @Test
+    fun aListingRefusedOnItsOwnLetsTheChangesBehindItGo() = playlistTest { env ->
+        val (session, _, pair) = waitingBetweenTwo(env)
+        val p = env.server.add("Mix", listOf("song-1"))
+        env.open(session, LibraryQuery.Playlist(p.id))
+        advanceUntilIdle()
+        env.server.failWithError["getPlaylists"] = DomainError.Server.Known(0)
+        // The rename's own flush lists for the waiting create first.
+        session.playlists.rename(p.id, "Evening")
+        advanceUntilIdle()
+        assertEquals("Evening", p.name, "the listing's own failure holds nothing else")
+        assertEquals(listOf(pair.first.id, pair.second.id), session.playlists.pendingChanges().single().candidates)
     }
 }
