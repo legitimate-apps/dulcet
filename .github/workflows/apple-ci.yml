@@ -1634,8 +1634,36 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-playlist-add-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
-          # streaming-quality cap chosen by remote, last on this device (see the script header).
+          # streaming-quality cap chosen by remote (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
+          # A create whose answer is lost, asked about by remote (spec §18.6): the fault proxy on
+          # 4544 forwards the create to this server and answers it with a gateway's 502, another
+          # client adds a song, and the return from the Home screen asks whether the playlist is
+          # the person's; keeping it sends nothing and a later add reaches it. Deletes what it made.
+          # Last on this device: a run that fails before answering leaves the question pending,
+          # and the app asks it again over the next launch's first screen.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL=http://127.0.0.1:4544 \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-doubt.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playlist-doubt.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-doubt.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-doubt.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-doubt-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
       # The required `apple-ci` job resolves FEATURES.yml evidence from these directories on another
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
@@ -2556,6 +2584,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-junit" \
             "$RUNNER_TEMP/dulcet-tvos-playlist-add-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-doubt-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \

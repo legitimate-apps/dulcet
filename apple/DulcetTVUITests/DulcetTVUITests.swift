@@ -1055,35 +1055,164 @@ final class DulcetTVUITests: XCTestCase {
         continueAfterFailure = false
         XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
         let server = try disposableServer()
+        let album = try playlistProofAlbum(server: server)
+        let songs = album.songs
+        // Two tracks after the album's first, the later one added first: the playlist's order is
+        // then the order of the adds, told apart from the album's.
+        let firstIndex = 2
+        let secondIndex = 1
+        let name = "TV Remote Playlist \(UUID().uuidString.prefix(6))"
+        XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
+        deleteEveryPlaylist(named: name, afterTestOn: server)
 
-        let albumList = try XCTUnwrap(
-            restCall("getAlbumList2", [URLQueryItem(name: "type", value: "alphabeticalByName"),
-                                       URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"] as? [String: Any],
-            "The server must list its albums")
-        let albums = (albumList["album"] as? [[String: Any]] ?? []).compactMap { album -> (id: String, name: String)? in
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        try openAlbumByRemote(app, album)
+
+        // The first add: the track's menu, Add to Playlist…, New Playlist…, the name, Create.
+        try createPlaylistByRemote(app, named: name, holding: songs[firstIndex].title)
+        let created = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[firstIndex].id], server: server),
+            "The server must hold \(name) with exactly \(songs[firstIndex].title)")
+
+        // The second add, to that playlist from the same chooser.
+        try addToPlaylistByRemote(app, named: name, track: songs[secondIndex].title)
+        let updated = try XCTUnwrap(
+            awaitServerPlaylist(named: name, entries: [songs[firstIndex].id, songs[secondIndex].id], server: server),
+            "The server's \(name) must hold \(songs[firstIndex].title) then \(songs[secondIndex].title)")
+        XCTAssertEqual(updated.id, created.id, "The second add must reach the playlist the first created, not a new one")
+        XCTAssertEqual(app.state, .runningForeground)
+        print("DULCET TV PLAYLIST ADD PASS album=\(album.name) first=\(songs[firstIndex].title.debugDescription)"
+            + " second=\(songs[secondIndex].title.debugDescription) entries=\(updated.entries.count) setup=debug-account-only")
+    }
+
+    /// A create whose answer is lost (spec §18.6), answered by remote. The app talks to the server
+    /// through `tools/conformance-env/lyrics-fault-proxy`, armed to forward the create and answer it
+    /// with a gateway's 502, so the server holds the playlist and the app cannot know it. Another
+    /// client then adds a song to it, so it no longer holds just what was sent and the core cannot
+    /// adopt it on its own. The question is asked on the next reconnect -- here the return from the
+    /// Home screen -- as an alert whose lone candidate can be kept; keeping it sends nothing, and a
+    /// later add from the chooser reaches that same playlist. The proxy's count shows the create was
+    /// never sent again.
+    @MainActor
+    func testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+        let proxyURL = try XCTUnwrap(ProcessInfo.processInfo.environment["DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL"],
+            "DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL must name the fault proxy")
+        XCTAssertTrue(Self.isLoopbackURL(proxyURL), "The fault proxy must be a loopback host")
+        let album = try playlistProofAlbum(server: server)
+        let songs = album.songs
+        let proxied = (url: proxyURL, username: server.username, password: server.password)
+        XCTAssertEqual(playlistProofAlbum(server: proxied, quietly: true)?.songs.map(\.id), songs.map(\.id),
+            "The fault proxy must front the disposable server")
+        let name = "TV Lost Answer \(UUID().uuidString.prefix(6))"
+        let encodedName = try XCTUnwrap(name.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+        XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
+        deleteEveryPlaylist(named: name, afterTestOn: server)
+        let armed = try XCTUnwrap(proxyControl("POST", "/__dulcet/create-answer-loss?name=\(encodedName)&state=on", proxyURL: proxyURL))
+        XCTAssertEqual(armed["armed"] as? Bool, true, "The proxy must arm the loss: \(armed)")
+        defer { _ = proxyControl("POST", "/__dulcet/create-answer-loss?name=\(encodedName)&state=off", proxyURL: proxyURL) }
+
+        let app = try launchAndConnect(serverURL: proxyURL, server: server)
+        try openAlbumByRemote(app, album)
+        try createPlaylistByRemote(app, named: name, holding: songs[2].title)
+        // The server holds it; the app heard a gateway fail.
+        let created = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[2].id], server: server),
+            "The server must hold \(name), whose answer was lost")
+        let lost = try XCTUnwrap(proxyControl("GET", "/__dulcet/create-observations?name=\(encodedName)", proxyURL: proxyURL))
+        XCTAssertEqual(lost["lost"] as? Int, 1, "The proxy must have lost the create's answer: \(lost)")
+        XCTAssertEqual(lost["creates"] as? Int, 1, "One create must have been sent: \(lost)")
+        // Another client adds a song, straight to the server.
+        XCTAssertNotNil(restCall("updatePlaylist", [URLQueryItem(name: "playlistId", value: created.id),
+                                                    URLQueryItem(name: "songIdToAdd", value: songs[0].id)], server: server))
+        XCTAssertNotNil(awaitServerPlaylist(named: name, entries: [songs[2].id, songs[0].id], server: server),
+            "Another client's add must reach \(name)")
+        let title = DulcetTVUITests.questionTitle
+        XCTAssertFalse(app.alerts[title].exists, "Nothing may be asked before the next reconnect")
+
+        // The next reconnect: away to the Home screen and back.
+        XCUIRemote.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 15) || app.wait(for: .runningBackgroundSuspended, timeout: 15),
+            "Home must send the app to the background")
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15), "The app must return to the foreground")
+        let question = app.alerts[title]
+        XCTAssertTrue(question.waitForExistence(timeout: 45),
+            "The reconnect must ask whether \(name) is the person's: " + app.debugDescription)
+        XCTAssertTrue(question.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.exists,
+            "The question must name \(name): " + question.debugDescription)
+        // tvOS draws each alert action as a button inside a button of the same label: the outer
+        // one holds focus.
+        func action(_ label: String) -> XCUIElement {
+            question.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        let keep = action(DulcetTVUITests.keepItsMine)
+        XCTAssertTrue(keep.exists, "A lone candidate must be offered as theirs: " + question.debugDescription)
+        XCTAssertTrue(action(DulcetTVUITests.noneOfThese).exists, question.debugDescription)
+        XCTAssertTrue(action(DulcetTVUITests.decideLater).exists, question.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, keep, .up, limit: 4),
+            "Yes, It's Mine must take remote focus: " + question.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(question.waitForNonExistence(timeout: 15), "Keeping it must close the question: " + app.debugDescription)
+
+        // Kept: never created again, and the chooser's add reaches that playlist.
+        try addToPlaylistByRemote(app, named: name, track: songs[1].title)
+        let updated = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[2].id, songs[0].id, songs[1].id], server: server),
+            "The add must reach the kept \(name)")
+        XCTAssertEqual(updated.id, created.id, "The add must reach the playlist whose answer was lost, not a new one")
+        let after = try XCTUnwrap(proxyControl("GET", "/__dulcet/create-observations?name=\(encodedName)", proxyURL: proxyURL))
+        XCTAssertEqual(after["creates"] as? Int, 1, "Keeping it must never send the create again: \(after)")
+        XCTAssertEqual(app.state, .runningForeground)
+        print("DULCET TV CREATE IN DOUBT PASS name=\(name.debugDescription) lost=\(lost["lost"] ?? "?")"
+            + " creates=\(after["creates"] ?? "?") entries=\(updated.entries.count) setup=debug-account-only")
+    }
+
+    private static let questionTitle = "Was this playlist already created?"
+    private static let keepItsMine = "Yes, It\u{2019}s Mine"
+    private static let noneOfThese = "None of These \u{2014} Create It"
+    private static let decideLater = "Decide Later"
+
+    private struct PlaylistProofAlbum {
+        let index: Int
+        let name: String
+        let songs: [(id: String, title: String)]
+    }
+
+    /// Threshold Boundary, read from the server: its place in the alphabetical grid and its tracks,
+    /// three or more with distinct titles.
+    private func playlistProofAlbum(server: Server, quietly: Bool = false) -> PlaylistProofAlbum? {
+        let albumName = "Threshold Boundary"
+        let list = restCall("getAlbumList2", [URLQueryItem(name: "type", value: "alphabeticalByName"),
+                                              URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"] as? [String: Any]
+        let albums = (list?["album"] as? [[String: Any]] ?? []).compactMap { album -> (id: String, name: String)? in
             guard let id = album["id"] as? String, let name = album["name"] as? String else { return nil }
             return (id, name)
         }
-        let albumName = "Threshold Boundary"
-        let albumIndex = try XCTUnwrap(albums.firstIndex { $0.name == albumName }, "The server must hold \(albumName)")
-        let albumPage = try XCTUnwrap(
-            restCall("getAlbum", [URLQueryItem(name: "id", value: albums[albumIndex].id)], server: server)?["album"] as? [String: Any],
-            "The server must read \(albumName)")
-        let songs = (albumPage["song"] as? [[String: Any]] ?? []).compactMap { song -> (id: String, title: String)? in
+        guard let index = albums.firstIndex(where: { $0.name == albumName }),
+              let page = restCall("getAlbum", [URLQueryItem(name: "id", value: albums[index].id)], server: server)?["album"]
+                as? [String: Any] else {
+            if !quietly { XCTFail("The server must hold and read \(albumName)") }
+            return nil
+        }
+        let songs = (page["song"] as? [[String: Any]] ?? []).compactMap { song -> (id: String, title: String)? in
             guard let id = song["id"] as? String, let title = song["title"] as? String else { return nil }
             return (id, title)
         }
-        // Two tracks after the album's first, the later one added first: the playlist's order is
-        // then the order of the adds, told apart from the album's.
-        XCTAssertGreaterThanOrEqual(songs.count, 3, "\(albumName) must hold three tracks: \(songs.map(\.title))")
-        let firstIndex = 2
-        let secondIndex = 1
-        XCTAssertEqual(songs.filter { $0.title == songs[firstIndex].title }.count, 1)
-        XCTAssertEqual(songs.filter { $0.title == songs[secondIndex].title }.count, 1)
-        let name = "TV Remote Playlist \(UUID().uuidString.prefix(6))"
-        XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
+        if !quietly {
+            XCTAssertGreaterThanOrEqual(songs.count, 3, "\(albumName) must hold three tracks: \(songs.map(\.title))")
+            XCTAssertEqual(Set(songs.map(\.title)).count, songs.count, "\(albumName)'s titles must be distinct")
+        }
+        return PlaylistProofAlbum(index: index, name: albumName, songs: songs)
+    }
+
+    private func playlistProofAlbum(server: Server) throws -> PlaylistProofAlbum {
+        try XCTUnwrap(playlistProofAlbum(server: server, quietly: false))
+    }
+
+    /// Deletes every playlist named `name` after the test: a defect that creates two must not leave
+    /// both behind.
+    private func deleteEveryPlaylist(named name: String, afterTestOn server: Server) {
         afterTest.append {
-            // Every playlist of that name: a defect that creates two must not leave both behind.
             let list = self.restCall("getPlaylists", [], server: server)?["playlists"] as? [String: Any]
             for playlist in list?["playlist"] as? [[String: Any]] ?? [] where playlist["name"] as? String == name {
                 if let id = playlist["id"] as? String {
@@ -1091,9 +1220,11 @@ final class DulcetTVUITests: XCTestCase {
                 }
             }
         }
+    }
 
-        // The album, by remote: Library, Albums, the grid walked to it, Select.
-        let app = try launchAndConnect(serverURL: server.url, server: server)
+    /// The album, by remote: Library, Albums, the grid walked to it, Select; then focus on its tracks.
+    @MainActor
+    private func openAlbumByRemote(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
         XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
         XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
@@ -1107,27 +1238,30 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
             "Down must reach the grid: " + app.debugDescription)
         pressToTheStart(app)
-        for index in 0..<albumIndex {
+        for index in 0..<album.index {
             let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
             XCUIRemote.shared.press(.right)
             XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
         }
-        XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", albumName),
-            "The walk must end on \(albumName); focus=\(focusedElement(app).debugDescription)")
+        XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", album.name),
+            "The walk must end on \(album.name); focus=\(focusedElement(app).debugDescription)")
         XCUIRemote.shared.press(.select)
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
         XCTAssertTrue(albumTitle.waitForExistence(timeout: 30), "Select must open the album: " + app.debugDescription)
-        XCTAssertTrue(waitForLabel(albumName, of: albumTitle, timeout: 15), "The page must be \(albumName)'s; title=\(albumTitle.label)")
+        XCTAssertTrue(waitForLabel(album.name, of: albumTitle, timeout: 15), "The page must be \(album.name)'s; title=\(albumTitle.label)")
         let trackRows = app.buttons.matching(identifier: "dulcet.reader.track")
         let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
-        while trackRows.count < songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
-        XCTAssertEqual(trackRows.count, songs.count, "The page must list every track the server holds: " + app.debugDescription)
+        while trackRows.count < album.songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertEqual(trackRows.count, album.songs.count, "The page must list every track the server holds: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.reader.track" },
             "Down from the album's header must reach its tracks: " + app.debugDescription)
+    }
 
-        // The first add: the track's menu, Add to Playlist…, New Playlist…, the name, Create.
-        try focusTrackRow(app, title: songs[firstIndex].title)
-        try chooseAddToPlaylist(app, track: songs[firstIndex].title)
+    /// `track`'s menu, Add to Playlist…, New Playlist…, `name` typed, Create; the chooser closes.
+    @MainActor
+    private func createPlaylistByRemote(_ app: XCUIApplication, named name: String, holding track: String) throws {
+        try focusTrackRow(app, title: track)
+        try chooseAddToPlaylist(app, track: track)
         let newPlaylist = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
         XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocused(app, newPlaylist, .up, limit: 6),
@@ -1150,26 +1284,21 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(pressUntilFocused(app, create, .down, limit: 4), "Create must take remote focus: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Create must close the chooser: " + app.debugDescription)
-        let created = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[firstIndex].id], server: server),
-            "The server must hold \(name) with exactly \(songs[firstIndex].title)")
+    }
 
-        // The second add, to that playlist from the same chooser.
-        try focusTrackRow(app, title: songs[secondIndex].title)
-        try chooseAddToPlaylist(app, track: songs[secondIndex].title)
-        XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser again: " + app.debugDescription)
+    /// `track`'s menu, Add to Playlist…, then `name`'s row in the chooser; the chooser closes.
+    @MainActor
+    private func addToPlaylistByRemote(_ app: XCUIApplication, named name: String, track: String) throws {
+        try focusTrackRow(app, title: track)
+        try chooseAddToPlaylist(app, track: track)
+        let newPlaylist = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
+        XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser: " + app.debugDescription)
         let row = app.descendants(matching: .any).matching(identifier: "dulcet.addToPlaylist.playlist")
             .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15), "The chooser must list \(name): " + app.debugDescription)
         XCTAssertTrue(pressUntilFocused(app, row, .down, limit: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Choosing a playlist must close the chooser: " + app.debugDescription)
-        let updated = try XCTUnwrap(
-            awaitServerPlaylist(named: name, entries: [songs[firstIndex].id, songs[secondIndex].id], server: server),
-            "The server's \(name) must hold \(songs[firstIndex].title) then \(songs[secondIndex].title)")
-        XCTAssertEqual(updated.id, created.id, "The second add must reach the playlist the first created, not a new one")
-        XCTAssertEqual(app.state, .runningForeground)
-        print("DULCET TV PLAYLIST ADD PASS album=\(albumName) first=\(songs[firstIndex].title.debugDescription)"
-            + " second=\(songs[secondIndex].title.debugDescription) entries=\(updated.entries.count) setup=debug-account-only")
     }
 
     // MARK: - Playlist helpers

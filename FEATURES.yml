@@ -1668,6 +1668,12 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetTVUITests/testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server through the fault proxy: a create made from the chooser reaches the server and its answer is replaced by a gateway's 502; another client adds a song to it; on the return from the Home screen the app asks whether the playlist named is the person's, Yes, It's Mine keeps it without sending the create again (the proxy counts one create), and a later add from the chooser reaches that same playlist",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote"
             }
           ],
           "promotion_condition": {
@@ -1675,7 +1681,7 @@
             "blocked_on": "tvos-playlist-page-and-pending-ui-proof",
             "reason": "No tvOS test opens a playlist from the Library and observes it play in its own order, and none makes an add while the server is unreachable and observes it shown pending and sent at reconnect. Until such tests exist no workflow, job or test can be named for them."
           },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); a playlist tile's menu also offers Delete for the person's own playlist, confirmed first, which no tvOS test drives. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays read-only."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. A create whose answer was lost is asked about over the screen and kept by remote, with no second create sent. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); a playlist tile's menu also offers Delete for the person's own playlist, confirmed first, which no tvOS test drives. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays read-only."
         },
         "android": {
           "status": "shipped",

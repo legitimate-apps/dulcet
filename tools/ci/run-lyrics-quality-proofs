@@ -19,8 +19,8 @@
 # - The lyrics proofs fail a read of "Thirty One Seconds" and need a device that has never stored
 #   that track's lyrics; on every device they run before anything else opens that track's lyrics.
 # - The streaming-quality proofs set a cap on the device and put it back at the end. A run that
-#   fails part-way leaves the cap set, so on each device they are the LAST proof, and nothing
-#   after them streams on that device.
+#   fails part-way leaves the cap set, so on each device they are the last proof that streams;
+#   only a proof that plays nothing may follow them.
 #
 # Each simulator proof is its own test method that fails on the other device class, so an iPhone
 # run cannot stand as iPad evidence.
