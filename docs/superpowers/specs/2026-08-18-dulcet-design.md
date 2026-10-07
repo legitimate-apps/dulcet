@@ -7601,6 +7601,25 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
+2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The
+queue button on a TV track row and on an album's header now offers Add to Playlist… after Play Next
+and Add to Queue. It opens a chooser: New Playlist… first and focused, then the playlists the account
+can edit. New Playlist… becomes a name field filled with what is being added, and Create makes the
+playlist through the core editor with those songs. A track is appended by id; an album is appended
+as the album (`appendAlbum`), or created from the songs the album screen shows. One choice is taken
+per presentation and claimed before the core is called; a refused edit gives the choice back and
+says why in the chooser. OBSERVED with D-pad and Centre presses against the disposable server
+(`AndroidTvProductionLibraryReaderAppConformanceTest`): a track goes into a new playlist, then its
+album and then a second track into the same playlist, and after each step the server holds exactly
+those additions under one id. ASSUMED, not driven on the TV: a new playlist made from an album, the
+one-choice guard and a refused edit; they follow the phone sheet. The chooser is a full-screen
+dialog window around a centred surface (docs/TRAPS.md 50). Add to Playlist… is offered where Play
+Next is, so only while a playback service is bound and on a queueable track; search result rows do
+not offer it. Not on the TV yet: rename, delete, remove and reorder. A create whose answer was lost
+waits in this device's outbox and only this device can resolve it; the TV cannot yet, so it stays
+waiting, neither adopted nor resent. A playlist change that did not land is not said on the TV.
+
 **2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
 `apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at
 90 minutes. Green runs spent 74 to 82 minutes in it (runs 37375260936, 37379563022, 37388349181,
