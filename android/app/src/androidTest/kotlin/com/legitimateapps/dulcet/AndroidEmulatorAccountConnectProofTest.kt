@@ -208,10 +208,21 @@ class AndroidEmulatorAccountConnectProofTest {
         }
     }
 
-    private fun launch(): ActivityScenario<MainActivity> = ActivityScenario.launch(
+    /**
+     * The app opened from the launcher, and in front: its window holds the focus, as a person waits for
+     * the launch animation before touching. A touch sent while it still runs goes to the launcher
+     * (OBSERVED in core-ci run 37638393461).
+     */
+    private fun launch(): ActivityScenario<MainActivity> = ActivityScenario.launch<MainActivity>(
         Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClassName(context, MainActivity::class.java.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-    )
+    ).also { scenario ->
+        awaitNode("the app's window in front") {
+            var focused = false
+            scenario.onActivity { focused = it.hasWindowFocus() }
+            focused
+        }
+    }
 
     private fun requireNothingSaved(store: AndroidAccountCredentialStore, moment: String) {
         check(store.activeAccountId() == null) { "No account may be saved $moment" }

@@ -210,9 +210,19 @@ class AndroidTvEmulatorAccountConnectProofTest {
         }
     }
 
-    private fun launch(): ActivityScenario<TvSearchActivity> = ActivityScenario.launch(
+    /**
+     * The app opened and in front: its window holds the focus, so the remote's keys reach it rather
+     * than the launcher still animating it in (as a phone touch did in core-ci run 37638393461).
+     */
+    private fun launch(): ActivityScenario<TvSearchActivity> = ActivityScenario.launch<TvSearchActivity>(
         Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-    )
+    ).also { scenario ->
+        awaitNode("the app's window in front") {
+            var focused = false
+            scenario.onActivity { focused = it.hasWindowFocus() }
+            focused
+        }
+    }
 
     private fun requireNothingSaved(store: AndroidAccountCredentialStore, moment: String) {
         check(store.activeAccountId() == null) { "No account may be saved $moment" }
