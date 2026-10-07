@@ -26,6 +26,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -181,6 +187,14 @@ internal fun TvField(
     var focused by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
+    // As on the search screen: the field is read-only until it is selected (the centre key, or a
+    // tap), so the remote can land on it or pass over it without the keyboard coming up and taking
+    // the D-pad. A read-only field opens no input session. Leaving it makes it read-only again.
+    val softKeyboard = LocalSoftwareKeyboardController.current
+    var editing by remember { mutableStateOf(false) }
+    LaunchedEffect(editing) {
+        if (editing) { withFrameNanos { }; softKeyboard?.show() }
+    }
     Column {
         Text(label, style = MaterialTheme.typography.labelLarge, color = if (focused) colors.primary else colors.onSurfaceVariant)
         Box(Modifier.fillMaxWidth().padding(top = 6.dp)
@@ -188,7 +202,7 @@ internal fun TvField(
             .border(2.dp, if (focused) colors.primary else colors.surfaceVariant, RoundedCornerShape(8.dp))
             .padding(horizontal = 16.dp, vertical = 12.dp)) {
             BasicTextField(
-                value = value, onValueChange = onChange, enabled = enabled, singleLine = true,
+                value = value, onValueChange = onChange, enabled = enabled, singleLine = true, readOnly = !editing,
                 keyboardOptions = keyboard, visualTransformation = visual,
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) },
                     onDone = { focusManager.moveFocus(FocusDirection.Down) }),
@@ -200,10 +214,22 @@ internal fun TvField(
                 },
                 // A text field consumes the D-pad for its cursor, which traps a remote in the first
                 // field. Up and Down leave the field; Left and Right still move the cursor.
-                modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+                modifier = modifier.fillMaxWidth()
+                    .onFocusChanged { focused = it.isFocused; if (!it.isFocused) editing = false }
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            editing = true
+                        }
+                    }
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (event.key) {
+                            // Selecting the field asks for the keyboard; again, once Back has closed it.
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                if (editing) softKeyboard?.show() else editing = true
+                                true
+                            }
                             Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
                             Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
                             else -> false

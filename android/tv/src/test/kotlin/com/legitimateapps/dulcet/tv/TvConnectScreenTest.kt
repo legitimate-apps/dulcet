@@ -1,5 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -102,6 +105,24 @@ class TvConnectScreenTest {
         }
     }
 
+    @Test fun aFieldTakesTextOnlyOnceTheCentreKeySelectsItSoTheRemotePassesOverItWithoutAKeyboard() {
+        compose.setContent { TvConnectScreen({ connectedResult() }, MemoryStore()) {} }
+        compose.waitForIdle()
+        // The remote lands on the first field at launch, and passes down over the next: neither is
+        // editable, so neither opens an input session or brings up the keyboard.
+        compose.onNodeWithTag("tv.connect.server").assertIsFocused().assert(editable(false))
+        compose.onRoot().performKeyInput { pressKey(androidx.compose.ui.input.key.Key.DirectionDown) }
+        compose.onNodeWithTag("tv.connect.username").assertIsFocused().assert(editable(false))
+        // The centre key selects it; leaving it makes it read-only again.
+        compose.onNodeWithTag("tv.connect.username").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.DirectionCenter) }
+        compose.onNodeWithTag("tv.connect.username").assertIsFocused().assert(editable(true))
+        compose.onRoot().performKeyInput { pressKey(androidx.compose.ui.input.key.Key.DirectionDown) }
+        compose.onNodeWithTag("tv.connect.password").assertIsFocused().assert(editable(false))
+        compose.onNodeWithTag("tv.connect.username").assert(editable(false))
+    }
+
+    private fun editable(value: Boolean) = SemanticsMatcher.expectValue(SemanticsProperties.IsEditable, value)
+
     /** A remote's select button on a focused control, which is how a TV user activates it. */
     @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
     private fun press(tag: String) {
@@ -111,9 +132,9 @@ class TvConnectScreenTest {
     }
 
     private fun fill() {
-        compose.onNodeWithTag("tv.connect.server").performTextInput("http://10.0.2.2:4747")
-        compose.onNodeWithTag("tv.connect.username").performTextInput("listener")
-        compose.onNodeWithTag("tv.connect.password").performTextInput("tv-password-canary")
+        compose.onNodeWithTag("tv.connect.server").selectWithRemote().performTextInput("http://10.0.2.2:4747")
+        compose.onNodeWithTag("tv.connect.username").selectWithRemote().performTextInput("listener")
+        compose.onNodeWithTag("tv.connect.password").selectWithRemote().performTextInput("tv-password-canary")
     }
 
     private class MemoryStore : AccountCredentialStore {
