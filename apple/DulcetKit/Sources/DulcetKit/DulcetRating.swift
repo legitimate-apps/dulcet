@@ -202,7 +202,6 @@ struct DulcetNowPlayingRatingControl: View {
     }
 }
 
-#if !os(tvOS)
 /// Rating in a track's context menu: No Rating and 1 to 5 stars, the current one checked. Offered only
 /// while the reader holds the track's account.
 struct DulcetRatingMenu: View {
@@ -232,4 +231,3 @@ struct DulcetRatingMenu: View {
         }
     }
 }
-#endif

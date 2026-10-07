@@ -91,6 +91,13 @@ public enum DulcetLibrarySection: String, CaseIterable, Identifiable, Sendable {
 
 /// A reader page pushed onto the Library stack. The store owns the stack, so a tab switched away
 /// from and back shows the page it was left on.
+/// Where a Back press in the Library landed: the page now on top (nil for the section at the
+/// root) and the route that page had opened, whose item takes focus again on a remote.
+public struct DulcetReaderReturn: Equatable, Sendable {
+    public let page: DulcetReaderRoute?
+    public let opened: DulcetReaderRoute
+}
+
 public enum DulcetReaderRoute: Hashable, Sendable {
     case section(DulcetLibrarySection)
     case album(DulcetProviderItemID)
@@ -234,7 +241,11 @@ public final class DulcetPresentationStore {
         guard !isApplyingSourceSnapshot else { return }
         if destination == .library, readerOwnsLibrary {
             // The reader's pages are the store's own; the source is told only the destination.
-            if selectedDestination == .library { readerPath = [] }
+            if selectedDestination == .library {
+                readerPath = []
+                readerReturn = nil
+                readerArrival = nil
+            }
             selectDestination(.library)
             return
         }
@@ -429,6 +440,8 @@ public final class DulcetPresentationStore {
     /// Opens a page from anywhere: from Library it is pushed; from elsewhere -- a search result,
     /// the player -- Library comes forward showing it on top of the section it was left on.
     public func showReaderPage(_ route: DulcetReaderRoute) {
+        readerReturn = nil
+        readerArrival = route
         if selectedDestination == .library {
             if readerPath.last != route { readerPath.append(route) }
         } else {
@@ -443,6 +456,8 @@ public final class DulcetPresentationStore {
             showReaderPage(route)
             return
         }
+        readerReturn = nil
+        readerArrival = route
         readerPath.append(route)
     }
 
@@ -450,7 +465,32 @@ public final class DulcetPresentationStore {
     public func popReader(to path: [DulcetReaderRoute]) {
         guard path.count < readerPath.count,
               Array(readerPath.prefix(path.count)) == path else { return }
+        readerReturn = DulcetReaderReturn(page: path.last, opened: readerPath[path.count])
+        readerArrival = nil
         readerPath = path
+    }
+
+    /// Where Back last landed and what it came back from: the page now on top (nil for the
+    /// section at the root) and the route that page had opened. On a remote, focus goes back to
+    /// the item that opened the page left, as in the platform's own Music app; the focus engine
+    /// alone puts it on the first control of the page, the Library's section bar. Cleared when
+    /// that item takes focus, and by any push or section change.
+    public private(set) var readerReturn: DulcetReaderReturn?
+
+    /// The item Back returned to holds focus again.
+    public func readerReturnFocused() {
+        readerReturn = nil
+    }
+
+    /// The page just opened, until one of its controls takes focus. On a remote nothing else
+    /// puts focus on a page whose content arrives after it is pushed: the focus engine finds no
+    /// control on it yet and falls back to the app's section bar, where Back leaves the app.
+    /// Cleared when the page's first control takes focus, and by Back or a section change.
+    public private(set) var readerArrival: DulcetReaderRoute?
+
+    /// A control of the page just opened holds focus.
+    public func readerArrivalFocused() {
+        readerArrival = nil
     }
 
     /// Whether Back has a library page to leave: the Library is showing and a page is pushed.
@@ -501,6 +541,8 @@ public final class DulcetPresentationStore {
     public func selectLibrarySection(_ section: DulcetLibrarySection) {
         librarySection = section
         readerPath = []
+        readerReturn = nil
+        readerArrival = nil
         if selectedDestination != .library {
             selectDestination(.library)
         }

@@ -203,6 +203,27 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(self.request("GET", f"/rest/getPlaylist?t={CANARY}&id=pl-1")[0], 200)
         self.assertEqual(self.control("GET", "/__dulcet/playlist-observations?playlist=pl-1")[1]["held"], 1)
 
+    def test_an_armed_create_lands_once_and_its_answer_alone_is_lost(self):
+        status, armed = self.control("POST", "/__dulcet/create-answer-loss?name=Road%20Trip&state=on")
+        self.assertEqual((status, armed), (200, {"armed": True, "lost": 0, "creates": 0}))
+        # Another name's create passes through untouched.
+        self.assertEqual(self.request("GET", f"/rest/createPlaylist.view?t={CANARY}&name=Other")[0], 200)
+        # The armed create, as a form body: forwarded whole, then answered as a gateway's failure.
+        form = f"t={CANARY}&name=Road+Trip&songId=s-1".encode()
+        status, _, body = self.request("POST", "/rest/createPlaylist.view", body=form,
+                                       headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 502)
+        self.assertIn(b"Bad Gateway", body)
+        self.assertNotIn(b"subsonic-response", body, "the server's own answer must not reach the client")
+        creates = [seen for seen in Upstream.seen if seen["path"].startswith("/rest/createPlaylist")]
+        self.assertEqual([seen["body"] for seen in creates], [b"", form], "the server must receive the lost create")
+        # One loss per arming: the same create sent again is answered by the server.
+        status, _, body = self.request("GET", f"/rest/createPlaylist.view?t={CANARY}&name=Road%20Trip")
+        self.assertEqual(status, 200)
+        self.assertIn(b"subsonic-response", body)
+        _, observed = self.control("GET", "/__dulcet/create-observations?name=Road%20Trip")
+        self.assertEqual(observed, {"armed": False, "lost": 1, "creates": 2})
+
     def test_a_hold_never_outlives_its_limit(self):
         self.control("POST", "/__dulcet/playlist-hold?playlist=pl-3&state=on")
         with mock.patch.dict(self.module["ProxyHandler"]._handle.__globals__, {"HOLD_LIMIT_SECONDS": 0.2}):
@@ -312,6 +333,9 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(self.control("POST", "/__dulcet/playlist-hold?state=on")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/playlist-hold?playlist=p&state=maybe")[0], 400)
         self.assertEqual(self.control("GET", "/__dulcet/playlist-hold?playlist=p&state=on")[0], 404)
+        self.assertEqual(self.control("POST", "/__dulcet/create-answer-loss?state=on")[0], 400)
+        self.assertEqual(self.control("POST", "/__dulcet/create-answer-loss?name=n&state=maybe")[0], 400)
+        self.assertEqual(self.control("GET", "/__dulcet/create-answer-loss?name=n&state=on")[0], 404)
         self.assertEqual(self.control("POST", "/__dulcet/outage?state=maybe")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/outage")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/rule?action=hold&state=on")[0], 400)

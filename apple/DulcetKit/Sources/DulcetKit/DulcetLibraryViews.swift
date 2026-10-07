@@ -1216,7 +1216,7 @@ struct DulcetAlbumLink: View {
 extension View {
     /// Play, Play Next, Add to Queue, Rating, Go to Album and Go to Artist for one track — each
     /// only when it can act. `publishedRating` is the rating in the row being drawn, when the row
-    /// carries one. Nothing on tvOS, whose focus engine owns the long press.
+    /// carries one. On tvOS the menu opens on a press and hold of the remote's clickpad.
     func dulcetTrackContextMenu(
         track: DulcetTrack,
         onPlay: (() -> Void)? = nil,
@@ -1250,7 +1250,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
 
     func body(content: Content) -> some View {
 #if os(tvOS)
-        content
+        content.contextMenu { menuItems }
 #else
         // The system preview, not DulcetContextMenuPreview: on iOS every track row is also a
         // drag source onto the queue, and only with the row itself as the preview does a drag
@@ -1260,7 +1260,6 @@ private struct DulcetTrackContextMenu: ViewModifier {
 #endif
     }
 
-#if !os(tvOS)
     @ViewBuilder
     private var menuItems: some View {
         if let onPlay, track.availability == .playable {
@@ -1280,7 +1279,6 @@ private struct DulcetTrackContextMenu: ViewModifier {
             onNavigate: onNavigate
         )
     }
-#endif
 }
 
 private struct DulcetAlbumContextMenu: ViewModifier {
@@ -1290,7 +1288,11 @@ private struct DulcetAlbumContextMenu: ViewModifier {
 
     func body(content: Content) -> some View {
 #if os(tvOS)
-        content
+        if isEnabled {
+            content.contextMenu { menuItems }
+        } else {
+            content
+        }
 #else
         if isEnabled {
             // The system preview: the tile is also a drag source onto the queue, which a custom
@@ -1302,7 +1304,6 @@ private struct DulcetAlbumContextMenu: ViewModifier {
 #endif
     }
 
-#if !os(tvOS)
     @ViewBuilder
     private var menuItems: some View {
         if !album.tracks.isEmpty {
@@ -1318,7 +1319,6 @@ private struct DulcetAlbumContextMenu: ViewModifier {
             credits: album.credits.filter { $0.role == .albumArtist }
         )
     }
-#endif
 }
 
 #if os(iOS)
@@ -1353,7 +1353,6 @@ struct DulcetContextMenuPreview: View {
 }
 #endif
 
-#if !os(tvOS)
 /// Play Next and Add to Queue, offered only while the playback controller can edit the queue.
 /// Both start playback when nothing is queued, as the edit intents define.
 struct DulcetQueueInsertionMenuItems: View {
@@ -1371,8 +1370,6 @@ struct DulcetQueueInsertionMenuItems: View {
         }
     }
 }
-
-#endif
 
 extension DulcetQueueAddition {
     /// One track, attributed to its album when the library can identify it.
@@ -1407,7 +1404,6 @@ extension DulcetQueueAddition {
     }
 }
 
-#if !os(tvOS)
 private struct DulcetGoToArtistMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let credits: [DulcetCredit]
@@ -1434,7 +1430,6 @@ private struct DulcetGoToArtistMenuItems: View {
         }
     }
 }
-#endif
 
 struct DulcetArtistDetailView: View {
     let artist: DulcetArtist

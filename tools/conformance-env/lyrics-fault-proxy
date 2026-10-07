@@ -2,8 +2,8 @@
 """A forwarding proxy in front of the disposable server that can fail one song's lyrics read.
 
 It can also hold one playlist's reads -- see "Holding a playlist read" below --, drop every
-request for a while -- see "An outage" below -- and count, hold or fail the reader's requests --
-see "Counting" below.
+request for a while -- see "An outage" below --, count, hold or fail the reader's requests --
+see "Counting" below -- and lose one create's answer -- see "Losing a create's answer".
 
 The Apple lyrics proofs need a lyrics read that fails, then succeeds when the person presses Try
 Again (spec §18.4). The disposable server answers every lyrics read, and nothing about the corpus
@@ -68,6 +68,18 @@ hold limit passes); a fail rule answers every matching request with a 500 and no
 error rather than an unreachable server. `type` narrows a rule to one `getAlbumList2` order. One rule
 of each action at a time; switching it on again replaces it.
 
+Losing a create's answer: the Apple proofs of a create in doubt need a `createPlaylist` the server
+applies whose answer never reaches the app (spec §18.6), which no server does on demand. Armed for a
+playlist name, the next `createPlaylist` of that name is forwarded upstream and the server's answer
+read and dropped; the app is answered HTTP 502 with a gateway's HTML page instead, which proves
+nothing about whether the create landed. One create is lost per arming, and the arming then ends.
+
+    POST /__dulcet/create-answer-loss?name=<name>&state=on|off
+    GET  /__dulcet/create-observations?name=<name>   {"armed": bool, "lost": n, "creates": n}
+
+`lost` counts the answers dropped, and `creates` every `createPlaylist` of that name forwarded, lost
+or not, since it was last armed; a proof shows from it that the app never sent the create again.
+
 Requests carry credentials in their query strings, so nothing here ever prints a request line,
 a query or a header: the base handler's request log is silenced, and the only output is the
 listening line and the names of the endpoints that were failed.
@@ -88,6 +100,7 @@ from urllib.parse import parse_qs, urlsplit
 
 LYRICS_ENDPOINTS = {"getLyricsBySongId", "getLyricsBySongId.view"}
 PLAYLIST_ENDPOINTS = {"getPlaylist", "getPlaylist.view"}
+CREATE_ENDPOINTS = {"createPlaylist", "createPlaylist.view"}
 # Longer than any proof keeps a read waiting, shorter than the app's own request timeout.
 HOLD_LIMIT_SECONDS = 45
 # Hop-by-hop headers (RFC 9110 §7.6.1) are this connection's, never forwarded.
@@ -108,6 +121,9 @@ class FaultState:
         self.held: dict[str, int] = {}
         self.released: dict[str, int] = {}
         self.timed_out: dict[str, int] = {}
+        self.losing: set[str] = set()
+        self.lost: dict[str, int] = {}
+        self.creates: dict[str, int] = {}
         self.outage = False
         self.dropped: dict[str, int] = {}
         self.forwarded_after_outage: dict[str, int] = {}
@@ -162,6 +178,31 @@ class FaultState:
             def shown(rule: tuple[str, str | None] | None) -> dict[str, object] | None:
                 return None if rule is None else {"endpoint": rule[0], "type": rule[1]}
             return {"hold": shown(self.rules["hold"]), "fail": shown(self.rules["fail"]), "held": self.rule_held}
+
+    def lose_create(self, name: str, on: bool) -> None:
+        with self.lock:
+            if on:
+                self.losing.add(name)
+                self.lost[name] = 0
+                self.creates[name] = 0
+            else:
+                self.losing.discard(name)
+
+    def create_forwarded(self, name: str | None) -> bool:
+        """Counts a create of `name` and returns whether its answer is the one to lose."""
+        with self.lock:
+            if name is None or name not in self.creates:
+                return False
+            self.creates[name] += 1
+            if name in self.losing:
+                self.losing.discard(name)
+                self.lost[name] += 1
+                return True
+            return False
+
+    def create_observations(self, name: str) -> dict[str, object]:
+        with self.lock:
+            return {"armed": name in self.losing, "lost": self.lost.get(name, 0), "creates": self.creates.get(name, 0)}
 
     def set_outage(self, on: bool) -> None:
         with self.lock:
@@ -274,6 +315,14 @@ def playlist_read(path: str, query: str, body: bytes, content_type: str) -> str 
     return request_id(PLAYLIST_ENDPOINTS, path, query, body, content_type)
 
 
+def create_name(path: str, query: str, body: bytes, content_type: str) -> str | None:
+    """The new playlist's name of a `createPlaylist` request, from its query or form body; else None."""
+    if not path.startswith("/rest/") or path[len("/rest/"):] not in CREATE_ENDPOINTS:
+        return None
+    names = request_fields(query, body, content_type).get("name") or []
+    return names[0] if names else None
+
+
 def request_id(endpoints: set[str], path: str, query: str, body: bytes, content_type: str) -> str | None:
     if not path.startswith("/rest/") or path[len("/rest/"):] not in endpoints:
         return None
@@ -335,7 +384,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             released = gate.wait(HOLD_LIMIT_SECONDS)
             self.server.state.passed(playlist, released)
             print(f"LYRICS FAULT PROXY held {parts.path} until {'released' if released else 'the limit'}", flush=True)
-        status = self._forward(body)
+        name = create_name(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
+        status = self._forward(body, lose_answer=self.server.state.create_forwarded(name))
         if entry is not None:
             state.answered(entry, status)
 
@@ -345,6 +395,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         if path in {"/__dulcet/playlist-hold", "/__dulcet/playlist-observations"}:
             self._playlist_control(path, query)
+            return
+        if path in {"/__dulcet/create-answer-loss", "/__dulcet/create-observations"}:
+            self._create_control(path, query)
             return
         if path == "/__dulcet/requests":
             since = (query.get("since") or ["0"])[0]
@@ -414,8 +467,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.server.state.hold(playlist, state == "on")
         self._send_json(200, self.server.state.playlist_observations(playlist))
 
-    def _forward(self, body: bytes) -> int:
-        """Forwards the request and relays the answer; returns the status the app got."""
+    def _create_control(self, path: str, query: dict[str, list[str]]) -> None:
+        name = (query.get("name") or [""])[0]
+        if not name:
+            self._send_json(400, {"error": "name is required"})
+            return
+        if path == "/__dulcet/create-answer-loss":
+            if self.command != "POST":
+                self._send_json(404, {"error": "unknown control"})
+                return
+            state = (query.get("state") or [""])[0]
+            if state not in {"on", "off"}:
+                self._send_json(400, {"error": "state must be on or off"})
+                return
+            self.server.state.lose_create(name, state == "on")
+        self._send_json(200, self.server.state.create_observations(name))
+
+    def _forward(self, body: bytes, lose_answer: bool = False) -> int:
+        """Forwards the request and relays the answer -- or, with `lose_answer`, a gateway's 502 in
+        its place; returns the status the app got."""
         upstream = http.client.HTTPConnection(self.server.upstream_host, self.server.upstream_port, timeout=60)
         try:
             headers = {
@@ -425,6 +495,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             headers["Host"] = f"{self.server.upstream_host}:{self.server.upstream_port}"
             upstream.request(self.command, self.path, body=body or None, headers=headers)
             response = upstream.getresponse()
+            if lose_answer:
+                # The server has applied it; the app hears only that a gateway failed.
+                response.read()
+                print(f"LYRICS FAULT PROXY lost the answer to {urlsplit(self.path).path}", flush=True)
+                page = b"<html><body>502 Bad Gateway</body></html>"
+                self.send_response(502, "Bad Gateway")
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(page)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(page)
+                return 502
             self.send_response(response.status, response.reason)
             length = response.getheader("Content-Length")
             for name, value in response.getheaders():

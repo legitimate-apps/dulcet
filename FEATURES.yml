@@ -774,8 +774,28 @@
           "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-76, CONF-77 and CONF-86 are counted through this app on the iPad simulator at the fault proxy in front of the disposable server, by the app-hosted reader tests. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64, the universal target this iPad app runs): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "tvos": {
-          "status": "planned",
-          "reason": "The Apple TV app reads the library through the reader (spec 16.18), but no test drives the TV library on the reader against a server, by the remote or otherwise, so no evidence exists for any declared id. The tvOS UI proofs in apple-ci cover search, the section bar and Now Playing, not library browse."
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-76": "The Apple TV proof browses a connected library only: it never relaunches into what this device saw, never goes offline and counts no request, so publishing before any request is not observed.",
+            "CONF-77": "No Apple test counts the requests a reconnect makes, and the Apple TV proof never reconnects.",
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on a tvOS simulator (the tvOS simulator runs the core-conformance suite only), and the albums grid the proof walks holds eight albums, so it never spans a second page.",
+            "CONF-86": "The proof observes Home's Recently Added shelf filling from the server, tile for tile in the server's newest order, but not that rows publish independently or that one failing row leaves the others live.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, which never run on a tvOS simulator; the proof observes no look-ahead read."
+          },
+          "evidence": [
+            {
+              "observes": "on Apple TV, driven by the remote against the disposable server and asserted against the server's own reads, Library opens on Home and its Recently Added shelf fills with the server's newest albums in order; Albums fills its grid and Right walks it in the server's alphabetical order to an album, whose page shows the server's tracks in order; Select on a later track plays it, Now Playing names it and its album and its position advances; Back pops the album page and puts focus on the album that opened it, in the Albums grid; Artists lists the server's artists, an artist's page shows its albums in the server's order and is reached by the remote, a control of the album opened from it holds focus before Back is pressed, and Back returns focus to that album and then to the artist's row in Artists. No request is counted",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "apple-reader-request-counting-app-proofs",
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed; no Apple TV proof relaunches offline or reconnects, none drives home rows failing independently (CONF-86), and the core reader tests that exercise window tearing and rebasing (CONF-82) and look-ahead (CONF-87) never run on a tvOS simulator. Until such tests exist no workflow, job or test can be named."
+          },
+          "reason": "The Apple TV UI proof runs the production app on a tvOS simulator against the disposable server in apple-ci's conformance job and exports its JUnit to the required apple-ci execution verifier. It drives every step by the remote and observes what the screen shows and where focus is, not the reader's publications."
         },
         "android": {
           "status": "shipped",
@@ -1719,8 +1739,51 @@
           "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order and the pending state, an edit made while the server is unreachable, are driven on the iPad by two proofs in the same leg; until they have passed on main the cell stays partial."
         },
         "tvos": {
-          "status": "planned",
-          "reason": "tvOS lists playlists and opens a read-only page that plays; editing is not offered on tvOS. No test drives that surface yet."
+          "status": "partial",
+          "evidence": [
+            {
+              "conformance": "CONF-88",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server: a press and hold on an album's track row opens its menu, Add to Playlist… opens the chooser, New Playlist… takes a name from the keyboard and Create makes the playlist holding that track; a second track's Add to Playlist… lists that playlist and choosing it appends the track. getPlaylist reads back exactly the first track, then both in the order added, under the same playlist id.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server through the fault proxy: a create made from the chooser reaches the server and its answer is replaced by a gateway's 502; another client adds a song to it; on the return from the Home screen the app asks whether the playlist named is the person's, Yes, It's Mine keeps it without sending the create again (the proxy counts one create), and a later add from the chooser reaches that same playlist",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-playlist-page-and-pending-ui-proof",
+            "reason": "No tvOS test opens a playlist from the Library and observes it play in its own order, and none makes an add while the server is unreachable and observes it shown pending and sent at reconnect. Until such tests exist no workflow, job or test can be named for them."
+          },
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. A create whose answer was lost is asked about over the screen and kept by remote, with no second create sent. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); a playlist tile's menu also offers Delete for the person's own playlist, confirmed first, which no tvOS test drives. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays read-only."
         },
         "android": {
           "status": "shipped",

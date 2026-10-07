@@ -7624,6 +7624,32 @@ not offer it. Not on the TV yet: rename, delete, remove and reorder. A create wh
 waits in this device's outbox and only this device can resolve it; the TV cannot yet, so it stays
 waiting, neither adopted nor resent. A playlist change that did not land is not said on the TV.
 
+**2026-10-06 — On Apple TV, a press and hold opens a track's or a tile's menu, and Add to Playlist…
+creates a playlist or adds to one (§18.6).** The tvOS shell had no context menus. A comment said the
+focus engine owns the long press, but nothing recorded backed it, and the platform says otherwise
+(OBSERVED: SwiftUI `contextMenu` is available from tvOS 14, and the Human Interface Guidelines list
+context menus with no tvOS-specific considerations). Apple Music on tvOS adds a song to a playlist
+and creates playlists (OBSERVED: the Apple TV user guide on support.apple.com), so a TV that only
+read playlists fell below it. Track rows, album and playlist tiles now offer on tvOS the same menu
+they offer on iPhone, iPad and Mac: Play, Play Next and Add to Queue while the queue can be edited,
+Add to Playlist…, Rating or Favorite, Go to Album and Go to Artist, and Delete for the person's own
+playlist (confirmed first). Only Add to Playlist… is driven on tvOS; the rest are offered, not yet
+observed there. Add to Playlist… opens the shared chooser, through the same
+`DulcetPlaylistEditor` and the same one-choice-per-presentation rule. On tvOS, New Playlist… is a
+page pushed inside the chooser (a name field, which opens the system keyboard, then Create) rather
+than the name alert the other platforms use: driven by remote, Select on New Playlist… presented no
+alert from inside the chooser's sheet (OBSERVED on the tvOS 26.5 simulator). Two alerts this makes
+reachable on tvOS are presented from the root rather than a sheet. The Delete confirmation is
+ASSUMED to present there (if it never shows, nothing is deleted). The question a create in doubt
+asks is OBSERVED there: a tvOS proof loses a create's answer through the fault proxy, another client
+adds a song so the core cannot adopt the playlist on its own, and on the return from the Home
+screen the question is presented over the screen; Yes, It's Mine is reached by remote and no second
+create is sent. Until it is answered the app asks again at each launch, over its first screen. Rename, removal and reorder
+stay on the playlist page of iPhone, iPad and Mac; the tvOS playlist page still lists and plays
+read-only. This supersedes the 2026-09-29 record's "tvOS lists and plays playlists read-only" for
+the menus. The new tvOS proof drives it by remote against the disposable server and reads each
+write back with `getPlaylist`.
+
 **2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
 `apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at
 90 minutes. Green runs spent 74 to 82 minutes in it (runs 37375260936, 37379563022, 37388349181,
@@ -7648,6 +7674,32 @@ the iPad member passed in 49 minutes; the iPhone member's first proof ran on a d
 time 12 s after its 201 s first boot, at load1 567 with 749 MB swapped out, and the app's account
 request ran out its 30-second limit before reaching the server. That proof's connect now also takes
 Try Again, as a person does, for that timeout only.
+
+**2026-10-06 — On Apple TV, Back goes back one Library page and focus returns to what opened it;
+a page opened takes focus on its first control (§16.18, §18.9).** Driven by the remote against the
+disposable server (OBSERVED in the new tvOS proof before each fix), four things kept a person from
+browsing the library the way the platform's own Music app does. (1) Menu on an album the Library
+had pushed was consumed by the app's exit handler, which moved focus to the app's section bar
+instead of going back; a second Menu left the app. While the Library has a page to go back to, the
+app now leaves Menu to the navigation stack, which pops one page; elsewhere Menu still returns focus
+to the bar, and from the bar it still leaves the app. (2) After going back, focus landed on the
+Library's own section bar (Home), and the person had lost their place in the grid. The store now
+records the page Back landed on and the item that page had opened (`readerReturn`), and that tile
+or row takes focus. (3) On an artist's page the albums could not be reached: Down from the artist's
+heart, at the trailing edge, found nothing below it. The albums grid is now one full-width focus
+section, so Down enters it from anywhere above. (4) An album opened from an artist's page -- the
+300-track fixture album, none of whose tracks has a length, so Play and Shuffle are disabled -- was
+shown with focus still on the app's Library tab (and once on nothing), and Back there did not go
+back. The page publishes after it is pushed, and when the focus engine settles first nothing moves
+focus onto the page when its content arrives. A page just opened (`readerArrival`) now puts focus on
+its first control once that control can hold it: Play, or the album's heart when nothing is
+playable, or the artist's heart. (4) is a race with the host's speed: it was OBSERVED on two loaded
+runs, and the proof passed once on an idle host with the claim disabled, so the proof catches it
+only when the host is slow; the store test covers the arrival record. Red without the change: the
+proof `testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt`, which reads every list it
+walks from the server and asserts where focus is after each press, for (1), (2) and (3); and the
+store test `aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened` for the records (2)
+and (4) rest on.
 
 **2026-10-05 — A connection made on Connection lands on the library (§10.2).**
 A successful connect submitted from Connection (the Settings destination) published "connected" and
