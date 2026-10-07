@@ -519,7 +519,13 @@ private fun LibraryBrowseRequest.endpointCredentials() = AuthenticatedEndpointCr
     allowLocalHttp = allowLocalHttp,
 )
 
-internal open class LibraryRequestFailure(val error: DomainError) : Exception()
+/**
+ * A request that failed, as [error]. [mayHaveArrived] says, for a [DomainError.Transport.Unreachable],
+ * that the request may have reached the server although no answer did — the connection was made and
+ * then lost — so it proves nothing about whether the server applied it (§18.6). It is false for a
+ * request refused unsent, or one whose connection was never made ([provesNeverConnected]).
+ */
+internal open class LibraryRequestFailure(val error: DomainError, val mayHaveArrived: Boolean = false) : Exception()
 
 internal suspend fun LibraryEndpointTransport.checkedRequest(
     endpoint: String,

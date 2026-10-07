@@ -2006,7 +2006,7 @@ internal class PlaylistEditor(
     ): SentResponse = try {
         slot?.sendRepeatedChecked(endpoint, parameters, formPost) ?: reader.sendRepeatedChecked(endpoint, parameters, formPost)
     } catch (thrown: LibraryRequestFailure) {
-        if (thrown.error.provesNotApplied() && unmarkUnapplied(row)) changed(setOf(row.playlistId))
+        if (thrown.provesNotApplied() && unmarkUnapplied(row)) changed(setOf(row.playlistId))
         throw thrown
     } finally {
         beforeMark.remove(row.key)
@@ -2211,12 +2211,16 @@ private fun DomainError.failureClass(): PlaylistFailureClass = when (this) {
     else -> PlaylistFailureClass.Transport
 }
 
-/** Whether a failure proves the request never changed the server. */
-private fun DomainError.provesNotApplied(): Boolean = when (this) {
-    DomainError.Transport.Unreachable -> true
+/**
+ * Whether a failure proves the request never changed the server: unreachable only when it cannot
+ * have arrived — a connection lost once made may have carried it (§18.6).
+ */
+private fun LibraryRequestFailure.provesNotApplied(): Boolean = when (val error = error) {
+    DomainError.Transport.Unreachable -> !mayHaveArrived
     is DomainError.Security -> true
     is DomainError.Auth -> true
-    is DomainError.Server.HttpStatus -> provesNotApplied
+    is DomainError.Server.HttpStatus -> error.provesNotApplied
     is DomainError.Server -> true
     else -> false
 }
+

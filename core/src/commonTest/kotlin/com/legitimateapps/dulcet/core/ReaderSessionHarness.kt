@@ -48,6 +48,12 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
     /** Endpoints whose change IS applied but whose answer is lost: the at-least-once case. */
     val applyThenLose = mutableSetOf<String>()
 
+    /**
+     * Endpoint -> what the HTTP client throws when the change IS applied and the connection then
+     * drops before the answer: a lost answer the client sees as unreachable, not as a timeout.
+     */
+    val applyThenDrop = mutableMapOf<String, Throwable>()
+
     /** Endpoint -> an HTTP status answered with no envelope, the change NOT applied (a proxy's refusal). */
     val failWithStatus = mutableMapOf<String, Int>()
 
@@ -130,6 +136,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
             else -> inject(base.request(endpoint, parameters))
         }
         if (endpoint in applyThenLose) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+        applyThenDrop[endpoint]?.let { throw it }
         applyThenStatus[endpoint]?.let { return LibraryEndpointResponse(it, "<html>bad gateway</html>", "http://fixture.invalid/rest") }
         if (endpoint in holdAfterAnswer) hold()
         return response

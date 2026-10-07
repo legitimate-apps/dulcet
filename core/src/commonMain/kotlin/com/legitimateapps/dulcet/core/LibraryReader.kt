@@ -815,7 +815,8 @@ internal class LibraryReader(
         } catch (failure: LibraryRequestFailure) {
             throw failure
         } catch (failure: Throwable) {
-            throw LibraryRequestFailure(failure.asReaderError())
+            val error = failure.asReaderError()
+            throw LibraryRequestFailure(error, mayHaveArrived = error == DomainError.Transport.Unreachable && !provesNeverConnected(failure))
         }
         return SentResponse(seq, before, response)
     }

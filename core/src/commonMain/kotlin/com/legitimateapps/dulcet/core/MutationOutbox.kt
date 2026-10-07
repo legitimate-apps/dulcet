@@ -482,9 +482,12 @@ private fun DomainError.failureClass(): FailureClass = when (this) {
     else -> FailureClass.Transport
 }
 
-/** Whether a failure proves the request never changed the server. */
-private fun DomainError.provesNotApplied(): Boolean = when (this) {
-    DomainError.Transport.Unreachable -> true
+/**
+ * Whether a failure proves the request never changed the server: unreachable only when it cannot
+ * have arrived — a connection lost once made may have carried it ([LibraryRequestFailure.mayHaveArrived]).
+ */
+private fun DomainError.provesNotApplied(mayHaveArrived: Boolean): Boolean = when (this) {
+    DomainError.Transport.Unreachable -> !mayHaveArrived
     is DomainError.Security -> true
     is DomainError.Auth -> true
     is DomainError.Server.HttpStatus -> provesNotApplied
@@ -721,6 +724,7 @@ internal class LibraryFavourites(
                     sent += 1
                     // Only a failure of the request is the server's; the device's own database failing
                     // propagates, with every change kept.
+                    var mayHaveArrived = false
                     val failure = try {
                         // One of the two kinds of request an offline reader sends — and only while
                         // canSend holds when it reaches the front of the queue, not only when queued.
@@ -732,6 +736,7 @@ internal class LibraryFavourites(
                         sent -= 1
                         notSent.error
                     } catch (thrown: LibraryRequestFailure) {
+                        mayHaveArrived = thrown.mayHaveArrived
                         thrown.error
                     }
                     if (failure == null) {
@@ -741,7 +746,7 @@ internal class LibraryFavourites(
                         emit(MutationOutcome.Saved(change.target, change.field, change.value))
                         continue
                     }
-                    if (failure.provesNotApplied()) outbox.unmarkAttempted(change.target, change.field, change.value)
+                    if (failure.provesNotApplied(mayHaveArrived)) outbox.unmarkAttempted(change.target, change.field, change.value)
                     // A refusal of access holds every change only when the account is refused: one
                     // ping asks, once per flush. Answered, it was this request's own refusal.
                     var error: DomainError = failure
