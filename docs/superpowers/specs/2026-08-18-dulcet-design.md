@@ -7601,6 +7601,22 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
+2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The
+queue button on a TV track row and on an album's header now offers Add to Playlist… after Play Next
+and Add to Queue. It opens a chooser: New Playlist… first and focused, then the playlists the account
+can edit. New Playlist… becomes a name field filled with what is being added, and Create makes the
+playlist through the core editor with those songs. A track is appended by id; an album is appended
+as the album (`appendAlbum`), or created from the songs the album screen shows. One choice is taken
+per presentation and claimed before the core is called; a refused edit gives the choice back and
+says why in the chooser. OBSERVED with the remote against the disposable server
+(`AndroidTvProductionLibraryReaderAppConformanceTest`): a track goes into a new playlist, then its
+album into the same playlist, and the server holds both under one id. The chooser is a full-screen
+dialog window around a centred surface (docs/TRAPS.md 50). Not on the TV yet: rename, delete,
+remove and reorder; the question the phone asks about a create whose answer was lost; and the line
+that says a playlist change did not land. Search result rows do not offer Add to Playlist… on the
+TV.
+
 **2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
 `apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at
 90 minutes. Green runs spent 74 to 82 minutes in it (runs 37375260936, 37379563022, 37388349181,

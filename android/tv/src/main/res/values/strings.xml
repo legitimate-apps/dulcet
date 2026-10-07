@@ -74,4 +74,12 @@
     <string name="tv_player_position">Playback position</string>
     <string name="tv_player_up_next">Up Next</string>
     <string name="tv_player_cover_art">Cover art</string>
+    <string name="tv_playlist_add">Add to Playlist…</string>
+    <string name="tv_playlist_add_title">Add to Playlist</string>
+    <string name="tv_playlist_new">New Playlist…</string>
+    <string name="tv_playlist_name">Name</string>
+    <string name="tv_playlist_create">Create</string>
+    <string name="tv_playlist_added">Added to “%1$s”</string>
+    <string name="tv_playlist_adding">Adding to playlist…</string>
+    <string name="tv_playlist_no_editable">You have no playlists you can add to yet.</string>
 </resources>

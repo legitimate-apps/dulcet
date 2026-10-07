@@ -912,7 +912,7 @@ private fun TvAlbumScreen(
         listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
-    TvAddToUpNext(adding) { adding = null }
+    TvAddToUpNext(adding, session) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
     // tv-material buttons can keep an onClick from an earlier composition, and with it this screen's
@@ -1001,8 +1001,11 @@ private fun TvAlbumScreen(
                                     fun add(insertion: AndroidQueueInsertion) {
                                         if (!queueAlbum(playback, provider, shownNow, insertion)) queueEditRefused(context)
                                     }
-                                    adding = TvQueueAddition((shownNow.header as? AndroidLibraryItem.Album)?.title.orEmpty(),
-                                        { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
+                                    val title = (shownNow.header as? AndroidLibraryItem.Album)?.title.orEmpty()
+                                    adding = TvQueueAddition(title,
+                                        { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
+                                        TvPlaylistAddition.Album(rawId, title,
+                                            shownNow.items.filterIsInstance<AndroidLibraryItem.Track>().map { it.rawId }))
                                 }
                             }
                             if (current.itemsState == AndroidLibraryItemsState.Present) {
@@ -1082,7 +1085,7 @@ private fun TvFavouritesScreen(
     val outcomeLines = rememberOutcomeLines(session, items.mapNotNull { it.favouriteTarget() })
     var note by remember { mutableStateOf<String?>(null) }
     var adding by remember { mutableStateOf<TvQueueAddition?>(null) }
-    TvAddToUpNext(adding) { adding = null }
+    TvAddToUpNext(adding, session) { adding = null }
     val shown by rememberUpdatedState(publication)
     val plays = rememberPlaybackBinding(playback)
     val title = resources.getString(SharedR.string.library_home_favourites)
@@ -1205,7 +1208,8 @@ internal fun tvTrackAddition(
     fun add(insertion: AndroidQueueInsertion) {
         if (!queueTrack(playback, provider, track, insertion, library, album)) queueEditRefused(context)
     }
-    return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) })
+    return TvQueueAddition(track.title.orEmpty(), { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
+        TvPlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty()))
 }
 
 /**
@@ -1357,7 +1361,7 @@ private fun TvPlaylistScreen(
     val observation by session.observation.collectAsState()
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
-    TvAddToUpNext(adding) { adding = null }
+    TvAddToUpNext(adding, session) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
     val plays = rememberPlaybackBinding(playback)
@@ -1475,7 +1479,7 @@ private fun TvGenreScreen(
     val observation by session.observation.collectAsState()
     var note by remember(name) { mutableStateOf<String?>(null) }
     var adding by remember(name) { mutableStateOf<TvQueueAddition?>(null) }
-    TvAddToUpNext(adding) { adding = null }
+    TvAddToUpNext(adding, session) { adding = null }
     val resources = libraryResources()
     val provider = account.providerInstanceId
     // tv-material buttons can keep an onClick from an earlier composition: they play what is shown now.

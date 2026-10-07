@@ -9,6 +9,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.Lifecycle
 import com.legitimateapps.dulcet.playback.PlaybackService
 import com.legitimateapps.dulcet.search.conformance.DisposableServer
@@ -391,6 +392,85 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         }
     }
 
+    /**
+     * With the remote only: a track's queue button offers Add to Playlist…, New Playlist… takes a
+     * name and Create makes the playlist on the server holding that track; then the album's own
+     * queue button adds the whole album to that playlist from the chooser. Each step is read back
+     * from the server directly, and both land in the one playlist.
+     */
+    @Test fun aTrackAndThenItsAlbumAreAddedToANewPlaylistWithTheRemoteAndTheServerHoldsBoth() {
+        environment.proxy.unpark()
+        val app = RuntimeEnvironment.getApplication()
+        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val binder = checkNotNull(service.get().onBind(Intent(PlaybackService.LOCAL_BIND))) { "setup: no local binder" }
+            shadowOf(app).setComponentNameAndServiceForBindServiceForIntent(
+                Intent(app, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+                ComponentName(app, PlaybackService::class.java),
+                binder,
+            )
+            // The queue button, which carries Add to Playlist, is offered while a playback service is bound.
+            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+            checkNotNull(service.get().playback) { "setup: the service has no controller" }
+
+            val server = environment.server
+            val songs = server.get("getAlbum", mapOf("id" to server.albumId(ALBUM))).getJSONObject("album").getJSONArray("song")
+                .let { list -> (0 until list.length()).map { list.getJSONObject(it).getString("id") } }
+            assertTrue(songs.size >= 2, "setup: a multi-track album")
+            val name = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv remote"
+            assertTrue(name !in server.playlists().values, "setup: no playlist of that name yet")
+
+            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+            press("library.view.albums")
+            await("the albums screen") { exists("library.albums.item.0") }
+            compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
+            focus(cardWithText("library.albums.item.", ALBUM))
+            key(Key.DirectionCenter)
+            await("album $ALBUM open, focus on Play") { titleIs("album.title", ALBUM) && focused("album.play") }
+
+            // The first track: RIGHT along its row to the queue button, then Add to Playlist….
+            focus("album.track.0")
+            repeat(4) { if (!focused("album.track.0.queue")) key(Key.DirectionRight) }
+            assertFocused("album.track.0.queue")
+            key(Key.DirectionCenter)
+            await("the queue dialog, Play Next focused") { focused("queue.add.playNext") }
+            stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
+            keyAt("queue.add.playlist", Key.DirectionCenter)
+            await("the chooser, New Playlist… focused") { focused("playlists.add.new") }
+            keyAt("playlists.add.new", Key.DirectionCenter)
+            await("the name field focused") { focused("playlists.add.name") }
+            // The TV's on-screen keyboard is the platform's; the field takes the text it would send.
+            compose.onNodeWithTag("playlists.add.name").performTextReplacement(name)
+            keyAt("playlists.add.name", Key.DirectionDown)
+            assertFocused("playlists.add.name.confirm")
+            keyAt("playlists.add.name.confirm", Key.DirectionCenter)
+            await("the playlist made on the server with the track") {
+                server.playlists().entries.singleOrNull { it.value == name }?.let { server.playlistEntries(it.key) } == listOf(songs[0])
+            }
+            val id = server.playlists().entries.single { it.value == name }.key
+            await("the chooser closed") { !exists("playlists.add") }
+
+            // The album, from its header's queue button, into that playlist.
+            focus("album.queue")
+            key(Key.DirectionCenter)
+            await("the album's queue dialog") { focused("queue.add.playNext") }
+            stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
+            keyAt("queue.add.playlist", Key.DirectionCenter)
+            await("the chooser lists the playlist") { exists("playlists.add.item.0") && runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
+            val row = cardWithText("playlists.add.item.", name)
+            stepTo(row, Key.DirectionDown, from = "playlists.add.new")
+            keyAt(row, Key.DirectionCenter)
+            await("the album appended on the server") { server.playlistEntries(id) == listOf(songs[0]) + songs }
+            await("the chooser closed") { !exists("playlists.add") }
+            assertEquals(listOf(id), server.playlists().filterValues { it == name }.keys.toList(), "one playlist, both additions in it")
+            assertNoCredentialLeak()
+            println("TV PLAYLIST ADD OBSERVED album=$ALBUM entries=${songs.size + 1} id-stable=true")
+        } finally {
+            service.destroy()
+        }
+    }
+
     private fun assertNowPlayingOpened(from: String) {
         val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "$from opened Now Playing")
         assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action, from)
@@ -458,6 +538,24 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     private fun key(key: Key) {
         compose.onRoot().performKeyInput { pressKey(key) }
         compose.waitForIdle()
+    }
+
+    /** The remote's [key] delivered where [tag] is: a dialog is a window of its own, with its own root. */
+    private fun keyAt(tag: String, key: Key) {
+        compose.onNodeWithTag(tag).performKeyInput { pressKey(key) }
+        compose.waitForIdle()
+    }
+
+    /**
+     * [key] pressed until [tag] holds focus, as a remote walks a list. Each press goes to the window
+     * [from] is in -- a dialog's, not the screen beneath it, whose own focus stays where it was.
+     */
+    private fun stepTo(tag: String, key: Key, from: String) {
+        repeat(12) {
+            if (focused(tag)) return
+            keyAt(from, key)
+        }
+        assertFocused(tag)
     }
 
     /** The remote's Back, through the activity's dispatcher as the platform delivers it. */

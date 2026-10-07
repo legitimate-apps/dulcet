@@ -161,7 +161,7 @@ internal fun TvConnectScreen(
 }
 
 @Composable
-private fun TvField(
+internal fun TvField(
     label: String,
     value: String,
     onChange: (String) -> Unit,
