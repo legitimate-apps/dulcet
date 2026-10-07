@@ -145,6 +145,7 @@ class TvPlaylistQuestionTest {
         press(Key.DirectionCenter)
         await("the answer is out") { core.held != null }
         compose.onNodeWithTag("playlists.question.keep").assertIsNotEnabled()
+        compose.onNodeWithTag("playlists.question.another").assertIsNotEnabled()
         compose.onNodeWithTag("playlists.question.later").assertIsNotEnabled()
         back()
         assertTrue(exists("playlists.question"), "Back does not drop a question whose answer is out")
@@ -173,6 +174,12 @@ class TvPlaylistQuestionTest {
         assertTrue(!exists("playlists.question.keep") && !exists("playlists.question.another"))
         press(Key.DirectionCenter)
         await("dismissed") { !exists("playlists.question") }
+        assertEquals(emptyList(), core.chosen)
+
+        questions.receive(AndroidPlaylistOutcome.PossiblyCreated("local-9", "Old Road", listOf("pl-x")))
+        awaitFocused("playlists.question.dismiss")
+        back()
+        await("Back is Dismiss") { !exists("playlists.question") }
         assertEquals(emptyList(), core.chosen)
     }
 

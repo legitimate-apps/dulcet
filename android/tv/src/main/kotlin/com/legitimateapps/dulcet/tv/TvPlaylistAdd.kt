@@ -221,8 +221,10 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
     val resources = libraryResources()
     val busy by questions.inFlight.collectAsState()
     val answering = question.localId in busy
-    var note by remember { mutableStateOf<String?>(null) }
-    Dialog(onDismissRequest = { if (!answering) questions.defer(question) },
+    // A refusal is about this question: a replacement (other candidates) starts without it.
+    var note by remember(question) { mutableStateOf<String?>(null) }
+    // Read live, not from the collected state a frame behind: Back right after an answer must not defer it.
+    Dialog(onDismissRequest = { if (question.localId !in questions.inFlight.value) questions.defer(question) },
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Surface(Modifier.width(640.dp).testTag("playlists.question")) {

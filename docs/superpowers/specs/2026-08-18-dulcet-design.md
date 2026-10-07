@@ -7608,8 +7608,9 @@ use that one (a lone candidate only), Not mine / None of these — create it, an
 create deleted here that may have been made gets Dismiss. Back is Decide later or Dismiss, and does
 nothing while an answer is out. A deferred create's playlist page says it waits, with Choose… to ask
 again; the page says a change that did not land, in the shared words, with Dismiss; and a page
-opened under a local id follows the playlist to the server's id. OBSERVED with remote keys over a
-fake core's outbox (`TvPlaylistQuestionTest`, as the phone's `PlaylistCreateInDoubtTest`); a mutant
+opened under a local id follows the playlist to the server's id. OBSERVED with D-pad and centre keys in the dialog,
+focus placed on the page's controls and Back sent to the dialog's dispatcher, over a fake core's
+outbox (`TvPlaylistQuestionTest`, as the phone's `PlaylistCreateInDoubtTest`); a mutant
 that let Back drop a question whose answer was out failed it. ASSUMED: the dialog presented by the
 library entry over a real session, and the page following to the server's id. This supersedes the
 entry below where it says the TV cannot resolve a create in doubt or say a change that did not land.

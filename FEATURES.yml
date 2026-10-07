@@ -1740,19 +1740,19 @@
               "test": "TvPlaylistQuestionTest/aLoneCandidateIsKeptWithTheRemote"
             },
             {
-              "observes": "a create in doubt rebuilt from the outbox with two candidates offers neither as theirs; Decide later closes it sending nothing and the playlist's page then says it waits, whose Choose… asks again, and None of these — create it gives the core no candidate and the page stops waiting",
+              "observes": "a create in doubt rebuilt from the outbox with two candidates offers neither as theirs; Decide later closes it sending nothing and the playlist's page then says it waits, and the centre key on its Choose… (focus placed on it) asks again, and None of these — create it gives the core no candidate and the page stops waiting",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvPlaylistQuestionTest/severalCandidatesAreNeverOfferedAndDecideLaterIsAskedAgainFromThePage"
             },
             {
-              "observes": "while an answer is out the question's controls are disabled and Back keeps the question; an answer the core refuses is said in the dialog with the question kept and focus on Keep, and Back then decides later, sending nothing",
+              "observes": "while an answer is out the question's three controls are disabled and Back (sent to the dialog's back dispatcher) keeps the question; an answer the core refuses is said in the dialog with the question kept and focus on Keep, and Back then decides later, sending nothing",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvPlaylistQuestionTest/whileAnAnswerIsOutBackDoesNothingAndARefusalIsSaidWithFocusKept"
             },
             {
-              "observes": "a playlist change that did not land is said on the playlist's page in the shared words, Dismiss reached with the remote clears it, and a change that landed says nothing",
+              "observes": "a playlist change that did not land is said on the playlist's page in the shared words, the centre key on Dismiss (focus placed on it) clears it, and a change that landed says nothing",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvPlaylistQuestionTest/aChangeThatDidNotLandIsSaidOnThePageAndDismissed"
