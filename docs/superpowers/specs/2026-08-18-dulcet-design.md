@@ -5707,8 +5707,9 @@ entries are offered on iPhone, iPad, Mac and the Android phone, not on a TV. Thi
 Apple TV user guide describes for Apple Music on tvOS: adding a song to a playlist and creating one
 (OBSERVED on support.apple.com). That Apple Music on tvOS does not edit a playlist's entries in place
 is ASSUMED. On Android TV, Delete Playlist… sits beside Play and Shuffle on the playlist's page; on
-Apple TV, Delete is in a playlist tile's press-and-hold menu (its confirmation presenting there is
-ASSUMED until a tvOS test drives it).
+Apple TV, Delete is in a playlist tile's press-and-hold menu, and its confirmation presents there
+with Cancel focused (OBSERVED,
+`DulcetTVUITests.testAPlaylistIsDeletedFromItsMenuAfterItsConfirmationByRemote`, tvOS simulator).
 
 **Failures.** An HTTP 429 is `Server.Busy`, named from the status whatever the body (the reference
 server's transcode limiter answers 429 with an envelope carrying only the generic code 0, §18.12), with its
@@ -7736,14 +7737,16 @@ and creates playlists (OBSERVED: the Apple TV user guide on support.apple.com), 
 read playlists fell below it. Track rows, album and playlist tiles now offer on tvOS the same menu
 they offer on iPhone, iPad and Mac: Play, Play Next and Add to Queue while the queue can be edited,
 Add to Playlist…, Rating or Favorite, Go to Album and Go to Artist, and Delete for the person's own
-playlist (confirmed first). Only Add to Playlist… is driven on tvOS; the rest are offered, not yet
-observed there. Add to Playlist… opens the shared chooser, through the same
+playlist (confirmed first). Add to Playlist… and a playlist row's Delete are driven on tvOS; the
+rest are offered, not yet observed there. Add to Playlist… opens the shared chooser, through the same
 `DulcetPlaylistEditor` and the same one-choice-per-presentation rule. On tvOS, New Playlist… is a
 page pushed inside the chooser (a name field, which opens the system keyboard, then Create) rather
 than the name alert the other platforms use: driven by remote, Select on New Playlist… presented no
 alert from inside the chooser's sheet (OBSERVED on the tvOS 26.5 simulator). Two alerts this makes
-reachable on tvOS are presented from the root rather than a sheet. The Delete confirmation is
-ASSUMED to present there (if it never shows, nothing is deleted). The question a create in doubt
+reachable on tvOS are presented from the root rather than a sheet. The Delete confirmation
+is OBSERVED to present there (tvOS 26.5 simulator, by remote: a press and hold on a playlist's row
+in Library > Playlists, Delete Playlist, then the alert with Cancel focused beside Delete Playlist;
+Cancel deleted nothing, and Delete Playlist removed the row and the server's playlist). The question a create in doubt
 asks is OBSERVED there: a tvOS proof loses a create's answer through the fault proxy, another client
 adds a song so the core cannot adopt the playlist on its own, and on the return from the Home
 screen the question is presented over the screen; Yes, It's Mine is reached by remote and no second
