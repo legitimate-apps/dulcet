@@ -1104,11 +1104,7 @@ private fun productionComposer(
                         pageSize = pageSize ?: config.pageSize,
                     )
                 },
-                downloads = DownloadedTrackSource { serverId ->
-                    opened.database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
-                        .filter { it.state == "complete" || it.state == "stale" }
-                        .mapTo(mutableSetOf()) { it.raw_id }
-                },
+                downloads = DownloadedTrackSource.fromDownloads(opened.database),
                 formPost = false,
                 foreground = foreground,
             ),

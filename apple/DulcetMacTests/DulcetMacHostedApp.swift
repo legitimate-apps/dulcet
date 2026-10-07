@@ -33,9 +33,10 @@ final class HostedApp {
     /// `run` names the run's storage: a second app with the same `run` reopens the first's reader
     /// and playback databases and account, as a relaunch does. `toolbar` bridges the root view's
     /// toolbar into the window's, as the app's window scene does, for a proof of what the Mac
-    /// draws there.
+    /// draws there. `downloadController` stands in for the device's downloads, for a proof of
+    /// what the rows offer and show; with none, the app keeps no downloads.
     init(serverURL: String, username: String, password: String, run: String = UUID().uuidString,
-         toolbar: Bool = false) async throws {
+         toolbar: Bool = false, downloadController: (any DulcetDownloadControlling)? = nil) async throws {
         defaultsSuite = "dulcet-mac-hosted-\(run)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
         streamingQuality = DulcetCoreStreamingQuality(defaults: defaults)
@@ -47,6 +48,7 @@ final class HostedApp {
             connector: DulcetCoreAccountConnector(),
             credentialStore: HostedCredentialStore(),
             playbackController: controller,
+            downloadController: downloadController,
             providerInstanceIDFactory: { providerInstanceID },
             librarySession: session
         ))

@@ -656,8 +656,25 @@ struct DulcetTrackRow: View {
         offline && !track.downloadState.isLocallyPlayable
     }
 
-    @ViewBuilder
     var body: some View {
+        #if os(macOS)
+        // The Download control sits beside the row, not inside it: the row's label and identifier
+        // would otherwise be read for the control too, and VoiceOver would hear the track's name
+        // where the button is.
+        HStack(spacing: 0) {
+            labelledRow
+            if !offline, let onDownload {
+                downloadControl(action: onDownload)
+                    .padding(.trailing, DulcetSpacing.xs)
+            }
+        }
+        #else
+        labelledRow
+        #endif
+    }
+
+    @ViewBuilder
+    private var labelledRow: some View {
         if unavailableOffline {
             rowContent
                 .dulcetForeground(surface.primaryPair)
@@ -681,10 +698,12 @@ struct DulcetTrackRow: View {
                     performActivation()
                     return .handled
                 }
+                .accessibilityElement(children: .ignore)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { performActivation() }
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
+                .accessibilityValue(downloadStateAccessibilityValue)
                 .accessibilityHint(DulcetStrings.play)
         #else
             Button(action: performActivation) {
@@ -693,6 +712,7 @@ struct DulcetTrackRow: View {
             .dulcetRowButtonStyle()
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
+            .accessibilityValue(downloadStateAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
             .dulcetQueueDragSource(
                 store: store,
@@ -756,9 +776,11 @@ struct DulcetTrackRow: View {
                         .dulcetForeground(surface.secondaryPair)
                 }
 
-                #if os(macOS)
-                if !offline, let onDownload {
-                    downloadControl(action: onDownload)
+                #if !os(macOS)
+                // On a touch listing the row itself plays, so Download lives in the row's menu;
+                // the row shows only where a download stands once there is one.
+                if !offline, onDownload != nil, track.downloadState != .notDownloaded {
+                    downloadStateGlyph
                 }
                 #endif
 
@@ -813,9 +835,53 @@ struct DulcetTrackRow: View {
         isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
     }
 
+    /// Where this row's download stands, read with the row: nothing until a download exists.
+    private var downloadStateAccessibilityValue: String {
+        guard !offline, onDownload != nil else { return "" }
+        switch track.downloadState {
+        case .notDownloaded: return ""
+        case .queued, .downloading: return DulcetStrings.downloading
+        case .downloaded: return DulcetStrings.downloaded
+        case .interrupted, .failed: return DulcetStrings.downloadFailed
+        case .stale: return DulcetStrings.downloadUpdateAvailable
+        }
+    }
+
+    #if !os(macOS)
+    @ViewBuilder
+    private var downloadStateGlyph: some View {
+        Group {
+            switch track.downloadState {
+            case .notDownloaded:
+                EmptyView()
+            case .queued, .downloading:
+                ProgressView()
+                    .controlSize(.small)
+            case .downloaded:
+                Image(systemName: "arrow.down.circle.fill")
+                    .dulcetForeground(surface.secondaryPair)
+            case .interrupted, .failed:
+                Image(systemName: "exclamationmark.circle")
+                    .dulcetForeground(surface.secondaryPair)
+            case .stale:
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .dulcetForeground(surface.secondaryPair)
+            }
+        }
+        .font(.caption)
+        .accessibilityHidden(true)
+    }
+    #endif
+
     #if os(macOS)
     @ViewBuilder
     private func downloadControl(action: @escaping () -> Void) -> some View {
+        downloadControlContent(action: action)
+            .accessibilityIdentifier("dulcet.track.download")
+    }
+
+    @ViewBuilder
+    private func downloadControlContent(action: @escaping () -> Void) -> some View {
         switch track.downloadState {
         case .notDownloaded:
             Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: action)
@@ -962,7 +1028,10 @@ struct DulcetAlbumDetailView: View {
                         .dulcetTrackContextMenu(
                             track: track,
                             onPlay: { onActivateTrack(track) },
-                            offersAlbum: false
+                            offersAlbum: false,
+                            onDownload: onDownloadTrack.map { handler in
+                                { handler(track) }
+                            }
                         )
                         if track.id != tracks.last?.id {
                             Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
@@ -1222,6 +1291,7 @@ extension View {
         onPlay: (() -> Void)? = nil,
         offersAlbum: Bool = true,
         publishedRating: Int? = nil,
+        onDownload: (() -> Void)? = nil,
         onNavigate: @escaping () -> Void = {}
     ) -> some View {
         modifier(DulcetTrackContextMenu(
@@ -1229,6 +1299,7 @@ extension View {
             onPlay: onPlay,
             offersAlbum: offersAlbum,
             publishedRating: publishedRating,
+            onDownload: onDownload,
             onNavigate: onNavigate
         ))
     }
@@ -1246,6 +1317,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
     let onPlay: (() -> Void)?
     let offersAlbum: Bool
     let publishedRating: Int?
+    let onDownload: (() -> Void)?
     let onNavigate: () -> Void
 
     func body(content: Content) -> some View {
@@ -1266,6 +1338,16 @@ private struct DulcetTrackContextMenu: ViewModifier {
             Button(DulcetStrings.play, systemImage: "play", action: onPlay)
         }
         DulcetQueueInsertionMenuItems(addition: .track(track, in: store))
+        if let onDownload, track.availability == .playable {
+            switch track.downloadState {
+            case .notDownloaded:
+                Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
+            case .interrupted, .failed:
+                Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
+            case .queued, .downloading, .downloaded, .stale:
+                EmptyView()
+            }
+        }
         DulcetAddTrackToPlaylistMenuItem(track: track)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {

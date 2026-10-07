@@ -1,0 +1,154 @@
+#!/bin/bash
+# Run the Apple download proofs that drive the app itself (spec §14.5,
+# docs/download-background-blockers.md) against the disposable server, and turn each result bundle
+# into cited evidence:
+#
+#   - the killed-process handoff, on each platform: a download still held at the fault proxy when
+#     the app dies, released with no app process alive, and reconciled into the durable downloaded
+#     row by a replacement process, with the server's bytes and no second fetch;
+#   - the Mac row's Download button, and the iPhone search result's Download.
+#
+# A file rather than inline YAML for the reason tools/ci/run-app-host-reader-proof gives: these run
+# inside the "Assert Darwin conformance preconditions" step, whose shell owns the disposable server
+# and the fault proxy (tools/ci/run-lyrics-quality-proofs starts it beside the server).
+#
+# Usage:
+#   run-download-handoff-proofs macos
+#   run-download-handoff-proofs iphone
+#   run-download-handoff-proofs ipados <ipad-simulator-destination>
+#
+# Each download goes to a probe namespace of its own (DulcetDownloadHandoffProbe): its background
+# session, database and files are apart from the app's, and the proof clears the namespace when it
+# ends, so no later proof can play the downloaded track from the device instead of the server. They
+# stream, so on a simulator they run BEFORE the streaming-quality proof, which must be the last to
+# stream there. The iOS handoff waits up to two minutes for the system's own relaunch, so the
+# allowance is 15 minutes, as tools/ci/run-ratings-playlists-proofs gives its proofs.
+
+set -euo pipefail
+
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
+allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
+iphone='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+
+mode="${1:-}"
+case "$mode" in
+    macos|iphone)
+        [ "$#" -eq 1 ] || { echo "run-download-handoff-proofs $mode: takes no further arguments" >&2; exit 2; }
+        ;;
+    ipados)
+        [ "$#" -eq 2 ] || { echo "run-download-handoff-proofs ipados: needs the iPad destination" >&2; exit 2; }
+        ipad_destination="$2"
+        ;;
+    *)
+        echo "run-download-handoff-proofs: mode must be macos, iphone or ipados, got '${mode}'" >&2
+        exit 2
+        ;;
+esac
+
+# The proxy holds the download's stream read, so the download is outstanding at the server when
+# the app dies.
+proxy_url=http://127.0.0.1:4544
+curl --fail --silent "$proxy_url/__dulcet/health" >/dev/null || {
+    echo "run-download-handoff-proofs: the fault proxy does not answer on $proxy_url" >&2
+    exit 1
+}
+
+# Every invocation below is written out with its literal -only-testing selector, its execution
+# guard and then its JUnit emission, in that order: tools/verify_ci_policy.py pairs each cited test
+# with the selector its emission follows, and a selector built from a variable pairs with nothing.
+# The guard comes BEFORE the JUnit: `swift-testing-junit` writes a well-formed tests="0" file for
+# an empty bundle, so a renamed test would otherwise ship green. The account reaches the test
+# runner as TEST_RUNNER_-prefixed variables; a trailing KEY=value would be parsed as a build
+# setting.
+export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533
+export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
+export TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password
+export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url"
+# A macOS host test does not inherit xcodebuild's environment, so the Mac proofs get the server and
+# the proxy as build settings, which the DulcetMac scheme hands the test host. They reuse the
+# product the first macOS app-host proof built, and sign ad hoc without entitlements as the other
+# hosted proofs do.
+mac=(
+    -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug -destination 'platform=macOS'
+    -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" -parallel-testing-enabled NO "${allowance[@]}"
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+    DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_TEST_CONFORMANCE_DISPOSABLE=true
+    DULCET_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url"
+)
+ios=(-project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug -parallel-testing-enabled NO "${allowance[@]}")
+
+case "$mode" in
+macos)
+    export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-handoff.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacDownloadHandoffAppTest/aKilledAppsDownloadIsReconciledByTheReplacementProcessThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-download-handoff.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-download-handoff.xcresult" \
+        DulcetMacTests.DulcetMacDownloadHandoffAppTest \
+        aKilledAppsDownloadIsReconciledByTheReplacementProcessThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-download-handoff.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-download-handoff-junit/TEST-DulcetMacDownloadHandoffAppTest.xml" \
+        DulcetMacDownloadHandoffAppTest
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-download-row.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacDownloadRowAppTest/aRowsDownloadButtonDownloadsTheTrackAndTheRowFollowsItThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-download-row.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-download-row.xcresult" \
+        DulcetMacTests.DulcetMacDownloadRowAppTest \
+        aRowsDownloadButtonDownloadsTheTrackAndTheRowFollowsItThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-download-row.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-download-row-junit/TEST-DulcetMacDownloadRowAppTest.xml" \
+        DulcetMacDownloadRowAppTest
+    ;;
+iphone)
+    python3 tools/ci/isolate-simulator --phase download-handoff-iphone --keep-name "iPhone 17 Pro"
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-download-handoff.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-download-handoff.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-download-handoff.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-download-handoff.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-download-handoff-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-search-download.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testASearchResultsMenuDownloadsTheTrackOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-search-download.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-search-download.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testASearchResultsMenuDownloadsTheTrackOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-search-download.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-search-download-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+ipados)
+    python3 tools/ci/isolate-simulator --phase download-handoff-ipad --keep "${ipad_destination##*id=}"
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-download-handoff.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-download-handoff.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-download-handoff.xcresult" \
+        DulcetiOSUITests.DulcetiOSUITests \
+        testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-download-handoff.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-download-handoff-junit/TEST-DulcetiOSUITests.xml" \
+        DulcetiOSUITests
+    ;;
+esac

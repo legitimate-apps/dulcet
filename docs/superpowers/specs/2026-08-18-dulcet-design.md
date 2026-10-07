@@ -2907,6 +2907,17 @@ and reconciliation against a changed server item. The platform owns the **execut
   `interrupted`); a row still `downloading` with no task died mid-write, and its file is always
   deleted (§28, 2026-10-05). Apple resumes none; Android resumes a row of its own account that holds
   `Range` resume data.
+- **Apple: a process that dies with a download outstanding (§28, 2026-10-07).** The background
+  session finishes the transfer without the app, and the next process to launch reconciles it into the
+  downloaded row with the same `downloadId`. That launch may be the system's or the person's, and a
+  launch into a saved account counts: it configures downloads before any Reconnect, because
+  reconciliation is local. Who launches it differs by platform. **iOS and iPadOS:** after a
+  termination that is not a force quit, the system launches the app in the background for the
+  session's events (**OBSERVED** on the simulator with `exit()`; **ASSUMED** for a real device's
+  memory-pressure termination). A force quit cancels the session's tasks. **macOS:** the system
+  launches nothing (**OBSERVED**, no launch within 120 s after `SIGKILL`; Apple documents the relaunch
+  for iOS only), so the download is reconciled at the person's next launch. Detail and sources:
+  `docs/download-background-blockers.md`.
 - **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
   table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
   before the file is atomically renamed and the row marked complete. An estimated length is never an
@@ -7708,6 +7719,49 @@ persistence error is reached both ways for real, through the unentitled host's K
 connected and saved/disconnected are reached over an in-memory credential store, because that host's
 Keychain cannot hold an account; CONF-09b therefore stays a named gap on macOS until the entitled
 signed host runs it, and is cited on iOS, iPadOS and tvOS.
+
+**2026-10-07 — Apple downloads survive the app's death on every platform; macOS never relaunches
+for a background session; a launch into a saved account reconciles its downloads; every Apple
+reader row and the iPhone search result offer Download (§14.5).** The killed-process handoff is now
+proved with real processes against the disposable server on macOS, iOS and iPadOS. Each proof
+observes, as a separate step, that the download is outstanding (the fault proxy holds its one
+`stream` read while the session reports it running), that the process dies with the read still
+unanswered, that the read is answered once with no app process alive, and that a replacement process
+promotes the same download into the durable row with the server's byte count and SHA-256 and no second
+read (`DulcetMacDownloadHandoffAppTest`; `DulcetiOSUITests`, `…OnIPhone` and `…OnIPadOS`). The
+`downloads.offline` Apple cells are shipped on it.
+
+The contract finding: **macOS does not launch a killed app for its background session.**
+**OBSERVED**: nothing launched the app within 120 s of a `SIGKILL` in a dedicated measurement, nor
+within 60 s in any run of the Mac proof, while the transfer itself still completed. Apple's
+documentation describes the background relaunch for iOS only
+(`URLSessionConfiguration.background(withIdentifier:)`; the events callback exists only on
+`UIApplicationDelegate`). The earlier ASSUMED claim that macOS relaunches the app is withdrawn. On iOS
+and iPadOS the system did launch the app in the background, about 2 s after an `exit()` and about
+10 s after a host `SIGKILL` (**OBSERVED** on the simulator). That follows Apple's advice in "Testing
+Background Session Code" (Developer Forums thread 14855): `exit()` is not treated as a force quit.
+A real device's memory-pressure termination remains **ASSUMED**.
+
+Defects the proofs found, each with a test that fails without its fix:
+
+1. **A launch into a saved account configured no downloads** until Reconnect, so a download the
+   system finished while the app was gone was never reconciled or shown as downloaded
+   (`aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect`; the control
+   `aLaunchWithoutASavedAccountConfiguresNoDownloads`). Reconciliation is local, so this sends nothing
+   CONF-10b forbids.
+2. **No Apple reader row offered Download, and the iOS shell offered it nowhere.** Rows now offer
+   Download, or Retry Download after a failure, in their menu, and say where their download stands as
+   a mark and as their accessibility value. A track search result's menu offers the same.
+3. **The Apple reader marked nothing playable offline:** it read downloads through
+   `DownloadedTrackSource.None`. It now reads the account's complete and stale downloads, as Android's
+   reader does (`DownloadPolicyTest.theReadersDownloadSourceIsTheServersCompleteAndStaleDownloads`).
+4. **The Mac row's Download button was read with the row's label**, so VoiceOver announced the track's
+   name for it and no element said "Download". The button now sits beside the row's labelled content
+   (`DulcetMacDownloadRowAppTest`).
+
+The Mac proof launches a copy of the app re-identified with a bundle identifier of its own. A second
+app under the installed bundle identifier was refused by Launch Services with `-3000`
+(**OBSERVED**), and would share its background session (**ASSUMED**).
 
 **2026-10-07 — Android opens a saved account without contacting its server until Reconnect
 (§13.1, CONF-10b), reports a proxy's 407 as an unsupported challenge (CONF-10c), says every account

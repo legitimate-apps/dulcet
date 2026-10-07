@@ -263,7 +263,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             currentSnapshot = fixture.snapshot(for: state)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
-        case .loadMoreSearchResults, .retrySearch, .downloadTrack, .activateSearchResult,
+        case .loadMoreSearchResults, .retrySearch, .downloadTrack, .requestDownload, .activateSearchResult,
              .retryAlbumTracks, .editQueue, .reportRefusedQueueEdit:
             // The fixture's albums always carry their tracks, so there is nothing to re-read.
             break

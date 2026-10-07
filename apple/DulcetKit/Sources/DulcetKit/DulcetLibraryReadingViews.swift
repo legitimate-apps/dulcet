@@ -766,10 +766,11 @@ struct DulcetReaderTrackRow: View {
                     row(track)
                         .accessibilityIdentifier("dulcet.reader.track")
                         .dulcetTrackContextMenu(
-                            track: track,
+                            track: withDownloadState(track),
                             onPlay: { onPlay(track) },
                             offersAlbum: showsAlbum,
-                            publishedRating: item.rating
+                            publishedRating: item.rating,
+                            onDownload: downloadAction(track)
                         )
                 }
             } else {
@@ -828,14 +829,27 @@ struct DulcetReaderTrackRow: View {
 
     private func row(_ track: DulcetTrack) -> some View {
         DulcetTrackRow(
-            track: track,
+            track: withDownloadState(track),
             showAlbum: showsAlbum,
             index: index,
             offline: item.isUnavailableOffline,
             showsArtwork: showsArtwork,
             albumArtists: albumArtists,
-            onActivate: item.isUnavailableOffline ? nil : { onPlay(track) }
+            onActivate: item.isUnavailableOffline ? nil : { onPlay(track) },
+            onDownload: downloadAction(track)
         )
+    }
+
+    /// The track as its download stands now: the reader's rows carry none of their own.
+    private func withDownloadState(_ track: DulcetTrack) -> DulcetTrack {
+        track.replacingDownloadState(store.downloadState(for: track))
+    }
+
+    /// Download is offered wherever a track the device can ask the server for is listed, and
+    /// only where this device keeps downloads (spec §14.5).
+    private func downloadAction(_ track: DulcetTrack) -> (() -> Void)? {
+        guard store.downloadsEnabled, !item.isUnavailableOffline else { return nil }
+        return { store.requestDownload(track) }
     }
 }
 

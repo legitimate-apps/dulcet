@@ -24,7 +24,14 @@ enum DulcetAppleProduction {
 
     #if os(macOS)
     static func makeMacComposition() -> DulcetMacProductionComposition {
-        let credentialStore = DulcetKeychainCredentialStore()
+        let credentialStore: any DulcetProviderInstanceCredentialStoring
+        #if DEBUG
+        // The handoff proof runs this app ad hoc signed, without the entitlement the
+        // data-protection Keychain needs, and its relaunch must find the account it connected.
+        credentialStore = DulcetDebugHandoffCredentialStore.whenProbing() ?? DulcetKeychainCredentialStore()
+        #else
+        credentialStore = DulcetKeychainCredentialStore()
+        #endif
         let downloads = DulcetCoreDownloadController.production()
         return DulcetMacProductionComposition(
             store: makeStore(credentialStore: credentialStore, downloads: downloads),
@@ -39,6 +46,7 @@ enum DulcetAppleProduction {
         let downloads = DulcetCoreDownloadController.production()
         let artworkFetcher = DulcetCoreArtworkFetcher()
         let playbackController = DulcetCorePlaybackController(
+            databaseName: databaseName,
             downloadController: downloads,
             artworkFetcher: artworkFetcher
         )
@@ -75,8 +83,18 @@ enum DulcetAppleProduction {
     }
     #endif
 
+    /// The one database every production component opens, so the reader sees what the
+    /// downloads write.
+    private static var databaseName: String {
+        #if os(macOS) || os(iOS)
+        DulcetCoreDownloadController.productionDatabaseName
+        #else
+        "dulcet.db"
+        #endif
+    }
+
     private static func makeStore(
-        credentialStore: DulcetKeychainCredentialStore,
+        credentialStore: any DulcetProviderInstanceCredentialStoring,
         downloads: (any DulcetDownloadControlling)?,
         playbackController: DulcetCorePlaybackController? = nil,
         artworkFetcher: DulcetCoreArtworkFetcher = DulcetCoreArtworkFetcher()
@@ -89,6 +107,7 @@ enum DulcetAppleProduction {
         // the reader existed: it reads the local database and sends nothing, and no library sync
         // is started from any screen while the reader holds the account.
         let playbackController = playbackController ?? DulcetCorePlaybackController(
+            databaseName: databaseName,
             downloadController: downloads,
             artworkFetcher: artworkFetcher
         )
@@ -99,17 +118,20 @@ enum DulcetAppleProduction {
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
                 credentialStore: credentialStore,
-                libraryBrowser: DulcetCoreLibraryBrowser(),
+                libraryBrowser: DulcetCoreLibraryBrowser(databaseName: databaseName),
                 artworkFetcher: artworkFetcher,
                 serverSearch: DulcetCoreServerSearch(),
                 playbackController: playbackController,
                 downloadController: downloads,
                 providerInstanceIDFactory: {
-                    credentialStore.activeAccountID ?? UUID().uuidString
+                    credentialStore.providerInstanceID ?? UUID().uuidString
                 },
                 localNetworkAccess: DulcetNetworkLocalNetworkAccessProbe(),
                 librarySession: DulcetLibrarySession(
-                    factory: DulcetCoreLibraryReaderFactory(),
+                    factory: DulcetCoreLibraryReaderFactory(
+                        databaseName: databaseName,
+                        readsDownloads: downloads != nil
+                    ),
                     reachability: DulcetNetworkReachability()
                 )
             )
@@ -883,9 +905,13 @@ final class DulcetCoreAccountOperation: DulcetAccountConnectOperation {
 @MainActor
 final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
     private let databaseName: String
+    private let readsDownloads: Bool
 
-    init(databaseName: String = "dulcet.db") {
+    /// `readsDownloads`: whether this device keeps downloads, so the reader marks a track whose
+    /// file is on the device as downloaded and lets it play offline (§14.5). tvOS keeps none.
+    init(databaseName: String = "dulcet.db", readsDownloads: Bool = false) {
         self.databaseName = databaseName
+        self.readsDownloads = readsDownloads
     }
 
     func makeReader(account: DulcetLibraryReaderAccount, foreground: Bool) -> any DulcetLibraryReading {
@@ -898,7 +924,8 @@ final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
                 password: account.password,
                 allowLocalHttp: account.allowLocalHTTP
             ),
-            foreground: foreground
+            foreground: foreground,
+            readsDownloads: readsDownloads
         ))
     }
 }

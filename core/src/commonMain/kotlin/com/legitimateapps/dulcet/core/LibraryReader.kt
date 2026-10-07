@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import com.legitimateapps.dulcet.database.DulcetDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -1530,12 +1531,23 @@ internal data class PlaylistOverlayView(
     val deletedLocally: Boolean,
 )
 
-/** R4 implements this over the `download` table: the tracks whose files are complete. */
+/** The tracks whose files are on the device, so they play offline: read from the `download` table. */
 internal fun interface DownloadedTrackSource {
     fun downloadedTrackRawIds(serverId: String): Set<String>
 
     companion object {
         val None = DownloadedTrackSource { emptySet() }
+
+        /**
+         * The tracks of one server whose download is `complete`, or `stale` (an update is
+         * available, and the file still plays). A download still queued, running, interrupted or
+         * failed has no file to play.
+         */
+        fun fromDownloads(database: DulcetDatabase) = DownloadedTrackSource { serverId ->
+            database.downloadsQueries.selectDownloadsForServer(serverId).executeAsList()
+                .filter { it.state == "complete" || it.state == "stale" }
+                .mapTo(mutableSetOf()) { it.raw_id }
+        }
     }
 }
 

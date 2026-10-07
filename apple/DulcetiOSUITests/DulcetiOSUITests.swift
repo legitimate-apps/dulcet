@@ -3338,10 +3338,11 @@ final class DulcetiOSUITests: XCTestCase {
     private func launchConnected(
         serverURL: String,
         configuration: LivePlaybackConfiguration,
-        compact expectedCompact: Bool
+        compact expectedCompact: Bool,
+        extraArguments: [String] = []
     ) -> XCUIApplication? {
         let app = XCUIApplication()
-        app.launchArguments += [
+        app.launchArguments += extraArguments + [
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", serverURL,
             "-dulcet-debug-account-username", configuration.username,
@@ -5473,5 +5474,337 @@ final class DulcetiOSUITests: XCTestCase {
         default:
             return nil
         }
+    }
+
+    // MARK: - Killed-process download handoff (spec §14.5, docs/download-background-blockers.md)
+
+    /// A download started from a reader row is still outstanding at the server when the app dies;
+    /// a replacement process reconciles it into the durable downloaded row, the same download and
+    /// the same bytes, without fetching the track again. On iPhone.
+    @MainActor
+    func testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPhone() {
+        guard requireSimulator(.phone, "The killed-process download handoff proof on iPhone") else { return }
+        proveKilledProcessDownloadHandoff(compact: true, platform: "ios")
+    }
+
+    /// The same proof in an iPad's regular window, so iPhone evidence does not stand for iPad.
+    @MainActor
+    func testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS() {
+        guard requireSimulator(.pad, "The killed-process download handoff proof on iPadOS") else { return }
+        proveKilledProcessDownloadHandoff(compact: false, platform: "ipados")
+    }
+
+    /// A track's search result offers Download in its menu, and choosing it downloads that track:
+    /// the probe's marker file records the promotion, the server's bytes, read back from the
+    /// durable row. The run's downloads, session and database are the probe namespace's own, so
+    /// nothing is left for a later test to play from.
+    @MainActor
+    func testASearchResultsMenuDownloadsTheTrackOnIPhone() {
+        guard requireSimulator(.phone, "The search result Download proof on iPhone"),
+              let configuration = livePlaybackConfiguration() else { return }
+        let track = "UI Playback Canary"
+        guard let songID = serverSongID(track, album: "Threshold Boundary", configuration: configuration),
+              let original = restBytes("download", [URLQueryItem(name: "id", value: songID)], configuration: configuration),
+              !original.isEmpty else {
+            XCTFail("The server must hand over \(track)'s original file")
+            return
+        }
+        let digest = SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined()
+        let namespace = "ios-search-" + UUID().uuidString.prefix(8).lowercased()
+        afterTest.append {
+            let cleaner = XCUIApplication()
+            cleaner.launchArguments = ["-dulcet-debug-download-handoff-clear"]
+            cleaner.launch()
+            cleaner.terminate()
+        }
+        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true,
+                                        extraArguments: ["-dulcet-debug-download-handoff", namespace]),
+              openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 10) else {
+            XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
+            return
+        }
+        field.tap()
+        field.typeText(track)
+        let result = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@ AND label ENDSWITH %@",
+            "dulcet.search.result.", track + ", ", ", Track"
+        )).firstMatch
+        guard result.waitForExistence(timeout: 30), dismissKeyboardBeforeActivation(in: app),
+              scrollIntoView(result, in: app) else {
+            XCTFail("Search must find \(track): " + app.debugDescription)
+            return
+        }
+        let download = app.buttons["Download"].firstMatch
+        var offered = false
+        withoutIdleWaits(app) {
+            result.press(forDuration: 1.2)
+            offered = download.waitForExistence(timeout: 5)
+            if offered { download.tap() }
+        }
+        guard offered else {
+            XCTFail("The track result's menu must offer Download: " + app.debugDescription)
+            return
+        }
+        let overlay = app.staticTexts["dulcet.debug.download-handoff"].firstMatch
+        guard waitForLabelContaining("state=downloaded", of: overlay, timeout: 60) else {
+            XCTFail("The track must be downloaded: " + overlay.debugDescription)
+            return
+        }
+        let finished = handoffFields(overlay.label)
+        print("DULCET SEARCH DOWNLOAD summary \(overlay.label)")
+        XCTAssertEqual(finished["item"], songID, "The result's own track must be downloaded")
+        XCTAssertEqual(finished["row"], "downloaded", "The durable row must read back downloaded")
+        XCTAssertEqual(finished["bytes"], String(original.count), "The file must hold the server's bytes")
+        XCTAssertEqual(finished["sha256"], digest, "The file must hold the server's bytes")
+        attachScreenshot(named: "search-result-download-ios", app: app)
+    }
+
+    /// The handoff, each step observed on its own:
+    /// 1. the proxy holds the track's `stream` read, so the download is outstanding at the server
+    ///    while the session reports it running;
+    /// 2. the app ends itself by `exit`, which the system does not read as a force quit
+    ///    (`simctl terminate` and the app switcher are force quits, and cancel the session's
+    ///    tasks), and the held read is still unanswered after the process is gone;
+    /// 3. the read is released and answered once, with no app process alive;
+    /// 4. a replacement process (another pid) promotes the secured artifact into the durable row:
+    ///    the same download, `downloaded` read back from the database, and the server's bytes.
+    /// Whether the system itself launched that replacement for the session's events is recorded
+    /// and asserted separately, so the two findings fail apart.
+    @MainActor
+    private func proveKilledProcessDownloadHandoff(compact: Bool, platform: String) {
+        guard let configuration = livePlaybackConfiguration(),
+              let proxy = lyricsFaultProxyConfiguration(server: configuration) else { return }
+        let track = "UI Playback Canary"
+        let album = "Threshold Boundary"
+        guard let songID = serverSongID(track, album: album, configuration: configuration),
+              let original = restBytes("download", [URLQueryItem(name: "id", value: songID)], configuration: configuration),
+              !original.isEmpty else {
+            XCTFail("The server must hand over \(track)'s original file")
+            return
+        }
+        let originalDigest = SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined()
+        let namespace = "\(platform)-" + UUID().uuidString.prefix(8).lowercased()
+        print("DULCET HANDOFF namespace=\(namespace) song=\(songID) bytes=\(original.count) sha256=\(originalDigest)")
+        afterTest.append { [self] in
+            _ = proxyRequest("POST", "/__dulcet/rule?action=hold&state=off", proxy: proxy)
+            // The namespace lives in the app's defaults for a quarter hour; a later test must not
+            // inherit it.
+            let cleaner = XCUIApplication()
+            cleaner.launchArguments = ["-dulcet-debug-download-handoff-clear"]
+            cleaner.launch()
+            cleaner.terminate()
+        }
+        guard let since = proxyRequestLog(since: 0, proxy: proxy)?.total else {
+            XCTFail("The proxy must report its request log")
+            return
+        }
+        guard proxyRequest("POST", "/__dulcet/rule?action=hold&state=on&endpoint=stream", proxy: proxy) != nil else {
+            XCTFail("The proxy must hold stream reads")
+            return
+        }
+        guard let app = launchConnected(serverURL: proxy.url, configuration: configuration, compact: compact,
+                                        extraArguments: ["-dulcet-debug-download-handoff", namespace]),
+              openLibraryAlbum(album, containing: track, in: app, compact: compact) else { return }
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
+        guard row.waitForExistence(timeout: 10), scrollIntoView(row, in: app) else {
+            XCTFail("The album must list \(track): " + app.debugDescription)
+            return
+        }
+        let download = app.buttons["Download"].firstMatch
+        var offered = false
+        withoutIdleWaits(app) {
+            row.press(forDuration: 1.2)
+            offered = download.waitForExistence(timeout: 5)
+            if offered { download.tap() }
+        }
+        guard offered else {
+            XCTFail("The row's menu must offer Download: " + app.debugDescription)
+            return
+        }
+
+        // 1. Outstanding: held at the server, and reported running by the session.
+        guard awaitProxyStreams(of: songID, since: since, proxy: proxy, timeout: 60, until: { $0.count == 1 && !$0[0].answered }) != nil else {
+            XCTFail("The download's stream read must reach the proxy and be held")
+            return
+        }
+        let overlay = app.staticTexts["dulcet.debug.download-handoff"].firstMatch
+        guard waitForLabelContaining("outstanding=download:", of: overlay, timeout: 30) else {
+            XCTFail("The session must report the download running: " + overlay.debugDescription)
+            return
+        }
+        let started = handoffFields(overlay.label)
+        let outstanding = started["outstanding"] ?? ""
+        let firstPID = started["pid"] ?? ""
+        print("DULCET HANDOFF outstanding=\(outstanding) pid=\(firstPID)")
+        XCTAssertTrue(outstanding.hasSuffix("@" + firstPID), "The running download must be this process's")
+
+        // 2. Death by exit while outstanding, and the read still unanswered afterwards. The app's
+        // probe calls exit() when the runner posts its Darwin notification: the runner shares the
+        // simulator's notification centre, and on the iPad simulator a synthesized tap on the
+        // overlay's Exit button was never delivered to it (three taps, the app still running).
+        guard app.buttons["dulcet.debug.download-handoff.exit"].exists else {
+            XCTFail("The probe must be running in the app: " + app.debugDescription)
+            return
+        }
+        let exitNotification = "com.legitimateapps.dulcet.debug.download-handoff.exit." + namespace
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFNotificationName(exitNotification as CFString), nil, nil, true)
+        guard app.wait(for: .notRunning, timeout: 20) else {
+            attachScreenshot(named: "download-handoff-exit-not-taken-\(platform)", app: app)
+            XCTFail("The app must have ended by exit(); state \(app.state.rawValue): " + app.debugDescription)
+            return
+        }
+        let afterDeath = proxyStreams(of: songID, since: since, proxy: proxy)
+        print("DULCET HANDOFF died stream-reads=\(afterDeath.count) answered=\(afterDeath.map(\.answered))")
+        XCTAssertEqual(afterDeath.map(\.answered), [false], "The download must still be outstanding after the process died")
+
+        // 3. Release; the read is answered once, by the system on the dead app's behalf.
+        guard proxyRequest("POST", "/__dulcet/rule?action=hold&state=off", proxy: proxy) != nil,
+              let answered = awaitProxyStreams(of: songID, since: since, proxy: proxy, timeout: 60, until: { $0.allSatisfy(\.answered) }) else {
+            XCTFail("The released read must be answered")
+            return
+        }
+        XCTAssertEqual(answered.map(\.status), [200], "The held read must be answered 200, once")
+
+        // 4. The replacement process. The system may launch it for the session's events; the
+        // proof waits for that, then brings it forward (or, if none came, launches one itself).
+        let relaunch = XCUIApplication()
+        relaunch.launchArguments = ["-dulcet-debug-download-handoff", namespace]
+        let launchDeadline = Date().addingTimeInterval(120)
+        while relaunch.state == .notRunning, Date() < launchDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        let systemLaunched = relaunch.state != .notRunning
+        if systemLaunched {
+            // Let the system's process finish the session's events before it is brought forward.
+            RunLoop.current.run(until: Date().addingTimeInterval(3))
+        }
+        print("DULCET HANDOFF os-launch=\(systemLaunched) state=\(relaunch.state.rawValue)")
+        if systemLaunched { relaunch.activate() } else { relaunch.launch() }
+        let replaced = relaunch.staticTexts["dulcet.debug.download-handoff"].firstMatch
+        guard waitForLabelContaining("state=downloaded", of: replaced, timeout: 60) else {
+            XCTFail("A replacement process must promote the download: " + replaced.debugDescription)
+            return
+        }
+        let finished = handoffFields(replaced.label)
+        print("DULCET HANDOFF summary \(replaced.label)")
+        let promoted = finished["promoted"] ?? ""
+        let promotedDownload = promoted.split(separator: "@").first.map(String.init) ?? ""
+        let promotedPID = promoted.split(separator: "@").last.map(String.init) ?? ""
+        XCTAssertEqual(finished["exit"], firstPID, "The process that died must be the one that started the download")
+        XCTAssertEqual(promotedDownload, outstanding.split(separator: "@").first.map(String.init),
+                       "The replacement must promote the download that was outstanding")
+        XCTAssertFalse(promotedPID.isEmpty || promotedPID == firstPID, "The promotion must come from another process")
+        XCTAssertEqual(finished["item"], songID)
+        XCTAssertEqual(finished["state"], "downloaded")
+        XCTAssertEqual(finished["row"], "downloaded", "The durable row must read back downloaded")
+        XCTAssertEqual(finished["bytes"], String(original.count), "The artifact must hold the server's bytes")
+        XCTAssertEqual(finished["sha256"], originalDigest, "The artifact must hold the server's bytes")
+        XCTAssertEqual(proxyStreams(of: songID, since: since, proxy: proxy).count, 1,
+                       "The handoff must not fetch the track again")
+        // The system's own delivery (os-initiated-background-session-delivery), asserted apart.
+        XCTAssertTrue(systemLaunched && Int(finished["unattended-launches"] ?? "") ?? 0 >= 1,
+                      "The system must launch the app for the session's events")
+        XCTAssertGreaterThanOrEqual(Int(finished["background-events"] ?? "") ?? 0, 1,
+                                    "The scene must receive the session's background events")
+
+        // The row the person sees.
+        guard openLibraryAlbum(album, containing: track, in: relaunch, compact: compact) else { return }
+        let shown = relaunch.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
+        let downloaded = NSPredicate(format: "value == %@", "Downloaded")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: downloaded, object: shown)], timeout: 15), .completed,
+                       "The row must show the track downloaded: " + shown.debugDescription)
+        attachScreenshot(named: "download-handoff-\(platform)", app: relaunch)
+    }
+
+    /// The probe overlay's `key=value` fields.
+    private func handoffFields(_ label: String) -> [String: String] {
+        Dictionary(label.split(separator: " ").compactMap { field -> (String, String)? in
+            guard let equals = field.firstIndex(of: "=") else { return nil }
+            return (String(field[..<equals]), String(field[field.index(after: equals)...]))
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private struct ProxyStream {
+        let answered: Bool
+        let status: Int
+    }
+
+    /// The proxy's request log after `since`: its total, and each entry's fields.
+    private func proxyRequestLog(since: Int, proxy: LyricsFaultProxy) -> (total: Int, requests: [[String: Any]])? {
+        guard let body = proxyRequest("GET", "/__dulcet/requests?since=\(since)", proxy: proxy),
+              let total = body["total"] as? Int else { return nil }
+        return (total, body["requests"] as? [[String: Any]] ?? [])
+    }
+
+    /// The `stream` reads of `songID` the proxy has seen since `since`, oldest first.
+    private func proxyStreams(of songID: String, since: Int, proxy: LyricsFaultProxy) -> [ProxyStream] {
+        (proxyRequestLog(since: since, proxy: proxy)?.requests ?? [])
+            .filter { $0["endpoint"] as? String == "stream" && $0["id"] as? String == songID }
+            .map { ProxyStream(answered: $0["answered"] as? Bool ?? false, status: $0["status"] as? Int ?? 0) }
+    }
+
+    private func awaitProxyStreams(
+        of songID: String,
+        since: Int,
+        proxy: LyricsFaultProxy,
+        timeout: TimeInterval,
+        until condition: ([ProxyStream]) -> Bool
+    ) -> [ProxyStream]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let seen = proxyStreams(of: songID, since: since, proxy: proxy)
+            if !seen.isEmpty, condition(seen) { return seen }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+        return nil
+    }
+
+    /// A binary `/rest` answer (`download`, `stream`), refused if it is a Subsonic error envelope.
+    /// Credentials ride in the query, so nothing here names the URL.
+    private func restBytes(
+        _ endpoint: String,
+        _ query: [URLQueryItem],
+        configuration: LivePlaybackConfiguration
+    ) -> Data? {
+        let salt = (0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+        let token = Insecure.MD5.hash(data: Data((configuration.password + salt).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        guard var components = URLComponents(string: configuration.serverURL) else { return nil }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = basePath + "/rest/" + endpoint
+        components.queryItems = [
+            URLQueryItem(name: "u", value: configuration.username),
+            URLQueryItem(name: "t", value: token),
+            URLQueryItem(name: "s", value: salt),
+            URLQueryItem(name: "v", value: "1.16.1"),
+            URLQueryItem(name: "c", value: "dulcet-ui-test"),
+        ] + query
+        guard let url = components.url else { return nil }
+        final class Outcome: @unchecked Sendable { var data: Data?; var type = "" }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            if error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                outcome.data = data
+                outcome.type = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+            }
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 30) == .success else {
+            task.cancel()
+            print("DULCET REST \(endpoint) timed out")
+            return nil
+        }
+        guard let data = outcome.data, !outcome.type.contains("xml"), !outcome.type.contains("json") else {
+            print("DULCET REST \(endpoint) did not return media")
+            return nil
+        }
+        return data
     }
 }

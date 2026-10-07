@@ -12,6 +12,9 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case playAlbum(DulcetProviderItemID, shuffle: Bool)
     case activateTrack(albumID: DulcetProviderItemID, trackID: DulcetProviderItemID)
     case downloadTrack(DulcetProviderItemID)
+    /// Downloads a track a reader screen drew: the track itself, since the reader's pages are not
+    /// in any album list the source holds.
+    case requestDownload(DulcetTrack)
     /// Shows one library album from anywhere in the app.
     case showAlbum(DulcetProviderItemID)
     /// Shows one library artist from anywhere in the app.
@@ -46,6 +49,15 @@ public protocol DulcetDataSource: AnyObject {
 
 public extension DulcetDataSource {
     var downloadsEnabled: Bool { false }
+}
+
+/// Optional capability of a data source: where each track's download stands, read synchronously,
+/// and word whenever any of that may have changed, so a row drawn before the answer was known
+/// (before the downloads were reconciled, say) is drawn again.
+@MainActor
+public protocol DulcetDownloadStateReading: AnyObject {
+    func downloadState(for id: DulcetProviderItemID) -> DulcetDownloadState
+    func setDownloadStateChangeHandler(_ handler: @escaping @MainActor () -> Void)
 }
 
 /// Optional capability of a data source: answering, synchronously, whether an item the person
@@ -224,6 +236,26 @@ public final class DulcetPresentationStore {
         source.setSnapshotHandler { [weak self] snapshot in
             self?.receive(snapshot)
         }
+        (source as? any DulcetDownloadStateReading)?.setDownloadStateChangeHandler { [weak self] in
+            self?.downloadStateRevision &+= 1
+        }
+    }
+
+    /// Bumped whenever the source says a download state may have changed; read by
+    /// `downloadState(for:)` so every row showing one is drawn again.
+    private var downloadStateRevision = 0
+
+    /// Where this track's download stands now: the source's answer where it keeps downloads,
+    /// otherwise what the track itself carries.
+    public func downloadState(for track: DulcetTrack) -> DulcetDownloadState {
+        _ = downloadStateRevision
+        guard let reading = source as? any DulcetDownloadStateReading else { return track.downloadState }
+        return reading.downloadState(for: track.id)
+    }
+
+    /// Downloads a track wherever it is drawn (spec §14.5).
+    public func requestDownload(_ track: DulcetTrack) {
+        source.send(.requestDownload(track))
     }
 
     /// Shows a destination's root: Library's grid, whatever was open on top of it.

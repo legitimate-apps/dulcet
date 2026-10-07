@@ -1169,6 +1169,9 @@ jobs:
           # the persistence error on save through this host's unentitled Keychain. In a file for the
           # same reason.
           tools/ci/run-account-connect-state-proofs macos
+          # The Mac's killed-process download handoff, with real processes, and its rows' Download
+          # (spec §14.5). In a file for the same reason.
+          tools/ci/run-download-handoff-proofs macos
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
@@ -2284,6 +2287,9 @@ jobs:
           tools/ci/run-ratings-playlists-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
           # Every account-connect render state on the iPad (spec §10.2; CONF-09b); it streams nothing.
           tools/ci/run-account-connect-state-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
+          # The iPad's killed-process download handoff (spec §14.5); it streams, so it stays
+          # before the streaming-quality cap.
+          tools/ci/run-download-handoff-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
           # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
           # the iPad (see the script header).
           tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
@@ -2419,6 +2425,9 @@ jobs:
           tools/ci/run-ratings-playlists-proofs iphone
           # Every account-connect render state on iPhone (spec §10.2; CONF-09b); it streams nothing.
           tools/ci/run-account-connect-state-proofs iphone
+          # The iPhone's killed-process download handoff and a search result's Download
+          # (spec §14.5); they stream, so they stay before the streaming-quality cap.
+          tools/ci/run-download-handoff-proofs iphone
           # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -2787,4 +2796,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-account-states-junit" \
             "$RUNNER_TEMP/dulcet-ios-account-states-junit" \
             "$RUNNER_TEMP/dulcet-ipados-account-states-junit" \
-            "$RUNNER_TEMP/dulcet-tvos-account-states-junit"
+            "$RUNNER_TEMP/dulcet-tvos-account-states-junit" \
+            "$RUNNER_TEMP/dulcet-mac-download-handoff-junit" \
+            "$RUNNER_TEMP/dulcet-mac-download-row-junit" \
+            "$RUNNER_TEMP/dulcet-ios-download-handoff-junit" \
+            "$RUNNER_TEMP/dulcet-ios-search-download-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-download-handoff-junit"

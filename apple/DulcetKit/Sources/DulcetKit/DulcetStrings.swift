@@ -36,6 +36,7 @@ enum DulcetStrings {
     static let downloading = text("download.state.downloading", "Downloading")
     static let downloaded = text("download.state.downloaded", "Downloaded")
     static let retryDownload = text("action.download.retry", "Retry Download")
+    static let downloadFailed = text("download.state.failed", "Download Failed")
     static let downloadUpdateAvailable = text(
         "download.state.updateAvailable",
         "Downloaded — Update Available"

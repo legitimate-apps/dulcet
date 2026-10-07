@@ -410,6 +410,20 @@ private struct DulcetSearchResultMenuItems: View {
             Button(DulcetStrings.play, systemImage: "play", action: onActivate)
             if let track = result.playableTrack, readerRow?.isUnavailableOffline != true {
                 DulcetQueueInsertionMenuItems(addition: .searchResult(track))
+                if store.downloadsEnabled {
+                    switch store.downloadState(for: track) {
+                    case .notDownloaded:
+                        Button(DulcetStrings.download, systemImage: "arrow.down.circle") {
+                            store.requestDownload(track)
+                        }
+                    case .interrupted, .failed:
+                        Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise") {
+                            store.requestDownload(track)
+                        }
+                    case .queued, .downloading, .downloaded, .stale:
+                        EmptyView()
+                    }
+                }
             }
             if let track = result.playableTrack, let albumID = store.libraryAlbumID(for: track) {
                 Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {

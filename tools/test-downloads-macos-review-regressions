@@ -34,30 +34,42 @@ assert "recordFailure" not in resume_branch
 assert "scheduleNextDownload()" in resume_branch
 
 downloads = next(feature for feature in features["features"] if feature["id"] == "downloads.offline")
-macos = downloads["platforms"]["macos"]
-assert macos["status"] == "partial"
-reason = macos.get("reason", "")
-assert "relaunch" in reason.lower()
-assert "evidenc" in reason.lower()
-
-for platform in ("macos", "ios", "ipados"):
+handoff_tests = {
+    "macos": "DulcetMacDownloadHandoffAppTest/aKilledAppsDownloadIsReconciledByTheReplacementProcessThroughTheHostedMacApp",
+    "ios": "DulcetiOSUITests/testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPhone",
+    "ipados": "DulcetiOSUITests/testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS",
+}
+for platform, handoff in handoff_tests.items():
     cell = downloads["platforms"][platform]
-    assert cell["status"] == "partial"
-    assert {row["conformance"] for row in cell["evidence"]} == {"CONF-51", "CONF-52"}
-    assert "relaunch" in cell["reason"].lower()
-    promotion = cell["promotion_condition"]
-    assert promotion["status"] == "blocked"
-    assert promotion["blocked_on"] == "killed-process-background-session-handoff"
-    assert "process" in promotion["reason"].lower()
-    assert "os-initiated-background-session-delivery" in promotion["reason"]
-    assert "backgroundSessionHandoffWaitsUntilDelegateFinishesEvents plays the OS" in cell["reason"]
-    assert "not process termination or a durable downloaded row" in cell["reason"]
-    if platform == "macos":
-        assert "ASSUMED" in promotion["reason"]
-        assert "separate macOS evidence" in promotion["reason"]
-    else:
-        for measurement in ("SpringBoard", "domain:10 code:0xFBFBFBFB", "no jetsam verb"):
-            assert measurement in promotion["reason"]
+    # Shipped on the killed-process handoff each platform proved for itself (2026-10-07).
+    assert cell["status"] == "shipped", platform
+    assert "promotion_condition" not in cell, platform
+    conformance = {row["conformance"] for row in cell["evidence"] if "conformance" in row}
+    assert conformance == {"CONF-51", "CONF-52"}, (platform, conformance)
+    tests = {row["test"] for row in cell["evidence"]}
+    assert handoff in tests, (platform, tests)
+    # iPhone evidence never stands for the iPad, nor the reverse.
+    for other, test in handoff_tests.items():
+        if other != platform and test != handoff:
+            assert test not in tests, (platform, test)
+    assert all(row["workflow"] == "apple-ci" for row in cell["evidence"]), platform
+    reason = cell["reason"]
+    assert "replacement process" in reason, platform
+    assert "SHA-256" in reason, platform
+    assert "aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect" in reason, platform
+
+mac = downloads["platforms"]["macos"]
+assert "DulcetMacDownloadRowAppTest/aRowsDownloadButtonDownloadsTheTrackAndTheRowFollowsItThroughTheHostedMacApp" in {
+    row["test"] for row in mac["evidence"]
+}
+assert "macOS does not launch a killed app for its background session" in mac["reason"]
+for platform in ("ios", "ipados"):
+    reason = downloads["platforms"][platform]["reason"]
+    assert "exit()" in reason and "force quit" in reason, platform
+    assert "ASSUMED: a real device's memory-pressure termination" in reason, platform
+assert "DulcetiOSUITests/testASearchResultsMenuDownloadsTheTrackOnIPhone" in {
+    row["test"] for row in downloads["platforms"]["ios"]["evidence"]
+}
 
 registry = (ROOT / "docs/download-background-blockers.md").read_text()
 for blocker in (
@@ -65,6 +77,16 @@ for blocker in (
     "os-initiated-background-session-delivery",
 ):
     assert f"## {blocker}" in registry
+for test in handoff_tests.values():
+    assert test in registry, test
+assert "macOS: the system does not relaunch the app" in registry
+assert "ASSUMED: macOS relaunches" not in registry
 assert "killed-process-" + "relaunch-harness" not in (ROOT / "FEATURES.yml").read_text()
+
+# A launch into a saved account configures downloads, so the launch reconciles what the system
+# finished while the app was gone (the defect the handoff proofs found).
+restored_start = presentation.index("if let providerInstanceID, let restored = restoredForReader {")
+restored_branch = presentation[restored_start:presentation.index("\n        }\n", restored_start)]
+assert "downloadController?.configure(account:" in restored_branch
 
 print("Apple downloads adversarial-review regression contracts valid")

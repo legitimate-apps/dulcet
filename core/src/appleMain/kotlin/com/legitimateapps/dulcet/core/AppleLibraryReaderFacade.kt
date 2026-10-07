@@ -84,7 +84,25 @@ public class AppleLibraryReaderClient internal constructor(
      * every later change with [setForeground].
      */
     public constructor(databaseName: String, account: AppleLibraryReaderAccount, foreground: Boolean) : this(
-        productionComposer(databaseName, account),
+        databaseName,
+        account,
+        foreground,
+        readsDownloads = false,
+    )
+
+    /**
+     * As above; [readsDownloads] is whether this device keeps downloads (macOS, iOS and iPadOS),
+     * so a track whose file is on the device reads as `downloaded` and plays offline (§14.5,
+     * §16.14). tvOS keeps none and passes false: it is given no download source at all, rather
+     * than one that happens to find nothing.
+     */
+    public constructor(
+        databaseName: String,
+        account: AppleLibraryReaderAccount,
+        foreground: Boolean,
+        readsDownloads: Boolean,
+    ) : this(
+        productionComposer(databaseName, account, readsDownloads),
         foreground,
         newLibraryReaderDispatcher(),
         Dispatchers.Main,
@@ -526,6 +544,7 @@ private fun failedConnection(kind: String) = AppleLibraryReaderConnection(false,
 private fun productionComposer(
     databaseName: String,
     account: AppleLibraryReaderAccount,
+    readsDownloads: Boolean,
 ): (CoroutineScope, Boolean) -> AppleLibraryReaderComposition = { scope, foreground ->
     var store: DulcetDatabaseStore? = null
     var transport: KtorLibraryEndpointTransport? = null
@@ -547,12 +566,17 @@ private fun productionComposer(
         val cache = SeenCacheStore(opened, AppleLibraryReaderWallClock)
             .bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
         AppleLibraryReaderComposition(
-            // No download source: downloads join the reader in phase R4, and tvOS has none (§14.5),
-            // so no Apple platform can publish `downloaded` until then.
+            // The download source is the same database's `download` table, where this device keeps
+            // downloads; tvOS keeps none (§14.5) and is given no source.
             // Playlist editing reaches the shells through [AppleLibraryPlaylistClient]. The account
             // does not carry the server's extensions, so `formPost` is off: without it an edit is
             // batched within the parameter budget (§18.6), never refused for want of it.
-            session = LibraryReaderSession(opened.database, cache, live, scope, formPost = false, foreground = foreground),
+            session = LibraryReaderSession(
+                opened.database, cache, live, scope,
+                downloads = if (readsDownloads) DownloadedTrackSource.fromDownloads(opened.database) else DownloadedTrackSource.None,
+                formPost = false,
+                foreground = foreground,
+            ),
             release = {
                 live.close()
                 opened.close()

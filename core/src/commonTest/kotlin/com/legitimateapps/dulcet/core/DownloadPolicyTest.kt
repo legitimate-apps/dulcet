@@ -524,6 +524,34 @@ class DownloadPolicyTest {
         playbackSessionActive = playbackSessionActive,
     )
 
+    /**
+     * What the reader treats as on the device (§16.14): one server's tracks whose download is
+     * complete, or stale and still playable -- never one queued, running or interrupted, and never
+     * another server's.
+     */
+    @Test
+    fun theReadersDownloadSourceIsTheServersCompleteAndStaleDownloads() = withFixture { fixture ->
+        val queries = fixture.database.database.downloadsQueries
+        fun row(server: String, rawId: String, state: String) {
+            val id = "download-$server-$rawId"
+            queries.insertDownload(server, rawId, "original", id, "$rawId.part", null)
+            queries.insertDownloadPolicyState(server, rawId, "original", "mp3", null, null, 0, 0, NOW)
+            queries.updateDownloadState(state, id)
+        }
+        row(SERVER_ID, "complete-track", "complete")
+        row(SERVER_ID, "stale-track", "stale")
+        row(SERVER_ID, "queued-track", "queued")
+        row(SERVER_ID, "downloading-track", "downloading")
+        row(SERVER_ID, "interrupted-track", "interrupted")
+        row(OTHER_SERVER_ID, "other-server-track", "complete")
+
+        val source = DownloadedTrackSource.fromDownloads(fixture.database.database)
+
+        assertEquals(setOf("complete-track", "stale-track"), source.downloadedTrackRawIds(SERVER_ID))
+        assertEquals(setOf("other-server-track"), source.downloadedTrackRawIds(OTHER_SERVER_ID))
+        assertEquals(emptySet(), DownloadedTrackSource.None.downloadedTrackRawIds(SERVER_ID))
+    }
+
     private fun withFixture(block: (Fixture) -> Unit) = withFixture(FileSystem.SYSTEM, block)
 
     private fun withFixture(fileSystem: FileSystem, block: (Fixture) -> Unit) {

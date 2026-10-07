@@ -44,6 +44,13 @@ public protocol DulcetDownloadControlling: AnyObject {
     /// Cancels account-owned tasks and deletes its downloaded files and durable rows.
     func removeAccountData() async -> Bool
     func disconnect()
+    /// Called whenever `status(for:)` may have changed for items no status report named: once
+    /// the downloads are reconciled, and when they are put away.
+    func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void)
+}
+
+public extension DulcetDownloadControlling {
+    func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
 }
 
 /// A range-readable local file. Its description deliberately omits the container path.

@@ -21,6 +21,7 @@ struct DulcetiOSApp: App {
     private let downloadController: DulcetCoreDownloadController?
 #if DEBUG
     @State private var scrobbleDeliveryMarker: DulcetDebugScrobbleDeliveryMarker?
+    @State private var downloadHandoff: DulcetDebugDownloadHandoff?
 #endif
 
     init() {
@@ -43,6 +44,10 @@ struct DulcetiOSApp: App {
         let composition = DulcetAppleProduction.makeIOSComposition()
         let presentation = composition.store
         downloadController = composition.downloads
+        _downloadHandoff = State(initialValue: DulcetDebugDownloadHandoff.start(
+            controller: composition.downloads,
+            store: presentation
+        ))
         if arguments.contains(DulcetDebugScrobbleDeliveryMarker.launchArgument) {
             let marker = DulcetDebugScrobbleDeliveryMarker()
             composition.playbackController.setScrobbleDeliveryHandler { report in
@@ -118,11 +123,19 @@ struct DulcetiOSApp: App {
                             )
                     }
                 }
+                .overlay(alignment: .top) {
+                    if let downloadHandoff {
+                        DulcetDebugDownloadHandoffOverlay(probe: downloadHandoff)
+                    }
+                }
 #endif
         }
         .backgroundTask(.urlSession(
             DulcetCoreDownloadController.productionBackgroundSessionIdentifier
         )) {
+#if DEBUG
+            DulcetDebugDownloadHandoff.recordBackgroundEvents()
+#endif
             await downloadController?.handleBackgroundSessionEvents()
         }
     }
