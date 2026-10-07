@@ -7609,13 +7609,16 @@ can edit. New Playlist… becomes a name field filled with what is being added, 
 playlist through the core editor with those songs. A track is appended by id; an album is appended
 as the album (`appendAlbum`), or created from the songs the album screen shows. One choice is taken
 per presentation and claimed before the core is called; a refused edit gives the choice back and
-says why in the chooser. OBSERVED with the remote against the disposable server
+says why in the chooser. OBSERVED with D-pad and Centre presses against the disposable server
 (`AndroidTvProductionLibraryReaderAppConformanceTest`): a track goes into a new playlist, then its
-album into the same playlist, and the server holds both under one id. The chooser is a full-screen
-dialog window around a centred surface (docs/TRAPS.md 50). Not on the TV yet: rename, delete,
-remove and reorder; the question the phone asks about a create whose answer was lost; and the line
-that says a playlist change did not land. Search result rows do not offer Add to Playlist… on the
-TV.
+album and then a second track into the same playlist, and after each step the server holds exactly
+those additions under one id. ASSUMED, not driven on the TV: a new playlist made from an album, the
+one-choice guard and a refused edit; they follow the phone sheet. The chooser is a full-screen
+dialog window around a centred surface (docs/TRAPS.md 50). Add to Playlist… is offered where Play
+Next is, so only while a playback service is bound and on a queueable track; search result rows do
+not offer it. Not on the TV yet: rename, delete, remove and reorder. A create whose answer was lost
+waits in this device's outbox and only this device can resolve it; the TV cannot yet, so it stays
+waiting, neither adopted nor resent. A playlist change that did not land is not said on the TV.
 
 **2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
 `apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at

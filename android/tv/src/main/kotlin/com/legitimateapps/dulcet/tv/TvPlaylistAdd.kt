@@ -70,7 +70,8 @@ internal sealed interface TvPlaylistAddition {
  * The chooser, tagged `playlists.add`: New Playlist… first and focused, then each playlist the
  * account can edit (`playlists.add.item.N`). New Playlist… turns the dialog into a name field, filled
  * with what is being added, and Create. One choice per presentation: the first claims it before the
- * core is called, and a refused edit gives it back with the reason said.
+ * core is called, and a refused edit gives it back with the reason said and focus on the dialog's
+ * first control (the controls it had were disabled while the edit was out).
  */
 @Composable
 internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAddition, onDismiss: () -> Unit) {
@@ -104,7 +105,11 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                 Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(resources.getString(R.string.tv_playlist_add_title), style = MaterialTheme.typography.headlineSmall)
                     val first = remember { FocusRequester() }
-                    LaunchedEffect(naming) { runCatching { first.requestFocus() } }
+                    LaunchedEffect(naming, submitting) { if (!submitting) runCatching { first.requestFocus() } }
+                    val songs = when (addition) {
+                        is TvPlaylistAddition.Songs -> addition.rawIds
+                        is TvPlaylistAddition.Album -> addition.trackRawIds
+                    }
                     if (naming) {
                         TvField(resources.getString(R.string.tv_playlist_name), name, { name = it }, enabled = !submitting,
                             tag = "playlists.add.name", keyboard = KeyboardOptions(imeAction = ImeAction.Done),
@@ -112,16 +117,13 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                         Button(
                             onClick = {
                                 val chosen = name.trim()
-                                if (submitting || chosen.isEmpty()) return@Button
+                                // An album screen that showed no tracks has nothing to create from.
+                                if (submitting || chosen.isEmpty() || songs.isEmpty()) return@Button
                                 submitting = true
                                 note = null
-                                val songs = when (addition) {
-                                    is TvPlaylistAddition.Songs -> addition.rawIds
-                                    is TvPlaylistAddition.Album -> addition.trackRawIds
-                                }
                                 session.playlists.create(chosen, songs) { finished(chosen, it) }
                             },
-                            enabled = !submitting && name.isNotBlank(),
+                            enabled = !submitting && name.isNotBlank() && songs.isNotEmpty(),
                             modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.confirm"),
                         ) { Text(resources.getString(R.string.tv_playlist_create)) }
                         Button(onClick = { naming = false }, enabled = !submitting,

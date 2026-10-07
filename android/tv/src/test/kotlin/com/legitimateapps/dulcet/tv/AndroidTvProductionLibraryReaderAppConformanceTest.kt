@@ -398,7 +398,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
      * queue button adds the whole album to that playlist from the chooser. Each step is read back
      * from the server directly, and both land in the one playlist.
      */
-    @Test fun aTrackAndThenItsAlbumAreAddedToANewPlaylistWithTheRemoteAndTheServerHoldsBoth() {
+    @Test fun aTrackItsAlbumAndAnotherTrackGoIntoANewPlaylistWithTheRemoteAndTheServerHoldsEach() {
         environment.proxy.unpark()
         val app = RuntimeEnvironment.getApplication()
         val service = Robolectric.buildService(PlaybackService::class.java).create()
@@ -463,9 +463,25 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             keyAt(row, Key.DirectionCenter)
             await("the album appended on the server") { server.playlistEntries(id) == listOf(songs[0]) + songs }
             await("the chooser closed") { !exists("playlists.add") }
-            assertEquals(listOf(id), server.playlists().filterValues { it == name }.keys.toList(), "one playlist, both additions in it")
+
+            // The second track, from its row, into the same playlist: an append of one song by id.
+            focus("album.track.1")
+            repeat(4) { if (!focused("album.track.1.queue")) key(Key.DirectionRight) }
+            assertFocused("album.track.1.queue")
+            key(Key.DirectionCenter)
+            await("the second track's queue dialog") { focused("queue.add.playNext") }
+            stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
+            keyAt("queue.add.playlist", Key.DirectionCenter)
+            await("the chooser lists the playlist again") { runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
+            val again = cardWithText("playlists.add.item.", name)
+            stepTo(again, Key.DirectionDown, from = "playlists.add.new")
+            keyAt(again, Key.DirectionCenter)
+            val expected = listOf(songs[0]) + songs + songs[1]
+            await("the second track appended on the server") { server.playlistEntries(id) == expected }
+            await("the chooser closed") { !exists("playlists.add") }
+            assertEquals(listOf(id), server.playlists().filterValues { it == name }.keys.toList(), "one playlist, every addition in it")
             assertNoCredentialLeak()
-            println("TV PLAYLIST ADD OBSERVED album=$ALBUM entries=${songs.size + 1} id-stable=true")
+            println("TV PLAYLIST ADD OBSERVED album=$ALBUM entries=${expected.size} id-stable=true")
         } finally {
             service.destroy()
         }

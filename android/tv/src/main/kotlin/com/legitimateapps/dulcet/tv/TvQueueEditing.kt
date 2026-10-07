@@ -28,7 +28,9 @@ import com.legitimateapps.dulcet.shared.R as SharedR
  * Queue editing with a remote (spec §14.1). A remote has no swipe, drag or long-press menu worth
  * relying on, so each edit is a named choice in a small dialog opened from a button beside what it
  * edits -- what the tvOS shell's context menu offers, reached by one RIGHT and a centre press. Every choice
- * closes the dialog, and focus returns to the button that opened it.
+ * closes the dialog, and focus returns to the button that opened it. Add to Playlist… closes it and
+ * opens the playlist chooser ([TvAddToPlaylist]); where focus lands after the chooser closes is not
+ * tested.
  */
 
 /** One choice in a [TvQueueMenu]: its words, its test tag, and what it does. */

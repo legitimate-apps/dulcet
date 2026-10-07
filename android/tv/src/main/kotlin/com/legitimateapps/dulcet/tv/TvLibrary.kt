@@ -1329,7 +1329,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     }
 }
 
-// ---- Playlists (spec §18.6): browse and play; editing is the phone's -------------------------------------
+// ---- Playlists (spec §18.6): browse, play, and Add to Playlist… (TvPlaylistAdd.kt) -------------------
 
 /** The account's playlists, one response (§16.9). */
 @Composable

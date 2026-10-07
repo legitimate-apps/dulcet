@@ -319,13 +319,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     window settle.** Every layout pass the field reports its focused rectangle, the dialog window is
     relaid out, and its root view asks for layout again; `isLayoutRequested` stays true. The idling
     strategy keeps laying it out, so the next wait for idle never returns. The process slowly fills
-    its heap (Robolectric's trace shadow keeps every section) and ends in an `OutOfMemoryError` far
-    from the cause, inside text layout. OBSERVED on the TV's Add to Playlist chooser: the Centre
-    press that swaps New Playlist… for the name field returned, and the next semantics read hung.
-    A minimal Robolectric test held the same field for 39 s in a default `Dialog` and settled it in
-    10 ms in a `Dialog(properties = DialogProperties(usePlatformDefaultWidth = false))` whose content
-    is a full-size `Box` centring the surface. A button in either dialog settled at once. On a
-    device the wrap-content form may behave; that is ASSUMED, not tested. TV dialogs that hold a text
+    its heap and ends in an `OutOfMemoryError` far from the cause, inside text layout (that
+    Robolectric's trace shadow retaining sections is what fills it is ASSUMED). OBSERVED on the TV's
+    Add to Playlist chooser: the Centre press that swaps New Playlist… for the name field returned,
+    and the next semantics read hung, with the dialog root's `isLayoutRequested` true in every
+    sample. A throwaway minimal Robolectric test, not kept in the repository, held the same field
+    for 39 s before failing in a default `Dialog` and settled it in 10 ms in a
+    `Dialog(properties = DialogProperties(usePlatformDefaultWidth = false))` whose content is a
+    full-size `Box` centring the surface; a button in either dialog settled at once. The kept
+    evidence is the chooser's proof, which hangs with the default form and passes with the
+    full-size one. On a device the wrap-content form may behave; that is ASSUMED, not tested. TV
+    dialogs that hold a text
     field use the full-size form. To find a hang like this, sample the test thread's stack from a
     second thread and print each window root's `isLayoutRequested`. The point where the heap runs
     out says nothing about the cause.
