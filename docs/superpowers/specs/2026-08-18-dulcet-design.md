@@ -2524,7 +2524,7 @@ through Ktor Darwin's `configureSession` hook.
 | key invalidation (lock screen removed, keystore reset) | detected on read; the account enters a re-auth state and cached library data is retained | same |
 | logout | credential deleted before any other cleanup (§14.7) | same |
 
-**macOS Phase-1 relaunch decision — explicit reconnect:** in the signed application, after a
+**Relaunch decision — explicit reconnect (every platform; first decided for macOS Phase 1):** in the signed application, after a
 successful account negotiation, the complete connection request is intended to be encoded into one
 Keychain generic-password value under
 `service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
@@ -2539,7 +2539,14 @@ prefills the secure account form, but performs **no network request until the pe
 Connect**. That policy is not a licence to present the app as unconfigured: a restored credential
 enters `accountSavedDisconnected` with a `saved(serverName:)` status, so the library surface offers
 to reconnect to the named server and the connectivity indicator reads disconnected rather than
-absent. Rendering a saved account as no account is the defect revision 78 corrected. A missing, malformed, or unreadable active item enters the credential-persistence error
+absent. Rendering a saved account as no account is the defect revision 78 corrected. The same rule
+holds on every platform, whatever its store: Android reads its Keystore-sealed record, opens the
+library for the saved account, says it is saved and not connected, and sends nothing — no library
+read, no cover art, no reconnect on reachability or on a return to the foreground — until the person
+chooses Reconnect (or Connect on the form), which then reconnects in place (§16.14). The foreground
+and reachability rules of §16.11 and §16.14 apply to a session connected in this process; a cold
+launch into a saved account is not a return to the foreground of a connected session (§28,
+2026-10-07). A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition. The storage API's
 delete path removes the Keychain item before clearing its active-account pointer; an account-management
 logout control is outside this account-connect surface.
@@ -3931,7 +3938,8 @@ under an unchanged epoch.
 
 **Freshness policy, precisely:**
 
-1. **Epoch reads** happen on connect, on every return to the foreground, on reconnect (§16.14), and
+1. **Epoch reads** happen on connect, on every return to the foreground of a session connected in
+   this process (a launch into a saved account reads nothing until Reconnect, §13.1), on reconnect (§16.14), and
    every **5 minutes** while a library screen is visible and the app is in the foreground (ASSUMED
    interval — a `getScanStatus` is a few milliseconds; tune from measurement, never raise it to
    hide a cost). Nothing reads the epoch in the background — neither this cadence nor a
@@ -4356,7 +4364,8 @@ it online and goes on to step 3. A platform report that the server is unreachabl
 tells it (after the grace below), takes the reader offline at once and cancels a reconnect in flight; a report that it is reachable, while offline,
 *requests* a reconnect rather than marking the reader online. A reconnect already running is joined,
 so two never run the steps at once. So a shell reports reachability on every change and reconnects on
-foreground, in either order or only one of them, and for a reader coming back from offline nothing is
+foreground — for a session connected in this process; a launch into a saved account does neither until
+the person chooses Reconnect (§13.1) — in either order or only one of them, and for a reader coming back from offline nothing is
 read before the flush. **That holds for the offline-to-online transition only** (corrected in place,
 item 29): a foreground reconnect of a reader that is already online leaves it online throughout, its
 screens and searches keep reading, and a read can go out before the flush's send — a change made while
@@ -7627,8 +7636,10 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
-**2026-10-07 — Android evidences CONF-09b through its apps, says an unreadable saved account on the
-TV, keeps the TV keyboard down until a field is selected, and names CONF-10b as a gap.** On both `account.connect` Android cells, CONF-09b is now evidenced
+**2026-10-07 — Android opens a saved account without contacting its server until Reconnect
+(§13.1, CONF-10b), reports a proxy's 407 as an unsupported challenge (CONF-10c), says every account
+error with its remedy on the TV, says an unreadable saved account, and keeps the TV keyboard down
+until a field is selected.** On both `account.connect` Android cells, CONF-09b is now evidenced
 in core-ci on the API 34 phone and Android TV emulators against the disposable server
 (`AndroidEmulatorAccountConnectProofTest`, `AndroidTvEmulatorAccountConnectProofTest`). Each starts
 from an install with no saved account and is driven by touches at each control's place on the screen,
@@ -7645,11 +7656,26 @@ The TV's form fields brought up the on-screen keyboard whenever the remote lande
 down the form took the D-pad away at each field until Back closed it (three times on the way to Sign
 out, OBSERVED). They now work as the search field does: read-only until the centre key or a tap
 selects them, and read-only again once the remote leaves.
-The same proofs OBSERVED that a relaunch with a saved account opens the library and the reader
-connects to the server before any Connect (§16.14 reconnect on foreground), contradicting CONF-10b
-and the explicit-reconnect decision of §13.1. Its view-model citation held only for a form the apps
-never show for a saved account, so CONF-10b is named as a gap on both cells and that test is kept as
-an `observes` row. Both cells stay `partial`, blocked on that product decision.
+The same proofs first OBSERVED that a relaunch with a saved account opened the library and the
+reader connected to the server before any Connect (core-ci, both emulators). That contradicted
+§13.1, which governs a launch into a saved account on every platform; the foreground and reachability
+rules of §16.11 and §16.14 apply to a session connected in this process, and are now worded so. Android
+now conforms: a launch into a saved account opens the library on what this device has seen, says the
+account on that server is saved and not connected, and sends nothing — no library read, no cover art
+(only what the device kept), no reconnect on reachability or the foreground — until the person
+chooses Reconnect (by touch, or with the remote one DOWN from the Library tab) or Try again, which
+reconnects in place. Connect on the form connects the session that follows, and a session connected
+in this process reads in every later screen host. Each emulator has a CONF-10b proof that connects
+through the form, relaunches with the process's library reader closed, counts no connection at the
+relay for five seconds, then chooses Reconnect and observes the server reached in place.
+Through an explicit HTTPS proxy, Ktor's CIO engine reports a 407 to the tunnel's CONNECT as a bare
+I/O failure, so Android said Transport.Unreachable where CONF-10c and Darwin say
+Auth.UnsupportedAuthenticationChallenge. After such a failure Android now asks the same proxy, with no
+credentials, for the same tunnel and reads only its status line; a 407 there reports the unsupported
+challenge, anything else (a dead proxy) stays unreachable. The TV's connect screen said only a short
+line per error; it now says the title, what happened and the remedy from the presentation the phone
+uses (CONF-09c), and the phone says an unreadable saved account as unreadable, not as one that could
+not be saved. Both cells are `shipped`.
 
 **2026-10-07 — The TVs' playlist editing is browse, play, add, create and delete (§18.6).** The
 Android TV's `playlists.edit` cell stayed partial "until rename, delete, remove and reorder are

@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -169,42 +170,8 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     observed += "connected"
                 }
 
-                // Relaunch into the saved account (spec §13.1): the library this device has seen, said to
-                // be saved and not connected, and NOTHING sent to the server until the person chooses
-                // Reconnect with the remote — one DOWN from the Library tab — which reconnects in place.
-                // The process's reader is closed first, as a new process has none; this instrumentation
-                // shares the app's process.
-                endProcessConnection()
-                val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
-                val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
-                launch().use { scenario ->
-                    awaitNode("the library for the saved account at relaunch, the remote on the Library tab") {
-                        exists("library.surface") && focused("library.open")
-                    }
-                    check(!exists("tv.connect.submit")) { "A saved account must not be asked for again" }
-                    check(!keyboardShown(scenario)) { "No keyboard at relaunch" }
-                    awaitNode("the library saying the account is saved and not connected") {
-                        exists("library.saved") && exists("library.reconnect")
-                    }
-                    check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
-                        "The saved line names the saved account's server: ${label("library.saved")}"
-                    }
-                    awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
-                    SystemClock.sleep(SAVED_SETTLE_MILLIS)
-                    val triedBeforeReconnect = tried()
-                    check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
-                    observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
-
-                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                    awaitNode("DOWN from the Library tab reaches Reconnect") { focused("library.reconnect") }
-                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    awaitNode("Reconnect reaching the server, in place", 60_000) {
-                        tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.surface")
-                    }
-                    check(!exists("tv.connect.submit")) { "Reconnect connects in place, without the form" }
-                    awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
-                    observed += "reconnected(in-place, tried=${tried()})"
-                }
+                // Relaunch into the saved account (spec §13.1, CONF-10b).
+                relaunchIntoTheSavedAccountAndReconnect(relay, observed)
 
                 // Relaunch after the Keystore lost the saved account's key.
                 endProcessConnection()
@@ -242,6 +209,98 @@ class AndroidTvEmulatorAccountConnectProofTest {
             } finally {
                 forgetSavedAccount(context)
             }
+        }
+    }
+
+    /**
+     * CONF-10b on an Android TV emulator (spec §13.1), with the remote only: an app launched into a
+     * saved account sends its server nothing — no library read, no cover art, no reconnect on
+     * reachability or the foreground — until the remote chooses Reconnect, one DOWN from the Library
+     * tab, which connects in place without the form. The account is connected and saved through the
+     * form first, as a person's is, so the relaunch has the albums this device has seen to show.
+     */
+    @Test fun aRelaunchIntoTheSavedAccountSendsNothingUntilTheRemoteChoosesReconnect() {
+        check(context.packageManager.hasSystemFeature("android.software.leanback")) {
+            "This proof must run on an Android TV device or emulator"
+        }
+        val probe = DisposableServerProbe.fromInstrumentation()
+        awaitQueuedBroadcastsDelivered()
+        val store = AndroidAccountCredentialStore(context)
+        check(store.activeAccountId() == null) { "The proof starts from an install with no saved account" }
+        val observed = mutableListOf<String>()
+        ServerRelay(probe.baseUrl).use { relay ->
+            try {
+                launch().use { scenario ->
+                    awaitNode("the connect form, the remote on the server address") { focused("tv.connect.server") }
+                    enter("tv.connect.server", relay.url, scenario)
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    awaitNode("DOWN reaches the username") { focused("tv.connect.username") }
+                    enter("tv.connect.username", DisposableServerProbe.USER, scenario)
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    awaitNode("DOWN reaches the password") { focused("tv.connect.password") }
+                    enter("tv.connect.password", DisposableServerProbe.PASSWORD, scenario)
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    awaitNode("DOWN reaches the local-HTTP switch") { focused("tv.connect.allow-local-http") }
+                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    awaitNode("the centre key allows local HTTP") { checked("tv.connect.allow-local-http") }
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    awaitNode("DOWN reaches Connect") { focused("tv.connect.submit") }
+                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    awaitNode("the library, the remote on it", 60_000) {
+                        exists("library.surface") && (focused("library.open") || focused("library.home.0.item.0"))
+                    }
+                    awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
+                    observed += "connected"
+                }
+                relaunchIntoTheSavedAccountAndReconnect(relay, observed)
+                println("ANDROID TV EMULATOR SAVED ACCOUNT RELAUNCH OBSERVED surface=tv leanback=true states=${observed.joinToString(",")}")
+            } finally {
+                forgetSavedAccount(context)
+            }
+        }
+    }
+
+    /**
+     * A relaunch into the saved account (spec §13.1): the library this device has seen, said to be
+     * saved and not connected, and NOTHING sent to the server until the person chooses Reconnect with
+     * the remote — one DOWN from the Library tab — which reconnects in place. The process's reader is
+     * closed first, as a new process has none; this instrumentation shares the app's process.
+     */
+    private fun relaunchIntoTheSavedAccountAndReconnect(relay: ServerRelay, observed: MutableList<String>) {
+        endProcessConnection()
+        val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
+        val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
+        launch().use { scenario ->
+            // The remote rests on the Library tab until the home's rows arrive, and the first card the
+            // device has seen takes it when they do (TvLibrary's landing rule).
+            awaitNode("the library for the saved account at relaunch, the remote on the Library tab or its first card") {
+                exists("library.surface") && (focused("library.open") || focused("library.home.0.item.0"))
+            }
+            check(!exists("tv.connect.submit")) { "A saved account must not be asked for again" }
+            check(!keyboardShown(scenario)) { "No keyboard at relaunch" }
+            awaitNode("the library saying the account is saved and not connected") {
+                exists("library.saved") && exists("library.reconnect")
+            }
+            check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
+                "The saved line names the saved account's server: ${label("library.saved")}"
+            }
+            awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
+            SystemClock.sleep(SAVED_SETTLE_MILLIS)
+            val triedBeforeReconnect = tried()
+            check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
+            observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
+
+            // Reconnect lies between the bar and the rows: DOWN from the Library tab, UP from the first card.
+            val landing = if (focused("library.open")) "library-tab" else "first-card"
+            remote(if (landing == "library-tab") KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
+            awaitNode("the remote reaching Reconnect from the $landing") { focused("library.reconnect") }
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitNode("Reconnect reaching the server, in place", 60_000) {
+                tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.surface")
+            }
+            check(!exists("tv.connect.submit")) { "Reconnect connects in place, without the form" }
+            awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
+            observed += "reconnected(in-place, tried=${tried()}, from=$landing)"
         }
     }
 
@@ -296,6 +355,12 @@ class AndroidTvEmulatorAccountConnectProofTest {
     private fun focused(tag: String) = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes()
         .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }
 
+    /** The tags of what holds focus now, for a failure to say where the remote is. */
+    private fun focusedTags(): List<String> = runCatching {
+        compose.onAllNodes(SemanticsMatcher("focused") { it.config.getOrElse(SemanticsProperties.Focused) { false } }, useUnmergedTree = true)
+            .fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "(untagged)" } }
+    }.getOrDefault(emptyList())
+
     private fun status(): String? = runCatching { label("tv.connect.status") }.getOrNull()
 
     private fun label(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
@@ -346,8 +411,16 @@ class AndroidTvEmulatorAccountConnectProofTest {
         return shown
     }
 
-    private fun awaitNode(what: String, timeoutMillis: Long = 30_000, condition: () -> Boolean) =
-        compose.waitUntil(what, timeoutMillis) { runCatching(condition).getOrDefault(false) }
+    /** Waits for [condition]; a timeout also says what held the focus and which tags were there. */
+    private fun awaitNode(what: String, timeoutMillis: Long = 30_000, condition: () -> Boolean) {
+        try {
+            compose.waitUntil(what, timeoutMillis) { runCatching(condition).getOrDefault(false) }
+        } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("$what: never, within $timeoutMillis ms; focus on ${focusedTags()}; " +
+                "library.surface=${exists("library.surface")} library.saved=${exists("library.saved")} " +
+                "library.reconnect=${exists("library.reconnect")} tv.connect.submit=${exists("tv.connect.submit")}", timeout)
+        }
+    }
 
     private companion object {
         /** How long a launch into the saved account is watched for any request before Reconnect. */

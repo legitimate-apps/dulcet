@@ -168,37 +168,8 @@ class AndroidEmulatorAccountConnectProofTest {
                     observed += "connected"
                 }
 
-                // Relaunch into the saved account (spec §13.1): the library this device has seen, said to
-                // be saved and not connected, and NOTHING sent to the server until the person touches
-                // Reconnect — which then reconnects in place. The process's reader is closed first, as a
-                // new process has none; this instrumentation shares the app's process.
-                endProcessConnection()
-                val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
-                val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
-                var triedBeforeReconnect = -1
-                launch().use { scenario ->
-                    awaitNode("the library for the saved account at relaunch") { exists("library.open") }
-                    check(!exists("account.submit")) { "A saved account must not be asked for again" }
-                    awaitNode("the library saying the account is saved and not connected") {
-                        exists("library.saved") && exists("library.reconnect")
-                    }
-                    check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
-                        "The saved line names the saved account's server: ${label("library.saved")}"
-                    }
-                    awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
-                    SystemClock.sleep(SAVED_SETTLE_MILLIS)
-                    triedBeforeReconnect = tried()
-                    check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
-                    observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
-
-                    touch("library.reconnect", scenario)
-                    awaitNode("Reconnect reaching the server, in place", 60_000) {
-                        tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.open")
-                    }
-                    check(!exists("account.submit")) { "Reconnect connects in place, without the form" }
-                    awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
-                    observed += "reconnected(in-place, tried=${tried()})"
-                }
+                // Relaunch into the saved account (spec §13.1, CONF-10b).
+                relaunchIntoTheSavedAccountAndReconnect(relay, observed)
 
                 // Relaunch after the Keystore lost the saved account's key.
                 endProcessConnection()
@@ -227,6 +198,87 @@ class AndroidEmulatorAccountConnectProofTest {
                 forgetSavedAccount(context)
                 ui.edit().apply { if (tabBefore == null) remove("tab") else putString("tab", tabBefore) }.commit()
             }
+        }
+    }
+
+    /**
+     * CONF-10b on a phone emulator (spec §13.1): an app launched into a saved account sends its server
+     * nothing — no library read, no cover art, no reconnect on reachability or the foreground — until
+     * the person touches Reconnect, which connects in place without the form. The account is connected
+     * and saved through the form first, as a person's is, so the relaunch has the albums this device
+     * has seen to show.
+     */
+    @Test fun aRelaunchIntoTheSavedAccountSendsNothingUntilThePersonTouchesReconnect() {
+        val probe = DisposableServerProbe.fromInstrumentation()
+        awaitQueuedBroadcastsDelivered()
+        val store = AndroidAccountCredentialStore(context)
+        check(store.activeAccountId() == null) { "The proof starts from an install with no saved account" }
+        val ui = context.getSharedPreferences("dulcet.ui", 0)
+        val tabBefore = ui.getString("tab", null)
+        val observed = mutableListOf<String>()
+        ServerRelay(probe.baseUrl).use { relay ->
+            try {
+                launch().use { scenario ->
+                    awaitNode("the connect form") { exists("account.submit") }
+                    touch("account.server", scenario)
+                    awaitNode("the keyboard, for the server address") { keyboardShown(scenario) }
+                    replaceText("account.server", relay.url)
+                    touch("account.username", scenario)
+                    awaitNode("the username field focused") { focused("account.username") }
+                    type(DisposableServerProbe.USER)
+                    touch("account.password", scenario)
+                    awaitNode("the password field focused") { focused("account.password") }
+                    type(DisposableServerProbe.PASSWORD)
+                    closeKeyboard(scenario)
+                    touch("account.allow-local-http", scenario)
+                    awaitNode("local HTTP allowed") { toggle("account.allow-local-http") == ToggleableState.On }
+                    touch("account.submit", scenario)
+                    awaitNode("the library, once connected", 60_000) { exists("library.open") && !exists("account.submit") }
+                    touch("library.open", scenario)
+                    awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
+                    observed += "connected"
+                }
+                relaunchIntoTheSavedAccountAndReconnect(relay, observed)
+                println("ANDROID EMULATOR SAVED ACCOUNT RELAUNCH OBSERVED surface=phone states=${observed.joinToString(",")}")
+            } finally {
+                forgetSavedAccount(context)
+                ui.edit().apply { if (tabBefore == null) remove("tab") else putString("tab", tabBefore) }.commit()
+            }
+        }
+    }
+
+    /**
+     * A relaunch into the saved account (spec §13.1): the library this device has seen, said to be
+     * saved and not connected, and NOTHING sent to the server until the person touches Reconnect —
+     * which then reconnects in place. The process's reader is closed first, as a new process has none;
+     * this instrumentation shares the app's process.
+     */
+    private fun relaunchIntoTheSavedAccountAndReconnect(relay: ServerRelay, observed: MutableList<String>) {
+        endProcessConnection()
+        val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
+        val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
+        launch().use { scenario ->
+            awaitNode("the library for the saved account at relaunch") { exists("library.open") }
+            check(!exists("account.submit")) { "A saved account must not be asked for again" }
+            awaitNode("the library saying the account is saved and not connected") {
+                exists("library.saved") && exists("library.reconnect")
+            }
+            check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
+                "The saved line names the saved account's server: ${label("library.saved")}"
+            }
+            awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
+            SystemClock.sleep(SAVED_SETTLE_MILLIS)
+            val triedBeforeReconnect = tried()
+            check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
+            observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
+
+            touch("library.reconnect", scenario)
+            awaitNode("Reconnect reaching the server, in place", 60_000) {
+                tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.open")
+            }
+            check(!exists("account.submit")) { "Reconnect connects in place, without the form" }
+            awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
+            observed += "reconnected(in-place, tried=${tried()})"
         }
     }
 
