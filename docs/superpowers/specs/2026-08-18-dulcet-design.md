@@ -5639,7 +5639,9 @@ not enter into it either.
   candidate named, never adopted and never ruled out, because ruling it out on a server that states
   this account in another form would send the create again beside its own playlist on every lost
   answer. The person is told the candidates (`PossibleDuplicate`, naming them) and the
-  create waits for them: `chooseCreated(localId, id)` adopts the one they pick,
+  create waits for them: `chooseCreated(localId, id)` adopts the one they pick (if it is no longer
+  listed when the flush looks, the choice is void, and a lone candidate left that was offered beside
+  it is named again, never adopted: the person passed over it),
   `chooseCreated(localId, null)` says none is theirs and sends it again, and `withdraw` takes the
   create back. Later flushes send nothing for a waiting create, and `pendingChanges` lists it with
   its candidates. While any create waits, each flush that may send (not while a 429's wait runs)
@@ -7643,6 +7645,13 @@ Another user's public playlist opens on the TV naming its owner, with no Delete 
 account's own playlist is the control. An addition made after the platform reported the network
 gone is shown at once on the playlist's page as "Not saved to your server yet" and is sent at the
 reconnect, the server holding nothing new until then (OBSERVED, same class).
+
+**2026-10-07 — A choice whose playlist is gone never adopts the one the person passed over
+(§18.6).** A create the person had answered — "this one is mine" — whose chosen playlist another
+client then deleted fell back to the ordinary rule, which adopts a lone candidate holding the songs
+sent, even when that candidate was offered beside the one chosen. It is now named again instead.
+OBSERVED with the fake server (`PlaylistWaitingCreateRecheckTest`): the new test fails with the
+guard removed (the passed-over playlist is adopted and the question disappears).
 
 **2026-10-07 — A create waiting for the person's choice drops a candidate the server no longer
 lists (§18.6).** A waiting create was passed over by every flush, so a candidate another client

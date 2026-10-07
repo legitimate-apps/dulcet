@@ -137,4 +137,23 @@ class PlaylistWaitingCreateRecheckTest {
         assertEquals("Evening", p.name, "the listing's own failure holds nothing else")
         assertEquals(listOf(pair.first.id, pair.second.id), session.playlists.pendingChanges().single().candidates)
     }
+
+    @Test
+    fun aChoiceWhosePlaylistIsDeletedElsewhereNeverAdoptsTheOnePassedOver() = playlistTest { env ->
+        val (session, localId, pair) = waitingBetweenTwo(env)
+        val (lost, elsewhere) = pair
+        session.setOnline(false)
+        advanceUntilIdle()
+        assertEquals(PlaylistEditRecord.Pending, session.playlists.chooseCreated(localId, elsewhere.id))
+        env.server.playlists.remove(elsewhere)
+        session.setOnline(true)
+        session.playlists.flush()
+        advanceUntilIdle()
+        // The lone candidate left holds what was sent and is this account's: without the person's
+        // choice it would be adopted. They chose the other, so it is named again.
+        assertEquals(listOf(lost.id), session.playlists.pendingChanges().single().candidates)
+        assertEquals(PlaylistEditOutcome.PossibleDuplicate(localId, "Once", listOf(lost.id)), env.outcomes.last())
+        assertEquals(1, env.server.count("createPlaylist"))
+        assertEquals(listOf(lost.id), env.server.playlists.map { it.id })
+    }
 }
