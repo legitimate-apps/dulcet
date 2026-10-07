@@ -7611,8 +7611,13 @@ again; the page says a change that did not land, in the shared words, with Dismi
 opened under a local id follows the playlist to the server's id. OBSERVED with D-pad and centre keys in the dialog,
 focus placed on the page's controls and Back sent to the dialog's dispatcher, over a fake core's
 outbox (`TvPlaylistQuestionTest`, as the phone's `PlaylistCreateInDoubtTest`); a mutant
-that let Back drop a question whose answer was out failed it. ASSUMED: the dialog presented by the
-library entry over a real session, and the page following to the server's id. This supersedes the
+that let Back drop a question whose answer was out failed it. OBSERVED end to end over the TV's
+library entry and the production session, reader and editor, against a loopback server that makes the
+playlist without the song sent and answers the create 502 (`TvPlaylistCreateInDoubtSessionTest`): the
+question presented over the album once the app returns to the foreground, Decide later, Choose… from
+the page, Keep with no second create, and the page on the server's id, which a saved-state restore
+after the reader closes reopens; a mutant without the follow failed it, the restore showing the
+playlist as unavailable. This supersedes the
 entry below where it says the TV cannot resolve a create in doubt or say a change that did not land.
 
 **2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
