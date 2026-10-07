@@ -43,6 +43,10 @@ import org.junit.runner.RunWith
  * said and nothing on disk; connected, the library opening with the remote on it and no keyboard;
  * a relaunch with the server unreachable opening the saved account's library, offline; and a relaunch
  * after the Keystore lost the account's key, said, with Sign out reachable by the remote.
+ *
+ * The keyboard comes up only when the person selects a field with the centre key, never because the
+ * remote landed on or passed over one: a keyboard that opens on its own takes the D-pad until Back
+ * closes it.
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidTvEmulatorAccountConnectProofTest {
@@ -66,7 +70,8 @@ class AndroidTvEmulatorAccountConnectProofTest {
             try {
                 launch().use { scenario ->
                     awaitNode("the connect form, the remote on the server address") { focused("tv.connect.server") }
-                    keyboardAtLaunch = keyboardShown(scenario)
+                    keyboardAtLaunch = !keyboardStaysDown(scenario)
+                    check(!keyboardAtLaunch) { "The keyboard came up at launch, before the server address was selected" }
                     check(label("tv.connect.submit") == text(R.string.tv_connect)) { "Idle shows Connect" }
                     check(!exists("tv.connect.status")) { "Idle shows no status" }
                     observed += "idle"
@@ -191,6 +196,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
                         remote(KeyEvent.KEYCODE_DPAD_DOWN)
                     }
                     check(focused("tv.account.signout")) { "DOWN must reach Sign out" }
+                    check(keyboardsInTheWay == 0) { "$keyboardsInTheWay keyboards came up on fields the remote only passed over" }
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
                     awaitNode("the sign-out question, the remote on Stay") { focused("signout.stay") }
                     remote(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -230,13 +236,14 @@ class AndroidTvEmulatorAccountConnectProofTest {
     }
 
     /**
-     * Types [value] into the field the remote is on: the centre key brings up the TV's keyboard if
-     * focus did not, [replacing] characters are taken back first, and Back closes the keyboard,
-     * leaving the remote on the field.
+     * Types [value] into the field the remote is on: the keyboard stays down until the centre key
+     * selects the field and brings it up, [replacing] characters are taken back first, and Back closes
+     * the keyboard, leaving the remote on the field.
      */
     private fun enter(tag: String, value: String, scenario: ActivityScenario<TvSearchActivity>, replacing: Int = 0) {
         check(focused(tag)) { "The remote must be on $tag" }
-        if (!keyboardShown(scenario)) remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        check(keyboardStaysDown(scenario)) { "The keyboard came up on $tag before the centre key selected it" }
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitNode("the TV's keyboard, for $tag") { keyboardShown(scenario) }
         if (replacing > 0) {
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MOVE_END)
@@ -283,6 +290,20 @@ class AndroidTvEmulatorAccountConnectProofTest {
         return node.positionOnScreen.y >= 0 && node.positionOnScreen.y + node.size.height <= height
     }
 
+    /**
+     * The keyboard is down and stays down for [KEYBOARD_SETTLE_MILLIS]: the keyboard comes up a moment
+     * after focus lands, so one look straight after a key press cannot tell that it will not.
+     */
+    private fun keyboardStaysDown(scenario: ActivityScenario<TvSearchActivity>): Boolean {
+        val until = SystemClock.uptimeMillis() + KEYBOARD_SETTLE_MILLIS
+        while (SystemClock.uptimeMillis() < until) {
+            compose.waitForIdle()
+            if (keyboardShown(scenario)) return false
+            SystemClock.sleep(100)
+        }
+        return !keyboardShown(scenario)
+    }
+
     private fun keyboardShown(scenario: ActivityScenario<TvSearchActivity>): Boolean {
         var shown = false
         scenario.onActivity { activity ->
@@ -296,6 +317,9 @@ class AndroidTvEmulatorAccountConnectProofTest {
 
     private companion object {
         const val WRONG_PASSWORD = "not-the-password"
+
+        /** How long a field must keep the keyboard down after the remote lands on it. */
+        const val KEYBOARD_SETTLE_MILLIS = 1_500L
 
         /** Long enough for a held request, released, to be answered by the local server. */
         const val SETTLE_MILLIS = 3_000L
