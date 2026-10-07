@@ -2666,10 +2666,17 @@ final class DulcetTVUITests: XCTestCase {
         let launchSections = ["Connection", "Library"]
         let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         var section = ""
+        var observedFocus: String?
+        // The section and the focus are read as one observation: the connection this launch asks
+        // for can land on Library between two separate reads, which once paired Connection's bar
+        // with Library's focus. A pair that disagrees is read again until the two settle.
         repeat {
             let bar = app.navigationBars.firstMatch
             section = bar.exists ? bar.identifier : ""
-            if launchSections.contains(section) { break }
+            observedFocus = launchSections.contains(section) ? focusedControlIdentifier(app) : nil
+            let barAfter = app.navigationBars.firstMatch
+            let settled = barAfter.exists && barAfter.identifier == section
+            if settled, let focus = observedFocus, section != "Connection" || focus.hasPrefix("dulcet.account-connect.") { break }
             Thread.sleep(forTimeInterval: 0.25)
         } while ContinuousClock.now < deadline
         XCTAssertTrue(
@@ -2679,7 +2686,7 @@ final class DulcetTVUITests: XCTestCase {
         )
         XCTAssertNil(focusedSection(app), "Launch focus belongs in the section, not on the bar")
         let focus = try XCTUnwrap(
-            focusedControlIdentifier(app),
+            observedFocus,
             "Launch must place remote focus on a named control: " + app.debugDescription
         )
         if section == "Connection" {
