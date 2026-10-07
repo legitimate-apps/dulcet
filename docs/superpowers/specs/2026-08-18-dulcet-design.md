@@ -5641,8 +5641,15 @@ not enter into it either.
   answer. The person is told the candidates (`PossibleDuplicate`, naming them) and the
   create waits for them: `chooseCreated(localId, id)` adopts the one they pick,
   `chooseCreated(localId, null)` says none is theirs and sends it again, and `withdraw` takes the
-  create back. Later flushes pass a waiting create over, and `pendingChanges` lists it with its
-  candidates.
+  create back. Later flushes send nothing for a waiting create, and `pendingChanges` lists it with
+  its candidates. While any create waits, each flush that may send (not while a 429's wait runs)
+  first lists the server's playlists, one listing for every waiting create, and a candidate no
+  longer listed — deleted by another client — leaves the choice: the create is asked again with the
+  candidates that remain (`PossibleDuplicate`), never adopting one the person passed over, and with
+  none left it waits no longer and that flush looks for what its send made again, listing again, as
+  for any create in doubt. A listing that fails changes no choice; a failure that would hold every
+  change — a 429, the account refused, the server unreachable — stops the flush as a change's own
+  would, a 429's wait included, and any other is the listing's own and the flush goes on.
 - A create **deleted here** while its send was in doubt deletes **nothing** — whether it was deleted
   before the flush looked for it or while the flush was looking. The person is told the candidates'
   ids (`PossiblyCreated`): the shell offers "A playlist named *X* may have been created. Delete it on
@@ -7607,6 +7614,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-07 — A create waiting for the person's choice drops a candidate the server no longer
+lists (§18.6).** A waiting create was passed over by every flush, so a candidate another client
+deleted stayed in the choice, and the shells asked about it again at each launch. While any create
+waits, each flush that may send now lists the server's playlists first, and a candidate not listed
+leaves the choice: the create is asked again with the rest, never adopting the one left, and with
+none left it is looked at again and, nothing of its name being listed, sent again. That listing's
+failure is classified as a change's would be: a 429 sets the wait and holds every change, a refused
+account or an unreachable server stops the flush, and the listing's own failure changes nothing.
+OBSERVED with the fake server (`PlaylistWaitingCreateRecheckTest`): with the check removed the
+drop-and-ask-again and the look-again tests fail; with every listing failure swallowed the 429 and
+timeout tests fail; one listing per flush while a create waits and none otherwise is counted.
 
 **2026-10-07 — A connection that drops after it was made leaves a write in doubt (§18.3, §18.6).**
 Both outboxes took every unreachable failure as proof that nothing arrived, so a write whose
