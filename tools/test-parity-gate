@@ -973,6 +973,12 @@ passing_cases = """\
             name="testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPadOS" time="0.1" />
   <testcase classname="DulcetKeychainIOSTests"
             name="testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPadOS" time="0.1" />
+  <testcase classname="DulcetKeychainTVOSTests"
+            name="testConf76ACachedOpenPublishesBeforeAnyAnswerOnAppleTV" time="0.1" />
+  <testcase classname="DulcetKeychainTVOSTests"
+            name="testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnAppleTV" time="0.1" />
+  <testcase classname="DulcetKeychainTVOSTests"
+            name="testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnAppleTV" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="searchQueryRanksAndActivatesTrackThroughHostedAppUI" time="0.1" />
   <testcase classname="DulcetiOSUITests"
@@ -1144,6 +1150,8 @@ passing_cases = """\
             name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV" time="0.1" />
   <testcase classname="DulcetMacLyricsAndQualityAppTest"
             name="lyricsPanelShowsEveryStateThroughTheHostedMacApp" time="0.1" />
   <testcase classname="DulcetMacLyricsAndQualityAppTest"

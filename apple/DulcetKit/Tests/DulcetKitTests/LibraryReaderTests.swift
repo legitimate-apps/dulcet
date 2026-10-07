@@ -1435,6 +1435,45 @@ func searchIsAnsweredByTheReaderFromTheFirstCharacter() throws {
     #expect(model.current == nil)
 }
 
+/// SwiftUI can report the search screen gone while it is still showing: on Apple TV, choosing
+/// Search with a Library page pushed ran the screen's onAppear and then its onDisappear a
+/// millisecond later, with no second onAppear, and the field went on taking text. The screen must
+/// still answer what is typed into it, not wait on a subscription its own disappearance closed.
+@Test @MainActor
+func aSearchScreenReportedGoneWhileItIsStillTypedIntoAnswersWhatIsTyped() throws {
+    let factory = RecordingReaderFactory()
+    let (store, session, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(
+            serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader",
+        factory: factory
+    )
+    store.navigate(to: .search)
+    let model = DulcetReaderSearchModel()
+    model.open(in: session, query: store.searchQuery)
+    let reader = try #require(factory.made.first)
+    let first = try #require(reader.searches.first)
+    // The disappearance that arrives while the screen is still on show.
+    model.close()
+    #expect(first.closed, "control: the disappearance closed the subscription")
+
+    store.searchQuery = "Thr"
+    model.updateQuery(store.searchQuery)
+    try #require(reader.searches.count == 2, "the screen subscribed again for what was typed into it")
+    let answering = try #require(reader.searches.last)
+    #expect(answering.queries.last == "Thr")
+    answering.publish(DulcetReaderSearchPublication(
+        query: "Thr", sequence: 1, scope: .deviceOffline(nil), rows: []))
+    #expect(model.current?.query == "Thr")
+    #expect(DulcetReaderSearchContent(query: model.query, publication: model.current, onActivate: { _ in })
+        .presentation != .waiting, "the screen answers from this device instead of waiting on the server")
+
+    // The screen's own disappearance still closes what it opened.
+    model.close()
+    #expect(answering.closed)
+}
+
 /// Try Again on a search the reader itself failed re-runs the search, which answers again for the
 /// query in the field; the reconnect would leave it as it is (§16.15). A server failure is still
 /// the reconnect's.

@@ -1075,8 +1075,17 @@ public final class DulcetReaderSearchModel {
         subscription?.updateQuery(query)
     }
 
+    /// Text typed into the field. A screen still being typed into is on show, so a subscription
+    /// its disappearance closed is opened again: SwiftUI can report the screen gone while it is
+    /// still showing (on Apple TV, choosing Search with a Library page pushed ran onAppear and
+    /// then onDisappear with no second onAppear), which left the field waiting for an answer that
+    /// could never arrive.
     public func updateQuery(_ query: String) {
         guard query != self.query else { return }
+        if subscription == nil, let session {
+            open(in: session, query: query)
+            return
+        }
         self.query = query
         subscription?.updateQuery(query)
     }

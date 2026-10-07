@@ -787,27 +787,56 @@
         },
         "tvos": {
           "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-76": "The Apple TV proof browses a connected library only: it never relaunches into what this device saw, never goes offline and counts no request, so publishing before any request is not observed.",
-            "CONF-77": "No Apple test counts the requests a reconnect makes, and the Apple TV proof never reconnects.",
-            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on a tvOS simulator (the tvOS simulator runs the core-conformance suite only), and the albums grid the proof walks holds eight albums, so it never spans a second page.",
-            "CONF-86": "The proof observes Home's Recently Added shelf filling from the server, tile for tile in the server's newest order, but not that rows publish independently or that one failing row leaves the others live.",
-            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, which never run on a tvOS simulator; the proof observes no look-ahead read."
-          },
           "evidence": [
             {
               "observes": "on Apple TV, driven by the remote against the disposable server and asserted against the server's own reads, Library opens on Home and its Recently Added shelf fills with the server's newest albums in order; Albums fills its grid and Right walks it in the server's alphabetical order to an album, whose page shows the server's tracks in order; Select on a later track plays it, Now Playing names it and its album and its position advances; Back pops the album page and puts focus on the album that opened it, in the Albums grid; Artists lists the server's artists, an artist's page shows its albums in the server's order and is reached by the remote, a control of the album opened from it holds focus before Back is pressed, and Back returns focus to that album and then to the artist's row in Artists. No request is counted",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt"
+            },
+            {
+              "observes": "on Apple TV, every step by the remote, through the production app and reader against the disposable server, an album favourited live on its page is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into Library, not Connection, offering Reconnect; the album opens from its tile in the Albums grid with every track listed from this device as unavailable offline, says it is showing what this device saw, and still shows the favourite; search there answers from this device and says so; back in Library the album page's Reconnect brings it live in place and the favourite is removed from the server again. No request is counted",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV"
+            },
+            {
+              "conformance": "CONF-82",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf82ReaderTearsRebasesTheViewportAppendsWhileScanningKeepsTheAnchorReadsNoStampAsNoEpochAFailedReadAsUnreadAndNoTotalAsUnknown"
+            },
+            {
+              "conformance": "CONF-87",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
+            },
+            {
+              "conformance": "CONF-76",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainTVOSTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnAppleTV"
+            },
+            {
+              "conformance": "CONF-77",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainTVOSTests/testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnAppleTV"
+            },
+            {
+              "conformance": "CONF-86",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainTVOSTests/testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnAppleTV"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed; no Apple TV proof relaunches offline or reconnects, none drives home rows failing independently (CONF-86), and the core reader tests that exercise window tearing and rebasing (CONF-82) and look-ahead (CONF-87) never run on a tvOS simulator. Until such tests exist no workflow, job or test can be named."
+            "blocked_on": "first-passing-apple-conformance-core-run-on-main",
+            "reason": "Every proof cited here has passed on a tvOS simulator against a disposable server outside CI, and apple-ci's apple-conformance-core job now runs each of them (the core reader tests in its tvOS core-conformance phase, the counted and saved-account proofs after the Apple TV library proof); none has yet passed in that job on main. The cell is promoted to shipped once that job has run them all green on main."
           },
-          "reason": "The Apple TV UI proof runs the production app on a tvOS simulator against the disposable server in apple-ci's conformance job and exports its JUnit to the required apple-ci execution verifier. It drives every step by the remote and observes what the screen shows and where focus is, not the reader's publications."
+          "reason": "Both Apple TV UI proofs run the production app on a tvOS simulator against the disposable server in apple-ci's conformance job and export their JUnit to the required apple-ci execution verifier. They drive every step by the remote and observe what the screen shows and where focus is, not the reader's publications; the saved-account proof fails on any idiom but Apple TV. CONF-76, CONF-77 and CONF-86 are counted through this app on the tvOS simulator at the fault proxy in front of the disposable server, by the app-hosted reader tests, each failing on any idiom but Apple TV. CONF-82 and CONF-87 run as the core reader's own conformance tests on the tvOS simulator (tvosSimulatorArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither. They evidence the reader this app reads through, not a screen."
         },
         "android": {
           "status": "shipped",

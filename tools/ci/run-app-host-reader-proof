@@ -12,6 +12,7 @@
 #   run-app-host-reader-proof ipados <ipad-simulator-destination>
 #   run-app-host-reader-proof iphone
 #   run-app-host-reader-proof counted-simulators <ipad-simulator-udid>
+#   run-app-host-reader-proof tvos
 #
 # One mode per call, so each proof keeps its own position in the calling step's sequence. The two
 # simulator proofs connect through the app's debug launch hook and then relaunch with the account
@@ -26,6 +27,11 @@
 # late or failed on purpose (each proof clears them, pass or fail). One proof per result bundle,
 # because the execution guard requires exactly one. `counted-simulators` runs them in the iOS app
 # host on the iPhone and then the iPad, each method failing on the other device class.
+#
+# `tvos` runs the same three counted proofs in the Apple TV app host, then the Apple TV saved-account
+# proof: a UI test that favourites an album by remote, relaunches with the account saved and no
+# account hook into Library from what this device saw, searches there, and reconnects in place. Each
+# method fails on any device class but Apple TV. It reuses the products the tvOS search proof built.
 
 set -euo pipefail
 
@@ -44,8 +50,11 @@ case "$mode" in
         [ "$#" -eq 2 ] || { echo "run-app-host-reader-proof counted-simulators: needs the iPad simulator's UDID" >&2; exit 2; }
         ipad_udid="$2"
         ;;
+    tvos)
+        [ "$#" -eq 1 ] || { echo "run-app-host-reader-proof tvos: takes no further arguments" >&2; exit 2; }
+        ;;
     *)
-        echo "run-app-host-reader-proof: mode must be 'macos', 'ipados', 'iphone' or 'counted-simulators', got '${mode}'" >&2
+        echo "run-app-host-reader-proof: mode must be 'macos', 'ipados', 'iphone', 'counted-simulators' or 'tvos', got '${mode}'" >&2
         exit 2
         ;;
 esac
@@ -240,6 +249,77 @@ if [ "$mode" = counted-simulators ]; then
         "$RUNNER_TEMP/dulcet-ipados-reader-conf86.xcresult" \
         "$RUNNER_TEMP/dulcet-ipados-reader-conf86-junit/TEST-DulcetKeychainIOSTests.xml" \
         DulcetKeychainIOSTests
+    exit 0
+fi
+
+if [ "$mode" = tvos ]; then
+    proxy_url=http://127.0.0.1:4544
+    curl --fail --silent "$proxy_url/__dulcet/health" >/dev/null || {
+        echo "run-app-host-reader-proof: the fault proxy does not answer on $proxy_url" >&2
+        exit 1
+    }
+    tv=(-project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug
+        -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
+        -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" -parallel-testing-enabled NO)
+    python3 tools/ci/isolate-simulator --phase reader-counted-tvos --keep-name "Apple TV 4K (3rd generation)"
+    export TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533
+    export TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true
+    export TEST_RUNNER_DULCET_LYRICS_FAULT_PROXY_URL="$proxy_url"
+    allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300)
+    xcodebuild test-without-building "${tv[@]}" "${allowance[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-reader-conf76.xcresult" \
+        -only-testing:DulcetKeychainTVOSTests/DulcetReaderCountedAppTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnAppleTV 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-tvos-reader-conf76.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf76.xcresult" \
+        DulcetKeychainTVOSTests.DulcetReaderCountedAppTests \
+        testConf76ACachedOpenPublishesBeforeAnyAnswerOnAppleTV
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf76.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf76-junit/TEST-DulcetKeychainTVOSTests.xml" \
+        DulcetKeychainTVOSTests
+    xcodebuild test-without-building "${tv[@]}" "${allowance[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-reader-conf77.xcresult" \
+        -only-testing:DulcetKeychainTVOSTests/DulcetReaderCountedAppTests/testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnAppleTV 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-tvos-reader-conf77.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf77.xcresult" \
+        DulcetKeychainTVOSTests.DulcetReaderCountedAppTests \
+        testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnAppleTV
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf77.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf77-junit/TEST-DulcetKeychainTVOSTests.xml" \
+        DulcetKeychainTVOSTests
+    xcodebuild test-without-building "${tv[@]}" "${allowance[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-reader-conf86.xcresult" \
+        -only-testing:DulcetKeychainTVOSTests/DulcetReaderCountedAppTests/testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnAppleTV 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-tvos-reader-conf86.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf86.xcresult" \
+        DulcetKeychainTVOSTests.DulcetReaderCountedAppTests \
+        testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnAppleTV
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf86.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-reader-conf86-junit/TEST-DulcetKeychainTVOSTests.xml" \
+        DulcetKeychainTVOSTests
+
+    # The saved-account proof, on the device the counted proofs left booted. Its first launch
+    # connects through the app's debug account hook; the relaunch has none.
+    TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+        TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+        TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+        xcodebuild test-without-building "${tv[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-reader.xcresult" \
+            -only-testing:DulcetTVUITests/DulcetTVUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-tvos-reader.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-tvos-reader.xcresult" \
+        DulcetTVUITests.DulcetTVUITests \
+        testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-reader.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-reader-junit/TEST-DulcetTVUITests.xml" \
+        DulcetTVUITests
     exit 0
 fi
 
