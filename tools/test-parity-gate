@@ -1192,6 +1192,10 @@ passing_cases = """\
             name="aPartialFileKeptAfterADroppedConnectionIsResumedWithARangeRequestAfterARelaunch" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.DownloadedTitleOfflineTest"
             name="aSongDownloadedByIdAloneIsNamedOnNowPlayingAfterAnOfflineRelaunch" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.AndroidEmulatorAccountConnectProofTest"
+            name="aPersonReachesEveryConnectStateOnTheWayFromAnEmptyInstallToTheLibraryAndBackAfterARelaunch" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvEmulatorAccountConnectProofTest"
+            name="aPersonWithTheRemoteReachesEveryConnectStateFromAnEmptyInstallToTheLibraryAndBackAfterARelaunch" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.TvDownloadedTitleOfflineTest"
             name="aSongDownloadedByIdAloneIsNamedOnTheTvPlayerAfterAnOfflineRelaunch" time="0.1" />
   <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"

@@ -7627,6 +7627,30 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-07 — Android evidences CONF-09b through its apps, says an unreadable saved account on the
+TV, keeps the TV keyboard down until a field is selected, and names CONF-10b as a gap.** On both `account.connect` Android cells, CONF-09b is now evidenced
+in core-ci on the API 34 phone and Android TV emulators against the disposable server
+(`AndroidEmulatorAccountConnectProofTest`, `AndroidTvEmulatorAccountConnectProofTest`). Each starts
+from an install with no saved account and is driven by touches at each control's place on the screen,
+or by the remote and the TV's own keyboard. Each state comes from a production transition: a wrong
+password refused by the server (error 40, read from the wire), the server unreachable, a held request
+cancelled, a save the device refuses (the preferences directory read-only), connected, a relaunch with
+the server unreachable, and a relaunch after the saved account's Keystore key is deleted. On Android,
+connected is the library and saved-and-disconnected is that library opened at relaunch and saying it
+is offline; neither app has separate cards for them. The TV used to open an empty connect form beside
+Sign out, saying nothing, when the saved account could not be read. It now says the saved account
+could not be read on this TV and offers to connect again or sign it out; the line goes once the
+account is signed out. The TV proof failed on that step before the change (core-ci run 37637171382).
+The TV's form fields brought up the on-screen keyboard whenever the remote landed on one, so moving
+down the form took the D-pad away at each field until Back closed it (three times on the way to Sign
+out, OBSERVED). They now work as the search field does: read-only until the centre key or a tap
+selects them, and read-only again once the remote leaves.
+The same proofs OBSERVED that a relaunch with a saved account opens the library and the reader
+connects to the server before any Connect (§16.14 reconnect on foreground), contradicting CONF-10b
+and the explicit-reconnect decision of §13.1. Its view-model citation held only for a form the apps
+never show for a saved account, so CONF-10b is named as a gap on both cells and that test is kept as
+an `observes` row. Both cells stay `partial`, blocked on that product decision.
+
 **2026-10-07 — The TVs' playlist editing is browse, play, add, create and delete (§18.6).** The
 Android TV's `playlists.edit` cell stayed partial "until rename, delete, remove and reorder are
 offered on the TV", while the 2026-10-06 Apple TV record kept rename, removal and reorder on the

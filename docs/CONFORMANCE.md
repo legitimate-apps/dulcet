@@ -92,7 +92,8 @@ base is an error naming that document; the gate never substitutes a different ba
 
 ## Account-connect evidence boundary (CONF-09b)
 
-CONF-09b is an explicit gap on all four Apple `account.connect` cells and on both Android cells.
+CONF-09b is an explicit gap on all four Apple `account.connect` cells. Both Android cells evidence it
+through the production apps on the emulators.
 
 **Apple.** The shared `accountPresentationTransitionsGivenConnectorOutcomes` test submits through the
 production `DulcetPresentationStore` into `DulcetAccountDataSource` and reads real snapshots, but it
@@ -112,13 +113,28 @@ the root loads in one fixture state at the platform's window size; and
 `testAccountConnectUsesRegularWidthSplitLayout` (iPadOS) the regular-width split layout. Un-citing
 them would leave each cell's reason describing a test that nothing checks still runs.
 
-**Android.** `conf09bEveryDeclaredDistinctRenderStateIsReachable` reaches the view model's six render
-states through injected gateway results (`ImmediateGateway`, `CancellableGateway`) and an injected
-failing credential store — the same boundary as the Apple test. It is cited as a bounded `observes`
-row on the `android` and `androidtv` cells, and CONF-09b is named as a gap there for the same reason:
-the production gateway originating each outcome, and a production credential save failing, are not
-observed. The capability point below does not arise on Android, which declares one failure render
-state for every error.
+**Android.** `AndroidEmulatorAccountConnectProofTest` (phone) and
+`AndroidTvEmulatorAccountConnectProofTest` (TV) run in core-ci on the API 34 emulators against the
+disposable server, from an install with no saved account. The phone is driven by touches injected at
+each control's place on the screen and typed key events; the TV by the remote's keys and its own
+on-screen keyboard. Every state comes from a production transition: a wrong password the server
+itself refuses (its error code 40 is read from the wire), the server made unreachable, a request held
+in flight and cancelled, the app's preferences directory made read-only so the real save fails,
+connected, a relaunch with the server unreachable, and a relaunch after the saved account's Keystore
+key is deleted, as a Keystore reset deletes it. Neither app has separate saved or connected cards:
+connected is the library, and saved-and-disconnected is the saved account's library opened at
+relaunch, saying it is offline. A relaunch is a new activity in the same process.
+
+`conf09bEveryDeclaredDistinctRenderStateIsReachable`, which reaches the view model's six render
+states through injected gateway results and an injected failing credential store, stays cited as a
+bounded `observes` row. The capability point below does not arise on Android, which declares one
+failure render state for every error.
+
+The same proofs show that both apps contradict CONF-10b. A relaunch with a saved account opens the
+library, whose reader reconnects by itself when the app comes to the foreground (§16.14). The prefilled
+form that waits for Connect is never shown. CONF-10b is therefore a named gap on both Android cells, and
+its view-model test is kept as an `observes` row. Whether Android keeps reconnecting by itself or
+waits for an explicit Reconnect is an open product decision.
 
 `unevidenced_conformance` maps a declared CONF id to a nonblank reason, and the parity gate refuses a
 `shipped` cell that carries one. When a cell cites at least one conformance row, or is `shipped`, the
