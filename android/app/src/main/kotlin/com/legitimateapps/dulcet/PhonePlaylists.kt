@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -476,6 +477,10 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
     var note by remember { mutableStateOf<String?>(null) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val addedTemplate = stringResource(R.string.playlist_added)
+    // One choice per presentation. Claim it synchronously, before invoking the asynchronous core:
+    // another tap can arrive before Compose redraws the disabled rows. Keep the claim after success
+    // until the sheet leaves composition; dismissing it need not remove it in the same frame.
+    var submitting by remember(session, addition) { mutableStateOf(false) }
     fun finished(name: String, result: AndroidPlaylistEditResult) {
         val line = resources.playlistEditLine(result)
         if (line == null) {
@@ -483,6 +488,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
             dismiss()
         } else {
             note = line
+            submitting = false
         }
     }
     ModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
@@ -496,16 +502,27 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     headlineContent = { Text(stringResource(R.string.playlist_add_to_new)) },
                     leadingContent = { Icon(DulcetIcons.Add, null) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable { naming = true }.testTag("playlists.add.new"),
+                    modifier = Modifier.clickable(enabled = !submitting) { if (!submitting) naming = true }.testTag("playlists.add.new"),
                 )
                 if (naming) NameEditor(R.string.playlist_new, R.string.playlist_create, addition.title, "playlists.add.name",
                     { naming = false }) { name ->
+                    if (submitting) return@NameEditor
+                    submitting = true
+                    note = null
                     naming = false
                     val songs = when (addition) {
                         is PlaylistAddition.Songs -> addition.rawIds
                         is PlaylistAddition.Album -> addition.trackRawIds
                     }
                     session.playlists.create(name, songs) { finished(name, it) }
+                }
+                if (submitting) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+                        .testTag("playlists.add.submitting"), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(12.dp))
+                        Text(stringResource(R.string.playlist_adding))
+                    }
                 }
                 note?.let { StatementText(it, "playlists.add.note") }
                 if (current != null) {
@@ -522,7 +539,11 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 40.dp) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.clickable {
+                    modifier = Modifier.clickable(enabled = !submitting) {
+                        if (submitting) return@clickable
+                        submitting = true
+                        note = null
+                        naming = false
                         when (addition) {
                             is PlaylistAddition.Songs -> session.playlists.append(playlist.rawId, addition.rawIds) { finished(playlist.name, it) }
                             is PlaylistAddition.Album -> session.playlists.appendAlbum(playlist.rawId, addition.rawId) { finished(playlist.name, it) }

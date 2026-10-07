@@ -498,14 +498,19 @@ public final class DulcetPlaylistEditor {
         }
     }
 
-    /// Adds what the chooser is adding to `playlistID`, and closes the chooser.
+    /// Adds what the chooser is adding to `playlistID`, and closes the chooser. The chooser takes
+    /// one choice: a second tap that lands while the sheet is still leaving the screen finds the
+    /// chooser already closed and adds nothing, rather than appending the same songs again.
     public func add(_ addition: DulcetPlaylistAddition, to playlistID: String) {
+        guard self.addition == addition else { return }
         self.addition = nil
         perform(addition.edit(into: playlistID))
     }
 
-    /// Makes a playlist holding what the chooser is adding, and closes the chooser.
+    /// Makes a playlist holding what the chooser is adding, and closes the chooser. As with `add`,
+    /// only the chooser on screen can make one; with no addition this is the plain New Playlist.
     public func createPlaylist(named name: String, with addition: DulcetPlaylistAddition?) {
+        if let addition, self.addition != addition { return }
         self.addition = nil
         switch addition {
         case let .songs(songs, _):
