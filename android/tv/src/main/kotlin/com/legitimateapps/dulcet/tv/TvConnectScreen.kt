@@ -54,6 +54,7 @@ import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.AccountConnectOutcome
 import com.legitimateapps.dulcet.AccountCredentialStore
+import com.legitimateapps.dulcet.CredentialStoreException
 import com.legitimateapps.dulcet.connectAndSaveAccount
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
@@ -83,6 +84,11 @@ internal fun TvConnectScreen(
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
     val connecting = attempt?.isActive == true
+    // A saved account whose record cannot be read (its Keystore key lost, say) is said, not left as
+    // an unexplained empty form beside Sign out. Read again whenever the saved account changes, so
+    // signing it out takes the line away.
+    val saved = LocalTvAccountActions.current?.saved
+    val unreadable = remember(saved) { runCatching { store.load() }.exceptionOrNull() is CredentialStoreException }
     // A form that leaves the screen abandons its attempt, so a connect answered after that saves
     // nothing — not even when the connector returns without noticing its scope was cancelled.
     // `stillWanted` reads this. Defence in depth: Sign out, the one way off this form while a
@@ -144,7 +150,7 @@ internal fun TvConnectScreen(
                 Button(onClick = ::submitOrCancel, modifier = Modifier.testTag("tv.connect.submit")) {
                     Text(stringResource(if (connecting) R.string.tv_cancel else R.string.tv_connect))
                 }
-                message?.let {
+                (message ?: R.string.tv_error_unreadable.takeIf { unreadable })?.let {
                     Text(stringResource(it), style = MaterialTheme.typography.bodyLarge,
                         color = if (it == R.string.tv_connecting) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.error,
