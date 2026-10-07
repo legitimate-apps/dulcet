@@ -22,6 +22,7 @@ import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.ServerRelay
 import com.legitimateapps.dulcet.emulator.await
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
+import com.legitimateapps.dulcet.emulator.awaitWindowInFront
 import com.legitimateapps.dulcet.emulator.forgetSavedAccount
 import com.legitimateapps.dulcet.emulator.loseSavedAccountKey
 import com.legitimateapps.dulcet.emulator.savedAccountFileNamesAnAccount
@@ -210,18 +211,16 @@ class AndroidEmulatorAccountConnectProofTest {
 
     /**
      * The app opened from the launcher, and in front: its window holds the focus, as a person waits for
-     * the launch animation before touching. A touch sent while it still runs goes to the launcher
-     * (OBSERVED in core-ci run 37638393461).
+     * the app before touching it. A touch sent before then went to the launcher (OBSERVED in core-ci
+     * run 37638393461).
      */
     private fun launch(): ActivityScenario<MainActivity> = ActivityScenario.launch<MainActivity>(
         Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClassName(context, MainActivity::class.java.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
     ).also { scenario ->
-        awaitNode("the app's window in front") {
-            var focused = false
-            scenario.onActivity { focused = it.hasWindowFocus() }
-            focused
-        }
+        var activity: MainActivity? = null
+        scenario.onActivity { activity = it }
+        awaitWindowInFront(instrumentation, { activity })
     }
 
     private fun requireNothingSaved(store: AndroidAccountCredentialStore, moment: String) {

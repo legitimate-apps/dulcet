@@ -18,6 +18,7 @@ import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.ServerRelay
 import com.legitimateapps.dulcet.emulator.await
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
+import com.legitimateapps.dulcet.emulator.awaitWindowInFront
 import com.legitimateapps.dulcet.emulator.forgetSavedAccount
 import com.legitimateapps.dulcet.emulator.loseSavedAccountKey
 import com.legitimateapps.dulcet.emulator.savedAccountFileNamesAnAccount
@@ -217,17 +218,15 @@ class AndroidTvEmulatorAccountConnectProofTest {
     }
 
     /**
-     * The app opened and in front: its window holds the focus, so the remote's keys reach it rather
-     * than the launcher still animating it in (as a phone touch did in core-ci run 37638393461).
+     * The app opened and in front: its window holds the focus, so the remote's keys reach it and not
+     * the launcher (where a phone touch went in core-ci run 37638393461).
      */
     private fun launch(): ActivityScenario<TvSearchActivity> = ActivityScenario.launch<TvSearchActivity>(
         Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
     ).also { scenario ->
-        awaitNode("the app's window in front") {
-            var focused = false
-            scenario.onActivity { focused = it.hasWindowFocus() }
-            focused
-        }
+        var activity: TvSearchActivity? = null
+        scenario.onActivity { activity = it }
+        awaitWindowInFront(instrumentation, { activity })
     }
 
     private fun requireNothingSaved(store: AndroidAccountCredentialStore, moment: String) {

@@ -1,6 +1,9 @@
 package com.legitimateapps.dulcet.emulator
 
+import android.app.Activity
+import android.app.Instrumentation
 import android.content.Context
+import android.os.SystemClock
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import java.io.File
 import java.security.KeyStore
@@ -62,4 +65,38 @@ fun ServerRelay.serverAnsweredErrorCode(code: Int): Boolean = connections().any 
 fun forgetSavedAccount(context: Context) {
     AndroidAccountCredentialStore(context).delete()
     check(AndroidAccountCredentialStore(context).activeAccountId() == null) { "The saved account could not be removed" }
+}
+
+/**
+ * Waits until [activity]'s window holds the input focus, so that a touch or a key reaches the app as
+ * it would reach it for a person looking at it. On a just-booted emulator the first launch has been
+ * left without focus (OBSERVED in core-ci runs 37638393461 and 37641121763, where a touch then went to
+ * the launcher): halfway through, the screen is woken, the keyguard dismissed and the shade collapsed,
+ * as a person would before using the phone. A window still without focus fails naming what holds it.
+ */
+fun awaitWindowInFront(instrumentation: Instrumentation, activity: () -> Activity?, timeoutMillis: Long = 60_000) {
+    fun focused(): Boolean {
+        var focused = false
+        instrumentation.runOnMainSync { focused = activity()?.hasWindowFocus() == true }
+        return focused
+    }
+    fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
+        java.io.FileInputStream(descriptor.fileDescriptor).bufferedReader().readText()
+    }
+    val start = SystemClock.uptimeMillis()
+    var prepared = false
+    while (SystemClock.uptimeMillis() - start < timeoutMillis) {
+        if (focused()) return
+        if (!prepared && SystemClock.uptimeMillis() - start > timeoutMillis / 2) {
+            prepared = true
+            shell("input keyevent KEYCODE_WAKEUP")
+            shell("wm dismiss-keyguard")
+            shell("cmd statusbar collapse")
+        }
+        SystemClock.sleep(100)
+    }
+    val holder = shell("dumpsys window").lines()
+        .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mFocusedWindow" in it }
+        .distinct().joinToString(" | ") { it.trim().take(200) }
+    error("The app's window never came to the front after ${timeoutMillis}ms (woken and unlocked halfway: $prepared). Focus: $holder")
 }
