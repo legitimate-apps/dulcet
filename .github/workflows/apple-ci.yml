@@ -1165,6 +1165,10 @@ jobs:
           # The Mac's toolbar stars and every playlist edit, each read back from the server
           # (spec §16.20, §18.6), through the hosted app. In a file for the same reason.
           tools/ci/run-ratings-playlists-proofs macos
+          # Every account-connect render state through the hosted Mac app (spec §10.2; CONF-09b),
+          # the persistence error on save through this host's unentitled Keychain. In a file for the
+          # same reason.
+          tools/ci/run-account-connect-state-proofs macos
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
@@ -1761,6 +1765,9 @@ jobs:
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
+          # Every account-connect render state on Apple TV by remote (spec §10.2; CONF-09b). It
+          # signs out what an earlier proof saved and leaves the account saved; it plays nothing.
+          tools/ci/run-account-connect-state-proofs tvos
           # A create whose answer is lost, asked about by remote (spec §18.6): the fault proxy on
           # 4544 forwards the create to this server and answers it with a gateway's 502, another
           # client adds a song, and the return from the Home screen asks whether the playlist is
@@ -2275,6 +2282,8 @@ jobs:
           # Now Playing's stars and every playlist edit on the iPad, each read back from the
           # server; before the streaming-quality cap, which is last to stream on the iPad.
           tools/ci/run-ratings-playlists-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
+          # Every account-connect render state on the iPad (spec §10.2; CONF-09b); it streams nothing.
+          tools/ci/run-account-connect-state-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
           # Every lyrics state beside the iPad player, then the streaming-quality cap, last on
           # the iPad (see the script header).
           tools/ci/run-lyrics-quality-proofs ipados "$IPAD_PLAYBACK_DESTINATION"
@@ -2408,6 +2417,8 @@ jobs:
           # Now Playing's stars and every playlist edit on iPhone, each read back from the server
           # (spec §16.20, §18.6); they stream, so they stay before the streaming-quality cap.
           tools/ci/run-ratings-playlists-proofs iphone
+          # Every account-connect render state on iPhone (spec §10.2; CONF-09b); it streams nothing.
+          tools/ci/run-account-connect-state-proofs iphone
           # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
@@ -2772,4 +2783,8 @@ jobs:
             "$RUNNER_TEMP/dulcet-mac-playlist-play-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-pending-junit" \
             "$RUNNER_TEMP/dulcet-ipados-playlist-play-junit" \
-            "$RUNNER_TEMP/dulcet-ipados-playlist-pending-junit"
+            "$RUNNER_TEMP/dulcet-ipados-playlist-pending-junit" \
+            "$RUNNER_TEMP/dulcet-mac-account-states-junit" \
+            "$RUNNER_TEMP/dulcet-ios-account-states-junit" \
+            "$RUNNER_TEMP/dulcet-ipados-account-states-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-account-states-junit"

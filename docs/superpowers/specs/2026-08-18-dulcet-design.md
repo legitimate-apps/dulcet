@@ -2561,7 +2561,9 @@ the server before Reconnect. The foreground and reachability rules of §16.11 an
 retries of §15.3 and the relaunch re-resolve of §18.10 apply to a session connected in this process;
 a cold launch into a saved account is not a return to the foreground of a connected session (§28,
 2026-10-07). A missing, malformed, or unreadable active item enters the credential-persistence error
-surface instead of silently attempting a connection or discarding the condition. The storage API's
+surface instead of silently attempting a connection or discarding the condition, and says that
+the saved account could not be opened, not that a save failed: the save copy describes an account
+the server just accepted, which a launch-time read has not. The storage API's
 delete path removes the Keychain item before clearing its active-account pointer; an account-management
 logout control is outside this account-connect surface.
 
@@ -6365,7 +6367,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-07 | advertised `formPost` is used successfully; the receiving loopback fixture reports the actual username, salted tokens, and salts it observed; those observed values and the input password are absent from every request trace, log, structured diagnostic, and `DomainError` rendering |
 | CONF-08 | runs separate advertised-`formPost` and non-advertised legacy/query cross-origin scenarios; requires authenticated POST/form placement in the former and GET/query placement in the latter; preserves the exact observed method, target path, raw query, byte-exact body and channel tuple on same-origin hops; permits same-canonical-host `http`→`https` only when scheme-normalised ports are equal, including both default `80`→`443` and equal non-default ports; rejects asymmetric `80`→`80` and `443`→`443` spellings plus every other origin change before send with `Auth.CrossOriginRedirectRejected`; asserts zero target-wire requests for form auth, query auth, a credential-bearing redirected path and a second-hop origin change; rejects HTTPS downgrade; retains cross-origin target mutation checks only as defence in depth |
 | CONF-09a | the account surface publishes progress on submission and Cancel cancels the active operation |
-| CONF-09b | every declared distinct account-connect render state is reachable, including idle, in-progress, saved/disconnected, connected, domain-error, and credential-persistence-error states |
+| CONF-09b | every declared distinct account-connect render state the account-connect path can originate is reached through the app's own transitions, including idle, in-progress, saved/disconnected, connected, each domain-error family the path originates (input, security, transport, authentication, protocol, server), and credential-persistence-error states; a declared state the path never originates (the capability error, §18.12) is named, not reached |
 | CONF-09c | every closed account-error presentation kind has actionable copy; TLS, internationalized-host, and cross-origin redirect remedies retain their decided specifics |
 | CONF-10a | when the platform-secure credential facility is unavailable to the caller, the write returns a typed failure, leaves no active-account pointer, and does not fall back to weaker storage; platform-specific secure-item properties require their own evidence |
 | CONF-10b | a relaunch into persisted credentials sends no network request (library, artwork, playback, plays) until an explicit Connect or Reconnect, except to continue downloads queued earlier; where a form is shown, the credentials prefill it |
@@ -7656,6 +7658,36 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-07 — CONF-09b names the states the path can originate, and a failed launch-time read has
+its own copy (§13.1, §20.4).** CONF-09b asked that "every declared distinct account-connect render
+state is reachable", but the Apple surface declares a capability error that the account-connect path
+never originates (§18.12, revision 109), so no honest proof could meet the row as written. The row
+now asks for every state the path can originate, through the app's own transitions, with each
+domain-error family named, and names the capability error rather than reaching it. Proving it found
+two defects, fixed with tests that fail without them. A launch whose active account the Keychain
+cannot return showed the save failure's copy ("The account could not be saved … the server accepted
+the account"), describing a save that never happened; it now says the saved account could not be
+opened (`DulcetCredentialPersistenceOperation.load`). And opening Connection from the library a
+connection landed on, or from a saved account's library, published the idle state whatever the
+account was, so Connection's state read idle while it showed a connected or saved account; it now
+publishes the state the account status renders. OBSERVED on 2026-10-07 against the local disposable server: the hosted Mac app
+(`DulcetMacAccountConnectStatesAppTest`), an iPhone and an iPad simulator
+(`DulcetAccountConnectStatesUITests`) and an Apple TV simulator driven by the remote alone
+(`DulcetTVAccountConnectStatesUITests`) each reach idle; the input error (an `ftp://` address); the
+security error (plain HTTP with the local-HTTP consent off); the transport error (a loopback port
+that refuses the connection); the authentication error (the server's answer to a wrong password);
+the protocol error (the server's web-player address, `/app`); the server error (the fault proxy
+answering `ping` with OpenSubsonic error 0, the one answer the disposable server never writes to a
+valid request); connecting and its Cancel (a loopback port that never answers); connected;
+saved/disconnected; and the persistence error. On the simulators the connection is submitted
+through Connect's own path by the DEBUG launch hook, because a typed password that is then accepted
+raises the system's save-password prompt, and the persistence error is the real Keychain read
+answering a planted active-account pointer; a failing save has no simulator trigger. On the Mac the
+persistence error is reached both ways for real, through the unentitled host's Keychain, and
+connected and saved/disconnected are reached over an in-memory credential store, because that host's
+Keychain cannot hold an account; CONF-09b therefore stays a named gap on macOS until the entitled
+signed host runs it, and is cited on iOS, iPadOS and tvOS.
 
 **2026-10-07 — Android opens a saved account without contacting its server until Reconnect
 (§13.1, CONF-10b), reports a proxy's 407 as an unsupported challenge (CONF-10c), says every account

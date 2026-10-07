@@ -1,0 +1,150 @@
+#!/bin/bash
+# Run the Apple account-connect render-state proofs (spec §10.2; CONF-09b) against the disposable
+# server and turn each result bundle into cited evidence.
+#
+# A file rather than inline YAML for the reason tools/ci/run-app-host-reader-proof gives: the
+# "Assert Darwin conformance preconditions" step is the largest `run:` block in apple-ci, and the
+# Mac and Apple TV proofs must run INSIDE that step, because the disposable server's lifetime is
+# that step's shell.
+#
+# Usage:
+#   run-account-connect-state-proofs macos
+#   run-account-connect-state-proofs iphone
+#   run-account-connect-state-proofs ipados <ipad-simulator-destination>
+#   run-account-connect-state-proofs tvos
+#
+# One mode per call, so each keeps its own position in the calling step. Each proof reaches idle,
+# the input, security, transport, authentication, protocol and server errors, connecting and its
+# Cancel, connected, saved and disconnected, and the credential-persistence error through the app's
+# own transitions; the Mac proof reaches the persistence error on save as well, through this host's
+# unentitled Keychain.
+# The simulator proofs sign out any account an earlier proof saved, and leave the disposable
+# account saved when they pass; a later proof connects through the launch hook as before. They
+# stream nothing and write nothing to the server. Requests go only to loopback: the server, the fault
+# proxy, and two ports each proof owns (one refused, one that accepts and never answers).
+#
+# Each simulator proof is its own test method that fails on the other device class, so an iPhone
+# run cannot stand as iPad evidence. Each proof runs under XCTest's own execution-time allowance.
+
+set -euo pipefail
+
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+
+allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
+iphone='platform=iOS Simulator,name=iPhone 17 Pro,OS=latest'
+tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
+
+mode="${1:-}"
+case "$mode" in
+    macos|iphone|tvos)
+        [ "$#" -eq 1 ] || { echo "run-account-connect-state-proofs $mode: takes no further arguments" >&2; exit 2; }
+        ;;
+    ipados)
+        [ "$#" -eq 2 ] || { echo "run-account-connect-state-proofs ipados: needs the iPad destination" >&2; exit 2; }
+        ipad_destination="$2"
+        ;;
+    *)
+        echo "run-account-connect-state-proofs: mode must be macos, iphone, ipados or tvos, got '${mode}'" >&2
+        exit 2
+        ;;
+esac
+
+# Every invocation below is written out with its literal -only-testing selector, its execution
+# guard and then its JUnit emission, in that order: tools/verify_ci_policy.py pairs each cited test
+# with the selector its emission follows, and a selector built from a variable pairs with nothing.
+# The guard comes BEFORE the JUnit: `swift-testing-junit` writes a well-formed tests="0" file for
+# an empty bundle, so a renamed test would otherwise ship green. The account reaches the test
+# runner as TEST_RUNNER_-prefixed variables; a trailing KEY=value would be parsed as a build
+# setting.
+export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533
+export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
+export TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password
+# The server-family error is the one answer the disposable server never writes to a valid request,
+# so each proof arms the fault proxy the calling step starts beside it (tools/conformance-env/
+# lyrics-fault-proxy) to answer the connect sequence's `ping` with an OpenSubsonic error, and
+# disarms it at once. Every other request in these proofs goes to the server directly.
+proxy_url=http://127.0.0.1:4544
+export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url"
+curl --fail --silent "$proxy_url/__dulcet/health" >/dev/null || {
+    echo "run-account-connect-state-proofs: the fault proxy does not answer on $proxy_url" >&2
+    exit 1
+}
+# A macOS host test does not inherit xcodebuild's environment, so the Mac proof gets the server as
+# build settings, which the DulcetMac scheme hands the test host. It reuses the product the first
+# macOS app-host proof built, signed ad hoc without entitlements as the other hosted proofs are:
+# that is what makes this host's Keychain refuse the save the proof reaches.
+mac=(
+    -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug -destination 'platform=macOS'
+    -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" -parallel-testing-enabled NO "${allowance[@]}"
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+    DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_TEST_CONFORMANCE_DISPOSABLE=true
+    DULCET_TEST_LYRICS_FAULT_PROXY_URL="$proxy_url"
+)
+ios=(-project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug -parallel-testing-enabled NO "${allowance[@]}")
+tvos=(-project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug -parallel-testing-enabled NO "${allowance[@]}")
+
+case "$mode" in
+macos)
+    export DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 DULCET_CONFORMANCE_DISPOSABLE=true
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-account-states.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacAccountConnectStatesAppTest/everyAccountConnectStateIsReachedThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-account-states.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-account-states.xcresult" \
+        DulcetMacTests.DulcetMacAccountConnectStatesAppTest \
+        everyAccountConnectStateIsReachedThroughTheHostedMacApp
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-account-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-account-states-junit/TEST-DulcetMacAccountConnectStatesAppTest.xml" \
+        DulcetMacAccountConnectStatesAppTest
+    ;;
+iphone)
+    python3 tools/ci/isolate-simulator --phase account-states-iphone --keep-name "iPhone 17 Pro"
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$iphone" -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ios-account-states.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ios-account-states.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ios-account-states.xcresult" \
+        DulcetiOSUITests.DulcetAccountConnectStatesUITests \
+        testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ios-account-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-ios-account-states-junit/TEST-DulcetAccountConnectStatesUITests.xml" \
+        DulcetAccountConnectStatesUITests
+    ;;
+ipados)
+    python3 tools/ci/isolate-simulator --phase account-states-ipad --keep "${ipad_destination##*id=}"
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-account-states.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
+        DulcetiOSUITests.DulcetAccountConnectStatesUITests \
+        testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPadOS
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipados-account-states-junit/TEST-DulcetAccountConnectStatesUITests.xml" \
+        DulcetAccountConnectStatesUITests
+    ;;
+tvos)
+    python3 tools/ci/isolate-simulator --phase account-states-tvos --keep-name "Apple TV 4K (3rd generation)"
+    xcodebuild test-without-building "${tvos[@]}" \
+        -destination "$tv" -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-account-states.xcresult" \
+        -only-testing:DulcetTVUITests/DulcetTVAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedByRemoteOnAppleTV 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-tvos-account-states.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-tvos-account-states.xcresult" \
+        DulcetTVUITests.DulcetTVAccountConnectStatesUITests \
+        testEveryAccountConnectStateIsReachedByRemoteOnAppleTV
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-account-states.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-account-states-junit/TEST-DulcetTVAccountConnectStatesUITests.xml" \
+        DulcetTVAccountConnectStatesUITests
+    ;;
+esac

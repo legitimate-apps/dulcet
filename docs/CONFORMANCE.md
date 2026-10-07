@@ -92,26 +92,57 @@ base is an error naming that document; the gate never substitutes a different ba
 
 ## Account-connect evidence boundary (CONF-09b)
 
-CONF-09b is an explicit gap on all four Apple `account.connect` cells. Both Android cells evidence it
-through the production apps on the emulators.
+CONF-09b asks that every account-connect render state the account-connect path can originate is
+reached through the app's own transitions; the capability error, which the path never originates
+(below), is named rather than reached. It is evidenced on the `ios`, `ipados` and `tvos`
+`account.connect` cells and on both Android cells, through the production apps on the simulators
+and emulators, and is a named gap on `macos`.
 
-**Apple.** The shared `accountPresentationTransitionsGivenConnectorOutcomes` test submits through the
-production `DulcetPresentationStore` into `DulcetAccountDataSource` and reads real snapshots, but it
-injects the connector's completed outcomes and controls the credential store's load and save. It
-checks each step against the one state that step must produce — idle, connecting, connected, a saved
-account reconstructed from the credentials the successful submission actually saved, the state for
-each injected failure kind from a table written out in the test, and the save-failure path — so two
-outcomes exchanging their states fail it. It does not prove that production can originate each
-outcome or forward it through the Apple adapter. It runs in the macOS package run
+**Apple app proofs.** One proof per platform drives the app against the local disposable server and
+reads each state back from what the app shows: `DulcetAccountConnectStatesUITests` on an iPhone and
+an iPad simulator (each its own method, which fails on the other device class),
+`DulcetTVAccountConnectStatesUITests` on an Apple TV simulator by the remote alone, and
+`DulcetMacAccountConnectStatesAppTest` in the hosted Mac app. Each state's trigger is real:
+
+| state | trigger |
+|---|---|
+| idle | a launch with no saved account |
+| input error | an `ftp://` address, refused by the connector before any request |
+| security error | the server's plain-HTTP address with the local-HTTP consent off |
+| transport error | a loopback port that refuses the connection |
+| authentication error | the disposable server's own answer to a wrong password |
+| protocol error | the server's web-player address, `/app`, which answers with its own 404 page |
+| server error | the fault proxy in front of the server answers the connect sequence's `ping` with OpenSubsonic error 0, and counts its answer |
+| in progress, then Cancel | a loopback port that accepts the connection and never answers; the proof counts the connection |
+| connected | the right account (on the simulators submitted through Connect's own path by the DEBUG launch hook) |
+| saved, disconnected | a relaunch with the account saved: the library offers Reconnect, Connection names the server |
+| credential persistence | simulators: a launch whose active-account pointer names no Keychain item, so the real Keychain read fails; Mac: that, and the unentitled host's Keychain refusing to save an account the server accepted |
+
+Three inputs are not the server's or the person's own. The server error's answer is the fault
+proxy's, because the disposable server never sends a server-family error to a valid request; the
+connector, the Apple adapter and the view still classify a real HTTP answer. The persistence error's
+pointer is planted, in the argument domain of the defaults the store reads; the read and its answer
+are the Keychain's. And the simulators' connection is submitted by the launch hook, which sets the
+form's fields and calls the same submission Connect calls, because a typed password that is then
+accepted raises the system's save-password prompt, which no UI test can dismiss (`docs/TRAPS.md`
+33). A failing Keychain save has no simulator trigger.
+
+**Why macOS stays a gap.** The Mac host is signed ad hoc without entitlements, so its Keychain refuses
+every save: the proof reaches both persistence errors for real, but connected and saved/disconnected
+over an in-memory credential store, with the production connector, reader, data source and view. A
+real Keychain save on macOS, and a relaunch that reads it back, need the entitled signed host. The
+Mac proof is cited as an `observes` row.
+
+**The earlier presentation test.** `accountPresentationTransitionsGivenConnectorOutcomes` submits
+through the production `DulcetPresentationStore` into `DulcetAccountDataSource` but injects the
+connector's completed outcomes and controls the credential store. It checks each step against the
+one state that step must produce, so two outcomes exchanging their states fail it, but it does not
+prove that production can originate each outcome. It runs in the macOS package run
 (`DulcetKitTests`), on the iPhone and the iPad (`DulcetKitIOSTests`) and on Apple TV
-(`DulcetKitTVOSTests`), and each cell cites it as a bounded `observes` row, never as CONF-09b.
-
-The tests these cells cited for CONF-09b before are kept, each as an `observes` row stating the one
-thing it shows: `fixtureRendersEveryDeclaredDistinctState` (macOS) that the deterministic fixture
-covers every declared state; `accountConnectRootLoadsForIOS` and `accountConnectRootLoadsForTVOS` that
-the root loads in one fixture state at the platform's window size; and
-`testAccountConnectUsesRegularWidthSplitLayout` (iPadOS) the regular-width split layout. Un-citing
-them would leave each cell's reason describing a test that nothing checks still runs.
+(`DulcetKitTVOSTests`), and each cell cites it as a bounded `observes` row. So are the tests the
+cells cited for CONF-09b before revision 109, each for the one thing it shows:
+`fixtureRendersEveryDeclaredDistinctState` (macOS), `accountConnectRootLoadsForIOS`,
+`accountConnectRootLoadsForTVOS` and `testAccountConnectUsesRegularWidthSplitLayout` (iPadOS).
 
 **Android.** `AndroidEmulatorAccountConnectProofTest` (phone) and
 `AndroidTvEmulatorAccountConnectProofTest` (TV) run in core-ci on the API 34 emulators against the

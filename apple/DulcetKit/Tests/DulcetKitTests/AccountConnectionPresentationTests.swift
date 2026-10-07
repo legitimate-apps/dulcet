@@ -152,6 +152,43 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
     #expect(persistenceFailed.snapshot.state == .accountErrorPersistence)
 }
 
+/// A saved account whose Keychain item cannot be read at launch -- the pointer survived and the
+/// item did not, as a backup restored to another device leaves it, since the item is this-device-only
+/// -- enters the persistence error, and says what happened: nothing was just accepted or saved, so
+/// the save failure's copy ("The server accepted the account, but the system Keychain did not save
+/// it") would be false. The control is that a failed save still says exactly that.
+@Test @MainActor
+func aSavedAccountThatCannotBeReadAtLaunchIsNotDescribedAsAFailedSave() {
+    let unreadable = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        credentialStore: Conf09bUnreadableCredentialStore()
+    ))
+    #expect(unreadable.snapshot.state == .accountErrorPersistence)
+    guard case let .failed(failure) = unreadable.snapshot.accountConnection else {
+        Issue.record("An unreadable saved account must enter the persistence error; it entered \(unreadable.snapshot.accountConnection)")
+        return
+    }
+    #expect(failure.kind == .credentialPersistenceFailed)
+    #expect(failure.title == "Your saved account could not be opened")
+    #expect(failure.message == "Dulcet found a saved account on this device, but the system Keychain did not return its details.")
+    #expect(failure.recovery == "Enter the account details and connect again to save it on this device.")
+
+    let saveFailure = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
+        kind: .credentialPersistenceFailed, serverName: "Music"
+    ))
+    #expect(saveFailure.title == "The account could not be saved")
+    #expect(saveFailure.message == "The server accepted the account, but the system Keychain did not save it.")
+}
+
+@MainActor
+private final class Conf09bUnreadableCredentialStore: DulcetCredentialStoring {
+    func load() throws -> DulcetAccountConnectRequest? {
+        throw DulcetCredentialStoreError.credentialMissing
+    }
+    func save(_ request: DulcetAccountConnectRequest) throws {}
+    func delete() throws {}
+}
+
 @MainActor
 private final class Conf09bFailingSaveCredentialStore: DulcetCredentialStoring {
     func load() throws -> DulcetAccountConnectRequest? { nil }
@@ -218,6 +255,44 @@ func productionDataSourceKeepsDestinationAndRenderedStateInAgreement() {
 
         #expect(store.snapshot.selectedDestination == destination)
         #expect(store.snapshot.state == expectedState)
+    }
+}
+
+/// Connection reached from another destination publishes the state its account status renders. A
+/// connection made on Connection lands on the library, so the person returns to Connection from
+/// there: the surface shows "Connected to" and Sign Out, and the published state must say
+/// connected too, not idle. Before this, every status reached Connection from the library as
+/// `accountConnectIdle`.
+@Test @MainActor
+func connectionReachedFromTheLibraryPublishesTheStateItsStatusRenders() {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        libraryBrowser: ControlledLibraryBrowser(),
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    )
+    let store = DulcetPresentationStore(source: source)
+    #expect(store.snapshot.state == .accountConnectIdle)
+    store.selectDestination(.library)
+    store.selectDestination(.settings)
+    #expect(store.snapshot.state == .accountConnectIdle, "the control: no account is idle from anywhere")
+
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    #expect(store.snapshot.selectedDestination == .library, "a connection made on Connection lands on the library")
+
+    store.selectDestination(.settings)
+    #expect(store.snapshot.selectedDestination == .settings)
+    #expect(store.snapshot.state == .accountConnected)
+    guard case .connected = store.snapshot.accountConnection else {
+        Issue.record("the account must still be connected; status \(store.snapshot.accountConnection)")
+        return
     }
 }
 

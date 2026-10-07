@@ -325,6 +325,30 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.control("POST", "/__dulcet/rule?action=fail&state=off")
         self.assertEqual(self.request("GET", f"/rest/getStarred2?t={CANARY}")[0], 200)
 
+    def test_a_subsonic_error_answers_the_armed_endpoint_with_a_failed_envelope_and_never_reaches_the_server(self):
+        status, armed = self.control("POST", "/__dulcet/subsonic-error?endpoint=ping&code=0&state=on")
+        self.assertEqual((status, armed), (200, {"rule": {"endpoint": "ping", "code": 0}, "answered": 0}))
+        status, _, body = self.request("GET", f"/rest/ping.view?t={CANARY}&f=json")
+        self.assertEqual(status, 200)
+        envelope = json.loads(body)["subsonic-response"]
+        self.assertEqual((envelope["status"], envelope["error"]["code"]), ("failed", 0))
+        self.assertNotIn(CANARY.encode(), body, "the answer repeats nothing the client sent")
+        self.assertEqual(self.request("GET", f"/rest/getOpenSubsonicExtensions.view?t={CANARY}")[0], 200)
+        self.assertEqual([seen["path"].split("?")[0] for seen in Upstream.seen],
+                         ["/rest/getOpenSubsonicExtensions.view"], "only the unarmed endpoint is forwarded")
+        _, observed = self.control("GET", "/__dulcet/subsonic-error")
+        self.assertEqual(observed, {"rule": {"endpoint": "ping", "code": 0}, "answered": 1})
+        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        self.assertEqual([(entry["endpoint"], entry["status"]) for entry in log["requests"]],
+                         [("ping", 200), ("getOpenSubsonicExtensions", 200)])
+        _, off = self.control("POST", "/__dulcet/subsonic-error?state=off")
+        self.assertEqual(off, {"rule": None, "answered": 1}, "switching off keeps the count")
+        self.assertEqual(self.request("GET", f"/rest/ping.view?t={CANARY}")[0], 200)
+        self.assertEqual(Upstream.seen[-1]["path"].split("?")[0], "/rest/ping.view", "disarmed, ping is forwarded")
+        _, rearmed = self.control("POST", "/__dulcet/subsonic-error?endpoint=ping&code=70&state=on")
+        self.assertEqual(rearmed["answered"], 0, "arming starts the count again")
+        self.control("POST", "/__dulcet/subsonic-error?state=off")
+
     def test_malformed_controls_are_refused(self):
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?state=on")[0], 400)
         self.assertEqual(self.control("POST", "/__dulcet/lyrics-failure?song=s&state=maybe")[0], 400)
@@ -343,6 +367,10 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(self.control("POST", "/__dulcet/rule?action=fail&state=off&endpoint=ping")[0], 400)
         self.assertEqual(self.control("GET", "/__dulcet/rule?action=hold&state=off")[0], 404)
         self.assertEqual(self.control("GET", "/__dulcet/requests?since=x")[0], 400)
+        for refused in ("endpoint=ping&state=on", "code=0&state=on", "endpoint=ping&code=x&state=on",
+                        "endpoint=ping&code=40&state=on", "endpoint=ping&code=30&state=on",
+                        "endpoint=ping&code=0&state=off", "state=maybe"):
+            self.assertEqual(self.control("POST", f"/__dulcet/subsonic-error?{refused}")[0], 400, refused)
         self.assertEqual(self.control("GET", "/__dulcet/health"), (200, {"ok": True}))
         self.assertEqual(Upstream.seen, [], "control requests never reach the server")
 

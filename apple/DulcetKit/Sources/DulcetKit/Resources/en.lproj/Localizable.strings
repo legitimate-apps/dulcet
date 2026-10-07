@@ -220,6 +220,9 @@
 "account.error.credentialPersistenceFailed.title" = "The account could not be saved";
 "account.error.credentialPersistenceFailed.message" = "The server accepted the account, but the system Keychain did not save it.";
 "account.error.credentialPersistenceFailed.recovery" = "Review Keychain access for Dulcet, then connect again.";
+"account.error.credentialPersistenceFailed.load.title" = "Your saved account could not be opened";
+"account.error.credentialPersistenceFailed.load.message" = "Dulcet found a saved account on this device, but the system Keychain did not return its details.";
+"account.error.credentialPersistenceFailed.load.recovery" = "Enter the account details and connect again to save it on this device.";
 "account.error.unrecognizedFailure.title" = "Account setup did not finish";
 "account.error.unrecognizedFailure.message" = "Dulcet received a failure it does not recognize.";
 "account.error.unrecognizedFailure.recovery" = "Try again. If it keeps happening, update Dulcet.";

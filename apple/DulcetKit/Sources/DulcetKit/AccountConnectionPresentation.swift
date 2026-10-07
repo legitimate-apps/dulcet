@@ -1,21 +1,33 @@
 import Foundation
 
+/// Which credential-store operation a ``DulcetAccountFailureKind/credentialPersistenceFailed``
+/// failure came from. The kind and its state are the same either way; the copy is not, because a
+/// save fails just after the server accepted the account, while a load fails at launch, when nothing
+/// was accepted and the person is told about an account saved earlier.
+public enum DulcetCredentialPersistenceOperation: Sendable, Hashable {
+    case save
+    case load
+}
+
 public struct DulcetAccountErrorContext: Sendable, Hashable {
     public let kind: DulcetAccountFailureKind
     public let serverName: String
     public let targetHost: String?
     public let invalidServerURLIsInternationalized: Bool
+    public let persistenceOperation: DulcetCredentialPersistenceOperation
 
     public init(
         kind: DulcetAccountFailureKind,
         serverName: String,
         targetHost: String? = nil,
-        invalidServerURLIsInternationalized: Bool = false
+        invalidServerURLIsInternationalized: Bool = false,
+        persistenceOperation: DulcetCredentialPersistenceOperation = .save
     ) {
         self.kind = kind
         self.serverName = serverName
         self.targetHost = targetHost
         self.invalidServerURLIsInternationalized = invalidServerURLIsInternationalized
+        self.persistenceOperation = persistenceOperation
     }
 }
 
@@ -153,6 +165,12 @@ public enum DulcetAccountErrorPresenter {
                 "This server cannot provide a capability required for account setup.",
                 "Update the server or use an endpoint with the required OpenSubsonic capability."
             )
+        case .credentialPersistenceFailed where context.persistenceOperation == .load:
+            (
+                "Your saved account could not be opened",
+                "Dulcet found a saved account on this device, but the system Keychain did not return its details.",
+                "Enter the account details and connect again to save it on this device."
+            )
         case .credentialPersistenceFailed:
             (
                 "The account could not be saved",
@@ -170,6 +188,9 @@ public enum DulcetAccountErrorPresenter {
         let localizationPrefix = if context.kind == .invalidServerURL &&
             context.invalidServerURLIsInternationalized {
             "account.error.unsupportedInternationalizedHost"
+        } else if context.kind == .credentialPersistenceFailed &&
+            context.persistenceOperation == .load {
+            "account.error.credentialPersistenceFailed.load"
         } else {
             "account.error.\(context.kind.rawValue)"
         }
@@ -646,9 +667,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             }
         } catch {
             savedServerName = nil
+            // A launch-time read, not a save: the copy says an earlier account could not be opened.
             let failure = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
                 kind: .credentialPersistenceFailed,
-                serverName: "Music server"
+                serverName: "Music server",
+                persistenceOperation: .load
             ))
             currentSnapshot = Self.snapshot(
                 state: .accountErrorPersistence,
@@ -702,7 +725,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 publish(
                     state: currentSnapshot.accountConnection == .connecting
                         ? .accountConnecting
-                        : currentSnapshot.state.accountStateOrIdle,
+                        : currentSnapshot.state.accountState(
+                            rendering: currentSnapshot.accountConnection
+                        ),
                     destination: .settings,
                     form: currentSnapshot.accountForm,
                     status: currentSnapshot.accountConnection
@@ -2381,7 +2406,10 @@ private extension DulcetAccountConnectionStatus {
 }
 
 private extension DulcetPresentationState {
-    var accountStateOrIdle: DulcetPresentationState {
+    /// The state Connection publishes when it is opened from here: an account state stands, and any
+    /// other surface's state gives way to the one the account status renders -- Connection opened
+    /// from the library a connection landed on is connected, not idle.
+    func accountState(rendering status: DulcetAccountConnectionStatus) -> DulcetPresentationState {
         switch self {
         case .accountConnectIdle, .accountConnectEmpty, .accountConnecting, .accountConnected,
              .accountRemoving, .accountRemovalError, .accountSavedDisconnected,
@@ -2395,7 +2423,7 @@ private extension DulcetPresentationState {
              .nowPlayingFailed, .nowPlayingUnavailable,
              .searchIdle, .searchLoading, .searchResults, .searchEmpty, .searchError,
              .tlsUntrusted, .tlsUntrustedPopulatedForm, .offlineMetadataOnly:
-            .accountConnectIdle
+            status.accountPresentationState
         }
     }
 }
