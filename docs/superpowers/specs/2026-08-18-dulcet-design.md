@@ -5636,8 +5636,12 @@ not enter into it either.
   answer. The person is told the candidates (`PossibleDuplicate`, naming them) and the
   create waits for them: `chooseCreated(localId, id)` adopts the one they pick,
   `chooseCreated(localId, null)` says none is theirs and sends it again, and `withdraw` takes the
-  create back. Later flushes pass a waiting create over, and `pendingChanges` lists it with its
-  candidates.
+  create back. Later flushes send nothing for a waiting create, and `pendingChanges` lists it with
+  its candidates. Each flush that can send first lists the server's playlists once, while any create
+  waits, and a candidate no longer listed — deleted by another client — leaves the choice: the create
+  is asked again with the candidates that remain (`PossibleDuplicate`), never adopting one the person
+  passed over, and with none left it waits no longer and that flush looks again, as for any create in
+  doubt. A listing that fails leaves the choice as it was.
 - A create **deleted here** while its send was in doubt deletes **nothing** — whether it was deleted
   before the flush looked for it or while the flush was looking. The person is told the candidates'
   ids (`PossiblyCreated`): the shell offers "A playlist named *X* may have been created. Delete it on
@@ -7600,6 +7604,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-07 — A create waiting for the person's choice drops a candidate the server no longer
+lists (§18.6).** A waiting create was passed over by every flush, so a candidate another client
+deleted stayed in the choice, and the shells asked about it again at each launch. Each flush that
+can send now lists the server's playlists once while any create waits, and a candidate not listed
+leaves the choice: the create is asked again with the rest, never adopting the one left, and with
+none left it is looked at again and, nothing of its name being listed, sent again. OBSERVED with the
+fake server (`PlaylistWaitingCreateRecheckTest`): both changes fail with the check removed, and a
+failing listing leaves the choice untouched.
 
 **2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
 2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The

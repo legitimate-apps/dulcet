@@ -1270,6 +1270,7 @@ internal class PlaylistEditor(
     }
 
     private suspend fun flushLocked(tally: Tally): PlaylistFlushReport {
+        if (reader.canSend && reader.busyError() == null) recheckWaitingCreates()
         while (reader.canSend) {
             // The server asked for quiet (a 429): no change begins until the wait has passed. Checked
             // before each row, not once, so a wait the favourites flush's 429 sets meanwhile stops
@@ -1788,6 +1789,33 @@ internal class PlaylistEditor(
             offer(outcome)
         }
         return settled
+    }
+
+    /**
+     * Creates waiting for the person's choice, checked against the server's list once a flush, since
+     * no flush sends one while it waits (§18.6). A candidate the server no longer lists — deleted
+     * there, by another client — leaves the choice. A create left with candidates is asked again with
+     * those, never adopting one the person passed over; one left with none waits no longer, and this
+     * flush looks for what its send made again, as for any create in doubt. A listing that fails
+     * changes nothing: the choice waits, and the changes behind it meet the failure themselves.
+     */
+    private suspend fun recheckWaitingCreates() {
+        val waiting = outbox.all().filter { it is PendingPlaylistRow.Create && it.awaitsChoice }
+        if (waiting.isEmpty()) return
+        val listed = try {
+            listPlaylists().map { it.id }.toSet()
+        } catch (_: LibraryRequestFailure) {
+            return
+        }
+        for (row in waiting.filterIsInstance<PendingPlaylistRow.Create>()) {
+            val next = rewriteCurrent(row) { current ->
+                if (!current.awaitsChoice || current.candidates!!.all { it in listed }) return@rewriteCurrent current
+                current.copy(candidates = current.candidates.filter { it in listed }.takeIf { it.isNotEmpty() })
+            } ?: continue
+            if (next.candidates == row.candidates) continue
+            changed(setOf(row.playlistId))
+            if (next.awaitsChoice) offer(PlaylistEditOutcome.PossibleDuplicate(next.playlistId, next.sentName ?: next.name, next.candidates!!))
+        }
     }
 
     /** Whether the create [localId] was deleted on this device after its send. */
