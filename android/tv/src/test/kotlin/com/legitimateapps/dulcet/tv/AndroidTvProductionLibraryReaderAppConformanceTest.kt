@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Looper
+import androidx.activity.ComponentDialog
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -44,6 +45,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import org.robolectric.shadows.ShadowDialog
 
 /**
  * The Android TV app's library on the reader, end to end: the production activity, `LibraryEntry`'s
@@ -500,6 +502,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             .let { list -> (0 until list.length()).map { list.getJSONObject(it).getString("id") } }
         val name = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv delete"
         val id = server.createPlaylist(name, songs.take(2))
+        // A second playlist of the account's own, which deleting the first must leave alone.
+        val siblingName = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv delete sibling"
+        val sibling = server.createPlaylist(siblingName, songs.take(1))
         assertEquals(name, server.playlists()[id], "setup: the playlist is on the server")
 
         if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
@@ -520,6 +525,15 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("the question gone") { !exists("playlist.delete.dialog") }
         assertEquals(name, server.playlists()[id], "Cancel deleted nothing")
         assertTrue(titleIs("playlist.title", name), "Cancel leaves the page")
+        await("focus back on Delete Playlist…") { focused("playlist.delete") }
+
+        // The remote's Back is Cancel too.
+        key(Key.DirectionCenter)
+        await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
+        compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
+        await("the question gone after Back") { !exists("playlist.delete.dialog") }
+        assertEquals(name, server.playlists()[id], "Back deleted nothing")
+        assertTrue(titleIs("playlist.title", name), "Back closed only the question")
 
         // Delete, reached with Down from Cancel, removes it on the server and goes Back to the grid.
         focus("playlist.delete")
@@ -528,6 +542,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         stepTo("playlist.delete.confirm", Key.DirectionDown, from = "playlist.delete.cancel")
         keyAt("playlist.delete.confirm", Key.DirectionCenter)
         await("the playlist gone from the server") { id !in server.playlists() }
+        assertEquals(siblingName, server.playlists()[sibling], "only the playlist asked about is deleted")
         await("Back on the grid, without it") {
             !exists("playlist.surface") && exists("library.playlists") &&
                 compose.onAllNodes(hasText(name)).fetchSemanticsNodes().isEmpty()

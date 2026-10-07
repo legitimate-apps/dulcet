@@ -5705,7 +5705,8 @@ entries are offered on iPhone, iPad, Mac and the Android phone, not on a TV. Thi
 Apple TV user guide describes for Apple Music on tvOS: adding a song to a playlist and creating one
 (OBSERVED on support.apple.com). That Apple Music on tvOS does not edit a playlist's entries in place
 is ASSUMED. On Android TV, Delete Playlist… sits beside Play and Shuffle on the playlist's page; on
-Apple TV, Delete is in a playlist tile's press-and-hold menu.
+Apple TV, Delete is in a playlist tile's press-and-hold menu (its confirmation presenting there is
+ASSUMED until a tvOS test drives it).
 
 **Failures.** An HTTP 429 is `Server.Busy`, named from the status whatever the body (the reference
 server's transcode limiter answers 429 with an envelope carrying only the generic code 0, §18.12), with its
@@ -7631,11 +7632,13 @@ create, and delete one the person may edit, confirmed first. The Android TV play
 Delete Playlist… beside Play and Shuffle, shown only on a playlist the core marks editable. It opens
 a question naming the playlist, with focus on Cancel; Back is Cancel. Delete records the delete
 through the core editor, and the page goes Back once the delete is queued (or a local playlist that
-was never sent is simply gone); any other answer is said on the page. OBSERVED with D-pad and Centre
+was never sent is simply gone), but only while it is still the screen showing, so an answer that
+arrives after the person pressed Back moves nothing; any other answer is said on the page. OBSERVED with D-pad and Centre
 presses against the disposable server
 (`AndroidTvProductionLibraryReaderAppConformanceTest.aPlaylistIsDeletedWithTheRemoteOnlyAfterItAsksAndCancelKeepsIt`):
-Cancel leaves the playlist on the server, and Delete, reached with Down, removes it there, with the
-grid shown again without it. A build where the button deletes without asking fails that test.
+Cancel, and the remote's Back, leave the playlist on the server, with focus back on Delete
+Playlist…; Delete, reached with Down, removes it there and leaves the account's other playlist,
+with the grid shown again without it. A build where the button deletes without asking fails that test.
 Another user's public playlist opens on the TV naming its owner, with no Delete Playlist…, and the
 account's own playlist is the control. An addition made after the platform reported the network
 gone is shown at once on the playlist's page as "Not saved to your server yet" and is sent at the

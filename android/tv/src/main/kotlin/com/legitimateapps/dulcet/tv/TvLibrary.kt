@@ -197,6 +197,8 @@ internal class TvNavigator(
     val back: () -> Unit,
     /** Puts the route [to] where [from] is, for a playlist made under a local id that now has the server's. */
     val replace: (from: String, to: String) -> Unit = { _, _ -> },
+    /** Back from [route] only while it is the one showing: an answer that comes after Back was pressed moves nothing. */
+    val leave: (route: String) -> Unit = { back() },
 ) {
     fun openAlbum(rawId: String) = open(ALBUM + rawId)
     fun openArtist(rawId: String) = open(ARTIST + rawId)
@@ -238,7 +240,7 @@ internal fun TvLibraryEntry(
                 routes[index] = to
                 if (from !in routes) { states.removeState(from); memory.forget(from) }
             }
-        })
+        }, leave = { route -> if (routes.last() == route) back() })
     }
     // Back walks down the routes, then from the search root to the library, the screen the app opens
     // on; from the library it leaves the app.
@@ -1487,7 +1489,7 @@ private fun TvPlaylistScreen(
         session.playlists.delete(rawId) { result ->
             // Queued, or a local one never sent simply gone: the page has nothing left to show.
             if (result.record == AndroidPlaylistEditRecord.Pending || result.record == AndroidPlaylistEditRecord.CompactedAway) {
-                navigator.back()
+                navigator.leave(PLAYLIST + rawId)
             } else {
                 note = resources.playlistEditLine(result)
             }
