@@ -81,5 +81,8 @@
     <string name="tv_playlist_create">Create</string>
     <string name="tv_playlist_added">Added to “%1$s”</string>
     <string name="tv_playlist_adding">Adding to playlist…</string>
+    <string name="tv_playlist_delete">Delete Playlist…</string>
+    <string name="tv_playlist_delete_confirm">Delete “%1$s”? This removes it from your server.</string>
+    <string name="tv_playlist_delete_action">Delete</string>
     <string name="tv_playlist_no_editable">You have no playlists you can add to yet.</string>
 </resources>

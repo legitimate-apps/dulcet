@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Looper
+import androidx.activity.ComponentDialog
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -44,6 +45,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import org.robolectric.shadows.ShadowDialog
 
 /**
  * The Android TV app's library on the reader, end to end: the production activity, `LibraryEntry`'s
@@ -482,6 +484,192 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             assertEquals(listOf(id), server.playlists().filterValues { it == name }.keys.toList(), "one playlist, every addition in it")
             assertNoCredentialLeak()
             println("TV PLAYLIST ADD OBSERVED album=$ALBUM entries=${expected.size} id-stable=true")
+        } finally {
+            service.destroy()
+        }
+    }
+
+    /**
+     * With the remote only: a playlist the account owns, made on the server for the run, opens from
+     * Library > Playlists and its page offers Delete Playlist…, which asks first with focus on Cancel.
+     * Cancel deletes nothing and leaves the page; Delete, reached with Down, removes the playlist on
+     * the server, read back directly, and the page goes Back to the grid, which no longer shows it.
+     */
+    @Test fun aPlaylistIsDeletedWithTheRemoteOnlyAfterItAsksAndCancelKeepsIt() {
+        environment.proxy.unpark()
+        val server = environment.server
+        val songs = server.get("getAlbum", mapOf("id" to server.albumId(ALBUM))).getJSONObject("album").getJSONArray("song")
+            .let { list -> (0 until list.length()).map { list.getJSONObject(it).getString("id") } }
+        val name = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv delete"
+        val id = server.createPlaylist(name, songs.take(2))
+        // A second playlist of the account's own, which deleting the first must leave alone.
+        val siblingName = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv delete sibling"
+        val sibling = server.createPlaylist(siblingName, songs.take(1))
+        assertEquals(name, server.playlists()[id], "setup: the playlist is on the server")
+
+        if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+        press("library.view.playlists")
+        await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
+        compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))
+        focus(cardWithText("library.playlists.item.", name))
+        key(Key.DirectionCenter)
+        await("the page of $name, Delete offered") { titleIs("playlist.title", name) && exists("playlist.delete") }
+
+        // Delete Playlist… asks; Cancel, where focus lands, keeps the playlist.
+        await("focus on the page's Play") { focused("playlist.play") }
+        stepTo("playlist.delete", Key.DirectionRight, from = "playlist.play")
+        key(Key.DirectionCenter)
+        await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
+        assertTrue(texts("playlist.delete.line").single().contains(name), "the question names the playlist")
+        keyAt("playlist.delete.cancel", Key.DirectionCenter)
+        await("the question gone") { !exists("playlist.delete.dialog") }
+        assertEquals(name, server.playlists()[id], "Cancel deleted nothing")
+        assertTrue(titleIs("playlist.title", name), "Cancel leaves the page")
+        await("focus back on Delete Playlist…") { focused("playlist.delete") }
+
+        // The remote's Back is Cancel too.
+        key(Key.DirectionCenter)
+        await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
+        compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
+        await("the question gone after Back") { !exists("playlist.delete.dialog") }
+        assertEquals(name, server.playlists()[id], "Back deleted nothing")
+        assertTrue(titleIs("playlist.title", name), "Back closed only the question")
+
+        // Delete, reached with Down from Cancel, removes it on the server and goes Back to the grid.
+        focus("playlist.delete")
+        key(Key.DirectionCenter)
+        await("the question again, focus on Cancel") { focused("playlist.delete.cancel") }
+        stepTo("playlist.delete.confirm", Key.DirectionDown, from = "playlist.delete.cancel")
+        keyAt("playlist.delete.confirm", Key.DirectionCenter)
+        await("the playlist gone from the server") { id !in server.playlists() }
+        assertEquals(siblingName, server.playlists()[sibling], "only the playlist asked about is deleted")
+        await("Back on the grid, without it") {
+            !exists("playlist.surface") && exists("library.playlists") &&
+                compose.onAllNodes(hasText(name)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /**
+     * Another user's public playlist opens on the TV read-only: it names its owner and offers Play
+     * but no Delete Playlist…, and nothing is written to it. The account's own playlist, opened the
+     * same way, offers Delete Playlist… (the control).
+     */
+    @Test fun anotherUsersPlaylistOffersNoDeleteOnTheTvAndTheOwnPlaylistIsTheControl() {
+        environment.proxy.unpark()
+        val server = environment.server
+        val songs = server.get("getAlbum", mapOf("id" to server.albumId(ALBUM))).getJSONObject("album").getJSONArray("song")
+            .let { list -> (0 until list.length()).map { list.getJSONObject(it).getString("id") } }
+        val other = environment.otherUser()
+        val othersName = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv others"
+        val othersId = other.createPlaylist(othersName, songs.take(2))
+        other.makePublic(othersId)
+        assertEquals(ProductionLibraryEnvironment.OTHER_USERNAME to true, server.playlistOwnership(othersId),
+            "setup: this account sees the other user's playlist as theirs, and public")
+        val ownName = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv own"
+        server.createPlaylist(ownName, songs.take(1))
+
+        if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+        press("library.view.playlists")
+        for (name in listOf(othersName, ownName)) {
+            await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
+            compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))
+            focus(cardWithText("library.playlists.item.", name))
+            key(Key.DirectionCenter)
+            await("the page of $name, Play offered") { titleIs("playlist.title", name) && exists("playlist.play") }
+            if (name == othersName) {
+                assertEquals(listOf("${ProductionLibraryEnvironment.OTHER_USERNAME}'s playlist · read-only"), texts("playlist.owner"))
+                assertFalse(exists("playlist.delete"), "another user's playlist offers Delete Playlist…")
+            } else {
+                assertTrue(exists("playlist.delete"), "control: the account's own playlist offers Delete Playlist…")
+                assertFalse(exists("playlist.owner"), "control: the account's own playlist names no other owner")
+            }
+            back()
+            await("the grid again") { exists("library.playlists") && !exists("playlist.surface") }
+        }
+        assertEquals(songs.take(2), other.playlistEntries(othersId), "the other user's playlist is unchanged")
+    }
+
+    /**
+     * With the remote only: the chooser for a track is open when the network goes; the playlist
+     * chosen from it is changed at once on its page, which says "Not saved to your server yet", and
+     * nothing reaches the server; when the network comes back the reconnect sends the addition, the
+     * server holds it, and the page stops saying so.
+     */
+    @Test fun aTrackAddedAfterTheNetworkWentIsShownPendingOnThePlaylistAndSentAtReconnect() {
+        environment.proxy.unpark()
+        val app = RuntimeEnvironment.getApplication()
+        val service = Robolectric.buildService(PlaybackService::class.java).create()
+        try {
+            val binder = checkNotNull(service.get().onBind(Intent(PlaybackService.LOCAL_BIND))) { "setup: no local binder" }
+            shadowOf(app).setComponentNameAndServiceForBindServiceForIntent(
+                Intent(app, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+                ComponentName(app, PlaybackService::class.java),
+                binder,
+            )
+            // The queue button, which carries Add to Playlist, is offered while a playback service is bound.
+            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+            checkNotNull(service.get().playback) { "setup: the service has no controller" }
+
+            val server = environment.server
+            val songs = server.get("getAlbum", mapOf("id" to server.albumId(ALBUM))).getJSONObject("album").getJSONArray("song")
+                .let { list -> (0 until list.length()).map { list.getJSONObject(it).getString("id") } }
+            assertTrue(songs.size >= 2, "setup: a multi-track album")
+            val name = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv pending"
+            val id = server.createPlaylist(name, listOf(songs[0]))
+
+            // The playlist and its page are seen once, so the chooser and the page have them offline.
+            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+            press("library.view.playlists")
+            await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
+            focus(cardWithText("library.playlists.item.", name))
+            key(Key.DirectionCenter)
+            await("the page with its one entry") { titleIs("playlist.title", name) && exists("playlist.entry.0") }
+            assertFalse(exists("playlist.pending"), "control: nothing is pending before the addition")
+            back()
+            await("the grid again") { exists("library.playlists") && !exists("playlist.surface") }
+            back()
+            press("library.view.albums")
+            await("the albums screen") { exists("library.albums.item.0") }
+            compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
+            focus(cardWithText("library.albums.item.", ALBUM))
+            key(Key.DirectionCenter)
+            await("album $ALBUM open, focus on Play") { titleIs("album.title", ALBUM) && focused("album.play") }
+
+            // The second track's chooser, open while the device still has its network.
+            focus("album.track.1")
+            repeat(4) { if (!focused("album.track.1.queue")) key(Key.DirectionRight) }
+            assertFocused("album.track.1.queue")
+            key(Key.DirectionCenter)
+            await("the queue dialog, Play Next focused") { focused("queue.add.playNext") }
+            stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
+            keyAt("queue.add.playlist", Key.DirectionCenter)
+            await("the chooser lists $name") { runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
+
+            environment.network.lose()
+            val row = cardWithText("playlists.add.item.", name)
+            stepTo(row, Key.DirectionDown, from = "playlists.add.new")
+            keyAt(row, Key.DirectionCenter)
+            await("the chooser closed") { !exists("playlists.add") }
+            assertEquals(listOf(songs[0]), server.playlistEntries(id), "nothing reaches the server while the network is gone")
+
+            // Its page, by the remote: the addition shown, and said to be unsaved.
+            back()
+            await("the albums screen again") { exists("library.albums") && !exists("album.title") }
+            back()
+            press("library.view.playlists")
+            await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
+            focus(cardWithText("library.playlists.item.", name))
+            key(Key.DirectionCenter)
+            await("the page with both entries, said pending") {
+                titleIs("playlist.title", name) && exists("playlist.entry.1") && exists("playlist.pending")
+            }
+            assertEquals(listOf("Not saved to your server yet"), texts("playlist.pending"))
+            assertEquals(listOf(songs[0]), server.playlistEntries(id), "still nothing on the server")
+
+            environment.network.restore()
+            await("the addition sent at the reconnect") { server.playlistEntries(id) == listOf(songs[0], songs[1]) }
+            await("the page no longer says it is unsaved") { !exists("playlist.pending") && exists("playlist.entry.1") }
         } finally {
             service.destroy()
         }

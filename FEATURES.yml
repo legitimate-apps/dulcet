@@ -1870,7 +1870,7 @@
           "reason": "The phone app lists playlists in the Library, opens a playlist page that plays and shuffles in the playlist's order, and edits through the core editor only: create (from the list or from Add to playlist), rename, delete, append from track rows, row menus and an album's header, and move and remove in edit mode naming the entries shown as the view acted on (spec 18.6). A queued change says Not saved to your server yet; a create in doubt asks Keep or Make another; a stale view, a refusal or a change made elsewhere is said on the page. Compose/Robolectric evidence against the disposable server, not a physical-device claim. The declared contracts are evidenced in core-ci: CONF-88, and CONF-89's offline replay, formPost batching and lost create, by the core's own conformance suite run in the Android host runtime against the disposable server; CONF-90 by the phone's production playlist page, where another client removes the first song on the server while the page shows the old four entries, removing entry 3 is refused as changed elsewhere with nothing written and the server unchanged, and the control removes exactly the intended song from the current view; and CONF-91 by the phone's app, where another user's public playlist opens read-only with no edit, menu, remove or move control and is not offered by the add-to-playlist sheet, with the user's own playlist as the control. They passed, with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. Compose/Robolectric evidence, not a physical-device claim."
         },
         "androidtv": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "observes": "a playlist made on the server in an order that is not the album's, holding one song twice, opens from the TV's Library > Playlists with the remote, and the centre key on its third entry, reached with D-pad down from the second, queues the playlist in its own order, duplicates kept, current at the second of the song's two entries, and opens the TV's Now Playing",
@@ -1913,14 +1913,51 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvPlaylistCreateInDoubtSessionTest/aCreateWhoseAnswerWasLostIsAskedOverTheScreenAndKeepingItWritesNoSecondPlaylist"
+            },
+            {
+              "observes": "against the disposable server, with D-pad and Centre presses, a playlist the account owns opens from Library > Playlists and Delete Playlist…, reached with Right from Play, asks first with focus on Cancel; Cancel leaves the playlist on the server and the page shown; Delete, reached with Down, removes it on the server, read back directly, and the page goes Back to the grid, which no longer shows it",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aPlaylistIsDeletedWithTheRemoteOnlyAfterItAsksAndCancelKeepsIt"
+            },
+            {
+              "observes": "against the disposable server, another user's public playlist opens from the TV's Library > Playlists naming its owner as read-only, offering Play and no Delete Playlist…, and is left unchanged on the server; the account's own playlist, opened the same way, offers Delete Playlist… (the control)",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/anotherUsersPlaylistOffersNoDeleteOnTheTvAndTheOwnPlaylistIsTheControl"
+            },
+            {
+              "observes": "against the disposable server, with the remote: a track's chooser is open when the platform reports the network gone, and the playlist chosen from it shows the addition at once on its page with \"Not saved to your server yet\" while the server still holds only its first song; when the network returns the reconnect sends the addition, the server holds both songs, and the page stops saying it is unsaved",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aTrackAddedAfterTheNetworkWentIsShownPendingOnThePlaylistAndSentAtReconnect"
+            },
+            {
+              "conformance": "CONF-88",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
             }
           ],
-          "reason": "The TV app browses and plays playlists: a Playlists grid in the Library and a read-only playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. It adds to playlists through the core editor: Add to Playlist… on a track row's and an album header's queue button opens a chooser of the playlists the account can edit, with New Playlist… first, which creates one from what is being added. Observed against the disposable server and read back from it: a new playlist made from a track, an album appended to it, and a track appended to it (Compose/Robolectric, not a physical-device claim). ASSUMED, not driven on the TV: a new playlist made from an album, the one-choice-per-presentation guard, a refused edit said in the chooser, and the chooser listing only editable playlists; they follow the phone sheet's code. Add to Playlist… is offered only where Play Next is, which needs a bound playback service and a queueable track. A create whose answer was lost is asked about in a dialog over whatever screen is showing, as the tvOS shell asks it, with the phone's choices; Decide later leaves it waiting on the playlist's page, which asks again on Choose…, and a change that did not land is said on the page with Dismiss. These are driven with the remote over a fake core's outbox, as the phone's are, and once end to end over the library entry and the production core against a loopback server that loses a create's answer: the question presented over the screen showing, Decide later, Choose… from the page, Keep, and the page following the local id to the server's. Not on the TV: rename, delete, remove and reorder.",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "androidtv-playlist-remaining-edits",
-            "reason": "The TV adds and creates through the core editor, driven with key presses and read back from the server, and asks about a create in doubt and says a change that did not land. The cell stays partial until rename, delete, remove and reorder are offered on the TV or the row is split into add and full editing."
-          }
+          "reason": "The TV app browses and plays playlists: a Playlists grid in the Library and a playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. It adds to playlists through the core editor: Add to Playlist… on a track row's and an album header's queue button opens a chooser of the playlists the account can edit, with New Playlist… first, which creates one from what is being added. Observed against the disposable server and read back from it: a new playlist made from a track, an album appended to it, and a track appended to it (Compose/Robolectric, not a physical-device claim). ASSUMED, not driven on the TV: a new playlist made from an album, the one-choice-per-presentation guard, a refused edit said in the chooser, and the chooser listing only editable playlists; they follow the phone sheet's code. Add to Playlist… is offered only where Play Next is, which needs a bound playback service and a queueable track. A create whose answer was lost is asked about in a dialog over whatever screen is showing, as the tvOS shell asks it, with the phone's choices; Decide later leaves it waiting on the playlist's page, which asks again on Choose…, and a change that did not land is said on the page with Dismiss. These are driven with the remote over a fake core's outbox, as the phone's are, and once end to end over the library entry and the production core against a loopback server that loses a create's answer: the question presented over the screen showing, Decide later, Choose… from the page, Keep, and the page following the local id to the server's. The page offers Delete Playlist… beside Play and Shuffle on a playlist the core marks editable, asks first with focus on Cancel, and goes Back once the delete is queued; another user's playlist offers none. An addition made after the network went is shown at once on the page as not yet saved and is sent at the reconnect. Each is driven with the remote against the disposable server and read back from it (Compose/Robolectric); the remote's Back closes the question like Cancel, and deleting one playlist leaves the account's others. The TVs' stated scope is browse, play, add, create and delete (spec §18.6, \"On the TVs\"); rename, removal and reorder are the phone's, tablet's and Mac's. CONF-88 to CONF-91 are the core's playlist conformance against the disposable server in the core's Android host runtime, the same core the TV app is built on; CONF-90's positional edit is not offered on the TV, so the core's refusal of a stale index is what the TV could reach."
         }
       }
     },

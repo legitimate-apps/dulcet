@@ -262,6 +262,31 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
 }
 
 /**
+ * Asks before a playlist is deleted from the server: Cancel, where focus lands, and Delete. Back is
+ * Cancel. Nothing is recorded until Delete is pressed.
+ */
+@Composable
+internal fun TvPlaylistDeleteDialog(name: String, onCancel: () -> Unit, onDelete: () -> Unit) {
+    val resources = libraryResources()
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Surface(Modifier.width(640.dp).testTag("playlist.delete.dialog")) {
+                Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(resources.getString(R.string.tv_playlist_delete_confirm, name), Modifier.testTag("playlist.delete.line"),
+                        style = MaterialTheme.typography.titleLarge)
+                    val cancel = remember { FocusRequester() }
+                    LaunchedEffect(Unit) { runCatching { cancel.requestFocus() } }
+                    TvQuestionButton(resources.getString(R.string.tv_cancel), "playlist.delete.cancel", true,
+                        Modifier.focusRequester(cancel), onCancel)
+                    TvQuestionButton(resources.getString(R.string.tv_playlist_delete_action), "playlist.delete.confirm", true,
+                        onClick = onDelete)
+                }
+            }
+        }
+    }
+}
+
+/**
  * What a playlist's page says about its own edits: a create waiting for the person's answer, with
  * Choose… to ask again (`playlist.question.waiting`, `.choose`; not while its dialog is showing), and
  * a change that did not land, with Dismiss (`playlist.outcome`, `.dismiss`).

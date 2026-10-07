@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import com.legitimateapps.dulcet.library.playPlaylist
+import com.legitimateapps.dulcet.library.playlistEditLine
 import com.legitimateapps.dulcet.library.playlistOwnerLine
 import com.legitimateapps.dulcet.library.playlistPendingLine
 import android.content.Context
@@ -99,6 +100,7 @@ import com.legitimateapps.dulcet.downloads.downloadItem
 import com.legitimateapps.dulcet.downloads.downloadLine
 import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
+import com.legitimateapps.dulcet.core.AndroidPlaylistEditRecord
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
@@ -195,6 +197,8 @@ internal class TvNavigator(
     val back: () -> Unit,
     /** Puts the route [to] where [from] is, for a playlist made under a local id that now has the server's. */
     val replace: (from: String, to: String) -> Unit = { _, _ -> },
+    /** Back from [route] only while it is the one showing: an answer that comes after Back was pressed moves nothing. */
+    val leave: (route: String) -> Unit = { back() },
 ) {
     fun openAlbum(rawId: String) = open(ALBUM + rawId)
     fun openArtist(rawId: String) = open(ARTIST + rawId)
@@ -236,7 +240,7 @@ internal fun TvLibraryEntry(
                 routes[index] = to
                 if (from !in routes) { states.removeState(from); memory.forget(from) }
             }
-        })
+        }, leave = { route -> if (routes.last() == route) back() })
     }
     // Back walks down the routes, then from the search root to the library, the screen the app opens
     // on; from the library it leaves the app.
@@ -1342,7 +1346,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     }
 }
 
-// ---- Playlists (spec §18.6): browse, play, and Add to Playlist… (TvPlaylistAdd.kt) -------------------
+// ---- Playlists (spec §18.6): browse, play, delete, and Add to Playlist… (TvPlaylistAdd.kt) -----------
 
 /** The account's playlists, one response (§16.9). */
 @Composable
@@ -1356,7 +1360,8 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
 
 /**
  * One playlist: its name, whose it is, and its entries in the playlist's order, duplicates kept.
- * Play and Shuffle queue the playable entries; an entry plays the playlist from it. A create waiting
+ * Play and Shuffle queue the playable entries; an entry plays the playlist from it. Delete Playlist…,
+ * on one the person may edit, asks first and goes Back once the delete is queued. A create waiting
  * for the person's answer says so, with Choose… to ask again; a change that did not land is said,
  * with Dismiss. A playlist made under a local id is followed to the server's id once it has one.
  */
@@ -1377,6 +1382,7 @@ private fun TvPlaylistScreen(
     val publication by surface.state.collectAsState()
     val observation by session.observation.collectAsState()
     val outcomes by session.playlistOutcomes.collectAsState()
+    var deleting by remember(rawId) { mutableStateOf(false) }
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
     TvAddToUpNext(adding, session) { adding = null }
@@ -1429,13 +1435,17 @@ private fun TvPlaylistScreen(
                             val playable = current.itemsState == AndroidLibraryItemsState.Present && current.items.any {
                                 it is AndroidLibraryItem.Track && !it.metadataMissing && it.playability != AndroidLibraryPlayability.UnavailableOffline
                             }
-                            if (playable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                TvAction(stringResource(R.string.tv_play), "playlist.play", icon = DulcetIcons.Play, default = true) {
-                                    shown?.let { play(it, 0, false) }
+                            if (playable || playlist.editable) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                if (playable) {
+                                    TvAction(stringResource(R.string.tv_play), "playlist.play", icon = DulcetIcons.Play, default = true) {
+                                        shown?.let { play(it, 0, false) }
+                                    }
+                                    TvAction(stringResource(R.string.tv_shuffle), "playlist.shuffle", icon = DulcetIcons.Shuffle) {
+                                        shown?.let { play(it, 0, true) }
+                                    }
                                 }
-                                TvAction(stringResource(R.string.tv_shuffle), "playlist.shuffle", icon = DulcetIcons.Shuffle) {
-                                    shown?.let { play(it, 0, true) }
-                                }
+                                if (playlist.editable) TvAction(stringResource(R.string.tv_playlist_delete), "playlist.delete",
+                                    icon = DulcetIcons.Delete) { note = null; deleting = true }
                             }
                         }
                         TvPlaylistNotices(session.playlistQuestions, rawId, outcomes[rawId]) { session.dismissPlaylistOutcome(rawId) }
@@ -1470,6 +1480,18 @@ private fun TvPlaylistScreen(
                         onQueue = tvTrackAddition(context, playback, provider, item, null)?.let { addition -> { adding = addition } },
                     )
                 }
+            }
+        }
+    }
+    val named = (publication?.header as? AndroidLibraryItem.Playlist)?.name
+    if (deleting && named != null) TvPlaylistDeleteDialog(named, onCancel = { deleting = false }) {
+        deleting = false
+        session.playlists.delete(rawId) { result ->
+            // Queued, or a local one never sent simply gone: the page has nothing left to show.
+            if (result.record == AndroidPlaylistEditRecord.Pending || result.record == AndroidPlaylistEditRecord.CompactedAway) {
+                navigator.leave(PLAYLIST + rawId)
+            } else {
+                note = resources.playlistEditLine(result)
             }
         }
     }
