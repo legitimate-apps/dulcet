@@ -6,6 +6,8 @@
 2. A file with samples but no phase marks must fail loudly, never summarise as zero pressure.
 3. Live sampling on THIS host must parse vm_stat into the counters the summary reads. A parser that
    silently matches nothing produces all-zero deltas, which is indistinguishable from a quiet host.
+4. The CPU line names the processes of the phase's highest-load sample, not another sample's, and
+   live sampling records a CPU list on this host.
 """
 import json
 import subprocess
@@ -34,19 +36,26 @@ with tempfile.TemporaryDirectory() as tmp:
         dict(event="phase", wallTimeMillis=2500, name="paging", bootedSimulators=4),
         # 640 pages of 16 KiB = 10 MB paged out, 1280 pages = 20 MB swapped out.
         dict(event="sample", wallTimeMillis=3000, pageouts=640, swapouts=1280,
-             **{**base, "swapUsedMb": 512.0, "load1": 9.5}),
+             **{**base, "swapUsedMb": 512.0, "load1": 9.5},
+             top=[["Simulator", 900]], cpuTop=[["mdworker_shared", 180.5], ["Dulcet", 20.0]]),
+        dict(event="sample", wallTimeMillis=3200, pageouts=640, swapouts=1280,
+             **{**base, "swapUsedMb": 100.0, "load1": 2.0},
+             top=[["Simulator", 800]], cpuTop=[["quiet", 1.0]]),
     ]
     fixture.write_text("".join(json.dumps(r) + "\n" for r in rows))
     result = run("summarize", str(fixture))
     assert result.returncode == 0, result
     lines = {line.split("phase=")[1].split()[0]: line for line in result.stdout.splitlines()
-             if "phase=" in line}
+             if line.startswith("HOST PRESSURE phase=")}
     assert "pageouts_mb=0 " in lines["quiet"] and "booted_simulators=1" in lines["quiet"], result.stdout
     assert "pageouts_mb=10 " in lines["paging"], result.stdout
     assert "swapouts_mb=20 " in lines["paging"], result.stdout
     assert "swap_used_max_mb=512.0" in lines["paging"] and "load1_max=9.5" in lines["paging"], result.stdout
     assert "booted_simulators=4" in lines["paging"], result.stdout
     print("POSITIVE CONTROL PASS known deltas reported: " + lines["paging"])
+    cpu = [line for line in result.stdout.splitlines() if line.startswith("HOST PRESSURE CPU phase=paging")]
+    assert cpu == ["HOST PRESSURE CPU phase=paging load1=9.5 mdworker_shared:180.5,Dulcet:20.0"], result.stdout
+    print("CPU CONTROL PASS the highest-load sample's processes: " + cpu[0])
 
     unmarked = Path(tmp) / "unmarked.jsonl"
     unmarked.write_text("".join(json.dumps(r) + "\n" for r in rows if r["event"] != "phase"))
@@ -68,5 +77,7 @@ with tempfile.TemporaryDirectory() as tmp:
     for key in ("page_bytes", "pageouts", "swapouts", "pageins", "compressor_pages"):
         assert all(key in s for s in samples), f"live vm_stat parse is missing {key}: {samples[0]}"
     assert samples[0]["page_bytes"] > 0 and samples[-1]["pageins"] > 0, samples[-1]
+    listed = [s for s in samples if "cpuTop" in s]
+    assert listed and listed[0]["cpuTop"] and all(len(entry) == 2 for entry in listed[0]["cpuTop"]), samples[0]
     print(f"LIVE CONTROL PASS samples={len(samples)} page_bytes={samples[0]['page_bytes']} "
           f"pageins={samples[-1]['pageins']}")

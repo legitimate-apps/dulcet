@@ -836,6 +836,24 @@ final class DulcetiOSUITests: XCTestCase {
             XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
         }
         bar.tap()
+        // A tap synthesized while the host is starved can be lost: main's run 37550927017 tapped
+        // the bar at load1 315 on three cores and no Now Playing surface followed in 15 s, with the
+        // bar still showing and the track playing. Only a tap that left the bar showing, hittable
+        // and with no Now Playing surface is repeated, once, and the repeat is printed, so a bar
+        // that ignores taps still fails here.
+        let surface = [
+            app.staticTexts["dulcet.now-playing.title"].firstMatch,
+            app.buttons["dulcet.now-playing.close"].firstMatch,
+            app.buttons["dulcet.now-playing.lyrics"].firstMatch,
+        ]
+        let deadline = Date().addingTimeInterval(15)
+        while !surface.contains(where: \.exists), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        if !surface.contains(where: \.exists), bar.exists, bar.isHittable {
+            print("DULCET NOW PLAYING RETAP the first tap on the bar presented nothing in 15 s")
+            bar.tap()
+        }
         return true
     }
 
