@@ -1132,6 +1132,12 @@ passing_cases = """\
             name="testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testAPlaylistOpensFromTheLibraryAndPlaysInItsOwnOrderByRemote" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testAnAddMadeWhileTheServerIsUnreachableShowsPendingAndIsSentAtReconnectByRemote" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testAPlaylistIsDeletedFromItsMenuAfterItsConfirmationByRemote" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw" time="0.1" />
   <testcase classname="DulcetiOSUITests"

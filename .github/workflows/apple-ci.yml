@@ -1672,6 +1672,81 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-playlist-add.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-playlist-add-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # A playlist's page on Apple TV by remote (spec §18.6): a playlist made for the run in the
+          # reverse of its album order opens from Library > Playlists, Play starts its first entry
+          # and Next Track its second, each named by the server's now-playing report. It plays the
+          # canary and Twenty Nine Seconds, never Thirty One Seconds, whose lyrics the lyrics proofs
+          # below need unstored; it deletes the playlist it made.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-order.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testAPlaylistOpensFromTheLibraryAndPlaysInItsOwnOrderByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playlist-order.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-order.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testAPlaylistOpensFromTheLibraryAndPlaysInItsOwnOrderByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-order.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-order-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
+          # An add made by remote during the fault proxy's outage on 4544 shows pending on the
+          # playlist's page and its Playlists row, and reaches the server after the reconnect
+          # (spec §18.6). It plays nothing, ends the outage and deletes what it made.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL=http://127.0.0.1:4544 \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-pending.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testAnAddMadeWhileTheServerIsUnreachableShowsPendingAndIsSentAtReconnectByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playlist-pending.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-pending.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testAnAddMadeWhileTheServerIsUnreachableShowsPendingAndIsSentAtReconnectByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-pending.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-pending-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
+          # Delete Playlist from a playlist row's press-and-hold menu, by remote (spec §18.6): Cancel
+          # in its confirmation deletes nothing; Delete removes the row and getPlaylists stops
+          # listing it. It plays nothing.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-delete.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testAPlaylistIsDeletedFromItsMenuAfterItsConfirmationByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playlist-delete.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-delete.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testAPlaylistIsDeletedFromItsMenuAfterItsConfirmationByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-delete.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-delete-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
@@ -2630,6 +2705,9 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-junit" \
             "$RUNNER_TEMP/dulcet-tvos-playlist-add-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-order-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-pending-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-delete-junit" \
             "$RUNNER_TEMP/dulcet-tvos-playlist-doubt-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \

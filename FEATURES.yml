@@ -1776,14 +1776,32 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetTVUITests/testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server: a playlist made for the run holding the canary then Twenty Nine Seconds, the reverse of their album order, opens from Library > Playlists and lists them in that order; Play starts the canary and Now Playing says it plays from the playlist, Next Track moves to Twenty Nine Seconds, and the server's getNowPlaying for the account names each in turn",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testAPlaylistOpensFromTheLibraryAndPlaysInItsOwnOrderByRemote"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote, connected through the fault proxy in front of the disposable server: during the proxy's outage a track's Add to Playlist… adds it to a playlist made for the run and already read; the send meets the outage at its re-read of the playlist and no updatePlaylist is written; the playlist's page lists both tracks and says Changes not yet on your server, as its Playlists row does, while getPlaylist still reads one track; once the outage ends the return from the Home screen reconnects, getPlaylist reads both tracks in order under the same id, the proxy forwarded an updatePlaylist after the outage, and the page stops saying the change is pending",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testAnAddMadeWhileTheServerIsUnreachableShowsPendingAndIsSentAtReconnectByRemote"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server: a press and hold on the row of a playlist the account owns, in Library > Playlists, opens its menu; Delete Playlist presents the confirmation with Cancel focused; Cancel closes it and the server still lists the playlist; asked again, Delete Playlist in the confirmation is reached by remote, the row leaves the list and getPlaylists no longer lists the playlist",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testAPlaylistIsDeletedFromItsMenuAfterItsConfirmationByRemote"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "tvos-playlist-page-and-pending-ui-proof",
-            "reason": "No tvOS test opens a playlist from the Library and observes it play in its own order, and none makes an add while the server is unreachable and observes it shown pending and sent at reconnect. Until such tests exist no workflow, job or test can be named for them."
+            "blocked_on": "tvos-playlist-page-proofs-first-main-run",
+            "reason": "The playlist page's proofs exist and passed locally on a tvOS simulator against the disposable server: a playlist opened from the Library plays in its own order, an add made while the server is unreachable is shown pending and sent at reconnect, and Delete from a playlist row's menu is confirmed first, with Cancel as the control. They are wired into the conformance leg, which a pull request does not run; what remains is their first passing run on main."
           },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. A create whose answer was lost is asked about over the screen and kept by remote, with no second create sent. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); a playlist tile's menu also offers Delete for the person's own playlist, confirmed first, which no tvOS test drives. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays read-only."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. A create whose answer was lost is asked about over the screen and kept by remote, with no second create sent. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); Library > Playlists opens a playlist's page, whose Play plays it in its own order, and an add made while the server is unreachable is said there as not yet on the server until the reconnect sends it. A playlist row's press-and-hold menu offers Delete for the person's own playlist, confirmed first; those three are driven by remote in the same leg and await their first passing run on main. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays."
         },
         "android": {
           "status": "shipped",

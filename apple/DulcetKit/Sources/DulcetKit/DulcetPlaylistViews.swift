@@ -424,6 +424,7 @@ struct DulcetPlaylistItemMenuItems: View {
                     // Recorded only once the person confirms (dulcetPlaylistSheets).
                     editor.requestDeletion(of: item.id.rawID)
                 }
+                .accessibilityIdentifier("dulcet.playlist.delete")
             default:
                 EmptyView()
             }
