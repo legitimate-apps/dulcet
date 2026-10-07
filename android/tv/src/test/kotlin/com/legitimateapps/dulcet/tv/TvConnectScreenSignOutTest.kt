@@ -102,7 +102,7 @@ class TvConnectScreenSignOutTest {
     @Test fun signOutIsReachedWithTheRemoteAndSeenAt1080pUnderAStatusLine() {
         store.saveUnreadable(BROKEN)
         host { AccountConnectionResult.Failed(DomainError.Auth.InvalidCredentials) }
-        compose.onNodeWithTag("tv.connect.server").performTextInput("https://music.example.invalid")
+        compose.onNodeWithTag("tv.connect.server").selectWithRemote().performTextInput("https://music.example.invalid")
         press("tv.connect.submit")
         compose.waitUntil(5_000) {
             runCatching { compose.onNodeWithTag("tv.connect.status").assertTextContains("not accepted", substring = true) }.isSuccess
@@ -216,9 +216,9 @@ class TvConnectScreenSignOutTest {
     }
 
     private fun fillAndSubmit() {
-        compose.onNodeWithTag("tv.connect.server").performTextInput("https://music.example.invalid")
-        compose.onNodeWithTag("tv.connect.username").performTextInput("listener")
-        compose.onNodeWithTag("tv.connect.password").performTextInput("tv-password-canary")
+        compose.onNodeWithTag("tv.connect.server").selectWithRemote().performTextInput("https://music.example.invalid")
+        compose.onNodeWithTag("tv.connect.username").selectWithRemote().performTextInput("listener")
+        compose.onNodeWithTag("tv.connect.password").selectWithRemote().performTextInput("tv-password-canary")
         press("tv.connect.submit")
     }
 

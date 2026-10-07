@@ -16,6 +16,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
 import com.legitimateapps.dulcet.core.AndroidLibraryUnavailableReason
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R
 import java.text.NumberFormat
 
@@ -97,6 +98,19 @@ private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().
 public fun Resources.connectionLine(state: LibraryConnectionState): String? =
     if (state is LibraryConnectionState.Failed && state.readerOffline) {
         getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
+    } else {
+        null
+    }
+
+/**
+ * A saved account not yet connected in this process (§13.1, CONF-10b): what is shown is what this
+ * device has seen, and the named server is contacted only after Reconnect. Null otherwise.
+ */
+public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? =
+    if (state == LibraryConnectionState.Saved) {
+        val server = runCatching { java.net.URI(account.normalizedBaseUrl).host }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: account.normalizedBaseUrl
+        getString(R.string.library_saved_not_connected, server)
     } else {
         null
     }

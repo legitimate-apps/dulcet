@@ -38,7 +38,7 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-09b | account-connect render-state inventory |
 | CONF-09c | total actionable account-error presentation |
 | CONF-10a | unavailable platform-secure credential storage fails closed with a typed reason, no active-account pointer, and no weaker fallback |
-| CONF-10b | explicit reconnect after persisted-credential prefill |
+| CONF-10b | no request after a relaunch into persisted credentials until an explicit Connect or Reconnect (downloads queued earlier excepted); prefill where a form is shown |
 | CONF-10c | a 407 proxy-auth challenge rejects ambient credentials |
 | CONF-10d | restricted-user permission errors map to `Auth.Forbidden` |
 | CONF-10e | a production Apple credential-store save records `AfterFirstUnlockThisDeviceOnly` accessibility and a non-synchronizable item, observed by an unconstrained attribute read-back; this does not claim protection enforcement or device-equivalent simulator semantics |
@@ -92,7 +92,8 @@ base is an error naming that document; the gate never substitutes a different ba
 
 ## Account-connect evidence boundary (CONF-09b)
 
-CONF-09b is an explicit gap on all four Apple `account.connect` cells and on both Android cells.
+CONF-09b is an explicit gap on all four Apple `account.connect` cells. Both Android cells evidence it
+through the production apps on the emulators.
 
 **Apple.** The shared `accountPresentationTransitionsGivenConnectorOutcomes` test submits through the
 production `DulcetPresentationStore` into `DulcetAccountDataSource` and reads real snapshots, but it
@@ -112,13 +113,32 @@ the root loads in one fixture state at the platform's window size; and
 `testAccountConnectUsesRegularWidthSplitLayout` (iPadOS) the regular-width split layout. Un-citing
 them would leave each cell's reason describing a test that nothing checks still runs.
 
-**Android.** `conf09bEveryDeclaredDistinctRenderStateIsReachable` reaches the view model's six render
-states through injected gateway results (`ImmediateGateway`, `CancellableGateway`) and an injected
-failing credential store — the same boundary as the Apple test. It is cited as a bounded `observes`
-row on the `android` and `androidtv` cells, and CONF-09b is named as a gap there for the same reason:
-the production gateway originating each outcome, and a production credential save failing, are not
-observed. The capability point below does not arise on Android, which declares one failure render
-state for every error.
+**Android.** `AndroidEmulatorAccountConnectProofTest` (phone) and
+`AndroidTvEmulatorAccountConnectProofTest` (TV) run in core-ci on the API 34 emulators against the
+disposable server, from an install with no saved account. The phone is driven by touches injected at
+each control's place on the screen and typed key events; the TV by the remote's keys and its own
+on-screen keyboard. Every state comes from a production transition: a wrong password the server
+itself refuses (its error code 40 is read from the wire), the server made unreachable, a request held
+in flight and cancelled, the app's preferences directory made read-only so the real save fails,
+connected, a relaunch into the saved account, and a relaunch after the saved account's Keystore key
+is deleted, as a Keystore reset deletes it. Neither app has separate saved or connected cards:
+connected is the library, and saved-and-disconnected is the saved account's library opened at
+relaunch, saying the account is saved and not connected and offering Reconnect. A relaunch is a new
+activity in the same process, after the proof closes the process's library reader, which a new
+process does not have.
+
+`conf09bEveryDeclaredDistinctRenderStateIsReachable`, which reaches the view model's six render
+states through injected gateway results and an injected failing credential store, stays cited as a
+bounded `observes` row. The capability point below does not arise on Android, which declares one
+failure render state for every error.
+
+Each emulator also has its own CONF-10b proof (§13.1), which connects through the form and then
+relaunches, and the CONF-09b proofs take the same relaunch: the relay in front of the server counts
+no connection for five seconds while the library paints the albums this device has seen, and the
+first connection comes only after the person chooses Reconnect — a touch on the phone, the remote on
+TV, the first place UP out of the library and one DOWN from the bar — which reconnects in place. Neither app shows a prefilled form for
+a saved account; the library's Reconnect is the explicit reconnect. The view-model test that prefills
+the form stays cited as a bounded `observes` row.
 
 `unevidenced_conformance` maps a declared CONF id to a nonblank reason, and the parity gate refuses a
 `shipped` cell that carries one. When a cell cites at least one conformance row, or is `shipped`, the

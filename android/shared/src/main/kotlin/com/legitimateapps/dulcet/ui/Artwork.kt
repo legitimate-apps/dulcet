@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.Color
@@ -14,6 +15,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidArtworkRepository
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchAccount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -47,10 +49,11 @@ public object ArtworkImages {
         return best
     }
 
-    public suspend fun load(context: Context, account: SearchAccount, key: String, pixels: Int): ImageBitmap? {
+    /** [cachedOnly]: read only what this device has kept, sending nothing (an account awaiting Reconnect). */
+    public suspend fun load(context: Context, account: SearchAccount, key: String, pixels: Int, cachedOnly: Boolean = false): ImageBitmap? {
         val cacheKey = cacheKey(account, key, pixels)
         decoded.get(cacheKey)?.let { return it }
-        val bytes = repository(context, account).load(key, pixels) ?: return null
+        val bytes = repository(context, account).load(key, pixels, cachedOnly) ?: return null
         return withContext(Dispatchers.Default) {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -128,9 +131,17 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     val context = LocalContext.current
     // A first paint may be the same cover at another size — the mini player's thumb, say — while the
     // requested size loads; a failed fetch never replaces it with the placeholder.
+    // A saved account awaiting Reconnect sends nothing (§13.1): its covers come from this device's
+    // cache, and the ones it lacks load when the person reconnects.
+    val waiting by SavedAccountConnection.waitingForReconnect.collectAsState()
+    val cachedOnly = account.providerInstanceId in waiting
     val image by produceState(key?.let { ArtworkImages.cached(account, it, pixels) ?: ArtworkImages.cachedAtAnySize(account, it) },
-        account.providerInstanceId, key, pixels) {
+        account.providerInstanceId, key, pixels, cachedOnly) {
         if (key.isNullOrBlank()) { value = null; return@produceState }
+        if (cachedOnly) {
+            runCatching { ArtworkImages.load(context, account, key, pixels, cachedOnly = true) }.getOrNull()?.let { value = it }
+            return@produceState
+        }
         // A null is a missing cover and a failed fetch alike, and the repository remembers only the
         // missing one — so asking again is cheap when there is no cover, and recovers a tile whose
         // fetch hit a transient failure (a fresh device's first connections are reset).

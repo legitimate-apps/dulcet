@@ -74,6 +74,9 @@
     <string name="library_artist_nothing_playable">Nothing on this artist\'s albums can play right now.</string>
     <string name="library_try_again">Try again</string>
     <string name="library_dismiss">Dismiss</string>
+    <string name="library_saved_not_connected">Your account on %1$s is saved and not connected. Dulcet contacts the server only after you choose Reconnect.</string>
+    <string name="library_reconnect">Reconnect</string>
+    <string name="now_playing_needs_reconnect">This song plays from your server, which Dulcet contacts only after you choose Reconnect.</string>
     <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>
     <string name="library_no_epoch">Your server doesn\'t say when its library changes, so lists may be out of date until you refresh.</string>
     <plurals name="library_discarded_changes">
@@ -203,4 +206,41 @@
         <item quantity="one">%d track wasn’t added to Up Next: what it was added to didn’t start.</item>
         <item quantity="other">%d tracks weren’t added to Up Next: what they were added to didn’t start.</item>
     </plurals>
+    <!-- Account-connect failures (CONF-09c), said by every Android shell. -->
+    <string name="error_invalid_url_title">Check the server address</string>
+    <string name="error_invalid_url_message">The server address is incomplete or unsupported.</string>
+    <string name="error_invalid_url_recovery">Enter a complete HTTP or HTTPS OpenSubsonic server address, then try again.</string>
+    <string name="error_internationalized_url_title">Use the punycode server address</string>
+    <string name="error_internationalized_url_message">Internationalized host names must use their ASCII spelling.</string>
+    <string name="error_internationalized_url_recovery">Convert the host to punycode, such as xn--msik-0ra.example.invalid for müsik.example.invalid, then try again.</string>
+    <string name="error_unreachable_title">The server could not be reached</string>
+    <string name="error_unreachable_message">Dulcet could not establish a network connection to the server.</string>
+    <string name="error_unreachable_recovery">Check that the server is running and reachable from this device, then try again.</string>
+    <string name="error_timeout_title">The server took too long to respond</string>
+    <string name="error_timeout_message">Account setup exceeded its response deadline.</string>
+    <string name="error_timeout_recovery">Check the server and network, then try again.</string>
+    <string name="error_cancelled_title">Connection cancelled</string>
+    <string name="error_cancelled_message">Dulcet stopped the active account connection.</string>
+    <string name="error_cancelled_recovery">Choose Connect whenever you are ready to try again.</string>
+    <string name="error_tls_title">The server certificate is not trusted</string>
+    <string name="error_tls_message">Android could not establish a trusted HTTPS connection to this server.</string>
+    <string name="error_tls_recovery">Install the issuing CA certificate in the operating-system trust store, correct the certificate, or use another trusted HTTPS endpoint.</string>
+    <string name="error_security_title">The connection was refused for security</string>
+    <string name="error_security_message">The requested address or redirect violated the account-connection security policy.</string>
+    <string name="error_security_recovery">Use a trusted HTTPS endpoint, or explicitly allow HTTP only for a server on this local network.</string>
+    <string name="error_protocol_title">This is not a compatible OpenSubsonic endpoint</string>
+    <string name="error_protocol_message">The server response did not match the supported OpenSubsonic protocol.</string>
+    <string name="error_protocol_recovery">Check the server address and version, then try again.</string>
+    <string name="error_server_title">The server could not complete account setup</string>
+    <string name="error_server_message">The server reported an error while Dulcet was establishing the account.</string>
+    <string name="error_server_recovery">Review the account and server settings, then try again.</string>
+    <string name="error_auth_title">The account was not accepted</string>
+    <string name="error_auth_message">The server or an intermediary rejected the authentication method or credentials.</string>
+    <string name="error_auth_recovery">Check the credentials and any reverse-proxy authentication, then try again.</string>
+    <string name="error_cross_origin_title">Account setup was redirected to another host</string>
+    <string name="error_cross_origin_message">The server redirected account setup to %1$s.</string>
+    <string name="error_cross_origin_recovery">Use an OpenSubsonic /rest/ endpoint that does not require an SSO or identity-provider redirect.</string>
+    <string name="error_capability_title">A required server capability is unavailable</string>
+    <string name="error_capability_message">This server does not provide a capability required for account setup.</string>
+    <string name="error_capability_recovery">Update the server or use a compatible OpenSubsonic endpoint.</string>
 </resources>

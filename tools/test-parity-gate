@@ -1192,8 +1192,20 @@ passing_cases = """\
             name="aPartialFileKeptAfterADroppedConnectionIsResumedWithARangeRequestAfterARelaunch" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.DownloadedTitleOfflineTest"
             name="aSongDownloadedByIdAloneIsNamedOnNowPlayingAfterAnOfflineRelaunch" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.AndroidEmulatorAccountConnectProofTest"
+            name="aPersonReachesEveryConnectStateOnTheWayFromAnEmptyInstallToTheLibraryAndBackAfterARelaunch" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvEmulatorAccountConnectProofTest"
+            name="aPersonWithTheRemoteReachesEveryConnectStateFromAnEmptyInstallToTheLibraryAndBackAfterARelaunch" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.TvDownloadedTitleOfflineTest"
             name="aSongDownloadedByIdAloneIsNamedOnTheTvPlayerAfterAnOfflineRelaunch" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.AndroidEmulatorAccountConnectProofTest"
+            name="aRelaunchIntoTheSavedAccountSendsNothingUntilThePersonTouchesReconnect" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvEmulatorAccountConnectProofTest"
+            name="aRelaunchIntoTheSavedAccountSendsNothingUntilTheRemoteChoosesReconnect" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.TvConnectScreenTest"
+            name="aCancelledAttemptLeavesNothingSavedEvenIfTheServerAccepts" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.tv.TvConnectScreenTest"
+            name="conf09cTheTvSaysEveryAccountErrorWithItsRemedy" time="0.1" />
   <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
             name="toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp" time="0.1" />
   <testcase classname="DulcetiOSUITests"

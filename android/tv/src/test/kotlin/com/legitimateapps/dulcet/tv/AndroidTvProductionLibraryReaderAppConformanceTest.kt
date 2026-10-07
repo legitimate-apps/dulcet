@@ -443,7 +443,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             keyAt("playlists.add.new", Key.DirectionCenter)
             await("the name field focused") { focused("playlists.add.name") }
             // The TV's on-screen keyboard is the platform's; the field takes the text it would send.
-            compose.onNodeWithTag("playlists.add.name").performTextReplacement(name)
+            compose.onNodeWithTag("playlists.add.name").selectWithRemote().performTextReplacement(name)
             keyAt("playlists.add.name", Key.DirectionDown)
             assertFocused("playlists.add.name.confirm")
             keyAt("playlists.add.name.confirm", Key.DirectionCenter)

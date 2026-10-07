@@ -53,6 +53,35 @@ class TvHomeLandingTest {
     }
 
     /**
+     * CONF-10b (spec §13.1): the saved account, not yet connected in this process, says so under the
+     * bar, and Reconnect is one DOWN from any place on the bar and the first place UP out of the
+     * library; choosing it ends the wait.
+     */
+    @Test fun aSavedAccountSaysItWaitsForReconnectWhichIsOneDownFromTheBar() {
+        await("the remote on the bar's Library tab") { focused("library.open") }
+        assertTrue(exists("library.saved"), "The library says the account is saved and not connected")
+        key(Key.DirectionDown)
+        assertFocused("library.reconnect")
+        // From the far end of the library's sections, UP out of the library is Reconnect, not the bar
+        // place above Refresh; and from the far end of the bar, DOWN is Reconnect, not Refresh. On the
+        // emulator's layout neither lines up with Reconnect (core-ci run 37657259993).
+        key(Key.DirectionDown)
+        var rights = 0
+        while (!focused("library.refresh") && rights < 8) { key(Key.DirectionRight); rights += 1 }
+        assertFocused("library.refresh")
+        key(Key.DirectionUp)
+        assertFocused("library.reconnect")
+        key(Key.DirectionUp)
+        assertFocused("library.open")
+        key(Key.DirectionRight)
+        assertFocused("tv.account.open")
+        key(Key.DirectionDown)
+        assertFocused("library.reconnect")
+        key(Key.DirectionCenter)
+        await("Reconnect ends the wait") { !exists("library.saved") && !exists("library.reconnect") }
+    }
+
+    /**
      * Should-fixes 4 and 5: along the bar to Account, which opens on Back and not on Sign out; DOWN
      * reaches Sign out, whose dialog opens on Stay signed in; and Back from Account returns to the
      * library with the remote where it was.

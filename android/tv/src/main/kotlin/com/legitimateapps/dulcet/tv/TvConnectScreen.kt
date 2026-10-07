@@ -25,7 +25,14 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,11 +60,14 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.AccountConnectOutcome
+import com.legitimateapps.dulcet.AccountFailurePresentation
 import com.legitimateapps.dulcet.AccountCredentialStore
+import com.legitimateapps.dulcet.CredentialStoreException
+import com.legitimateapps.dulcet.accountFailurePresentation
 import com.legitimateapps.dulcet.connectAndSaveAccount
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
-import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.statement
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -79,10 +89,16 @@ internal fun TvConnectScreen(
     var attempt by remember { mutableStateOf<Job?>(null) }
     var generation by remember { mutableStateOf(0L) }
     var message by remember { mutableStateOf<Int?>(null) }
+    var failure by remember { mutableStateOf<AccountFailurePresentation?>(null) }
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
     val connecting = attempt?.isActive == true
+    // A saved account whose record cannot be read (its Keystore key lost, say) is said, not left as
+    // an unexplained empty form beside Sign out. Read again whenever the saved account changes, so
+    // signing it out takes the line away.
+    val saved = LocalTvAccountActions.current?.saved
+    val unreadable = remember(saved) { runCatching { store.load() }.exceptionOrNull() is CredentialStoreException }
     // A form that leaves the screen abandons its attempt, so a connect answered after that saves
     // nothing — not even when the connector returns without noticing its scope was cancelled.
     // `stillWanted` reads this. Defence in depth: Sign out, the one way off this form while a
@@ -96,6 +112,7 @@ internal fun TvConnectScreen(
         generation += 1
         if (attempt?.isActive == true) { attempt?.cancel(); attempt = null; message = null; return }
         val mine = generation
+        failure = null
         message = R.string.tv_connecting
         attempt = scope.launch {
             val outcome = connectAndSaveAccount(AccountConnectionRequest(server, username, password, allowLocalHttp),
@@ -104,7 +121,7 @@ internal fun TvConnectScreen(
             attempt = null
             when (outcome) {
                 is AccountConnectOutcome.Connected -> { message = null; onConnected() }
-                is AccountConnectOutcome.Failed -> message = outcome.error.tvConnectMessage()
+                is AccountConnectOutcome.Failed -> { message = null; failure = outcome.error.accountFailurePresentation() }
                 AccountConnectOutcome.PersistenceFailed -> message = R.string.tv_error_persistence
                 AccountConnectOutcome.Superseded -> Unit
             }
@@ -144,9 +161,13 @@ internal fun TvConnectScreen(
                 Button(onClick = ::submitOrCancel, modifier = Modifier.testTag("tv.connect.submit")) {
                     Text(stringResource(if (connecting) R.string.tv_cancel else R.string.tv_connect))
                 }
-                message?.let {
-                    Text(stringResource(it), style = MaterialTheme.typography.bodyLarge,
-                        color = if (it == R.string.tv_connecting) MaterialTheme.colorScheme.onSurface
+                // A failure says what every Android shell says (CONF-09c): its title, what happened and
+                // what to do, with the decided remedies.
+                val resources = LocalContext.current.resources
+                (failure?.statement(resources) ?: (message ?: R.string.tv_error_unreadable.takeIf { unreadable })
+                    ?.let { stringResource(it) })?.let { said ->
+                    Text(said, style = MaterialTheme.typography.bodyLarge,
+                        color = if (failure == null && message == R.string.tv_connecting) MaterialTheme.colorScheme.onSurface
                         else MaterialTheme.colorScheme.error,
                         modifier = Modifier.testTag("tv.connect.status"))
                 }
@@ -175,6 +196,14 @@ internal fun TvField(
     var focused by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
+    // As on the search screen: the field is read-only until it is selected (the centre key, or a
+    // tap), so the remote can land on it or pass over it without the keyboard coming up and taking
+    // the D-pad. A read-only field opens no input session. Leaving it makes it read-only again.
+    val softKeyboard = LocalSoftwareKeyboardController.current
+    var editing by remember { mutableStateOf(false) }
+    LaunchedEffect(editing) {
+        if (editing) { withFrameNanos { }; softKeyboard?.show() }
+    }
     Column {
         Text(label, style = MaterialTheme.typography.labelLarge, color = if (focused) colors.primary else colors.onSurfaceVariant)
         Box(Modifier.fillMaxWidth().padding(top = 6.dp)
@@ -182,7 +211,7 @@ internal fun TvField(
             .border(2.dp, if (focused) colors.primary else colors.surfaceVariant, RoundedCornerShape(8.dp))
             .padding(horizontal = 16.dp, vertical = 12.dp)) {
             BasicTextField(
-                value = value, onValueChange = onChange, enabled = enabled, singleLine = true,
+                value = value, onValueChange = onChange, enabled = enabled, singleLine = true, readOnly = !editing,
                 keyboardOptions = keyboard, visualTransformation = visual,
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) },
                     onDone = { focusManager.moveFocus(FocusDirection.Down) }),
@@ -194,10 +223,22 @@ internal fun TvField(
                 },
                 // A text field consumes the D-pad for its cursor, which traps a remote in the first
                 // field. Up and Down leave the field; Left and Right still move the cursor.
-                modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+                modifier = modifier.fillMaxWidth()
+                    .onFocusChanged { focused = it.isFocused; if (!it.isFocused) editing = false }
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            editing = true
+                        }
+                    }
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (event.key) {
+                            // Selecting the field asks for the keyboard; again, once Back has closed it.
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                if (editing) softKeyboard?.show() else editing = true
+                                true
+                            }
                             Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
                             Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
                             else -> false
@@ -206,22 +247,4 @@ internal fun TvField(
             )
         }
     }
-}
-
-/** Plain-language copy per failure class; server text and URLs are never shown. */
-private fun DomainError.tvConnectMessage(): Int = when (this) {
-    is DomainError.Input.InvalidServerUrl -> R.string.tv_error_address
-    DomainError.Transport.Unreachable, DomainError.Transport.Cancelled -> R.string.tv_error_unreachable
-    DomainError.Transport.Timeout -> R.string.tv_error_timeout
-    is DomainError.Security.TlsUntrusted -> R.string.tv_error_tls
-    DomainError.Security.LocalExceptionViolated, is DomainError.Security.RedirectRejected,
-    is DomainError.Auth.CrossOriginRedirectRejected -> R.string.tv_error_security
-    DomainError.Protocol.MalformedEnvelope, is DomainError.Protocol.UnexpectedContentType,
-    DomainError.Protocol.UnexpectedBinary, is DomainError.Protocol.Incompatible,
-    DomainError.Protocol.NotASubsonicServer, DomainError.Protocol.TooLarge -> R.string.tv_error_protocol
-    is DomainError.Server.Busy, is DomainError.Server.Known, is DomainError.Server.Unknown,
-    is DomainError.Server.HttpStatus, DomainError.Playback.NoPlayableSource -> R.string.tv_error_server
-    DomainError.Auth.InvalidCredentials, DomainError.Auth.TokenAuthUnsupported, DomainError.Auth.Forbidden,
-    DomainError.Auth.UnsupportedAuthenticationChallenge -> R.string.tv_error_auth
-    is DomainError.CapabilityUnsupported -> R.string.tv_error_capability
 }

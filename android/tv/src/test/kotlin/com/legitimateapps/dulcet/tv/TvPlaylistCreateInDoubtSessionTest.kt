@@ -99,7 +99,7 @@ class TvPlaylistCreateInDoubtSessionTest {
         await("the chooser on New Playlist…") { focused("playlists.add.new") }
         keyAt("playlists.add.new", Key.DirectionCenter)
         await("the name field") { focused("playlists.add.name") }
-        compose.onNodeWithTag("playlists.add.name").performTextReplacement(NAME)
+        compose.onNodeWithTag("playlists.add.name").selectWithRemote().performTextReplacement(NAME)
         keyAt("playlists.add.name", Key.DirectionDown)
         assertFocused("playlists.add.name.confirm")
         keyAt("playlists.add.name.confirm", Key.DirectionCenter)

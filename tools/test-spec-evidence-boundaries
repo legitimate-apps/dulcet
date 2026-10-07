@@ -183,7 +183,8 @@ for marker in (
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 for marker in (
-    "**macOS Phase-1 relaunch decision — explicit reconnect:**",
+    "**Relaunch decision — explicit reconnect (every platform; first decided for macOS Phase 1):**",
+    "a cold launch into a saved account is not a return to the foreground of a connected session",
     "one Keychain generic-password value",
     "generated local UUID",
     "data-protection Keychain",

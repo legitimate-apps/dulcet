@@ -81,36 +81,46 @@ class AndroidProxyAuthenticationConformanceTest {
                     observation.bodyAsText(),
             )
 
-            // Taxonomy is asserted LAST, after the security properties above, so a divergence in the
-            // error label can never mask a failure to reject the challenge. Those are different
-            // claims and the security one is the requirement.
+            // Taxonomy is asserted LAST, after the security properties above, so a wrong error label
+            // can never mask a failure to reject the challenge. Those are different claims and the
+            // security one is the requirement.
             //
-            // 🚨 ANDROID DIVERGES FROM DARWIN HERE, and this pins the real behaviour rather than the
-            // one we would prefer. Darwin's URLSession delegate sees the challenge and marks the
-            // tracker, so it reports Auth.UnsupportedAuthenticationChallenge. Ktor's CIO engine
-            // surfaces a 407 as `java.io.IOException: Can not establish tunnel connection` -- OBSERVED
-            // -- carrying no status, so `mapAccountConnectionFailure` cannot tell it apart from a
-            // proxy that is simply down and lands on Transport.Unreachable.
-            //
-            // Matching that message to produce the auth error was considered and rejected: the same
-            // string covers a genuinely unreachable proxy, so it would report an authentication
-            // challenge for a dead one. A wrong error is not better than a coarse one.
-            //
-            // The security properties asserted above are identical on both platforms; only the label
-            // differs. That gap is user-visible -- Android tells someone their server is unreachable
-            // when a proxy demanded credentials -- and is recorded as a known divergence rather than
-            // silently accepted. Tightening it needs an engine that reports the status, not a
-            // message match here.
-            assertIs<DomainError.Transport.Unreachable>(
+            // CIO surfaces a 407 to the tunnel's CONNECT as `IOException("Can not establish tunnel
+            // connection")` with no status, and the same message covers a proxy that is down. The
+            // Android client then asks the proxy that CONNECT once more, with no credentials, and
+            // marks the challenge only on an observed 407 — so this reports what Darwin reports,
+            // and aDeadProxyIsUnreachableNotAChallenge holds the other side.
+            assertIs<DomainError.Auth.UnsupportedAuthenticationChallenge>(
                 failure.error,
-                "CONF-10c on Android expected the documented CIO granularity, observed ${failure.error}. " +
-                    "If this now reports the auth challenge, the engine gained a status signal and " +
-                    "this assertion plus the divergence note should be tightened to match Darwin.",
+                "CONF-10c expected the proxy's 407 reported as an unsupported challenge, observed ${failure.error}",
             )
         } finally {
             observationClient.close()
             Authenticator.setDefault(null)
         }
+    }
+
+    /**
+     * The other side of CONF-10c's error label: a forward proxy that is not there is unreachable, never
+     * an authentication challenge, though CIO fails both with the same message.
+     */
+    @Test
+    fun aDeadProxyIsUnreachableNotAChallenge() = runTest {
+        val deadPort = java.net.ServerSocket(0, 1, InetAddress.getByName(PROXY_HOST)).use { it.localPort }
+        val result = AndroidForwardProxyAccountConnector(
+            proxyHost = PROXY_HOST,
+            proxyPort = deadPort,
+            saltSource = SaltSource { "0123456789abcdef0123456789abcdef" },
+        ).connect(
+            AccountConnectionRequest(
+                serverUrl = "https://proxy-target.example.invalid/account",
+                username = "dulcet-proxy-auth",
+                password = "fixture-password",
+                allowLocalHttp = false,
+            ),
+        )
+        val failure = assertIs<AccountConnectionResult.Failed>(result, "A dead proxy cannot connect, observed $result")
+        assertIs<DomainError.Transport.Unreachable>(failure.error, "A dead proxy is unreachable, observed ${failure.error}")
     }
 
     private companion object {

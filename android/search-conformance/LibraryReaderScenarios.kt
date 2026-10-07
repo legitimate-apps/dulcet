@@ -140,9 +140,15 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         compose.activityRule.scenario.recreate()
         ui.openLibrary()
         await("every home row to paint") { HOME.all { frames(it).isNotEmpty() } }
-        await("each row's own read to be issued, and held") {
+        // A new process opened on a saved account sends nothing until the person chooses Reconnect
+        // (spec §13.1, CONF-10b); the rows painted from the device alone.
+        assertEquals(emptyList(), proxy.since(relaunchMark).map { it.endpoint }, "the relaunch sent nothing before Reconnect")
+        ui.activate(compose.onNodeWithTag("library.reconnect"))
+        // Reconnect reads the epoch and revalidates the screen (§16.11): the rows on it issue their
+        // reads, which are held, so what is shown next is still the device's.
+        await("the shown rows' reads to be issued after Reconnect, and held") {
             val held = proxy.since(relaunchMark).filter { !it.answered }
-            ROW_READS.all { (endpoint, type) -> held.any { it.endpoint == endpoint && it.parameters["type"] == type } }
+            ROW_READS.any { (endpoint, type) -> held.any { it.endpoint == endpoint && it.parameters["type"] == type } }
         }
         HOME.forEachIndexed { index, key ->
             val first = frames(key).first()
@@ -362,7 +368,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     fun conf77EpochCadenceRunsInTheForegroundOnly() {
         AndroidLibraryReader.testEpochIntervalMillis = CADENCE_MILLIS
         try {
-            closeProcessReader()
+            closeProcessReaderAndReconnect()
             compose.activityRule.scenario.recreate()
             ui.openLibrary()
             awaitHomeLive()
@@ -1778,7 +1784,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         ui.leaveBrowseView()
         awaitQuiet()
-        closeProcessReader()
+        closeProcessReaderAndReconnect()
         RuntimeEnvironment.getApplication().deleteDatabase("dulcet.db")
         proxy.withoutHeader({ it.endpoint == "getAlbumList2" }, "X-Total-Count")
         try {
@@ -1814,7 +1820,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     /** A cold start into the albums grid, live and quiet. */
     private fun relaunchIntoAlbums() {
-        closeProcessReader()
+        closeProcessReaderAndReconnect()
         compose.activityRule.scenario.recreate()
         openPagedAlbums()
     }
@@ -1839,7 +1845,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     private fun withWindowPages(block: () -> Unit) {
         AndroidLibraryReader.testPageSize = WINDOW_PAGE
         try {
-            closeProcessReader()
+            closeProcessReaderAndReconnect()
             compose.activityRule.scenario.recreate()
             block()
         } finally {

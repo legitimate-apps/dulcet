@@ -30,14 +30,18 @@ public class AndroidArtworkRepository internal constructor(
     // "No artwork" is remembered for this process only; a later scan may add a cover.
     private val unavailable = ConcurrentHashMap.newKeySet<String>()
 
-    /** Validated image bytes, or null when the server has none or the request failed. */
-    public suspend fun load(artworkKey: String, sizePixels: Int): ByteArray? {
+    /**
+     * Validated image bytes, or null when the server has none or the request failed. [cachedOnly] reads
+     * only what this device has kept and sends nothing: an account that is saved and not connected.
+     */
+    public suspend fun load(artworkKey: String, sizePixels: Int, cachedOnly: Boolean = false): ByteArray? {
         if (artworkKey.isBlank()) return null
         val bucket = bucketFor(sizePixels)
         val name = digest(artworkKey + "\u0000" + bucket.pixels) + ".image"
         if (name in unavailable) return null
         val file = File(root, name)
         readCached(file)?.let { return it }
+        if (cachedOnly) return null
         val mine = CompletableDeferred<ByteArray?>()
         val existing = inFlight.putIfAbsent(name, mine)
         if (existing != null) return existing.await()

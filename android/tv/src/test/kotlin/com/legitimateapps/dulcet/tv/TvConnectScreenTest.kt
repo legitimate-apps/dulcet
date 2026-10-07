@@ -1,5 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -16,6 +19,18 @@ import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.CapabilitySet
 import com.legitimateapps.dulcet.core.ConnectedAccount
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.accountFailurePresentation
+import com.legitimateapps.dulcet.statement
+import com.legitimateapps.dulcet.core.AudioContainer
+import com.legitimateapps.dulcet.core.CapabilityFeature
+import com.legitimateapps.dulcet.core.InvalidServerUrlReason
+import com.legitimateapps.dulcet.core.ObservedPlaybackContentType
+import com.legitimateapps.dulcet.core.ProtocolVersionLevel
+import com.legitimateapps.dulcet.core.RedirectRejectionReason
+import com.legitimateapps.dulcet.core.RedirectTargetHost
+import com.legitimateapps.dulcet.core.TlsTrustFailure
+import kotlin.time.Duration.Companion.seconds
+import org.robolectric.RuntimeEnvironment
 import com.legitimateapps.dulcet.core.UserPermissions
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Rule
@@ -66,6 +81,42 @@ class TvConnectScreenTest {
         assertEquals(0, connected)
     }
 
+    /**
+     * CONF-09c on the TV: every account error the connector can return is said on the TV screen as
+     * its title, what happened and what to do, and the TLS, internationalized-host and cross-origin
+     * redirect remedies keep their decided specifics.
+     */
+    @Test fun conf09cTheTvSaysEveryAccountErrorWithItsRemedy() {
+        val resources = RuntimeEnvironment.getApplication().resources
+        var next: DomainError = DomainError.Auth.InvalidCredentials
+        compose.setContent { TvConnectScreen({ AccountConnectionResult.Failed(next) }, MemoryStore()) {} }
+        fill()
+        val said = allAccountErrors().associateWith { error ->
+            next = error
+            press("tv.connect.submit")
+            val expected = error.accountFailurePresentation().statement(resources)
+            compose.waitUntil(5_000) { statusText() == expected }
+            checkNotNull(statusText())
+        }
+        said.forEach { (error, text) ->
+            val lines = text.split('\n')
+            assertEquals(2, lines.size, "$error: a title, then what happened and what to do")
+            assertTrue(lines.all { it.isNotBlank() }, "$error is said with nothing to act on: $text")
+        }
+        fun saidFor(match: (DomainError) -> Boolean) = said.entries.first { match(it.key) }.value
+        assertTrue(saidFor { it == DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.UnsupportedInternationalizedHost) }
+            .contains("punycode", ignoreCase = true), "The internationalized-host remedy")
+        val tls = saidFor { it is DomainError.Security.TlsUntrusted }
+        assertTrue(tls.contains("CA") && tls.contains("operating-system", ignoreCase = true), "The TLS remedy: $tls")
+        val crossOrigin = saidFor { it is DomainError.Auth.CrossOriginRedirectRejected }
+        assertTrue(crossOrigin.contains("login.example.invalid") && crossOrigin.contains("/rest/") &&
+            crossOrigin.contains("SSO", ignoreCase = true), "The cross-origin remedy: $crossOrigin")
+    }
+
+    private fun statusText(): String? = runCatching {
+        compose.onNodeWithTag("tv.connect.status").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("") { it.text }
+    }.getOrNull()
+
     @Test fun aCancelledAttemptLeavesNothingSavedEvenIfTheServerAccepts() {
         val store = MemoryStore()
         val gate = CompletableDeferred<Unit>()
@@ -102,6 +153,24 @@ class TvConnectScreenTest {
         }
     }
 
+    @Test fun aFieldTakesTextOnlyOnceTheCentreKeySelectsItSoTheRemotePassesOverItWithoutAKeyboard() {
+        compose.setContent { TvConnectScreen({ connectedResult() }, MemoryStore()) {} }
+        compose.waitForIdle()
+        // The remote lands on the first field at launch, and passes down over the next: neither is
+        // editable, so neither opens an input session or brings up the keyboard.
+        compose.onNodeWithTag("tv.connect.server").assertIsFocused().assert(editable(false))
+        compose.onRoot().performKeyInput { pressKey(androidx.compose.ui.input.key.Key.DirectionDown) }
+        compose.onNodeWithTag("tv.connect.username").assertIsFocused().assert(editable(false))
+        // The centre key selects it; leaving it makes it read-only again.
+        compose.onNodeWithTag("tv.connect.username").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.DirectionCenter) }
+        compose.onNodeWithTag("tv.connect.username").assertIsFocused().assert(editable(true))
+        compose.onRoot().performKeyInput { pressKey(androidx.compose.ui.input.key.Key.DirectionDown) }
+        compose.onNodeWithTag("tv.connect.password").assertIsFocused().assert(editable(false))
+        compose.onNodeWithTag("tv.connect.username").assert(editable(false))
+    }
+
+    private fun editable(value: Boolean) = SemanticsMatcher.expectValue(SemanticsProperties.IsEditable, value)
+
     /** A remote's select button on a focused control, which is how a TV user activates it. */
     @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
     private fun press(tag: String) {
@@ -111,9 +180,9 @@ class TvConnectScreenTest {
     }
 
     private fun fill() {
-        compose.onNodeWithTag("tv.connect.server").performTextInput("http://10.0.2.2:4747")
-        compose.onNodeWithTag("tv.connect.username").performTextInput("listener")
-        compose.onNodeWithTag("tv.connect.password").performTextInput("tv-password-canary")
+        compose.onNodeWithTag("tv.connect.server").selectWithRemote().performTextInput("http://10.0.2.2:4747")
+        compose.onNodeWithTag("tv.connect.username").selectWithRemote().performTextInput("listener")
+        compose.onNodeWithTag("tv.connect.password").selectWithRemote().performTextInput("tv-password-canary")
     }
 
     private class MemoryStore : AccountCredentialStore {
@@ -129,4 +198,30 @@ class TvConnectScreenTest {
         openSubsonic = true, serverType = "Music", serverVersion = "fixture",
         capabilities = CapabilitySet(emptyMap(), UserPermissions(false, false, false, false, false), false),
         requests = emptyList()))
+}
+
+private fun allAccountErrors(): List<DomainError> = buildList {
+    addAll(InvalidServerUrlReason.entries.map { DomainError.Input.InvalidServerUrl(it) })
+    add(DomainError.Transport.Unreachable)
+    add(DomainError.Transport.Timeout)
+    add(DomainError.Transport.Cancelled)
+    addAll(TlsTrustFailure.entries.map { DomainError.Security.TlsUntrusted(it) })
+    add(DomainError.Security.LocalExceptionViolated)
+    addAll(RedirectRejectionReason.entries.map { DomainError.Security.RedirectRejected(it) })
+    add(DomainError.Protocol.MalformedEnvelope)
+    add(DomainError.Protocol.UnexpectedContentType(actual = ObservedPlaybackContentType.Other, expected = AudioContainer.Mp3))
+    add(DomainError.Protocol.UnexpectedBinary)
+    add(DomainError.Protocol.Incompatible(clientVersion = ProtocolVersionLevel(1, 16), serverVersion = ProtocolVersionLevel(2, 0)))
+    add(DomainError.Protocol.NotASubsonicServer)
+    add(DomainError.Server.Busy(5.seconds))
+    add(DomainError.Server.Known(40))
+    add(DomainError.Server.Unknown(999))
+    add(DomainError.Server.HttpStatus(414))
+    add(DomainError.Auth.InvalidCredentials)
+    add(DomainError.Auth.TokenAuthUnsupported)
+    add(DomainError.Auth.Forbidden)
+    add(DomainError.Auth.UnsupportedAuthenticationChallenge)
+    add(DomainError.Auth.CrossOriginRedirectRejected(RedirectTargetHost("login.example.invalid")))
+    add(DomainError.Playback.NoPlayableSource)
+    addAll(CapabilityFeature.entries.map { DomainError.CapabilityUnsupported(it) })
 }

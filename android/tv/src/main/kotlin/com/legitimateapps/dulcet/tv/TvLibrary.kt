@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,7 +60,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -128,6 +131,7 @@ import com.legitimateapps.dulcet.library.isFavourite
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
 import com.legitimateapps.dulcet.library.favouriteTarget
@@ -214,11 +218,16 @@ internal fun TvLibraryEntry(
     account: SearchAccount,
     /** The playback service's controller, null until it binds. */
     playback: AndroidPlaybackController? = rememberPlaybackController(),
+    /**
+     * The app opened on the saved account, so nothing is sent until the person connects it in this
+     * process (spec §13.1, CONF-10b); the app's entry passes true.
+     */
+    untilReconnectChosen: Boolean = false,
     search: @Composable (TvNavigator, AndroidPlaybackController?) -> Unit,
 ) {
     val context = LocalContext.current
     val foreground = hostInForeground()
-    val session = remember(account) { LibrarySession(context, account, foreground) }
+    val session = remember(account) { LibrarySession(context, account, foreground, untilReconnectChosen) }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
@@ -257,7 +266,17 @@ internal fun TvLibraryEntry(
                 onLibrary = { show(routes, states, memory, ROUTE_LIBRARY) },
                 onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) },
                 onAccount = { if (routes.last() != ROUTE_ACCOUNT) routes += ROUTE_ACCOUNT })
-            Box(Modifier.fillMaxWidth().weight(1f)) {
+            // Under the bar on the library's home, the screen that offers to reconnect the saved account:
+            // DOWN from the bar and UP out of the screen below both reach it, wherever the remote is
+            // along them, so its place does not depend on how wide the bar's tabs happen to be.
+            if (top == ROUTE_LIBRARY) TvSavedAccountNotice(session, account, navigation)
+            Box(Modifier.fillMaxWidth().weight(1f).focusProperties {
+                onExit = {
+                    if (navigation.reconnectShown && requestedFocusDirection == FocusDirection.Up) {
+                        navigation.reconnect.requestFocus()
+                    }
+                }
+            }.focusGroup()) {
             states.SaveableStateProvider(top) {
                 CompositionLocalProvider(
                     LocalTvRouteFocus provides memory.route(top),
@@ -320,6 +339,10 @@ internal class TvNavigationFocus {
     val library = FocusRequester()
     val account = FocusRequester()
     var current: FocusRequester = library
+
+    /** The saved account's Reconnect, under the bar while [reconnectShown] (spec §13.1). */
+    val reconnect = FocusRequester()
+    var reconnectShown: Boolean = false
 
     /** The tag of the showing root's tab: the one place on the bar a screen's default may take focus from. */
     var currentTag: String = "library.open"
@@ -404,6 +427,7 @@ internal fun TvTopBar(
         Spacer(Modifier.weight(1f))
         if (playing) {
             Button(onClick = onNowPlaying, modifier = Modifier
+                .focusProperties { if (focus.reconnectShown) down = focus.reconnect }
                 .onFocusChanged { focus.focusChanged("tv.nav.nowplaying", it.isFocused) }
                 .testTag("tv.nav.nowplaying")) {
                 Icon(DulcetIcons.QueueMusic, null, Modifier.size(20.dp))
@@ -428,7 +452,8 @@ private fun TvTab(
 ) {
     Button(
         onClick = onClick,
-        modifier = modifier.focusRequester(focus).onFocusChanged { bar.focusChanged(tag, it.isFocused) }
+        modifier = modifier.focusProperties { if (bar.reconnectShown) down = bar.reconnect }
+            .focusRequester(focus).onFocusChanged { bar.focusChanged(tag, it.isFocused) }
             .testTag(tag).semantics { this.selected = selected },
         colors = if (selected) androidx.tv.material3.ButtonDefaults.colors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -685,6 +710,29 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 }
             }
         }
+    }
+}
+
+/**
+ * The saved account waiting for the person (spec §13.1, CONF-10b): Reconnect, one DOWN from any place
+ * on the bar and the first place UP out of the library below, and the line saying nothing is sent
+ * until it is chosen. Nothing while the account is connected.
+ */
+@Composable
+private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount, navigation: TvNavigationFocus) {
+    val connection by session.connection.collectAsState()
+    val resources = libraryResources()
+    val line = resources.savedAccountLine(connection, account) ?: return
+    DisposableEffect(navigation) {
+        navigation.reconnectShown = true
+        onDispose { navigation.reconnectShown = false }
+    }
+    Row(Modifier.fillMaxWidth().padding(start = 56.dp, end = 56.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        TvAction(resources.getString(SharedR.string.library_reconnect), "library.reconnect",
+            modifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
+            onClick = session::connectSavedAccount)
+        TvStatement(line, "library.saved")
     }
 }
 
@@ -1762,12 +1810,13 @@ internal fun TvAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     default: Boolean = false,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.tvFocus(tag, default).semantics { description?.let { contentDescription = it } },
+        modifier = modifier.tvFocus(tag, default).semantics { description?.let { contentDescription = it } },
     ) {
         if (icon != null) Icon(icon, null, Modifier.size(20.dp))
         Text(label, Modifier.padding(start = if (icon != null) 8.dp else 0.dp))

@@ -107,6 +107,7 @@ import com.legitimateapps.dulcet.library.displayTitle
 import com.legitimateapps.dulcet.library.favouriteTarget
 import com.legitimateapps.dulcet.library.isFavourite
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
+import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.noEpochLine
@@ -486,6 +487,23 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
                 publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List,
             ), "$tag.unavailable")
             publication.items.isEmpty() -> StatementText(resources.getString(SharedR.string.library_empty_list), "$tag.empty")
+        }
+    }
+}
+
+/**
+ * The saved account waiting for the person (spec §13.1, CONF-10b): the line saying nothing is sent
+ * until Reconnect, and Reconnect, which connects in place. Nothing while the account is connected.
+ */
+@Composable
+internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount) {
+    val connection by session.connection.collectAsState()
+    val resources = libraryResources()
+    val line = resources.savedAccountLine(connection, account) ?: return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(line, Modifier.weight(1f).testTag("library.saved"), style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = session::connectSavedAccount, modifier = Modifier.testTag("library.reconnect")) {
+            Text(resources.getString(SharedR.string.library_reconnect))
         }
     }
 }
