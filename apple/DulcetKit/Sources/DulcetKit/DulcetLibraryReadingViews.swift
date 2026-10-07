@@ -340,7 +340,6 @@ struct DulcetFavouriteIndicator: View {
     }
 }
 
-#if !os(tvOS)
 /// Favorite / Remove Favorite in a context menu.
 struct DulcetFavouriteMenuItem: View {
     @Environment(DulcetPresentationStore.self) private var store
@@ -356,7 +355,6 @@ struct DulcetFavouriteMenuItem: View {
         }
     }
 }
-#endif
 
 // MARK: - Playing what a screen shows
 
@@ -767,14 +765,12 @@ struct DulcetReaderTrackRow: View {
                 } else {
                     row(track)
                         .accessibilityIdentifier("dulcet.reader.track")
-#if !os(tvOS)
                         .dulcetTrackContextMenu(
                             track: track,
                             onPlay: { onPlay(track) },
                             offersAlbum: showsAlbum,
                             publishedRating: item.rating
                         )
-#endif
                 }
             } else {
                 // The server never gave this track's length: listed with the list's chrome, and
@@ -845,7 +841,7 @@ struct DulcetReaderTrackRow: View {
 
 extension View {
     /// Play, Shuffle, Play Next, Add to Queue, Favorite and Go to Artist for an album, a
-    /// playlist or an artist. Nothing on tvOS, whose focus engine owns the long press.
+    /// playlist or an artist. On tvOS the menu opens on a press and hold of the remote's clickpad.
     func dulcetReaderItemContextMenu(_ item: DulcetReaderItem) -> some View {
         modifier(DulcetReaderItemContextMenu(item: item))
     }
@@ -892,7 +888,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 
     func body(content: Content) -> some View {
 #if os(tvOS)
-        content
+        content.contextMenu { menuItems }
 #elseif os(iOS)
         if item.isQueueDraggable {
             // The system preview: an album or a playlist is also a drag source onto the queue,
@@ -915,7 +911,6 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 #endif
     }
 
-#if !os(tvOS)
     @ViewBuilder
     private var menuItems: some View {
         if item.trackListQuery != nil {
@@ -940,7 +935,6 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
         }
         DulcetPlaylistItemMenuItems(item: item)
     }
-#endif
 }
 
 // MARK: - Grids and lists

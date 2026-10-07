@@ -1637,8 +1637,45 @@
           "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order is driven on the iPhone and not on the iPad, and the pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values, not driven through the UI."
         },
         "tvos": {
-          "status": "planned",
-          "reason": "tvOS lists playlists and opens a read-only page that plays; editing is not offered on tvOS. No test drives that surface yet."
+          "status": "partial",
+          "evidence": [
+            {
+              "conformance": "CONF-88",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server: a press and hold on an album's track row opens its menu, Add to Playlist… opens the chooser, New Playlist… takes a name from the keyboard and Create makes the playlist holding that track; a second track's Add to Playlist… lists that playlist and choosing it appends the track. getPlaylist reads back exactly the first track, then both in the order added, under the same playlist id.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-playlist-page-and-pending-ui-proof",
+            "reason": "No tvOS test opens a playlist from the Library and observes it play in its own order, and none makes an add while the server is unreachable and observes it shown pending and sent at reconnect. Until such tests exist no workflow, job or test can be named for them."
+          },
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); a playlist tile's menu also offers Delete for the person's own playlist, confirmed first, which no tvOS test drives. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays read-only."
         },
         "android": {
           "status": "shipped",

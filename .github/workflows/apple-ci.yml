@@ -1608,6 +1608,31 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-library.xcresult" \
             "$RUNNER_TEMP/dulcet-tvos-library-junit/TEST-DulcetTVUITests.xml" \
             DulcetTVUITests
+          # Add to Playlist on Apple TV by remote (spec §18.6): a press and hold on a track row opens
+          # its menu, Add to Playlist… makes a new playlist holding it, and a second track is added
+          # to that playlist from the same chooser; the server's getPlaylist is the outcome. It plays
+          # nothing, and deletes the playlist it made.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetTV \
+              -configuration Debug \
+              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-add.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetTVUITests/DulcetTVUITests/testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-tvos-playlist-add.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-add.xcresult" \
+            DulcetTVUITests.DulcetTVUITests \
+            testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-add.xcresult" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-add-junit/TEST-DulcetTVUITests.xml" \
+            DulcetTVUITests
           # Lyrics on Apple TV by remote -- plain, none, and a failed read with Try Again -- then the
           # streaming-quality cap chosen by remote, last on this device (see the script header).
           tools/ci/run-lyrics-quality-proofs tvos
@@ -2530,6 +2555,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
             "$RUNNER_TEMP/dulcet-tvos-library-junit" \
+            "$RUNNER_TEMP/dulcet-tvos-playlist-add-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-junit" \
             "$RUNNER_TEMP/dulcet-ios-skip-probe-ax5-long-title-junit" \

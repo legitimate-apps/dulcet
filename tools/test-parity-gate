@@ -1104,6 +1104,8 @@ passing_cases = """\
             name="testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw" time="0.1" />
   <testcase classname="DulcetiOSUITests"

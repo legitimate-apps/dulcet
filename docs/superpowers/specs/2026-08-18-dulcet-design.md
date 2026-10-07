@@ -7586,6 +7586,25 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-06 — On Apple TV, a press and hold opens a track's or a tile's menu, and Add to Playlist…
+creates a playlist or adds to one (§18.6).** The tvOS shell had no context menus. A comment said the
+focus engine owns the long press, but nothing recorded backed it, and the platform says otherwise
+(OBSERVED: SwiftUI `contextMenu` is available from tvOS 14, and the Human Interface Guidelines list
+context menus with no tvOS-specific considerations). Apple Music on tvOS adds a song to a playlist
+and creates playlists (OBSERVED: the Apple TV user guide on support.apple.com), so a TV that only
+read playlists fell below it. Track rows, album and playlist tiles now carry on tvOS the same menu
+they carry on iPhone, iPad and Mac: Play, Play Next and Add to Queue while the queue can be edited,
+Add to Playlist…, Rating or Favorite, Go to Album and Go to Artist, and Delete for the person's own
+playlist (confirmed first). Add to Playlist… opens the shared chooser, through the same
+`DulcetPlaylistEditor` and the same one-choice-per-presentation rule. On tvOS, New Playlist… is a
+page pushed inside the chooser (a name field, which opens the system keyboard, then Create) rather
+than the name alert the other platforms use: driven by remote, Select on New Playlist… presented no
+alert from inside the chooser's sheet (OBSERVED on the tvOS 26.5 simulator). Rename, removal and reorder
+stay on the playlist page of iPhone, iPad and Mac; the tvOS playlist page still lists and plays
+read-only. This supersedes the 2026-09-29 record's "tvOS lists and plays playlists read-only" for
+the menus. The new tvOS proof drives it by remote against the disposable server and reads each
+write back with `getPlaylist`.
+
 **2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
 `apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at
 90 minutes. Green runs spent 74 to 82 minutes in it (runs 37375260936, 37379563022, 37388349181,

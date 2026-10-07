@@ -6,6 +6,18 @@ final class DulcetTVUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
     private static let sections = ["library", "search", "nowPlaying", "settings"]
 
+    /// Server cleanup a test registers once it has made something on the disposable server; run
+    /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
+    /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
+    private var afterTest: [() -> Void] = []
+
+    override func tearDown() {
+        let cleanups = afterTest
+        afterTest = []
+        cleanups.reversed().forEach { $0() }
+        super.tearDown()
+    }
+
     /// The account is DEBUG setup, because typing credentials raises a system save-password
     /// dialog no app-side query can reach. Everything else -- reaching Search, entering the
     /// query, ranked rendering, remote activation, playback, and the return to Library --
@@ -1032,6 +1044,207 @@ final class DulcetTVUITests: XCTestCase {
         print("DULCET TV LIBRARY PASS shelf=\(shelfLabels) grid-walk=\(gridWalk) album=\(albumName) tracks=\(rowLabels.count)"
             + " played=\(playedTrack.debugDescription) progress=\(initialProgress)->\(observedProgress)"
             + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
+    }
+
+    /// Add to Playlist on Apple TV by remote, the way Apple Music on tvOS offers it: a press and hold
+    /// on a track row opens its menu, Add to Playlist… opens the chooser, New Playlist… names one
+    /// and creates it holding that track; a second track is then added to that playlist from the
+    /// same chooser. The server's own reads are the expectation and the outcome.
+    @MainActor
+    func testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+
+        let albumList = try XCTUnwrap(
+            restCall("getAlbumList2", [URLQueryItem(name: "type", value: "alphabeticalByName"),
+                                       URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"] as? [String: Any],
+            "The server must list its albums")
+        let albums = (albumList["album"] as? [[String: Any]] ?? []).compactMap { album -> (id: String, name: String)? in
+            guard let id = album["id"] as? String, let name = album["name"] as? String else { return nil }
+            return (id, name)
+        }
+        let albumName = "Threshold Boundary"
+        let albumIndex = try XCTUnwrap(albums.firstIndex { $0.name == albumName }, "The server must hold \(albumName)")
+        let albumPage = try XCTUnwrap(
+            restCall("getAlbum", [URLQueryItem(name: "id", value: albums[albumIndex].id)], server: server)?["album"] as? [String: Any],
+            "The server must read \(albumName)")
+        let songs = (albumPage["song"] as? [[String: Any]] ?? []).compactMap { song -> (id: String, title: String)? in
+            guard let id = song["id"] as? String, let title = song["title"] as? String else { return nil }
+            return (id, title)
+        }
+        // Two tracks after the album's first, the later one added first: the playlist's order is
+        // then the order of the adds, told apart from the album's.
+        XCTAssertGreaterThanOrEqual(songs.count, 3, "\(albumName) must hold three tracks: \(songs.map(\.title))")
+        let firstIndex = 2
+        let secondIndex = 1
+        XCTAssertEqual(songs.filter { $0.title == songs[firstIndex].title }.count, 1)
+        XCTAssertEqual(songs.filter { $0.title == songs[secondIndex].title }.count, 1)
+        let name = "TV Remote Playlist \(UUID().uuidString.prefix(6))"
+        XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
+        afterTest.append {
+            if let playlist = self.serverPlaylist(named: name, server: server) {
+                _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlist.id)], server: server)
+            }
+        }
+
+        // The album, by remote: Library, Albums, the grid walked to it, Select.
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down from the bars must reach Home's shelf: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
+            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
+            "The grid must fill: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down must reach the grid: " + app.debugDescription)
+        pressToTheStart(app)
+        for index in 0..<albumIndex {
+            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
+            XCUIRemote.shared.press(.right)
+            XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
+        }
+        XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", albumName),
+            "The walk must end on \(albumName); focus=\(focusedElement(app).debugDescription)")
+        XCUIRemote.shared.press(.select)
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 30), "Select must open the album: " + app.debugDescription)
+        XCTAssertTrue(waitForLabel(albumName, of: albumTitle, timeout: 15), "The page must be \(albumName)'s; title=\(albumTitle.label)")
+        let trackRows = app.buttons.matching(identifier: "dulcet.reader.track")
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while trackRows.count < songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertEqual(trackRows.count, songs.count, "The page must list every track the server holds: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.reader.track" },
+            "Down from the album's header must reach its tracks: " + app.debugDescription)
+
+        // The first add: the track's menu, Add to Playlist…, New Playlist…, the name, Create.
+        try focusTrackRow(app, title: songs[firstIndex].title)
+        try chooseAddToPlaylist(app, track: songs[firstIndex].title)
+        let newPlaylist = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
+        XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, newPlaylist, .up, limit: 6),
+            "New Playlist… must take focus in the chooser: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let field = app.textFields["dulcet.playlist.name"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "New Playlist… must ask for a name: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, field, .up, limit: 4), "The name field must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Select on the field must bring up the keyboard")
+        field.typeText(name)
+        let done = app.buttons["done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !done.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(done.hasFocus, "Keyboard Done must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let create = app.descendants(matching: .any)["dulcet.playlist.name.confirm"].firstMatch
+        XCTAssertTrue(create.waitForExistence(timeout: 5), "The name prompt must offer Create: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, create, .down, limit: 4), "Create must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Create must close the chooser: " + app.debugDescription)
+        let created = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[firstIndex].id], server: server),
+            "The server must hold \(name) with exactly \(songs[firstIndex].title)")
+
+        // The second add, to that playlist from the same chooser.
+        try focusTrackRow(app, title: songs[secondIndex].title)
+        try chooseAddToPlaylist(app, track: songs[secondIndex].title)
+        XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser again: " + app.debugDescription)
+        let row = app.descendants(matching: .any).matching(identifier: "dulcet.addToPlaylist.playlist")
+            .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "The chooser must list \(name): " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, row, .down, limit: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Choosing a playlist must close the chooser: " + app.debugDescription)
+        let updated = try XCTUnwrap(
+            awaitServerPlaylist(named: name, entries: [songs[firstIndex].id, songs[secondIndex].id], server: server),
+            "The server's \(name) must hold \(songs[firstIndex].title) then \(songs[secondIndex].title)")
+        XCTAssertEqual(updated.id, created.id, "The second add must reach the playlist the first created, not a new one")
+        XCTAssertEqual(app.state, .runningForeground)
+        print("DULCET TV PLAYLIST ADD PASS album=\(albumName) first=\(songs[firstIndex].title.debugDescription)"
+            + " second=\(songs[secondIndex].title.debugDescription) entries=\(updated.entries.count) setup=debug-account-only")
+    }
+
+    // MARK: - Playlist helpers
+
+    /// Down or Up along the album's track rows until `title`'s row holds focus.
+    @MainActor
+    private func focusTrackRow(_ app: XCUIApplication, title: String) throws {
+        let matches: (Focus) -> Bool = { $0.id == "dulcet.reader.track" && Self.names($0.label, title) }
+        if pressUntilFocus(app, .down, limit: 12, matches) { return }
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 12, matches), "\(title)'s row must take focus: " + app.debugDescription)
+    }
+
+    /// A press and hold on the focused track row, then Add to Playlist… in its menu.
+    @MainActor
+    private func chooseAddToPlaylist(_ app: XCUIApplication, track: String) throws {
+        XCUIRemote.shared.press(.select, forDuration: 1.5)
+        let item = app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 10),
+            "A press and hold on \(track) must open its menu with Add to Playlist…: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, item, .down, limit: 10),
+            "Add to Playlist… must take remote focus in the menu: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+    }
+
+    /// Whether `element` holds remote focus: itself, or -- for a menu item or a list row, which
+    /// the system draws inside a cell -- the focused cell it sits in.
+    @MainActor
+    private func isFocused(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+        guard let target = try? element.snapshot() else { return false }
+        if target.hasFocus { return true }
+        guard let cell = try? app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.snapshot() else { return false }
+        return cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+    }
+
+    /// Presses `button` until `element` holds focus, at most `limit` times.
+    @MainActor
+    private func pressUntilFocused(_ app: XCUIApplication, _ element: XCUIElement, _ button: XCUIRemote.Button, limit: Int) -> Bool {
+        func settles() -> Bool {
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(1500))
+            repeat {
+                if isFocused(app, element) { return true }
+                Thread.sleep(forTimeInterval: 0.2)
+            } while ContinuousClock.now < deadline
+            return false
+        }
+        if settles() { return true }
+        for _ in 0..<limit {
+            XCUIRemote.shared.press(button)
+            if settles() { return true }
+        }
+        return false
+    }
+
+    private struct ServerPlaylist {
+        let id: String
+        let entries: [String]
+    }
+
+    /// The disposable account's one playlist named `name`, with its entries' song ids in order.
+    private func serverPlaylist(named name: String, server: Server) -> ServerPlaylist? {
+        guard let list = restCall("getPlaylists", [], server: server)?["playlists"] as? [String: Any] else { return nil }
+        let named = (list["playlist"] as? [[String: Any]] ?? []).filter { $0["name"] as? String == name }
+        guard named.count == 1, let id = named[0]["id"] as? String,
+              let playlist = restCall("getPlaylist", [URLQueryItem(name: "id", value: id)], server: server)?["playlist"]
+                as? [String: Any] else { return nil }
+        return ServerPlaylist(id: id, entries: (playlist["entry"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+    }
+
+    /// Polls until the server's `name` holds exactly `entries`; nil, with what it held, if it never does.
+    private func awaitServerPlaylist(named name: String, entries: [String], server: Server) -> ServerPlaylist? {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        var last: ServerPlaylist?
+        repeat {
+            last = serverPlaylist(named: name, server: server)
+            if let last, last.entries == entries { return last }
+            Thread.sleep(forTimeInterval: 0.5)
+        } while ContinuousClock.now < deadline
+        print("DULCET TV PLAYLIST server held \(last.map { "\($0.entries)" } ?? "no such playlist"); expected \(entries)")
+        return nil
     }
 
     // MARK: - Library helpers
