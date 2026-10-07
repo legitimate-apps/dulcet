@@ -17,7 +17,9 @@ Subcommands:
 
 Samples are cumulative kernel counters (vm_stat) plus swap use and load average; every sixth
 sample also lists the largest processes by resident memory, summed by command name, so a phase
-that swaps names what held the memory (`HOST PRESSURE TOP`). A phase's
+that swaps names what held the memory (`HOST PRESSURE TOP`), and the same sample names what held
+the CPU (`HOST PRESSURE CPU`, from the phase's highest-load sample), so a load of hundreds on three
+cores is attributed to a process rather than guessed at. A phase's
 pressure is the DELTA of the counters between its mark and the next one, so the sampler can run
 for the whole job without any phase needing to know about it. Stdlib only.
 """
@@ -69,18 +71,26 @@ def booted_simulators() -> int | None:
         return None
 
 
-def top_processes(limit: int = 8) -> list[list]:
-    """[[command basename, resident MB], ...] for the largest, summed across processes of a name."""
-    out = subprocess.run(["ps", "-axo", "rss=,comm="], capture_output=True, text=True,
+def top_processes(limit: int = 8) -> tuple[list[list], list[list]]:
+    """The largest by resident MB and by CPU percent, each summed across processes of a name:
+    ([[command basename, MB], ...], [[command basename, percent], ...])."""
+    out = subprocess.run(["ps", "-axo", "rss=,%cpu=,comm="], capture_output=True, text=True,
                          timeout=10).stdout
-    totals: dict[str, int] = {}
+    memory: dict[str, int] = {}
+    cpu: dict[str, float] = {}
     for line in out.splitlines():
-        rss, _, command = line.strip().partition(" ")
-        if rss.isdigit() and command:
-            name = os.path.basename(command.strip())
-            totals[name] = totals.get(name, 0) + int(rss)
-    ranked = sorted(totals.items(), key=lambda item: item[1], reverse=True)[:limit]
-    return [[name, kib // 1024] for name, kib in ranked]
+        fields = line.strip().split(None, 2)
+        if len(fields) != 3 or not fields[0].isdigit():
+            continue
+        name = os.path.basename(fields[2].strip())
+        memory[name] = memory.get(name, 0) + int(fields[0])
+        try:
+            cpu[name] = cpu.get(name, 0.0) + float(fields[1].replace(",", "."))
+        except ValueError:
+            pass
+    by_memory = sorted(memory.items(), key=lambda item: item[1], reverse=True)[:limit]
+    by_cpu = sorted(cpu.items(), key=lambda item: item[1], reverse=True)[:limit]
+    return [[name, kib // 1024] for name, kib in by_memory], [[name, round(p, 1)] for name, p in by_cpu]
 
 
 def append(path: str, record: dict) -> None:
@@ -100,7 +110,7 @@ def sample(path: str, interval: float) -> int:
             record = {"event": "sample", **vm_stat(), "swapUsedMb": swap_used_mb(),
                       "load1": os.getloadavg()[0]}
             if count % 6 == 0:
-                record["top"] = top_processes()
+                record["top"], record["cpuTop"] = top_processes()
             count += 1
             append(path, record)
         except Exception as error:  # noqa: BLE001 -- keep sampling; record why one sample failed
@@ -157,6 +167,11 @@ def summarize(path: str) -> int:
             worst = max(listed, key=lambda s: (s.get("swapUsedMb") or 0, s.get("compressor_pages", 0)))
             print(f"HOST PRESSURE TOP phase={phase['name']} swap_used_mb={worst.get('swapUsedMb')} "
                   + ",".join(f"{name}:{mb}" for name, mb in worst["top"]))
+        busy = [s for s in listed if s.get("cpuTop")]
+        if busy:
+            loaded = max(busy, key=lambda s: s.get("load1", 0))
+            print(f"HOST PRESSURE CPU phase={phase['name']} load1={loaded.get('load1', 0):.1f} "
+                  + ",".join(f"{name}:{percent}" for name, percent in loaded["cpuTop"]))
     return 0
 
 

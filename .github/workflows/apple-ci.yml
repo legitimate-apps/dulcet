@@ -105,6 +105,12 @@ jobs:
         run: python3 tools/verify_dulcet_core_build_order.py
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # Spotlight indexes what this job writes -- DerivedData, the seeded corpus, simulator data --
+      # while the proofs run. mdworker_shared held the fourth most memory in the starved search
+      # phase of main's run 37550927017 (load1 315 on three cores, 6.7 GB paged in over 329 s), and
+      # nothing here searches with Spotlight. Best effort: a runner image without it changes nothing.
+      - name: Stop Spotlight indexing on the runner
+        run: sudo mdutil -a -i off || echo "mdutil failed; Spotlight indexing left as it was"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
@@ -743,6 +749,12 @@ jobs:
         run: python3 tools/test-darwin-ffmpeg-verification-gate
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # Spotlight indexes what this job writes -- DerivedData, the seeded corpus, simulator data --
+      # while the proofs run. mdworker_shared held the fourth most memory in the starved search
+      # phase of main's run 37550927017 (load1 315 on three cores, 6.7 GB paged in over 329 s), and
+      # nothing here searches with Spotlight. Best effort: a runner image without it changes nothing.
+      - name: Stop Spotlight indexing on the runner
+        run: sudo mdutil -a -i off || echo "mdutil failed; Spotlight indexing left as it was"
       # FIRST, before any build: a broken environment should fail in minutes, not after ~55 minutes of
       # platform builds and UI tests (run 35796413810 on main, 2026-09-22, spent 55.6 minutes of a
       # hosted macOS slot before the old Homebrew closure step reported drift in 49 seconds). Nothing
@@ -1736,6 +1748,12 @@ jobs:
           python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
       - name: Select compatible Xcode
         run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # Spotlight indexes what this job writes -- DerivedData, the seeded corpus, simulator data --
+      # while the proofs run. mdworker_shared held the fourth most memory in the starved search
+      # phase of main's run 37550927017 (load1 315 on three cores, 6.7 GB paged in over 329 s), and
+      # nothing here searches with Spotlight. Best effort: a runner image without it changes nothing.
+      - name: Stop Spotlight indexing on the runner
+        run: sudo mdutil -a -i off || echo "mdutil failed; Spotlight indexing left as it was"
       # FIRST, before any build (spec §21.5 rule 1): a Homebrew pin drift fails every run, and this
       # job finds it in minutes rather than after its builds. The gates' own controls run once, in
       # apple-conformance-core; the gates themselves run inside these scripts in both jobs.
