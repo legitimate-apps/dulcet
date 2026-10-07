@@ -45,7 +45,7 @@ import org.junit.runner.RunWith
  * said and nothing on disk; connected, the library opening with the remote on it and no keyboard;
  * a relaunch into the library this device has seen, saying the account is saved and not connected
  * and sending the server nothing — the relay counts no connection in five seconds — until the remote
- * chooses Reconnect, one DOWN from the Library tab, which reconnects in place; and a relaunch
+ * chooses Reconnect, under the bar, which reconnects in place; and a relaunch
  * after the Keystore lost the account's key, said, with Sign out reachable by the remote.
  *
  * The keyboard comes up only when the person selects a field with the centre key, never because the
@@ -215,8 +215,8 @@ class AndroidTvEmulatorAccountConnectProofTest {
     /**
      * CONF-10b on an Android TV emulator (spec §13.1), with the remote only: an app launched into a
      * saved account sends its server nothing — no library read, no cover art, no reconnect on
-     * reachability or the foreground — until the remote chooses Reconnect, one DOWN from the Library
-     * tab, which connects in place without the form. The account is connected and saved through the
+     * reachability or the foreground — until the remote chooses Reconnect, the first place UP out of the
+     * library, which connects in place without the form. The account is connected and saved through the
      * form first, as a person's is, so the relaunch has the albums this device has seen to show.
      */
     @Test fun aRelaunchIntoTheSavedAccountSendsNothingUntilTheRemoteChoosesReconnect() {
@@ -263,7 +263,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
     /**
      * A relaunch into the saved account (spec §13.1): the library this device has seen, said to be
      * saved and not connected, and NOTHING sent to the server until the person chooses Reconnect with
-     * the remote — one DOWN from the Library tab — which reconnects in place. The process's reader is
+     * the remote — UP from the first card, over the row's Try again and the sections — which reconnects in place. The process's reader is
      * closed first, as a new process has none; this instrumentation shares the app's process.
      */
     private fun relaunchIntoTheSavedAccountAndReconnect(relay: ServerRelay, observed: MutableList<String>) {
@@ -290,19 +290,20 @@ class AndroidTvEmulatorAccountConnectProofTest {
             check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
             observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
 
-            // Reconnect lies under the bar, one DOWN from the Library tab. From the first card the remote
-            // goes UP to the bar — over the row's Try again and the library's sections, which UP from the
-            // content passes (OBSERVED in core-ci) — and then DOWN.
+            // Reconnect lies under the bar: one DOWN from the bar, and the first place UP out of the
+            // library, over the row's Try again and the library's sections.
             val landing = if (focused("library.open")) "library-tab" else "first-card"
             var presses = 0
-            while (!focused("library.open") && presses < 5) {
-                remote(KeyEvent.KEYCODE_DPAD_UP)
-                presses += 1
-                compose.waitForIdle()
+            if (landing == "library-tab") {
+                remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                presses = 1
+            } else {
+                while (!focused("library.reconnect") && presses < 4) {
+                    remote(KeyEvent.KEYCODE_DPAD_UP)
+                    presses += 1
+                    compose.waitForIdle()
+                }
             }
-            check(focused("library.open")) { "UP from the $landing did not reach the Library tab; focus on ${focusedTags()}" }
-            remote(KeyEvent.KEYCODE_DPAD_DOWN)
-            presses += 1
             awaitNode("the remote reaching Reconnect from the $landing in $presses presses") { focused("library.reconnect") }
             check(tried() == 0) { "Moving the remote to Reconnect contacted the server ${tried()} times" }
             remote(KeyEvent.KEYCODE_DPAD_CENTER)

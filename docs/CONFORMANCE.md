@@ -136,7 +136,7 @@ Each emulator also has its own CONF-10b proof (§13.1), which connects through t
 relaunches, and the CONF-09b proofs take the same relaunch: the relay in front of the server counts
 no connection for five seconds while the library paints the albums this device has seen, and the
 first connection comes only after the person chooses Reconnect — a touch on the phone, the remote on
-TV, one DOWN from the Library tab — which reconnects in place. Neither app shows a prefilled form for
+TV, the first place UP out of the library and one DOWN from the bar — which reconnects in place. Neither app shows a prefilled form for
 a saved account; the library's Reconnect is the explicit reconnect. The view-model test that prefills
 the form stays cited as a bounded `observes` row.
 
