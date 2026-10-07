@@ -47,7 +47,12 @@ kotlin {
         }
     }
     tvosArm64()
-    tvosSimulatorArm64()
+    tvosSimulatorArm64 {
+        // The same for the tvOS run of the reader's conformance tests.
+        providers.gradleProperty("dulcet.tvosSimulatorUdid").orNull?.let { simulatorUdid ->
+            testRuns["test"].deviceId = simulatorUdid
+        }
+    }
 
     targets.withType<KotlinNativeTarget>().configureEach {
         binaries.framework {

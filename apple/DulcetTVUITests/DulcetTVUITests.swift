@@ -1242,6 +1242,157 @@ final class DulcetTVUITests: XCTestCase {
             + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
     }
 
+    /// A saved account's library on Apple TV, every step by remote (spec §16.14, §16.18), the tvOS
+    /// counterpart of the iPhone and iPad saved-account reader proofs:
+    ///
+    /// 1. A favourite made on an album page shows at once and reaches the server.
+    /// 2. Relaunched with the account saved and no account hook, the app opens straight into
+    ///    Library, not Connection, offering Reconnect; the album's tile opens its page from what
+    ///    this device saw, which says so, with the favourite still shown. Requests are not counted
+    ///    here, so "nothing is sent" is not observed (the CONF-76 app-host proof counts them).
+    /// 3. Search there answers from this device and says so.
+    /// 4. The album page's Reconnect brings it live in place, and the favourite is removed again,
+    ///    so the disposable server ends as it started.
+    @MainActor
+    func testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+        // Threshold Boundary, the album the playlist proofs walk to: its tracks are playable rows.
+        let album = try playlistProofAlbum(server: server)
+        let albumName = album.name
+        let albumID = try XCTUnwrap(
+            (restCall("getAlbumList2", [URLQueryItem(name: "type", value: "alphabeticalByName"),
+                                        URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"]
+                as? [String: Any])?["album"] as? [[String: Any]]
+        ).first { $0["name"] as? String == albumName }?["id"] as? String
+        afterTest.append {
+            // Whatever a failure left: the album unstarred, as the proof found it.
+            if self.readServerStarred("album", named: albumName, server: server) == true, let id = albumID {
+                _ = self.restCall("unstar", [URLQueryItem(name: "albumId", value: id)], server: server)
+            }
+        }
+
+        // 1. Live: the album by remote, its favourite from what the server holds.
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        try openAlbumByRemote(app, album)
+        let heart = app.buttons["dulcet.album.favorite"].firstMatch
+        XCTAssertTrue(heart.waitForExistence(timeout: 10), "The album page must offer its heart: " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(heart, in: app), "The heart must take remote focus: " + app.debugDescription)
+        if heart.label == "Remove Favorite" {
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5), "An earlier run's favourite must clear first")
+            XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
+                "An earlier run's favourite must clear on the server first")
+        }
+        XCTAssertEqual(readServerStarred("album", named: albumName, server: server), false,
+            "The control: the server must not already hold the favourite this proof makes")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "The heart must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServerAlbumStarred(albumName, true, server: server), true, "The favourite must reach the server")
+
+        // 2. Relaunch with nothing but the saved account: Library, from what this device saw.
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30),
+            "A saved account must open straight into Library, not \(app.navigationBars.firstMatch.identifier.debugDescription): "
+                + app.debugDescription)
+        let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
+        XCTAssertTrue(reconnect.waitForExistence(timeout: 15), "Library must offer Reconnect: " + app.debugDescription)
+        let launchFocus = focusedElement(app)
+        try openAlbumTileByRemote(app, album)
+        // Its tracks are listed from this device too, each saying it cannot play offline.
+        let offlineRows = app.buttons.matching(identifier: "dulcet.reader.track.unavailable")
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while offlineRows.count < album.songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertEqual(offlineRows.count, album.songs.count,
+            "The page must list every track this device saw, as unavailable offline: " + app.debugDescription)
+        XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
+            "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
+        let seenLine = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing what")).firstMatch
+        XCTAssertTrue(seenLine.waitForExistence(timeout: 5),
+            "The album page must say it is showing what this device saw: " + app.debugDescription)
+        let seenLabel = seenLine.label
+
+        // 3. Search answers from this device and says so.
+        typeSearchQuery(app, query: String(albumName.prefix(3)))
+        let scope = app.staticTexts["dulcet.search.scope"].firstMatch
+        XCTAssertTrue(scope.waitForExistence(timeout: 10), "The results must say where they come from: " + app.debugDescription)
+        let scopeLabel = scope.label
+        let albumResult = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "dulcet.search.result.", albumName + ", "
+        )).firstMatch
+        XCTAssertTrue(albumResult.waitForExistence(timeout: 10),
+            "The album this device saw must be among the device's results: " + app.debugDescription)
+        let albumRow = albumResult.identifier
+
+        // 4. Library comes back on the album page, whose Reconnect brings it live in place.
+        XCTAssertTrue(selectSection(app, "library"), "The section bar must return to Library: " + app.debugDescription)
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == albumName,
+            "Library must come back on the album it was left on: " + app.debugDescription)
+        let retry = app.buttons["dulcet.reader.retry"].firstMatch
+        XCTAssertTrue(retry.waitForExistence(timeout: 10) && retry.label == "Reconnect",
+            "The album page must offer Reconnect: " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(retry, in: app), "Reconnect must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 30), "Reconnect must bring the page live: " + app.debugDescription)
+        XCTAssertTrue(seenLine.waitForNonExistence(timeout: 15), "Live, the page no longer says it shows what was seen")
+        XCTAssertTrue(albumTitle.exists && albumTitle.label == albumName, "Reconnect must not leave the album page")
+        XCTAssertTrue(heart.waitForExistence(timeout: 10) && focusByRemote(heart, in: app),
+            "The heart must take remote focus after Reconnect: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
+            "Removing the favourite must reach the server")
+        print("DULCET TV READER PROOF PASS relaunch=Library launch-focus=\(launchFocus?.id ?? "-")"
+            + " seen=\(seenLabel.debugDescription) scope=\(scopeLabel.debugDescription) album-row=\(albumRow)"
+            + " reconnected-from=dulcet.reader.retry setup=debug-account-then-none")
+    }
+
+    /// The album's page by remote, as `openAlbumByRemote` reaches it, without requiring playable
+    /// tracks: Library, Albums, the grid walked to the album's tile, Select, the page's title.
+    @MainActor
+    private func openAlbumTileByRemote(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
+        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down from the bars must reach Home's shelf: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
+            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
+            "The grid must fill: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down must reach the grid: " + app.debugDescription)
+        pressToTheStart(app)
+        for index in 0..<album.index {
+            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
+            XCUIRemote.shared.press(.right)
+            XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
+        }
+        XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", album.name),
+            "The walk must end on \(album.name); focus=\(focusedElement(app).debugDescription)")
+        XCUIRemote.shared.press(.select)
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 30), "Select must open the album: " + app.debugDescription)
+        XCTAssertTrue(waitForLabel(album.name, of: albumTitle, timeout: 15), "The page must be \(album.name)'s; title=\(albumTitle.label)")
+    }
+
+    /// The server's favourite flag for `albumName`, polled until it reads `expected` or 30 s pass.
+    private func awaitServerAlbumStarred(_ albumName: String, _ expected: Bool, server: Server) -> Bool? {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        var observed = readServerStarred("album", named: albumName, server: server)
+        while observed != nil, observed != expected, ContinuousClock.now < deadline {
+            Thread.sleep(forTimeInterval: 1)
+            observed = readServerStarred("album", named: albumName, server: server)
+        }
+        return observed
+    }
+
     /// Add to Playlist on Apple TV by remote, the way Apple Music on tvOS offers it: a press and hold
     /// on a track row opens its menu, Add to Playlist… opens the chooser, New Playlist… names one
     /// and creates it holding that track; a second track is then added to that playlist from the

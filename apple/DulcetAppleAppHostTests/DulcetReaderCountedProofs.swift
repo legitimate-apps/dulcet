@@ -9,7 +9,7 @@ import XCTest
 @testable import Dulcet_DEV
 #endif
 
-/// The production reader inside the app host (macOS, or iOS and iPadOS), through the production Kotlin facade and
+/// The production reader inside the app host (macOS, iOS and iPadOS, or tvOS), through the production Kotlin facade and
 /// database, with every request it sends counted by `tools/conformance-env/lyrics-fault-proxy` in
 /// front of the disposable server (CONF-76, CONF-77, CONF-86; spec §16.9, §16.14). The account's
 /// server is the proxy, so the proxy's log is everything the app sent; the test reads the server
