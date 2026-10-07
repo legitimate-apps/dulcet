@@ -1194,6 +1194,14 @@ passing_cases = """\
             name="aSongDownloadedByIdAloneIsNamedOnNowPlayingAfterAnOfflineRelaunch" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.TvDownloadedTitleOfflineTest"
             name="aSongDownloadedByIdAloneIsNamedOnTheTvPlayerAfterAnOfflineRelaunch" time="0.1" />
+  <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
+            name="toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote" time="0.1" />
 """
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'

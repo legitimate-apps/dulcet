@@ -932,7 +932,7 @@
       "conformance": ["CONF-84"],
       "platforms": {
         "macos": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "observes": "the playing track's heart, which the Mac draws in the window's toolbar, goes through the rows' session: it changes with the press before any request, a row of the same track shows the change, the send names that track, and a held then saved outcome reads the same as on the row",
@@ -957,17 +957,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
+            },
+            {
+              "observes": "through the Mac app hosted over the production root view against the disposable server, the Now Playing toolbar's heart for the playing track, then the heart beside that track's row on its album page (lying inside the window's content), each shows Remove Favorite at once on a click and the server reads the track starred, and a second click shows Favorite at once and the server reads it unstarred, starting from an unstarred track",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacRatingsAndPlaylistsAppTest/toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "mac-heart-ui-proof",
-            "reason": "The Mac rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's macosArm64 core-conformance runtime in apple-ci against the disposable server. What remains: no test drives the Mac app's heart, the toolbar's or a row's, against the server, so favouriting itself is not driven through the Mac app."
-          },
-          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. No test drives the Mac app's heart against the server, so the cell is partial."
+          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The hearts are driven the same way (toolbarAndRowHeartsStarTheTrackOnTheServerThroughTheHostedMacApp): the toolbar's heart for the playing track, then the heart beside that track's row on its album page, each clicked where it is drawn, shows the change at once and the server reads the star and then the unstar back. It executed and passed in main's apple-ci push run 37591393763 on 144c921f. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. The album and artist rows' hearts are the same control in the same session and are not driven separately."
         },
         "ios": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on iPhone, against the disposable server, Now Playing's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track",
@@ -1004,17 +1005,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
+            },
+            {
+              "observes": "through the iPhone app on a simulator (tab navigation) against the disposable server, the heart beside a track's row on its album page, then the heart on that album's artist page reached through the album page's artist link, each fills with the tap before the server answers and the star reaches the server for that track or artist, and a second tap empties it at once and unstars it; the test fails on the other idiom's window class",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "iphone-artist-and-track-row-hearts-ui-proof",
-            "reason": "The iPhone rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's iosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: artist and track-row hearts are driven by no wired UI proof; only the album's heart and Now Playing's are."
-          },
-          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. Artist and track-row hearts are not driven by a wired UI proof, so the cell is partial. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main."
+          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. A track row's heart and the artist page's heart are driven the same way (testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone): each fills with the tap, the star reaches the server for that track or artist, and a second tap unstars it. It executed and passed in main's apple-ci push run 37591393763 on 144c921f. The UI proofs run in the conformance leg, which a pull request does not run."
         },
         "ipados": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on iPad, against the disposable server, the full-screen player's heart for the playing track fills with the tap before the server answers, the star reaches the server for that track, and taking it off empties the heart at once and unstars the track",
@@ -1045,17 +1047,18 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
+            },
+            {
+              "observes": "through the iPad app on a simulator (sidebar navigation) against the disposable server, the heart beside a track's row on its album page, then the heart on that album's artist page reached through the album page's artist link, each fills with the tap before the server answers and the star reaches the server for that track or artist, and a second tap empties it at once and unstars it; the test fails on the other idiom's window class",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "ipad-artist-and-track-row-hearts-ui-proof",
-            "reason": "The iPad rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's iosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: artist and track-row hearts are driven by no wired UI proof; only the album's heart and Now Playing's are."
-          },
-          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. Artist and track-row hearts are not driven by a wired UI proof, so the cell is partial. Resolved on main, as the iPhone proof is."
+          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. A track row's heart and the artist page's heart are driven on an iPad simulator through the sidebar in their own test (testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS, which fails on an iPhone idiom): each fills with the tap, the star reaches the server for that track or artist, and a second tap unstars it. It executed and passed in main's apple-ci push run 37591393763 on 144c921f."
         },
         "tvos": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {"observes": "on Apple TV, driven by the remote against the disposable server, Down from the transport reaches the playing track's heart, Select fills it at once and the star reaches the server for that track, and Select again empties it and unstars the track, with focus kept on the heart; and Right from the heart moves across the five stars in order, Select on the third rates the track 3 and the server's own userRating reads back 3, and Select on the star shown removes the rating and the server reads back 0", "workflow": "apple-ci", "job": "apple-ci",
              "test": "DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote"},
@@ -1064,10 +1067,11 @@
             {"conformance": "CONF-84", "workflow": "apple-ci", "job": "apple-ci",
              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"},
             {"observes": "the core's production reader session in the tvosSimulatorArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"}
+             "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"},
+            {"observes": "on Apple TV, every step by remote against the disposable server: an album found by Search opens from its result, the album header's heart, then the heart beside a track's row, then the heart on the artist page reached from Library > Artists each take focus, Select fills it at once and the star reaches the server for that album, track or artist, and Select again empties it and unstars it", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "DulcetTVUITests/testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote"}
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "tvos-row-hearts-ui-proof", "reason": "The Apple TV remote proof now covers both halves of what the player offers: the heart (star and unstar read back) and the stars (a press rates the track and the server's userRating reads back, a second press on the star shown reads back 0). It executed and passed in three green apple-ci runs on main (the apple-conformance job, junit written by the tvos-now-playing phase, one testcase, no failure and none skipped, with the test's own rating line reporting rated=3 before=0). The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's tvosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: album, artist and row hearts are not driven by a wired UI proof on Apple TV; only the Now Playing heart and stars are."},
-          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server, and the five stars are crossed in order, one pressed and the server's userRating read back as 3, then the same star pressed again and read back as 0. It is the rows' heart through the same session. The CONF-84 row is the core's star and rating conformance in the tvOS simulator's core-conformance runtime. Album, artist and row hearts are not driven by a wired UI proof, so the cell is partial. Resolved on main."
+          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server, and the five stars are crossed in order, one pressed and the server's userRating read back as 3, then the same star pressed again and read back as 0. It is the rows' heart through the same session. The CONF-84 row is the core's star and rating conformance in the tvOS simulator's core-conformance runtime. The album header's, a track row's and the artist page's hearts are reached and pressed by remote the same way (testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote), each star and unstar read back from the server; it executed and passed in main's apple-ci push run 37591393763 on 144c921f."
         },
         "android": {
           "status": "shipped",
@@ -1568,7 +1572,7 @@
       ],
       "platforms": {
         "macos": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-88",
@@ -1607,21 +1611,16 @@
               "test": "DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp"
             },
             {
-              "observes": "through the Mac app hosted over the production root view against the disposable server, a playlist made for the run in an order unlike its album's is opened from the Playlists list and its Play pressed with nothing playing: the playlist's own first entry becomes current, the queue holds the playlist's entries in the playlist's order with the first current, and its media time advances",
+              "observes": "through the Mac app hosted over the production root view against the disposable server, a playlist made for the run in an order unlike its album's is opened from the Playlists list and its Play pressed with nothing playing: the playlist's own first entry becomes current, the queue holds the playlist's entries in the playlist's order with the first current, and its media time advances; executed and passed on main in apple-ci run 37591393763 on 144c921f",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacRatingsAndPlaylistsAppTest/aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "mac-playlist-play-proof-first-main-run",
-            "reason": "The Mac playlist edit proof executed and passed: create, add an album, add a track, remove, move up, rename, delete and a failed rename, each read back from the server. Play now has a proof, aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp: a playlist opened on the Mac plays in its own order, the queue read back, wired into the conformance leg. What remains is its first passing run on main, which a pull request does not run. A drag reorder is not driven either; the Move Up accessibility action is."
-          },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. Playing a playlist in its own order is driven through the Mac app by aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp in the same leg; until it has passed on main the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. Playing a playlist in its own order is driven through the Mac app by aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp in the same leg, the queue read back; it executed and passed in main's apple-ci push run 37591393763 on 144c921f."
         },
         "ios": {
-          "status": "partial",
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-88",
@@ -1666,26 +1665,16 @@
               "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPhone"
             },
             {
-              "observes": "through the iPhone app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away",
+              "observes": "through the iPhone app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away; executed and passed on main in apple-ci run 37591393763 on 144c921f",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "iphone-playlist-pending-proof-first-main-run",
-            "reason": "The iPhone edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server, beside the existing open, play-in-order and rename proof. The pending state now has a proof, testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone: a rename made during the fault proxy's outage shows pending and reaches the server at the reconnect, wired into the conformance leg. What remains is its first passing run on main, which a pull request does not run."
-          },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit made while the server is unreachable, is driven through the iPhone app by testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone in the same leg; until it has passed on main the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit made while the server is unreachable, is driven through the iPhone app by testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone in the same leg: a rename made during the fault proxy's outage shows pending and reaches the server at the reconnect. It executed and passed in main's apple-ci push run 37591393763 on 144c921f."
         },
         "ipados": {
-          "status": "partial",
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "ipad-playlist-play-and-pending-proofs-first-main-run",
-            "reason": "The iPad edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server. Both remaining parts now have proofs that fail on an iPhone idiom, wired into the conformance leg: testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS plays a playlist in its own order on the iPad, and testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS shows a rename made during the fault proxy's outage pending, then sent at the reconnect. What remains is their first passing run on main, which a pull request does not run."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "conformance": "CONF-88",
@@ -1724,19 +1713,19 @@
               "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPadOS"
             },
             {
-              "observes": "the iPad app in its regular-width window opens a server playlist from Library > Playlists, Play starts the playlist's own first entry rather than its album's, and a rename made on the page shows at once and is read back from the server",
+              "observes": "the iPad app in its regular-width window opens a server playlist from Library > Playlists, Play starts the playlist's own first entry rather than its album's, and a rename made on the page shows at once and is read back from the server; executed and passed on main in apple-ci run 37591393763 on 144c921f",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS"
             },
             {
-              "observes": "through the iPad app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away",
+              "observes": "through the iPad app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away; executed and passed on main in apple-ci run 37591393763 on 144c921f",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS"
             }
           ],
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order and the pending state, an edit made while the server is unreachable, are driven on the iPad by two proofs in the same leg; until they have passed on main the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order and the pending state, an edit made while the server is unreachable, are driven on the iPad by two proofs in the same leg, each failing on an iPhone idiom (testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS and testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS); both executed and passed in main's apple-ci push run 37591393763 on 144c921f."
         },
         "tvos": {
           "status": "partial",
