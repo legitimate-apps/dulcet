@@ -264,7 +264,7 @@ internal sealed interface PendingPlaylistRow {
         val candidates: List<String>? = null,
         /**
          * The candidate the person chose as this create's playlist, adopted by the next flush — void
-         * if another create settles it first.
+         * if another create settles it first, or if that flush no longer finds it listed.
          */
         val chosen: String? = null,
     ) : PendingPlaylistRow {
@@ -802,9 +802,10 @@ internal class PlaylistEditor(
      * The person's answer to [PlaylistEditOutcome.PossibleDuplicate] for the create [localId]:
      * [playlistId], one of the candidates they were shown, IS that playlist — adopted by the next
      * flush, and every edit made here since follows it — or, with null, none of them is: the create is
-     * sent, and those playlists are left as they are. A choice another create settles first is void,
-     * and the person is asked again ([PlaylistEditOutcome.PossibleDuplicate]) with the candidates that
-     * remain; none they passed over is adopted instead. [PlaylistEditRecord.Invalid] when the create is
+     * sent, and those playlists are left as they are. A choice another create settles first, or that
+     * the flush no longer finds listed, is void, and the person is asked again
+     * ([PlaylistEditOutcome.PossibleDuplicate]) with the candidates that remain; none they passed over
+     * is adopted instead. [PlaylistEditRecord.Invalid] when the create is
      * not waiting for a choice or [playlistId] is not one of its candidates.
      */
     fun chooseCreated(localId: String, playlistId: String?): PlaylistEditRecord {
@@ -1967,7 +1968,9 @@ internal class PlaylistEditor(
      * never none ([holdsWhatWasSent]) — adopted; else, with no candidate at all, it is sent again;
      * else the person is told the candidates ([PlaylistEditOutcome.PossibleDuplicate]), none of which
      * is then a candidate for another create, and it waits for their choice. A row whose pre-send
-     * list was never recorded adopts nothing on its own.
+     * list was never recorded adopts nothing on its own, and neither does one whose chosen playlist
+     * is no longer listed when the only candidate left was offered beside it: the person passed over
+     * that one, and is asked again.
      */
     private suspend fun resolveLostCreate(
         row: PendingPlaylistRow.Create,
@@ -1978,11 +1981,14 @@ internal class PlaylistEditor(
         row.chosen?.let { chosen -> if (candidates.any { it.id == chosen }) return LostCreate.Adopt(chosen) }
         if (candidates.isEmpty()) return LostCreate.NotLanded
         val only = candidates.singleOrNull()
+        // A choice whose playlist is no longer listed is void, and a candidate offered beside it was
+        // passed over by the person: named again, never adopted on its own.
+        val passedOver = row.chosen != null && only != null && only.id in row.candidates.orEmpty()
         // Named, never adopted: while another create of this device that sent the same name is in
         // doubt, since its send may have made this one; and one whose stated owner is not this
         // account — the person says whether it is theirs.
         if (
-            only != null && !anotherCreateInDoubt(row.playlistId, sentName) && (only.owner == null || isThisAccount(only.owner)) &&
+            only != null && !passedOver && !anotherCreateInDoubt(row.playlistId, sentName) && (only.owner == null || isThisAccount(only.owner)) &&
             row.seenBeforeSend != null && holdsWhatWasSent(only.id, sentSongs)
         ) {
             return LostCreate.Adopt(only.id)
