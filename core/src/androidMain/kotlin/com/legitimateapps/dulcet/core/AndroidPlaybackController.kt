@@ -75,6 +75,12 @@ public data class AndroidPlaybackState(
  */
 public fun interface AndroidLocalPlaybackSource {
     public suspend fun localPlan(rawId: String): LocalPlaybackPlan?
+
+    /**
+     * The downloaded song's own metadata, kept with its download (spec §16.13), or null. Read from
+     * the device alone: a restored or offline entry that is downloaded is named with no request.
+     */
+    public suspend fun localTrack(rawId: String): AndroidTrack? = null
 }
 
 /**
@@ -787,6 +793,13 @@ public class AndroidPlaybackController internal constructor(
         return Song(container, duration, track)
     }
 
+    /** [rawId]'s metadata as its download kept it, or null; never a request. */
+    private suspend fun localTrack(rawId: String): AndroidTrack? = localPlans?.let { source ->
+        try { source.localTrack(rawId) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null }
+    }?.takeIf { it.providerInstanceId == account.providerInstanceId && it.rawId == rawId && it.title.isNotBlank() }
+
     private fun remember(track: AndroidTrack) {
         val id = ProviderItemId(track.providerInstanceId, track.rawId)
         val known = metadata[id]
@@ -846,6 +859,10 @@ public class AndroidPlaybackController internal constructor(
         metadataLoads += missing
         metadataFill = scope.launch {
             for (id in missing) {
+                // A downloaded song is named from what its download kept: no request, and offline
+                // the song's own read would fail and leave the row untitled.
+                val kept = localTrack(id.rawId)
+                if (kept != null) { remember(kept); publish(); continue }
                 try { loadSong(id.rawId) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { continue }
@@ -877,6 +894,12 @@ public class AndroidPlaybackController internal constructor(
                 }
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 if (local != null) {
+                    // A restored or untitled entry takes its title from what the download kept,
+                    // before the media item is built from it.
+                    if (metadata[directive.itemId]?.title.isNullOrBlank()) {
+                        localTrack(directive.itemId.rawId)?.let(::remember)
+                        if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
+                    }
                     command(PlaybackCommand.Stop(id()))
                     val plan = AndroidLocalPlaybackPlan(session, directive.attemptId, directive.itemId, local)
                     activePlan = plan

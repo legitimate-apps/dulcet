@@ -206,9 +206,19 @@ internal class DownloadPolicyEngine(
     private val store = SqlDownloadStore(database)
     private var reconciled = false
 
+    /**
+     * Relaunch reconciliation (spec §14.5): matches the platform's outstanding tasks to rows, and
+     * deletes every temporary file no outstanding task owns — except one that [resumesTemporaryFile]
+     * accepts. Only a row whose transfer ENDED and was recorded is asked: `Queued` or `Interrupted`
+     * before reconciliation, with no destination file and no credential change. A row still
+     * `Downloading` with no task died mid-write, so its file is never offered for resumption. The
+     * default keeps none, which is Apple's behaviour: its resumable state is the OS's resume data,
+     * not a file of ours.
+     */
     fun reconcile(
         outstandingTasks: List<OutstandingDownloadTask>,
         currentCredentialGenerations: Map<String, Long>,
+        resumesTemporaryFile: (DownloadRecord) -> Boolean = { false },
     ): DownloadReconciliationResult {
         check(!reconciled) { "download reconciliation may run only once per subsystem launch" }
         require(currentCredentialGenerations.values.all { it >= 0 })
@@ -220,6 +230,7 @@ internal class DownloadPolicyEngine(
         val cancel = activeTaskIds.filterTo(mutableSetOf()) { it !in rowsById }
         val interrupted = mutableSetOf<DownloadId>()
         val recovered = mutableSetOf<DownloadId>()
+        val resumable = mutableSetOf<DownloadId>()
 
         rows.forEach { row ->
             val currentCredentialGeneration = currentCredentialGenerations[row.identity.serverId]
@@ -244,10 +255,15 @@ internal class DownloadPolicyEngine(
             } else if (row.state == DownloadState.Downloading && row.downloadId !in activeTaskIds) {
                 store.markInterrupted(row.downloadId)
                 interrupted += row.downloadId
+            } else if (
+                (row.state == DownloadState.Queued || row.state == DownloadState.Interrupted) &&
+                resumesTemporaryFile(row)
+            ) {
+                resumable += row.downloadId
             }
         }
 
-        val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds)
+        val deletedTemps = files.deleteUnownedTemporaryFiles(activeTaskIds + resumable)
         reconciled = true
         return DownloadReconciliationResult(cancel, interrupted, recovered, deletedTemps)
     }
@@ -704,13 +720,14 @@ internal class DownloadFileStore(
         return unnamed.size
     }
 
-    fun deleteUnownedTemporaryFiles(activeTaskIds: Set<DownloadId>): Set<DownloadId> {
+    /** Deletes every `<id>.partial` whose id is not in [keptIds]: those an outstanding task owns or a row resumes. */
+    fun deleteUnownedTemporaryFiles(keptIds: Set<DownloadId>): Set<DownloadId> {
         val deleted = mutableSetOf<DownloadId>()
         fileSystem.listOrNull(temporaryRoot).orEmpty().forEach { path ->
             val name = path.name
             if (!name.endsWith(".partial")) return@forEach
             val id = DownloadId(name.removeSuffix(".partial"))
-            if (id !in activeTaskIds) {
+            if (id !in keptIds) {
                 fileSystem.delete(path, mustExist = false)
                 deleted += id
             }

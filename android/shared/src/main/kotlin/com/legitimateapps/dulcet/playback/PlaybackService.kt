@@ -111,12 +111,14 @@ class PlaybackService : MediaSessionService() {
         // A downloaded song plays from its file (spec §14.5), and only this account's downloads.
         val controller = AndroidPlaybackController(this, PlaybackEndpointAccount(
             account.id, account.serverUrl, account.username, account.password, account.allowLocalHttp),
-            AndroidLocalPlaybackSource { rawId ->
+            object : AndroidLocalPlaybackSource {
                 // Called from the player's main-thread callbacks: opening the controller reads the
                 // Keystore-backed account record and the database, so none of it runs on main.
-                withContext(Dispatchers.IO) {
-                    AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }?.localPlan(rawId)
-                }
+                private fun downloads() =
+                    AndroidDownloads.controller(service)?.takeIf { it.providerInstanceId == account.id }
+                override suspend fun localPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localPlan(rawId) }
+                // A downloaded song's title, artist and album, kept with its download (§16.13).
+                override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
             })
         // The quality for the next item: the person's choice for the network last reported.
         controller.setStreamingQuality(StreamingQualitySettings.get(this).preference.value)

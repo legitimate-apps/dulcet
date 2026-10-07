@@ -155,6 +155,8 @@ public class AndroidDownloadController internal constructor(
         AuthenticatedEndpointCredentials(account.normalizedBaseUrl, account.username, account.password, account.allowLocalHttp),
         "download.android",
     )
+    /** The account's seen-cache namespace (spec §16.13), bound on first use; database thread only. */
+    private var boundCache: BoundSeenCache? = null
     private val reconciled = CompletableDeferred<Boolean>()
     private val progress = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Long?>>()
     private val mutableStatuses = MutableStateFlow<Map<String, AndroidDownloadStatus>>(emptyMap())
@@ -181,6 +183,15 @@ public class AndroidDownloadController internal constructor(
                         // Account ids are never reused and an account's credentials never change
                         // under its id on Android, so its generation is constant.
                         mapOf(account.providerInstanceId to CREDENTIAL_GENERATION),
+                        // A row of this account holding Range resume data — the exact length its
+                        // first response declared — has a partial file the next run continues with
+                        // a Range request. The worker that recorded its end has finished, so no
+                        // task owns the file at relaunch; the run's own rules decide whether the
+                        // file is still usable (a mismatched answer restarts from zero).
+                        resumesTemporaryFile = { row ->
+                            row.identity.serverId == account.providerInstanceId &&
+                                row.platformResumeData?.let(::decodeRangeResume) != null
+                        },
                     )
                 }
                 result.taskIdsToCancel.forEach { tasks.cancel(it.value) }
@@ -208,7 +219,10 @@ public class AndroidDownloadController internal constructor(
     /**
      * Downloads [items], each the original file (spec §14.5 identity `(server, raw id, original)`).
      * A track already downloaded or under way is left as it is. Each row is written, and its track's
-     * metadata pinned against seen-cache eviction (§16.13), before any file exists. It returns once
+     * metadata pinned against seen-cache eviction (§16.13), before any file exists: the pin's track
+     * row exists from then on, as an identity alone until its metadata is read. A track the library
+     * never read — asked for by its id alone — has its metadata read with `getSong` when its task
+     * runs, before the transfer, so every downloaded track has a title to show offline. It returns once
      * scheduling has settled: the next download's task is started, or a wake is requested, whichever
      * scheduling pass made that decision.
      */
@@ -228,7 +242,8 @@ public class AndroidDownloadController internal constructor(
                         credentialGeneration = CREDENTIAL_GENERATION,
                         wallClockMilliseconds = wall(),
                     ))
-                    store.database.seenCacheQueries.insertPin(account.providerInstanceId, "track", item.rawId, "download")
+                    // A pin never points at nothing: an identity-only track row comes with it.
+                    cache().pin(CacheItemKind.Track, item.rawId, CachePinReason.Download)
                 }
                 // An interrupted row asked for again is retried now, not at its backoff boundary.
                 if (existing?.state == DownloadState.Interrupted) {
@@ -331,6 +346,9 @@ public class AndroidDownloadController internal constructor(
             ?.takeIf { it.state == DownloadState.Downloading && it.identity.serverId == account.providerInstanceId }
             ?: return AndroidDownloadRunOutcome.NotRunnable
         val temporary = File(withContext(database) { engine.temporaryFilePath(id) })
+        // Best effort and outside the transfer's failure handling: no lookup outcome fails the run or
+        // reaches the catch below, which deletes a partial file the failure does not keep.
+        ensureTrackMetadata(row.identity.rawId)
         val outcome = try {
             val metadata = transfer(row, temporary)
             withContext(database) {
@@ -386,6 +404,21 @@ public class AndroidDownloadController internal constructor(
         }
     }
 
+    /**
+     * The metadata kept with [rawId]'s download (spec §16.13), or null when it has no download or no
+     * metadata yet. Read from the device alone, so the player names a downloaded song — restored
+     * after a relaunch, or played offline — with no request.
+     */
+    public suspend fun localTrack(rawId: String): AndroidTrack? {
+        if (!awaitReconciled()) return null
+        return withContext(database) {
+            if (closed || engine.record(identity(rawId)) == null) return@withContext null
+            val record = cache().track(rawId)?.record?.takeIf { it.title.isNotBlank() } ?: return@withContext null
+            AndroidTrack(account.providerInstanceId, rawId, record.title, record.credits.firstOrNull()?.name,
+                record.albumTitle, record.durationMilliseconds, record.artworkKey)
+        }
+    }
+
     /** The raw ids whose downloads are complete and present, for the library's playability (§16.14). */
     public fun downloadedRawIds(): Set<String> =
         statuses.value.values.filter(AndroidDownloadStatus::playsOffline).mapTo(mutableSetOf(), AndroidDownloadStatus::rawId)
@@ -403,6 +436,37 @@ public class AndroidDownloadController internal constructor(
         closeNetworkAccess()
         // The store is released on the database thread, after anything already queued there.
         CoroutineScope(database).launch { store.close() }
+    }
+
+    /** Database thread only. The reader binds the same account's identity, so this never purges. */
+    private fun cache(): BoundSeenCache = boundCache ?: SeenCacheStore(store, SeenCacheWallClock { wall() })
+        .bind(CacheBinding(account.providerInstanceId, account.normalizedBaseUrl, account.username))
+        .also { boundCache = it }
+
+    /**
+     * Reads [rawId]'s own metadata with `getSong` when the seen-cache holds none (spec §16.13), and
+     * writes what it learns as a song lookup, which never clears `gone`. Nothing is read for a track
+     * the library already read. Best effort: the download needs only `stream`, so a refused,
+     * unreadable or failed lookup leaves the identity-only row and the transfer runs as before; only
+     * a cancellation leaves here.
+     */
+    private suspend fun ensureTrackMetadata(rawId: String) {
+        try {
+            val issueSeq = withContext(database) {
+                val cached = cache().track(rawId)
+                if (cached?.record != null && !cached.metadataMissing) null else cache().issue()
+            } ?: return
+            val response = (requests ?: return).request("getSong", mapOf("id" to rawId))
+            if (response.statusCode !in 200..299) return
+            val track = parseLookupSong(response.body.decodeToString(), rawId) ?: return
+            withContext(database) {
+                cache().writeEntities(CacheWriteStamp(issueSeq, wall(), null), CacheEntitySource.SongLookup, CacheEntities(tracks = listOf(track)))
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // The lookup is never the download: its failure leaves the placeholder.
+        }
     }
 
     private suspend fun transfer(row: DownloadRecord, temporary: File): DownloadResponseMetadata {
