@@ -4902,9 +4902,13 @@ about publication, not about the cache:
   outcome for an earlier value (4 saved while a later 5 is still on its way) records the 4 as the
   server's and leaves the 5 shown, pending or held, until its own outcome. On every platform an
   unknown rating's stars are also dimmed, so it looks different from a known 0. Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
-  Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84's
-  rating half runs against the disposable server through the production session
-  (`RatingConformanceTest`), reading the server's `userRating` back after every write.
+  Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84
+  runs against the disposable server through the production session, in every core-conformance
+  runtime: the rating half (`RatingConformanceTest`) reads the server's `userRating` back after every
+  write; the star half (`StarConformanceTest`) holds the `star` send at the transport, before the
+  server, while the screen is re-read, so the server answers that re-read with no star and only the
+  overlay keeps it shown, then reads the star back raw and checks that the session holds the echo with
+  nothing pending.
 - The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value;
   they use the same outbox and the same publish-time overlay with a verified delivery of their own
   (§18.6).

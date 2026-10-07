@@ -1057,6 +1057,18 @@ passing_cases = """\
             name="conf90AStaleIndexIsPreventedNotSent[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[macosArm64]"
             name="conf91AnotherUsersPlaylistIsNotEditable[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.StarConformanceTest[macosArm64]"
+            name="conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.StarConformanceTest[iosSimulatorArm64]"
+            name="conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.StarConformanceTest[tvosSimulatorArm64]"
+            name="conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted[tvosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.RatingConformanceTest[macosArm64]"
+            name="conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.RatingConformanceTest[iosSimulatorArm64]"
+            name="conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.RatingConformanceTest[tvosSimulatorArm64]"
+            name="conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt[tvosSimulatorArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
             name="conf88PlaylistWritesOnTheReferenceServer[iosSimulatorArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
