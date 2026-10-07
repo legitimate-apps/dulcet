@@ -69,10 +69,13 @@ fun forgetSavedAccount(context: Context) {
 
 /**
  * Waits until [activity]'s window holds the input focus, so that a touch or a key reaches the app as
- * it would reach it for a person looking at it. On a just-booted emulator the first launch has been
- * left without focus (OBSERVED in core-ci runs 37638393461 and 37641121763, where a touch then went to
- * the launcher): halfway through, the screen is woken, the keyguard dismissed and the shade collapsed,
- * as a person would before using the phone. A window still without focus fails naming what holds it.
+ * it would reach it for a person looking at it. The account proofs run first after the emulator boots,
+ * and there the first launch has been left without focus: a touch went to the launcher (core-ci run
+ * 37638393461), and in run 37643560014 the launcher, relaunching under the boot's load, raised an
+ * "isn't responding" dialog that held the focus over the app. Another app's not-responding dialog is
+ * answered by stopping that app, which closes the dialog, as a person answers it with Close app;
+ * halfway, the screen is also woken, the keyguard dismissed and the shade collapsed. The app under
+ * test is never touched. A window still without focus fails naming the window that holds it.
  */
 fun awaitWindowInFront(instrumentation: Instrumentation, activity: () -> Activity?, timeoutMillis: Long = 60_000) {
     fun focused(): Boolean {
@@ -83,11 +86,28 @@ fun awaitWindowInFront(instrumentation: Instrumentation, activity: () -> Activit
     fun shell(command: String) = instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
         java.io.FileInputStream(descriptor.fileDescriptor).bufferedReader().readText()
     }
+    fun focusHolder() = shell("dumpsys window").lines()
+        .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mFocusedWindow" in it }
+        .distinct().joinToString(" | ") { it.trim().take(200) }
+    val ownPackage = instrumentation.targetContext.packageName
+    val notResponding = Regex("""Application Not Responding: ([A-Za-z0-9_.]+)""")
     val start = SystemClock.uptimeMillis()
     var prepared = false
+    var lastLook = start
+    val answered = mutableListOf<String>()
     while (SystemClock.uptimeMillis() - start < timeoutMillis) {
-        if (focused()) return
-        if (!prepared && SystemClock.uptimeMillis() - start > timeoutMillis / 2) {
+        if (focused()) {
+            if (answered.isNotEmpty()) println("ANDROID EMULATOR FOCUS another app's not-responding dialog answered: ${answered.joinToString(",")}")
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        if (now - start > 3_000 && now - lastLook > 2_000) {
+            lastLook = now
+            notResponding.findAll(focusHolder()).map { it.groupValues[1] }.distinct()
+                .filter { it != ownPackage && it !in answered }
+                .forEach { stuck -> shell("am force-stop $stuck"); answered += stuck }
+        }
+        if (!prepared && now - start > timeoutMillis / 2) {
             prepared = true
             shell("input keyevent KEYCODE_WAKEUP")
             shell("wm dismiss-keyguard")
@@ -95,8 +115,6 @@ fun awaitWindowInFront(instrumentation: Instrumentation, activity: () -> Activit
         }
         SystemClock.sleep(100)
     }
-    val holder = shell("dumpsys window").lines()
-        .filter { "mCurrentFocus" in it || "mFocusedApp" in it || "mFocusedWindow" in it }
-        .distinct().joinToString(" | ") { it.trim().take(200) }
-    error("The app's window never came to the front after ${timeoutMillis}ms (woken and unlocked halfway: $prepared). Focus: $holder")
+    error("The app's window never came to the front after ${timeoutMillis}ms (woken and unlocked halfway: $prepared; " +
+        "not-responding apps stopped: ${answered.ifEmpty { listOf("none") }.joinToString(",")}). Focus: ${focusHolder()}")
 }
