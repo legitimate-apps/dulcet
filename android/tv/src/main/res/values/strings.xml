@@ -22,6 +22,7 @@
     <string name="tv_error_auth">The account was not accepted. Check the username and password.</string>
     <string name="tv_error_capability">This server does not provide a capability Dulcet requires.</string>
     <string name="tv_error_persistence">The account could not be saved, so Dulcet stayed disconnected.</string>
+    <string name="tv_error_unreadable">The saved account could not be read on this TV. Connect again, or sign it out.</string>
     <!-- Navigation -->
     <string name="tv_nav_search">Search</string>
     <string name="tv_nav_library">Library</string>

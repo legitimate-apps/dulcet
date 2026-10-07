@@ -19,6 +19,11 @@ import kotlin.concurrent.thread
  * each one at once without forwarding it. It counts them, so a test can show both that the app's
  * path is closed and how often the app tried it.
  *
+ * [makeUnreachable] is [cut] undone by [makeReachable]: the server is unreachable to the app until
+ * then, and refused connections are counted the same way. [hold] parks every connection accepted
+ * from then on, neither forwarded nor closed, until [release] forwards them: the app's request is
+ * in flight for as long as a test needs to look at what the app shows meanwhile.
+ *
  * Every forwarded connection's bytes are also kept, up to [TAP_LIMIT] in each direction, so a test
  * can read what the server actually answered ([connections]). They stay in this process's memory
  * and carry credentials in their request lines: a test reads them and never prints them whole.
@@ -55,34 +60,61 @@ class ServerRelay(target: String) : AutoCloseable {
     /** Every connection forwarded, in the order accepted. */
     fun connections(): List<Tapped> = synchronized(lock) { tapped.toList() }
 
+    /** Connections accepted while held, and not yet released. */
+    val heldConnections = AtomicInteger()
+    private var isHeld = false
+    private val parked = mutableListOf<Socket>()
+
     init {
         thread(name = "server-relay-accept", isDaemon = true) {
             while (!listener.isClosed) {
                 val client = try { listener.accept() } catch (_: IOException) { break }
-                val upstream = synchronized(lock) {
-                    if (isCut) null else try {
-                        Socket(targetHost, targetPort).also { open += client; open += it }
-                    } catch (_: IOException) { null }
+                val held = synchronized(lock) {
+                    if (isHeld && !isCut) { parked += client; heldConnections.incrementAndGet(); true } else false
                 }
-                if (upstream == null) {
-                    if (synchronized(lock) { isCut }) refusedConnections.incrementAndGet()
-                    runCatching { client.close() }
-                    continue
-                }
-                forwardedConnections.incrementAndGet()
-                val tap = Tapped().also { synchronized(lock) { tapped += it } }
-                val finished = AtomicInteger()
-                val release = {
-                    if (finished.incrementAndGet() == 2) {
-                        runCatching { client.close() }; runCatching { upstream.close() }
-                        synchronized(lock) { open -= client; open -= upstream }
-                    }
-                }
-                pump(client, upstream, release) { bytes, count -> keep(tap, tap.sent, bytes, count) }
-                pump(upstream, client, release) { bytes, count -> keep(tap, tap.answered, bytes, count) }
+                if (!held) forward(client)
             }
         }
     }
+
+    private fun forward(client: Socket) {
+        val upstream = synchronized(lock) {
+            if (isCut) null else try {
+                Socket(targetHost, targetPort).also { open += client; open += it }
+            } catch (_: IOException) { null }
+        }
+        if (upstream == null) {
+            if (synchronized(lock) { isCut }) refusedConnections.incrementAndGet()
+            runCatching { client.close() }
+            return
+        }
+        forwardedConnections.incrementAndGet()
+        val tap = Tapped().also { synchronized(lock) { tapped += it } }
+        val finished = AtomicInteger()
+        val release = {
+            if (finished.incrementAndGet() == 2) {
+                runCatching { client.close() }; runCatching { upstream.close() }
+                synchronized(lock) { open -= client; open -= upstream }
+            }
+        }
+        pump(client, upstream, release) { bytes, count -> keep(tap, tap.sent, bytes, count) }
+        pump(upstream, client, release) { bytes, count -> keep(tap, tap.answered, bytes, count) }
+    }
+
+    /** Parks every connection accepted from now on until [release]. */
+    fun hold() = synchronized(lock) { isHeld = true }
+
+    /** Stops holding and forwards every parked connection, in the order accepted. */
+    fun release() {
+        val waiting = synchronized(lock) { isHeld = false; parked.toList().also { parked.clear() } }
+        waiting.forEach(::forward)
+    }
+
+    /** As [cut], until [makeReachable]. */
+    fun makeUnreachable() = cut()
+
+    /** Forwards new connections again after [makeUnreachable]. */
+    fun makeReachable() = synchronized(lock) { isCut = false }
 
     /** Closes every forwarded connection and forwards nothing from now on. */
     fun cut() {
@@ -92,6 +124,7 @@ class ServerRelay(target: String) : AutoCloseable {
 
     override fun close() {
         cut()
+        synchronized(lock) { parked.toList().also { parked.clear() } }.forEach { runCatching { it.close() } }
         runCatching { listener.close() }
     }
 
