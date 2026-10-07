@@ -50,8 +50,17 @@ internal class FakePlaylistServer(
     /** Endpoint -> a transport failure thrown instead of answering (nothing applied). */
     val failWithError = mutableMapOf<String, DomainError>()
 
-    /** Endpoint -> what the HTTP client itself throws instead of answering (nothing applied). */
+    /**
+     * Endpoint -> what the HTTP client itself throws instead of answering, nothing applied. Unless it
+     * is a platform failure that proves no connection was made, the client cannot know that.
+     */
     val failWithThrowable = mutableMapOf<String, Throwable>()
+
+    /**
+     * Endpoint -> what the HTTP client throws when the change IS applied and the connection then
+     * drops before the answer: a lost answer the client sees as unreachable, not as a timeout.
+     */
+    val applyThenDrop = mutableMapOf<String, Throwable>()
 
     /** Endpoints whose change IS applied but whose answer is lost: the at-least-once case. */
     val applyThenLose = mutableSetOf<String>()
@@ -119,6 +128,7 @@ internal class FakePlaylistServer(
         if (request.endpoint in WRITES) beforeWrite(request)
         val response = respond(request)
         if (request.endpoint in applyThenLose) throw LibraryRequestFailure(DomainError.Transport.Timeout)
+        applyThenDrop[request.endpoint]?.let { throw it }
         applyThenStatus[request.endpoint]?.let { return LibraryEndpointResponse(it, "<html>bad gateway</html>", "http://fixture.invalid/rest") }
         return response
     }

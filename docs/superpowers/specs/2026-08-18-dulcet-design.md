@@ -5076,8 +5076,9 @@ retry loop.
   `withdraw(target, field)` removes one — a held one included — so a change the server will not take
   never stays stuck in the queue. Withdrawing cannot unsend, and says so: a change none of whose
   sends has gone out, or every send of which was answered in a way that proves it was not applied —
-  a 429, another 4xx, an error envelope, or no connection at all — is `CompactedAway`; only one whose
-  send is under way, or whose answer was lost or does not prove it unapplied (a 5xx), is
+  a 429, another 4xx, an error envelope, or a connection never made — is `CompactedAway`; only one whose
+  send is under way, or whose answer was lost or does not prove it unapplied (a 5xx, or a connection
+  that closed or reset after it was made, which the person also sees as unreachable), is
   `AlreadySent` — too late to undo, since the server may hold it already — and the item then shows what the server answers, or its next read (fourth
   and fifth review rounds, maintainer's decisions).
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
@@ -5777,8 +5778,10 @@ create's refusal always meant the server held no such playlist).
 A pending change can always be withdrawn — held, waiting for a choice, or failing — so none is ever
 stuck in the queue (`pendingChanges`, `withdraw`; §18.3 for favourites). Withdrawing cannot unsend,
 and says so: a change none of whose sends has gone out, or every send of which was answered in a
-way that proves it was not applied — a 429, another 4xx, an error envelope, or no connection at all
-— is `CompactedAway`, a header change or a create edited here while that send was out included
+way that proves it was not applied — a 429, another 4xx, an error envelope, or a connection never
+made (refused, no route, an unresolved name, or stopped by the local-HTTP policy; not one that
+closed or reset once made, §18.3) — is
+`CompactedAway`, a header change or a create edited here while that send was out included
 (sixth review round); only one whose send is under way, or whose answer was lost or does not prove
 it unapplied (a 5xx), is `AlreadySent` (fifth review round) — and a list change edited here while
 its send was out, which stays `AlreadySent` even when that send is answered 429: the list it was
@@ -7604,6 +7607,30 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-07 — A connection that drops after it was made leaves a write in doubt (§18.3, §18.6).**
+Both outboxes took every unreachable failure as proof that nothing arrived, so a write whose
+connection closed or reset after the request went out was sent again as if it had never gone: a
+second playlist for a create, and a star compacted away with its unstar, leaving the server with the
+star the person removed. Only a connection never made proves the request never arrived. Each
+platform now says so from its own typed failure (`provesNeverConnected`): on the JVM and Android a
+`ConnectException`, `NoRouteToHostException`, `UnknownHostException` or `UnresolvedAddressException`
+in the cause chain; on Apple an `NSURLErrorDomain` code of -1003, -1004 or -1006, and never -1005
+(connection lost), which NSURLSession reports after a request was written (OBSERVED below). The
+no-network codes (-1009, -1018, -1020) are left out: whether NSURLSession can report them for a path
+that drops while a request is out is not known (ASSUMED possible), and a write taken back on that
+guess would be sent twice. A refusal by the local-HTTP policy, which stops a request before any
+socket opens, is never sent too. Any other unreachable failure is a lost answer: a playlist write is in doubt, as a timed-out
+one is, and a favourite or rating stays `AlreadySent`. OBSERVED through the real HTTP stacks against
+loopback sockets: a server that reads the request whole and closes is unreachable and not
+never-connected on the JVM (a GET and a form POST) and on macOS (a form POST); a closed port is
+never-connected on both (`RequestDeliveryTransportTest`, `RequestDeliveryAppleTest`). Mutants of the
+old rule in either outbox, and of the reader dropping the platform's answer, each fail a test. Also
+OBSERVED on macOS: NSURLSession sends a GET again by itself when its connection closes without an
+answer (the fixture, serving up to three connections, served three to one call; the test requires
+at least two) and a POST never, so a write sent without `formPost`
+may reach the server more than once below the core; the test pins that platform fact. The
+wording of §18.3 and §18.6 ("no connection at all") now says "a connection never made".
 
 **2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
 2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The
