@@ -5703,6 +5703,9 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(finished["row"], "downloaded", "The durable row must read back downloaded")
         XCTAssertEqual(finished["bytes"], String(original.count), "The artifact must hold the server's bytes")
         XCTAssertEqual(finished["sha256"], originalDigest, "The artifact must hold the server's bytes")
+        // As in the Mac proof, let any unintended follow-up transfer reach the proxy before
+        // asserting that the handoff made only one stream read.
+        RunLoop.current.run(until: Date().addingTimeInterval(3))
         XCTAssertEqual(proxyStreams(of: songID, since: since, proxy: proxy).count, 1,
                        "The handoff must not fetch the track again")
         // The system's own delivery (os-initiated-background-session-delivery), asserted apart.

@@ -52,10 +52,13 @@ system finished while the app was gone was never reconciled. DulcetKit's
 `aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect` fails without
 the fix.
 
-ASSUMED, unmeasured: a download that finishes between the launch's task listing
-and its reconciliation is first marked interrupted. Promotion accepts any row
-state, so a secured artifact still promotes; the cost is at most one repeated
-read.
+ASSUMED, unmeasured: a task can finish and be absent from `getAllTasks` while its
+delegate event has not yet arrived. If that event arrives after `finishReconciliation`,
+the row is marked interrupted and the scheduler starts a re-fetch: a second server
+`stream` read, despite the first transfer having finished. Promotion accepts any row
+state, so the secured artifact still promotes once; idempotent promotion does not
+prevent the extra server read. The handoff proofs' three-second settle checks observe
+one read in their tested ordering, rather than excluding this race.
 
 ## os-initiated-background-session-delivery
 
@@ -84,19 +87,21 @@ ASSUMED: a real device's memory-pressure termination relaunches the app as
 `exit()` does on the simulator. The simulator has no jetsam command, and these
 proofs run on no physical device.
 
-**macOS: the system does not relaunch the app. It finishes the transfer, and the
-app reconciles it at its next launch.** OBSERVED: after `SIGKILL` with the
-download outstanding, nothing launched the app within 120 s in a dedicated
-measurement, nor within 60 s in any run of the Mac proof. The released read was
-still answered with no app process alive, and the next launch reconciled the
-download. Apple documents the relaunch for iOS only.
+**macOS: no unattended relaunch was observed in the proof's configuration.**
+OBSERVED: the Mac proof used an unsandboxed, ad-hoc-signed app copy under a separate
+bundle identifier, launched by `NSWorkspace` with `activates=false`. After `SIGKILL`
+with the download outstanding, nothing relaunched it within the proof's 60 s watch;
+a dedicated measurement watched for 120 s. The released read was answered with no
+app process alive, and the next harness launch reconciled the download. This does
+not establish relaunch behavior for the sandboxed distribution app. Apple documents
+the relaunch for iOS only.
 `URLSessionConfiguration.background(withIdentifier:)` describes the case where "an
 iOS app is terminated by the system and relaunched". The
 `sessionSendsLaunchEvents` wording speaks of the app being launched in the
 background, and `application(_:handleEventsForBackgroundURLSession:completionHandler:)`
 exists only on `UIApplicationDelegate`; `NSApplicationDelegate` has no
-counterpart. This is a contract finding (spec §28, 2026-10-07). On macOS, the
-`.backgroundTask(.urlSession(...))` registration serves a running app only, and
-the requirement is met by the system finishing the transfer while the app is not
-running and the app reconciling it at its next launch. The Mac proof observes
-exactly that.
+counterpart. Those API differences do not establish a general macOS relaunch rule.
+The Mac proof meets the requirement by observing the system finish the transfer
+while the app is not running and the app reconcile it at the next harness launch
+(spec §28, 2026-10-07). Unattended relaunch in the sandboxed distribution app remains
+ASSUMED.

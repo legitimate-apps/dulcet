@@ -62,7 +62,7 @@ mac = downloads["platforms"]["macos"]
 assert "DulcetMacDownloadRowAppTest/aRowsDownloadButtonDownloadsTheTrackAndTheRowFollowsItThroughTheHostedMacApp" in {
     row["test"] for row in mac["evidence"]
 }
-assert "macOS does not launch a killed app for its background session" in mac["reason"]
+assert "macOS did not relaunch that killed copy for its background session" in mac["reason"]
 for platform in ("ios", "ipados"):
     reason = downloads["platforms"][platform]["reason"]
     assert "exit()" in reason and "force quit" in reason, platform
@@ -79,7 +79,7 @@ for blocker in (
     assert f"## {blocker}" in registry
 for test in handoff_tests.values():
     assert test in registry, test
-assert "macOS: the system does not relaunch the app" in registry
+assert "macOS: no unattended relaunch was observed in the proof's configuration" in registry
 assert "ASSUMED: macOS relaunches" not in registry
 assert "killed-process-" + "relaunch-harness" not in (ROOT / "FEATURES.yml").read_text()
 

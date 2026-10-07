@@ -689,7 +689,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         if let librarySession, let providerInstanceID, let restored = restoredForReader {
             // The saved account's library paints at once from what this device has seen, and
-            // nothing is sent until the person chooses Reconnect (CONF-10b).
+            // the library sends nothing until the person chooses Reconnect (CONF-10b).
             librarySession.open(
                 account: Self.readerAccount(
                     request: restored,
@@ -713,9 +713,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             // Downloads belong to the saved account, not to a connection: a relaunch -- by the
             // person, or by the system for a transfer that finished while the app was gone --
             // reconciles them at once (spec §14.5), so a finished download shows as downloaded and
-            // plays offline without a Reconnect the server may never answer. Reconciliation is
-            // local; the only requests it can lead to continue downloads queued earlier, which
-            // CONF-10b allows.
+            // plays offline without a Reconnect the server may never answer. The controller then
+            // schedules queued/interrupted rows with the saved credentials, including previously
+            // complete/stale downloads whose file is missing or whose credential generation
+            // changed. These recovery reads are part of the download exception in §13.1/CONF-10b.
             downloadController?.configure(account: DulcetPlaybackAccount(
                 providerInstanceID: providerInstanceID,
                 normalizedServerURL: restored.serverURL,

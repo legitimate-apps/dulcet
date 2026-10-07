@@ -1743,6 +1743,8 @@ func cancellingARestoredReconnectReturnsToSavedDisconnectedState() {
 /// finished while the app was gone is reconciled by the replacement process, not left until the
 /// server answers again. Without it a background download completed during process death stayed
 /// "not downloaded" and unplayable offline until the person reconnected.
+/// This fake observes configuration only; DownloadPolicyTest's relaunch recovery tests exercise
+/// the real reconciliation and scheduling of missing files and changed credential generations.
 @Test @MainActor
 func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     let connector = ControlledAccountConnector()
@@ -1766,6 +1768,7 @@ func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     #expect(account?.providerInstanceID == "provider-instance-saved")
     #expect(account?.normalizedServerURL == "http://127.0.0.1:4533")
     #expect(account?.username == "listener")
+    #expect(account?.password == "fixture-password")
     #expect(account?.allowLocalHTTP == true)
     #expect(!downloads.configuredBeforeStatusHandler,
             "a state the reconciliation publishes must reach the presentation")

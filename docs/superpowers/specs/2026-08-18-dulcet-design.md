@@ -2556,9 +2556,13 @@ in any screen host — library, search, player — connects them all. **One exce
 person explicitly queued earlier continue in the background, as Apple's background transfer session
 continues them through the OS. Android's download worker continues only rows the person queued,
 including the one song read it needs to file a queued track, and its reconciliation at launch reads
-only the device's own state (the work queue and the database); nothing else in downloads contacts
-the server before Reconnect. The foreground and reachability rules of §16.11 and §16.14, the play
-retries of §15.3 and the relaunch re-resolve of §18.10 apply to a session connected in this process;
+only the device's own state (the work queue and the database). On Apple, a saved launch configures
+and reconciles downloads with the saved credentials, then schedules queued or interrupted rows
+before Reconnect. This includes re-fetching a previously complete or stale download whose file is
+missing, and re-issuing a row whose credential generation changed, even if its file still exists.
+These recovery reads for downloads the person previously requested are also part of the exception;
+nothing else in downloads contacts the server before Reconnect. The foreground and reachability
+rules of §16.11 and §16.14, the play retries of §15.3 and the relaunch re-resolve of §18.10 apply to a session connected in this process;
 a cold launch into a saved account is not a return to the foreground of a connected session (§28,
 2026-10-07). A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition, and says that
@@ -2910,13 +2914,16 @@ and reconciliation against a changed server item. The platform owns the **execut
 - **Apple: a process that dies with a download outstanding (§28, 2026-10-07).** The background
   session finishes the transfer without the app, and the next process to launch reconciles it into the
   downloaded row with the same `downloadId`. That launch may be the system's or the person's, and a
-  launch into a saved account counts: it configures downloads before any Reconnect, because
-  reconciliation is local. Who launches it differs by platform. **iOS and iPadOS:** after a
-  termination that is not a force quit, the system launches the app in the background for the
+  launch into a saved account counts: it configures downloads before any Reconnect to recover
+  finished artifacts, then schedules recovery reads under the download exception in §13.1. Who
+  launches it differs by platform. **iOS and iPadOS:** after a termination that is not a force quit, the system launches the app in the background for the
   session's events (**OBSERVED** on the simulator with `exit()`; **ASSUMED** for a real device's
-  memory-pressure termination). A force quit cancels the session's tasks. **macOS:** the system
-  launches nothing (**OBSERVED**, no launch within 120 s after `SIGKILL`; Apple documents the relaunch
-  for iOS only), so the download is reconciled at the person's next launch. Detail and sources:
+  memory-pressure termination). A force quit cancels the session's tasks. **macOS:** in the proof's
+  configuration (an unsandboxed, ad-hoc-signed app copy under a separate bundle identifier, launched
+  by `NSWorkspace` with `activates=false`), the system launched nothing within the 60 s watch after
+  `SIGKILL` (**OBSERVED**); a dedicated measurement watched for 120 s. The download was reconciled
+  at the next harness launch. Unattended relaunch in the sandboxed distribution app remains
+  **ASSUMED**, rather than ruled out by this proof. Detail and sources:
   `docs/download-background-blockers.md`.
 - **Atomic promotion:** bytes land in a temp file and the file is validated with the §12.4 validator
   table. When the server supplied `PlaybackContentLength.Exact`, its byte count is also required
@@ -7720,8 +7727,8 @@ connected and saved/disconnected are reached over an in-memory credential store,
 Keychain cannot hold an account; CONF-09b therefore stays a named gap on macOS until the entitled
 signed host runs it, and is cited on iOS, iPadOS and tvOS.
 
-**2026-10-07 — Apple downloads survive the app's death on every platform; macOS never relaunches
-for a background session; a launch into a saved account reconciles its downloads; every Apple
+**2026-10-07 — Apple downloads survive the app's death on every platform; the Mac proof observes
+completion without unattended relaunch; a saved launch reconciles and schedules recovery; every Apple
 reader row and the iPhone search result offer Download (§14.5).** The killed-process handoff is now
 proved with real processes against the disposable server on macOS, iOS and iPadOS. Each proof
 observes, as a separate step, that the download is outstanding (the fault proxy holds its one
@@ -7731,9 +7738,11 @@ promotes the same download into the durable row with the server's byte count and
 read (`DulcetMacDownloadHandoffAppTest`; `DulcetiOSUITests`, `…OnIPhone` and `…OnIPadOS`). The
 `downloads.offline` Apple cells are shipped on it.
 
-The contract finding: **macOS does not launch a killed app for its background session.**
-**OBSERVED**: nothing launched the app within 120 s of a `SIGKILL` in a dedicated measurement, nor
-within 60 s in any run of the Mac proof, while the transfer itself still completed. Apple's
+The bounded finding: **the Mac proof's app copy was not relaunched unattended for its background
+session.** **OBSERVED**: the proof's unsandboxed, ad-hoc-signed copy, under a separate bundle
+identifier and launched by `NSWorkspace` with `activates=false`, was not relaunched within 60 s of
+`SIGKILL`, while the transfer still completed; a dedicated measurement watched for 120 s. This
+does not establish whether the sandboxed distribution app is relaunched. Apple's
 documentation describes the background relaunch for iOS only
 (`URLSessionConfiguration.background(withIdentifier:)`; the events callback exists only on
 `UIApplicationDelegate`). The earlier ASSUMED claim that macOS relaunches the app is withdrawn. On iOS
@@ -7747,8 +7756,14 @@ Defects the proofs found, each with a test that fails without its fix:
 1. **A launch into a saved account configured no downloads** until Reconnect, so a download the
    system finished while the app was gone was never reconciled or shown as downloaded
    (`aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect`; the control
-   `aLaunchWithoutASavedAccountConfiguresNoDownloads`). Reconciliation is local, so this sends nothing
-   CONF-10b forbids.
+   `aLaunchWithoutASavedAccountConfiguresNoDownloads`). Configuration also schedules queued and
+   interrupted rows using the saved credentials before Reconnect. That can re-fetch a previously
+   complete or stale row whose file is missing, or re-issue a row whose credential generation changed
+   even with its file present. §13.1/CONF-10b's download exception includes these recovery reads for
+   downloads the person previously requested. The real database/filesystem tests
+   `DownloadPolicyTest.relaunchSchedulesPreviouslyCompletedAndStaleDownloadsWhoseFilesAreMissing`
+   and `relaunchSchedulesPreviouslyCompletedAndStaleDownloadsAfterCredentialGenerationChanges`
+   pin reconciliation followed by scheduling; the DulcetKit fake observes configuration only.
 2. **No Apple reader row offered Download, and the iOS shell offered it nowhere.** Rows now offer
    Download, or Retry Download after a failure, in their menu, and say where their download stands as
    a mark and as their accessibility value. A track search result's menu offers the same.
@@ -7809,8 +7824,9 @@ production playback service from a relaunch with a persisted queue whose current
 downloaded and an unsent play: the loopback server records no request through launch and Play, and
 after Reconnect the play is delivered and the entry read (`SavedLaunchPlaybackTest`, phone;
 `TvSavedLaunchNowPlayingTest`, the TV's cold Now Playing). Each fails with its gate removed. Apple,
-read statically, already sends nothing before Reconnect: playback and downloads are configured only
-by the connect-success path, and restores no queue until then. On the TV, Reconnect sits under the bar,
+read statically, configures playback only by the connect-success path and restores no queue until
+then. Apple downloads are configured at saved launch and may send recovery reads before Reconnect
+under §13.1's download exception (the Apple entry above). On the TV, Reconnect sits under the bar,
 one DOWN from any place on it and the first place UP out of the library, wherever the bar's tabs
 fall; on the emulator's layout it had lined up with neither. Connect on the form connects the session that follows, and a session connected
 in this process reads in every later screen host. Each emulator has a CONF-10b proof that connects
