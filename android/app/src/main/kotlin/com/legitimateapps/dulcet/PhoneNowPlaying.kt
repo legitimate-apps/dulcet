@@ -6,6 +6,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.outcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
@@ -127,7 +128,12 @@ internal fun MiniPlayer(
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("player.mini.title"))
-                    state.artist?.let {
+                    // A Play that needs the server of a saved account (§13.1) says so where it was pressed.
+                    if (state.needsReconnect) {
+                        Text(stringResource(R.string.mini_player_needs_reconnect), style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("player.mini.needsReconnect"))
+                    } else state.artist?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -174,6 +180,8 @@ internal fun NowPlayingScreen(
     } }
     // The playing track's stars, under its title and artist (§16.20).
     val rating: (@Composable () -> Unit)? = library?.let { session -> { NowPlayingRating(session, state) } }
+    // A saved account not yet connected (§13.1): what the player can do without the server, and Reconnect.
+    val saved: (@Composable () -> Unit)? = library?.let { session -> { NowPlayingSavedNotice(session, account, state) } }
     val surface = MaterialTheme.colorScheme.surface
     val accent = state.artworkKey?.let { ArtworkImages.accent(account, it) }
     val top by animateColorAsState(accent?.copy(alpha = 0.55f)?.compositeOver(surface) ?: MaterialTheme.colorScheme.primaryContainer,
@@ -190,7 +198,7 @@ internal fun NowPlayingScreen(
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             // The app locks no orientation and runs in split screen, so the player lays itself out for
             // the window it is given (`PlayerLayout`).
-            PlayerLayout(account, state, playback, close, { showQueue = true }, heart, rating,
+            PlayerLayout(account, state, playback, close, { showQueue = true }, heart, rating, saved,
                 Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
         }
     }
@@ -262,6 +270,7 @@ private fun PlayerLayout(
     openQueue: () -> Unit,
     heart: (@Composable () -> Unit)?,
     rating: (@Composable () -> Unit)?,
+    saved: (@Composable () -> Unit)?,
     modifier: Modifier,
 ) {
     val card = rememberSkipNoticeCard(state.skipNotice, MaterialTheme.typography.bodyMedium)
@@ -279,7 +288,7 @@ private fun PlayerLayout(
             PlayerHeader(state, close, openQueue, heart, vertical = if (short) 0.dp else if (wide) 4.dp else 8.dp)
         }.single().measure(Constraints(maxWidth = inner))
         val info = subcompose(PlayerSlot.Info) { PlayerInfo(state, rating) }.single()
-        val error = subcompose(PlayerSlot.Error) { PlayerError(state) }.single()
+        val error = subcompose(PlayerSlot.Error) { PlayerError(state, saved) }.single()
         val scrubber = subcompose(PlayerSlot.Scrubber) { Column(Modifier.fillMaxWidth()) { Scrubber(state, playback) } }.single()
         val titleLine = measurer.measure("Ag", titleStyle, density = this).size.height
         val full = TRANSPORT_FULL_WIDTH.roundToPx()
@@ -454,13 +463,35 @@ private fun PlayerInfo(state: AndroidPlaybackState, rating: (@Composable () -> U
 
 /** The failure line, when there is one, scrolling in its own region when cut short. */
 @Composable
-private fun PlayerError(state: AndroidPlaybackState) {
+private fun PlayerError(state: AndroidPlaybackState, saved: (@Composable () -> Unit)?) {
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        saved?.invoke()
         if (state.error != null) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                 modifier = Modifier.fillMaxWidth().testTag("player.error")) {
                 Text(stringResource(R.string.now_playing_failed), Modifier.padding(16.dp),
                     color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
+    }
+}
+
+/**
+ * The saved account waiting for the person (spec §13.1): the player restored what the device holds,
+ * and a song that needs the server waits for Reconnect, which connects in place. Nothing once connected.
+ */
+@Composable
+private fun NowPlayingSavedNotice(session: LibrarySession, account: SearchAccount, state: AndroidPlaybackState) {
+    val connection by session.connection.collectAsState()
+    val resources = libraryResources()
+    val savedLine = resources.savedAccountLine(connection, account) ?: return
+    val line = if (state.needsReconnect) resources.getString(SharedR.string.now_playing_needs_reconnect) else savedLine
+    Card(modifier = Modifier.fillMaxWidth().testTag("player.saved")) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(line, Modifier.weight(1f).testTag(if (state.needsReconnect) "player.needsReconnect" else "player.savedLine"),
+                style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = session::connectSavedAccount, modifier = Modifier.testTag("player.reconnect")) {
+                Text(resources.getString(SharedR.string.library_reconnect))
             }
         }
     }

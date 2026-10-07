@@ -24,6 +24,7 @@ import com.legitimateapps.dulcet.library.LibraryConnectionState
 import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibraryObservationState
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchAccount
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -61,6 +62,9 @@ class TvLyricsBehindTheLibraryTest {
     private val context = RuntimeEnvironment.getApplication()
     private val server = LyricsServer()
     private val account = SearchAccount("provider:tvlyrics", server.url, "u", "p", true)
+    // The person connected this account in this process, as the library behind the player was: the
+    // player's own session then reads too (spec §13.1).
+    init { SavedAccountConnection.connectedOnTheForm(account.providerInstanceId) }
     private val library = LibrarySession(context, account, foreground = true)
 
     @After fun close() {

@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.core
 
 import android.os.Looper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -1516,6 +1517,106 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    /** The person's choice to connect a saved account (spec §13.1), as the app's screens make it. */
+    private class ChosenContact : AndroidServerContact {
+        val open = kotlinx.coroutines.flow.MutableStateFlow(false)
+        override fun isOpen(): Boolean = open.value
+        override suspend fun awaitOpen() { open.first { it } }
+    }
+
+    /** Virtual time on both clocks the controller reads, and real time for the sockets. */
+    private fun settle(seconds: Int = 60) {
+        repeat(seconds / 5) {
+            mainScheduler.advanceTimeBy(5_000)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(5_000))
+            Thread.sleep(10)
+        }
+    }
+
+    /**
+     * A relaunch into a saved account the person has not connected in this process (spec §13.1,
+     * CONF-10b): the queue the last run left, whose current song is not downloaded, and a play the last
+     * run left unsent. Nothing reaches the server -- no song read, no resolve, no scrobble -- for a
+     * minute of the controller's own retry clock, nor when the person presses Play, which says the
+     * song needs Reconnect instead. Once the person connects, the waiting play is delivered and the
+     * restored entry is read, resolved and prepared, still paused. The scrobble server is a real socket.
+     */
+    @Test fun aSavedAccountNotYetConnectedSendsNothingUntilTheyConnectAndThenDrainsAndPreparesPaused() {
+        ScrobbleReceiver().use { receiver ->
+            val loaded = java.util.concurrent.CopyOnWriteArrayList<String>()
+            val resolvedIds = java.util.concurrent.CopyOnWriteArrayList<String>()
+            val contact = ChosenContact()
+            Fixture(savedOwner = OWNER, savedSongs = listOf("saved-song", "next-song"), baseUrl = receiver.url,
+                onDelivery = null, loadSong = { id -> loaded += id; song(id) },
+                resolve = { request -> resolvedIds += request.itemId.rawId; resolved(request) },
+                pendingPlays = listOf("played-before"), serverContact = contact).use { f ->
+                val outbox = PersistentScrobbleOutbox(f.store.database, OutboxWallClock { System.currentTimeMillis() })
+                settle()
+                val restored = f.controller.state.value
+                assertEquals(listOf("saved-song", "next-song"), restored.queue.map { it.track.rawId },
+                    "the restored queue shows from the device")
+                assertEquals(0, restored.currentIndex)
+                assertFalse(restored.playWhenReady, "restored paused")
+                assertFalse(restored.needsReconnect, "nothing was asked of it yet")
+                assertEquals(1, outbox.pending(ServerId(OWNER)).size, "setup: a play waits in the outbox")
+                fun tried() = loaded.size + resolvedIds.size + receiver.requests.size
+                assertEquals(0, tried(), "nothing is sent before the person connects: $loaded $resolvedIds ${receiver.requests}")
+                assertTrue(f.prepared.isEmpty() && f.preparedLocal.isEmpty())
+
+                f.controller.play()
+                settle(20)
+                assertTrue(f.controller.state.value.needsReconnect, "Play says the song needs Reconnect")
+                assertFalse(f.controller.state.value.playWhenReady)
+                assertFalse(f.probe.requested, "and the player was never asked to play")
+                f.controller.next()
+                settle(20)
+                assertEquals(0, tried(), "Play and Next send nothing either")
+
+                contact.open.value = true
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+                while ((receiver.requests.none { it["submission"] == "true" } || outbox.pending(ServerId(OWNER)).isNotEmpty() ||
+                        f.prepared.isEmpty()) && System.nanoTime() < deadline) settle(5)
+                val submitted = receiver.requests.filter { it["submission"] == "true" }
+                assertEquals(listOf("played-before"), submitted.map { it["id"] }, "the waiting play is delivered once connected")
+                assertTrue(outbox.pending(ServerId(OWNER)).isEmpty())
+                assertEquals(listOf("next-song"), f.prepared.map { it.itemId.rawId }, "the selected entry is prepared once connected")
+                assertTrue("next-song" in loaded && "next-song" in resolvedIds)
+                assertFalse(f.probe.requested, "still paused: connecting asked for no sound")
+                assertFalse(f.controller.state.value.needsReconnect)
+            }
+        }
+    }
+
+    /** Saved and not connected (spec §13.1), a downloaded song plays from its file, and only it does. */
+    @Test fun aSavedAccountNotYetConnectedPlaysADownloadAndSaysTheNextSongNeedsReconnect() {
+        val songReads = mutableListOf<String>()
+        val file = java.io.File.createTempFile("dulcet-local", ".wav")
+        try {
+            Fixture(loadSong = { id -> songReads += id; song(id) }, serverContact = ChosenContact(), localPlans = { rawId ->
+                if (rawId != "down") null else LocalPlaybackPlan(DownloadId("download:down"),
+                    DownloadIdentity(OWNER, "down", DownloadIdentity.ORIGINAL_PROFILE), AudioContainer.Wav, 44, file.path)
+            }).use { f ->
+                f.controller.playQueue(album("net"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                assertTrue(f.controller.state.value.needsReconnect, "a song that needs the server says so")
+                assertTrue(f.controller.state.value.queue.isEmpty(), "and replaces nothing")
+                f.controller.playQueue(album("down", "net"), 0, AndroidQueueSource.Album, "Album", "album-id")
+                assertEquals(listOf("down"), f.preparedLocal.map { it.itemId.rawId })
+                assertTrue(f.probe.requested, "the download plays")
+                assertFalse(f.controller.state.value.needsReconnect)
+                f.probe.state = androidx.media3.common.Player.STATE_READY
+                f.probe.events()
+                f.probe.state = androidx.media3.common.Player.STATE_ENDED
+                f.probe.events()
+                assertEquals(1, f.controller.state.value.currentIndex, "the queue moves on to the next song")
+                assertTrue(f.prepared.isEmpty(), "which is not resolved")
+                assertTrue(songReads.isEmpty(), "nor read: $songReads")
+                assertTrue(f.controller.state.value.needsReconnect, "and says it needs Reconnect")
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
     @Test fun progressionSendsSubmittedScrobbleThroughTheLiveConsumerWorkerAndSender() {
         ScrobbleReceiver().use { receiver ->
             Fixture(baseUrl = receiver.url, onDelivery = null, resolve = { resolved(it) }).use { f ->
@@ -1711,6 +1812,9 @@ class AndroidPlaybackControllerTest {
         realPlayer: Boolean = false,
         baseUrl: String = "http://127.0.0.1:4533",
         localPlans: AndroidLocalPlaybackSource? = null,
+        /** Plays left in the outbox by an earlier run, by raw id, before the controller exists. */
+        pendingPlays: List<String> = emptyList(),
+        serverContact: AndroidServerContact? = null,
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -1728,13 +1832,19 @@ class AndroidPlaybackControllerTest {
                     savedSongs.map { PlaybackQueueItem(ProviderItemId(savedOwner, it), 40.seconds) },
                     QueueSourceContext(QueueSourceKind.Search, null, "Search"), 0, false))
             }
+            val outbox = PersistentScrobbleOutbox(store.database, OutboxWallClock { System.currentTimeMillis() })
+            pendingPlays.forEachIndexed { index, rawId ->
+                outbox.persistSynchronously(RecordedPlaybackEvent.SubmittedPlay(
+                    ProviderItemId(OWNER, rawId), PlaybackWallClockTime(System.currentTimeMillis() - 60_000 + index)))
+            }
             controller = AndroidPlaybackController(RuntimeEnvironment.getApplication(),
                 PlaybackEndpointAccount(OWNER, baseUrl, "controller-canary", "controller-password-canary", true),
                 AndroidPlaybackControllerBoundaries(store, if (realPlayer) null else probe.player,
                     if (realPlayer) null else { plan -> prepared += plan }, loadSong, resolve,
                     onDelivery?.let { callback -> { event -> callback(this, event) } },
                     localPlans = localPlans,
-                    prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan }))
+                    prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan }),
+                serverContact = serverContact)
         }
         override fun close() {
             try {

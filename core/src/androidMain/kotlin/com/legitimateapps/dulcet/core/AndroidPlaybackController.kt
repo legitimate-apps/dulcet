@@ -64,6 +64,12 @@ public data class AndroidPlaybackState(
      * [AndroidPlaybackController.dismissDroppedAdditions], another drop replaces it, or the controller closes.
      */
     val droppedAdditions: AndroidDroppedAdditions? = null,
+    /**
+     * The person asked to play a song that needs the server while the account is saved and not
+     * connected (spec §13.1): nothing was sent, and the surface offers Reconnect. Cleared once the
+     * person connects, stops, or a downloaded song plays.
+     */
+    val needsReconnect: Boolean = false,
 ) {
     val hasSession: Boolean get() = playbackSessionId != null
 }
@@ -81,6 +87,22 @@ public fun interface AndroidLocalPlaybackSource {
      * the device alone: a restored or offline entry that is downloaded is named with no request.
      */
     public suspend fun localTrack(rawId: String): AndroidTrack? = null
+}
+
+/**
+ * Whether this process may contact the account's server on the person's behalf (spec §13.1). A launch
+ * into a saved account sends nothing until the person chooses Connect or Reconnect. Until then the
+ * controller restores the queue from the device, paused; plays a downloaded song from its file; keeps
+ * a finished play in the outbox; reads nothing for titles or cover art that the device has not kept;
+ * and says a song that needs the server needs Reconnect ([AndroidPlaybackState.needsReconnect]). Once
+ * open it drains the outbox, names the queue and prepares the restored entry, still paused.
+ */
+public interface AndroidServerContact {
+    /** True once the person has chosen to contact the server in this process. */
+    public fun isOpen(): Boolean
+
+    /** Returns once [isOpen] is true; at once when it already is. */
+    public suspend fun awaitOpen()
 }
 
 /**
@@ -129,10 +151,18 @@ public class AndroidPlaybackController internal constructor(
     private val account: PlaybackEndpointAccount,
     private val boundaries: AndroidPlaybackControllerBoundaries?,
     private val localPlans: AndroidLocalPlaybackSource? = boundaries?.localPlans,
+    /** Null: the server may always be contacted, as for an account connected in this process. */
+    private val serverContact: AndroidServerContact? = null,
 ) : AutoCloseable {
     public constructor(context: Context, account: PlaybackEndpointAccount) : this(context, account, boundaries = null, localPlans = null)
     public constructor(context: Context, account: PlaybackEndpointAccount, localPlans: AndroidLocalPlaybackSource?) :
         this(context, account, boundaries = null, localPlans = localPlans)
+    public constructor(
+        context: Context,
+        account: PlaybackEndpointAccount,
+        localPlans: AndroidLocalPlaybackSource?,
+        serverContact: AndroidServerContact?,
+    ) : this(context, account, boundaries = null, localPlans = localPlans, serverContact = serverContact)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val store = boundaries?.store ?: DulcetDriverFactory(context.applicationContext).openDulcetDatabase()
     private val resumes = PersistentResumePositionStore(store.database)
@@ -164,6 +194,12 @@ public class AndroidPlaybackController internal constructor(
     private var startJob: Job? = null
     private var activePlan: PlaybackPlan? = null
     private var wantsPlay = false
+    /**
+     * The entry the core started while the server could not be contacted (spec §13.1): selected and
+     * paused, nothing requested for it. Prepared, still paused, once the person connects.
+     */
+    private var heldStart: PlaybackQueueStartDirective? = null
+    private var needsReconnect = false
     private var pendingResume: Long? = null
     private var requestGeneration = 0L
     // Play Next and Add to Queue accepted while a new queue was still resolving; applied, in the order
@@ -297,11 +333,14 @@ public class AndroidPlaybackController internal constructor(
         }
         scope.launch {
             for (event in deliveries) when (event) {
-                is RecordedPlaybackEvent.NowPlaying -> sender.send(ScrobbleEndpointRequest(event))
-                is RecordedPlaybackEvent.SubmittedPlay -> drain()
+                // Saved and not connected (§13.1): a downloaded song playing is not announced, and a
+                // finished play waits in the outbox, where capture() has already put it.
+                is RecordedPlaybackEvent.NowPlaying -> if (contactOpen()) sender.send(ScrobbleEndpointRequest(event))
+                is RecordedPlaybackEvent.SubmittedPlay -> if (contactOpen()) drain()
             }
         }
-        scope.launch { drain() }
+        if (contactOpen()) scope.launch { drain() }
+        else serverContact?.let { contact -> scope.launch { contact.awaitOpen(); contactOpened() } }
         // Restore only this service's account. Another account's persisted queue is not even
         // opened as a core session: its entries would otherwise be reachable by Next, Previous
         // and Up Next and requested with this account's credentials.
@@ -312,6 +351,28 @@ public class AndroidPlaybackController internal constructor(
             }
             fillQueueMetadata()
         }
+    }
+
+    /** Whether the server may be contacted now (spec §13.1); always, without a [serverContact]. */
+    private fun contactOpen(): Boolean = serverContact?.isOpen() ?: true
+
+    /**
+     * The person chose Connect or Reconnect: what waited for it goes now, as it does for an account
+     * connected in this process. The outbox drains, the queue is named, and the restored entry is
+     * prepared -- paused, because the person asked for no sound by connecting.
+     */
+    private fun contactOpened() {
+        if (closed) return
+        needsReconnect = false
+        scope.launch { drain() }
+        heldStart?.let { held ->
+            heldStart = null
+            if (activePlan == null && startJob?.isActive != true && resolution?.isActive != true &&
+                queue.snapshot().currentSession?.playbackSessionId == held.playbackSessionId) start(held)
+        }
+        activePlan?.let(::loadArtwork)
+        publish()
+        fillQueueMetadata()
     }
 
     /** True when the core's active queue belongs to this service's account. */
@@ -398,6 +459,14 @@ public class AndroidPlaybackController internal constructor(
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { null }
                 } != null
+                if (!downloaded && !contactOpen()) {
+                    // Saved and not connected (§13.1): the song needs the server, so nothing is
+                    // sent and the queue stays as it was; the surface offers Reconnect.
+                    if (generation == requestGeneration) {
+                        dropHeldAdditions(); wantsPlay = false; needsReconnect = true; publish()
+                    }
+                    return@launch
+                }
                 val song = if (downloaded) null else loadSong(chosen.rawId)
                 if (generation != requestGeneration) return@launch
                 command(PlaybackCommand.Stop(id()))
@@ -446,6 +515,10 @@ public class AndroidPlaybackController internal constructor(
                 wantsPlay = true; recordPlayRequested(); return
             }
             if (refuseForeignQueue()) return
+            if (heldStart != null && !contactOpen()) {
+                // The entry needs the server, which waits for the person (§13.1): say so, send nothing.
+                needsReconnect = true; publish(); return
+            }
             wantsPlay = true
             recordPlayRequested()
             // The engine holds nothing live -- after Stop, after a failure the core stopped on, or
@@ -499,6 +572,7 @@ public class AndroidPlaybackController internal constructor(
     public fun stop() {
         if (!live()) return
         requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
+        heldStart = null; needsReconnect = false
         dropHeldAdditions()
         command(PlaybackCommand.Stop(id()))
     }
@@ -833,7 +907,8 @@ public class AndroidPlaybackController internal constructor(
         if (artworkBytes?.first == key) return
         val repository = artwork ?: return
         artworkJob = scope.launch {
-            val bytes = try { repository.load(key, SESSION_ARTWORK_PIXELS) }
+            // Saved and not connected (§13.1): only what this device has kept.
+            val bytes = try { repository.load(key, SESSION_ARTWORK_PIXELS, cachedOnly = !contactOpen()) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { null } ?: return@launch
             artworkBytes = key to bytes
@@ -863,6 +938,8 @@ public class AndroidPlaybackController internal constructor(
                 // the song's own read would fail and leave the row untitled.
                 val kept = localTrack(id.rawId)
                 if (kept != null) { remember(kept); publish(); continue }
+                // Saved and not connected (§13.1): read once the person connects, not now.
+                if (!contactOpen()) { metadataLoads -= id; continue }
                 try { loadSong(id.rawId) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { continue }
@@ -880,6 +957,7 @@ public class AndroidPlaybackController internal constructor(
         // entry's preparing state replaces it (spec §12.12 rule 5). It is never left on screen
         // for a track that is not playing.
         failure = null
+        heldStart = null
         val session = directive.playbackSessionId
         val generation = requestGeneration
         startJob?.cancel()
@@ -901,12 +979,22 @@ public class AndroidPlaybackController internal constructor(
                         if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                     }
                     command(PlaybackCommand.Stop(id()))
+                    needsReconnect = false
                     val plan = AndroidLocalPlaybackPlan(session, directive.attemptId, directive.itemId, local)
                     activePlan = plan
                     pendingResume = directive.resumePosition?.inWholeMilliseconds
                     command(PlaybackCommand.Prepare(id(), plan.attemptId, plan))
                     command(if (wantsPlay) PlaybackCommand.Play(id()) else PlaybackCommand.Pause(id()))
                     loadArtwork(plan)
+                    return@launch
+                }
+                if (knownSong == null && !contactOpen()) {
+                    // Saved and not connected (§13.1): the entry stays selected and paused, and
+                    // nothing is asked of the server for it until the person connects. A Play that
+                    // asked for it is told it needs Reconnect.
+                    heldStart = directive
+                    if (wantsPlay) { wantsPlay = false; needsReconnect = true }
+                    publish()
                     return@launch
                 }
                 val song = knownSong ?: loadSong(directive.itemId.rawId)
@@ -1035,7 +1123,8 @@ public class AndroidPlaybackController internal constructor(
                 exo.currentPosition > RESTART_THRESHOLD_MILLISECONDS,
             skipNotice = skipNotice,
             playingDownload = session != null && activePlan is AndroidLocalPlaybackPlan,
-            droppedAdditions = droppedAdditions)
+            droppedAdditions = droppedAdditions,
+            needsReconnect = needsReconnect)
     }
 
     override fun close() {

@@ -76,6 +76,7 @@
     <string name="library_dismiss">Dismiss</string>
     <string name="library_saved_not_connected">Your account on %1$s is saved and not connected. Dulcet contacts the server only after you choose Reconnect.</string>
     <string name="library_reconnect">Reconnect</string>
+    <string name="now_playing_needs_reconnect">This song plays from your server, which Dulcet contacts only after you choose Reconnect.</string>
     <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>
     <string name="library_no_epoch">Your server doesn\'t say when its library changes, so lists may be out of date until you refresh.</string>
     <plurals name="library_discarded_changes">

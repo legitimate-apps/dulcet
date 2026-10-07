@@ -16,6 +16,7 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchAccount
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -48,6 +49,9 @@ class TvPlayerFavouriteSessionTest {
     private val context = RuntimeEnvironment.getApplication()
     private val server = RecordingServer()
     private val account = SearchAccount("provider:tvheart", server.url, "u", "p", true)
+    // The person connected this account in this process, as the library behind the player was: the
+    // player's own session then reads too (spec §13.1).
+    init { SavedAccountConnection.connectedOnTheForm(account.providerInstanceId) }
     // The library activity's session, which the app has open behind the player: it holds the
     // foreground, so the reader may send. The player's own session is never started.
     private val library = LibrarySession(context, account, foreground = true)

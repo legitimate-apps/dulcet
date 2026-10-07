@@ -38,7 +38,7 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-09b | account-connect render-state inventory |
 | CONF-09c | total actionable account-error presentation |
 | CONF-10a | unavailable platform-secure credential storage fails closed with a typed reason, no active-account pointer, and no weaker fallback |
-| CONF-10b | explicit reconnect after persisted-credential prefill |
+| CONF-10b | no request after a relaunch into persisted credentials until an explicit Connect or Reconnect (downloads queued earlier excepted); prefill where a form is shown |
 | CONF-10c | a 407 proxy-auth challenge rejects ambient credentials |
 | CONF-10d | restricted-user permission errors map to `Auth.Forbidden` |
 | CONF-10e | a production Apple credential-store save records `AfterFirstUnlockThisDeviceOnly` accessibility and a non-synchronizable item, observed by an unconstrained attribute read-back; this does not claim protection enforcement or device-equivalent simulator semantics |

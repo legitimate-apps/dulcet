@@ -46,11 +46,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
@@ -190,14 +192,22 @@ internal class TvPlayerFavourite(val favourite: Boolean, val line: String?, val 
  */
 internal class TvPlayerRating(val rating: Int?, val rate: (Int) -> Unit)
 
+/**
+ * A saved account not yet connected in this process (spec §13.1): [line] says what waits for the
+ * server, and [reconnect] connects it in place.
+ */
+internal class TvPlayerSaved(val line: String, val reconnect: () -> Unit)
+
 @Composable
 internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
     val context = LocalContext.current
-    // The account's process reader, for the heart alone. This session is never started: the library
-    // activity's session reports the foreground and reachability, and a second one here would tell
-    // the reader the app went to the background whenever that activity stops behind this one.
+    // The account's process reader, for the heart, the stars and the lyrics. This session is never
+    // started: the library activity's session reports the foreground and reachability, and a second
+    // one here would tell the reader the app went to the background whenever that activity stops
+    // behind this one. Like every entry point it holds a saved account for Reconnect (§13.1): this
+    // activity is also opened cold, from the notification or a played track, with no library behind it.
     val library = remember(account) {
-        account?.let { runCatching { LibrarySession(context, it, foreground = false) }.getOrNull() }
+        account?.let { runCatching { LibrarySession(context, it, foreground = false, untilReconnectChosen = true) }.getOrNull() }
     }
     DisposableEffect(library) { onDispose { library?.close() } }
     val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId
@@ -215,7 +225,16 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
         null
     }
     val lyrics: (@Composable () -> Unit)? = library?.let { session -> { TvLyricsPanel(session, state) } }
-    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, rating)
+    val saved = if (library != null && account != null) {
+        val connection by library.connection.collectAsState()
+        context.resources.savedAccountLine(connection, account)?.let { line ->
+            TvPlayerSaved(if (state.needsReconnect) context.getString(SharedR.string.now_playing_needs_reconnect) else line,
+                library::connectSavedAccount)
+        }
+    } else {
+        null
+    }
+    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, rating, saved)
 }
 
 /** Lean-back Now Playing for [state]; null [playback] before the service is bound or without an account. */
@@ -227,6 +246,7 @@ internal fun TvNowPlayingScreen(
     favourite: TvPlayerFavourite? = null,
     lyrics: (@Composable () -> Unit)? = null,
     rating: TvPlayerRating? = null,
+    saved: TvPlayerSaved? = null,
 ) {
     val playFocus = remember { FocusRequester() }
     // The lyrics take Up Next's place while on (§18.4); the setting outlives a track change.
@@ -269,6 +289,16 @@ internal fun TvNowPlayingScreen(
                     TvScrubber(state, playback)
                     if (state.error != null) Text(stringResource(R.string.tv_player_failed),
                         color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
+                    // Between the scrubber and the transport, so UP from Play reaches Reconnect.
+                    saved?.let { notice ->
+                        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                            Text(notice.line, style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag(if (state.needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
+                        }
+                    }
                     Spacer(Modifier.height(20.dp))
                     TvTransport(state, playback, playFocus, favourite,
                         lyrics = if (lyrics != null && state.queue.getOrNull(state.currentIndex ?: -1) != null) showLyrics else null) {

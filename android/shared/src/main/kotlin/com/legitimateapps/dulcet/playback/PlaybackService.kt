@@ -20,6 +20,7 @@ import com.legitimateapps.dulcet.CredentialStoreException
 import com.legitimateapps.dulcet.core.AndroidLocalPlaybackSource
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.core.NetworkCostClass
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import kotlinx.coroutines.CoroutineScope
@@ -119,7 +120,10 @@ class PlaybackService : MediaSessionService() {
                 override suspend fun localPlan(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localPlan(rawId) }
                 // A downloaded song's title, artist and album, kept with its download (§16.13).
                 override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
-            })
+            },
+            // A launch into a saved account sends nothing until the person connects it (§13.1):
+            // the queue restores paused, downloads play, and plays wait in the outbox till then.
+            SavedAccountConnection.contact(account.id))
         // The quality for the next item: the person's choice for the network last reported.
         controller.setStreamingQuality(StreamingQualitySettings.get(this).preference.value)
         networkCost?.let(controller::setNetworkCostClass)

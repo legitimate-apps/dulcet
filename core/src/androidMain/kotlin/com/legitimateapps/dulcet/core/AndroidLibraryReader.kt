@@ -975,6 +975,14 @@ public class AndroidLibraryReader internal constructor(
          * account's rows (§14.7 step 6): [AndroidAccountData.removeAccountData] waits for it.
          */
         @JvmStatic
+        /**
+         * The process's open reader for the account [providerInstanceId], or null when there is none:
+         * none was made yet in this process, or it was closed for a sign-out or an account change.
+         */
+        public fun currentFor(providerInstanceId: String): AndroidLibraryReader? = synchronized(lock) {
+            current?.takeIf { !it.isClosed && it.account?.providerInstanceId == providerInstanceId }
+        }
+
         public fun closeCurrent(completion: () -> Unit = {}) {
             // The current reader, or the one still closing: either may still be using the database.
             // Recorded as closing here, under the lock, so an obtain() racing this hands it over.

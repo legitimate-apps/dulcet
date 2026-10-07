@@ -2,17 +2,26 @@ package com.legitimateapps.dulcet
 
 import android.os.Looper
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.library.connectionLine
+import com.legitimateapps.dulcet.library.errorPhrase
+import com.legitimateapps.dulcet.library.savedAccountLine
+import com.legitimateapps.dulcet.shared.R
 import com.legitimateapps.dulcet.library.LibraryConnectionState
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
@@ -108,6 +117,88 @@ class SavedAccountLaunchTest {
         assertIs<LibraryConnectionState.Saved>(relaunched.connection.value)
     }
 
+    @Test fun anAccountStaysHeldWhileAnySessionOfItWaitsAndEachReleasesOnlyItsOwnHold() {
+        val account = account("provider:two")
+        val library = open(account, untilReconnectChosen = true)
+        val player = open(account, untilReconnectChosen = true)
+        assertTrue(account.providerInstanceId in SavedAccountConnection.waitingForReconnect.value)
+        player.close()
+        player.close()
+        assertTrue(account.providerInstanceId in SavedAccountConnection.waitingForReconnect.value,
+            "The library still waits, so cover art still reads only what this device kept")
+        library.close()
+        assertFalse(account.providerInstanceId in SavedAccountConnection.waitingForReconnect.value)
+    }
+
+    @Test fun reconnectChosenInOneScreenHostLeavesSavedInEveryOtherInPlace() {
+        val account = account("provider:elsewhere")
+        val library = open(account, untilReconnectChosen = true)
+        library.start()
+        val search = open(account, untilReconnectChosen = true)
+        settleFor(500)
+        assertEquals(0, server.connections.get(), "control: nothing before the person asks")
+
+        search.connectSavedAccount()
+        settle("the started library's own reconnect, answered") { library.observation.value.reconnectAnswers >= 1 }
+        assertTrue(library.connection.value !is LibraryConnectionState.Saved, "The library no longer says saved")
+        assertFalse(account.providerInstanceId in SavedAccountConnection.waitingForReconnect.value)
+    }
+
+    @Test fun aReconnectTheServerRefusesStatesTheRefusalNotSaved() {
+        server.answer = """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"""
+        val session = open(account("provider:refused"), untilReconnectChosen = true)
+        session.start()
+        session.connectSavedAccount()
+        settle("the refused reconnect, answered") { session.observation.value.reconnectAnswers >= 1 }
+        val state = assertIs<LibraryConnectionState.Failed>(session.connection.value)
+        assertEquals(DomainError.Auth.InvalidCredentials, state.error)
+        val line = assertNotNull(context.resources.connectionLine(state), "The failure is stated above the screen")
+        assertTrue(context.getString(R.string.library_error_credentials) in line, line)
+        assertNull(context.resources.savedAccountLine(state, account("provider:refused")))
+    }
+
+    @Test fun aReconnectToAServerThatIsGoneSaysItCannotBeReached() {
+        val gone = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { "http://127.0.0.1:${it.localPort}" }
+        val account = SearchAccount("provider:gone", gone, "launch-user", "launch-canary-password", true)
+        val session = open(account, untilReconnectChosen = true)
+        session.start()
+        session.connectSavedAccount()
+        settle("the unreachable reconnect, answered") { session.observation.value.reconnectAnswers >= 1 }
+        val state = assertIs<LibraryConnectionState.Offline>(session.connection.value)
+        assertEquals(DomainError.Transport.Unreachable, state.error)
+        assertEquals(context.getString(R.string.library_error_unreachable), context.resources.errorPhrase(state.error!!))
+    }
+
+    @Test fun aWaitingReaderInTheForegroundReadsNoEpochOnItsCadence() {
+        val library = LoopbackLibraryServer()
+        AndroidLibraryReader.testEpochIntervalMillis = 100
+        try {
+            val waiting = open(SearchAccount("provider:cadence", library.url, "u", "p", true), untilReconnectChosen = true)
+            waiting.start()
+            waiting.openAlbums()  // the cadence runs with a library screen open
+            AndroidLibraryReader.currentFor("provider:cadence")!!.setForeground(true)
+            settleFor(1_500)
+            assertEquals(emptyList(), library.endpoints(), "Fifteen cadence periods in the foreground, and no epoch read")
+            waiting.close()
+            closeReader()
+
+            // Control: the same cadence on a connected session reads the epoch again and again.
+            val connected = SearchAccount("provider:cadence-connected", library.url, "u", "p", true)
+            SavedAccountConnection.connectedOnTheForm(connected.providerInstanceId)
+            val session = open(connected, untilReconnectChosen = true)
+            session.start()
+            session.openAlbums()
+            settle("the connected session online") { session.connection.value is LibraryConnectionState.Online }
+            val after = library.requests("getScanStatus").size
+            settle("the cadence's own epoch reads") { library.requests("getScanStatus").size >= after + 3 }
+        } finally {
+            AndroidLibraryReader.testEpochIntervalMillis = null
+            sessions.forEach(LibrarySession::close)
+            closeReader()
+            library.close()
+        }
+    }
+
     private fun account(id: String) = SearchAccount(id, server.url, "launch-user", "launch-canary-password", true)
 
     private fun open(account: SearchAccount, untilReconnectChosen: Boolean) =
@@ -146,6 +237,7 @@ class SavedAccountLaunchTest {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
         val connections = AtomicInteger()
+        @Volatile var answer = """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""
         private val pool = Executors.newCachedThreadPool()
 
         init {
@@ -163,7 +255,7 @@ class SavedAccountLaunchTest {
             val input = client.getInputStream().bufferedReader()
             input.readLine() ?: return@use
             generateSequence { input.readLine()?.takeIf { it.isNotEmpty() } }.toList()
-            val envelope = """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""".toByteArray()
+            val envelope = answer.toByteArray()
             client.getOutputStream().apply {
                 write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${envelope.size}\r\n" +
                     "Connection: close\r\n\r\n").toByteArray())

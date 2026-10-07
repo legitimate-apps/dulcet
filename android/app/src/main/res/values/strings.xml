@@ -73,6 +73,7 @@
     <string name="now_playing_nothing">Nothing is playing</string>
     <string name="now_playing_failed">Playback failed. Check your connection, then press Play to try again.</string>
     <string name="now_playing_unavailable">Connect an account before playing.</string>
+    <string name="mini_player_needs_reconnect">Choose Reconnect in the library to play this song.</string>
     <string name="up_next_empty">The queue is empty.</string>
     <string name="up_next_playing">Playing</string>
     <string name="artwork_description">Cover art for %1$s</string>

@@ -221,6 +221,16 @@ public class LibrarySession internal constructor(
     /** Whether the person has yet to connect the saved account in this process; see the class notes. */
     private var awaitingReconnect = savedAccountId != null && !SavedAccountConnection.isConnected(reader, savedAccountId)
 
+    /**
+     * Reconnect chosen in another screen host — TV Search, Now Playing — connects the process's reader
+     * this session shares, so this session leaves Saved too, in place.
+     */
+    private val connectedElsewhere: AutoCloseable? = if (awaitingReconnect) SavedAccountConnection.observe {
+        if (!closed && awaitingReconnect && savedAccountId != null && SavedAccountConnection.isConnected(reader, savedAccountId)) {
+            leaveSaved()
+        }
+    } else null
+
     init {
         // Before any window opens: a fresh reader is online, and a window would read the server.
         if (awaitingReconnect) {
@@ -523,7 +533,16 @@ public class LibrarySession internal constructor(
     public fun connectSavedAccount() {
         if (closed || !awaitingReconnect) return
         SavedAccountConnection.reconnectChosen(reader)
+        leaveSaved()
+        // A host that never starts its session (TV Now Playing) reconnects here, where the person chose it.
+        if (!started) retry()
+    }
+
+    /** The reader may contact the server now: stop holding, and reconnect in place if started. */
+    private fun leaveSaved() {
+        if (closed || !awaitingReconnect) return
         awaitingReconnect = false
+        connectedElsewhere?.close()
         savedAccountId?.let(SavedAccountConnection::stopWaiting)
         setConnection(LibraryConnectionState.Unknown)
         if (started) {
@@ -535,6 +554,7 @@ public class LibrarySession internal constructor(
     override fun close() {
         if (closed) return
         if (awaitingReconnect) savedAccountId?.let(SavedAccountConnection::stopWaiting)
+        connectedElsewhere?.close()
         stop()
         releaseHeldLoss()
         closed = true

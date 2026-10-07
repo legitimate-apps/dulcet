@@ -2539,13 +2539,27 @@ prefills the secure account form, but performs **no network request until the pe
 Connect**. That policy is not a licence to present the app as unconfigured: a restored credential
 enters `accountSavedDisconnected` with a `saved(serverName:)` status, so the library surface offers
 to reconnect to the named server and the connectivity indicator reads disconnected rather than
-absent. Rendering a saved account as no account is the defect revision 78 corrected. The same rule
-holds on every platform, whatever its store: Android reads its Keystore-sealed record, opens the
-library for the saved account, says it is saved and not connected, and sends nothing — no library
-read, no cover art, no reconnect on reachability or on a return to the foreground — until the person
-chooses Reconnect (or Connect on the form), which then reconnects in place (§16.14). The foreground
-and reachability rules of §16.11 and §16.14 apply to a session connected in this process; a cold
-launch into a saved account is not a return to the foreground of a connected session (§28,
+absent. Rendering a saved account as no account is the defect revision 78 corrected.
+
+The same rule holds on every platform, whatever its store. **Saved-and-not-connected sends nothing on
+the person's behalf until they choose Reconnect or Connect:** no library read, no cover art, no
+reconnect on reachability or on a return to the foreground, no playback re-resolve or metadata fill,
+no scrobble or outbox drain, no favourite, rating or lyrics read — on every entry point, TV Now
+Playing included. What the device already holds may show: the restored queue may show from the
+device, paused; a downloaded track plays from the device; Play on a track that needs the server says
+it needs Reconnect and offers it, rather than sending. Reconnect (or Connect on the form) then
+reconnects in place (§16.14), and the outbox drains after it, as it does for a connected session.
+Android reads its Keystore-sealed record, opens the library for the saved account and says it is
+saved and not connected; its playback service, the phone's player and the TV's player (whose own
+library session is gated the same way) hold every request until that choice, and a Reconnect chosen
+in any screen host — library, search, player — connects them all. **One exception:** downloads the
+person explicitly queued earlier continue in the background, as Apple's background transfer session
+continues them through the OS. Android's download worker continues only rows the person queued,
+including the one song read it needs to file a queued track, and its reconciliation at launch reads
+only the device's own state (the work queue and the database); nothing else in downloads contacts
+the server before Reconnect. The foreground and reachability rules of §16.11 and §16.14, the play
+retries of §15.3 and the relaunch re-resolve of §18.10 apply to a session connected in this process;
+a cold launch into a saved account is not a return to the foreground of a connected session (§28,
 2026-10-07). A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition. The storage API's
 delete path removes the Keychain item before clearing its active-account pointer; an account-management
@@ -3166,7 +3180,9 @@ emitted at most once per session.
 
 Unsubmitted completed plays go to `scrobble_outbox` with the session's wall-clock start time, retried
 with exponential backoff **by the process's own timer while it runs**, and also on reachability and on
-foreground. The timer is the floor, not the other two: an app that stays in the foreground on a
+foreground — all of it for an account connected in this process, or once the person chooses Connect or
+Reconnect; a launch into a saved account keeps its plays in the outbox and sends none until then
+(§13.1). The timer is the floor, not the other two: an app that stays in the foreground on a
 reachable server, with no event of either kind to come, still sends again. The wait after a failed
 send is the backoff — 1 s doubling to 256 s, counted per failed attempt of the play — or, after a 429,
 the server's `Retry-After` when that is longer (the §18.6 rule: `max(Retry-After, backoff)`), and
@@ -4462,7 +4478,9 @@ itself is retried by itself:
   `offline` again.
 
 A return to the foreground while the reader is offline and the platform reports the server reachable
-starts a fresh reconnect at once, the wait reset, whatever ended the last one.
+starts a fresh reconnect at once, the wait reset, whatever ended the last one — for a session connected
+in this process, or after the person chooses Connect or Reconnect. A launch into a saved account is not
+such a return: it reconnects only when the person chooses to (§13.1).
 
 **"Try again" calls reconnect, never a screen's refresh.** A screen's `refresh()` does nothing while
 the reader is offline, because there is nothing it may send. A "Try again" offered for a screen that
@@ -5904,7 +5922,10 @@ A persisted queue is not playback restoration. On relaunch Dulcet restores the a
 with its shuffle order and repeat mode, the current entry and its saved position, the source context for
 the "playing from" label, and the **paused** state — playback never auto-starts on launch. **Playback
 plans are never restored**; they are re-resolved, because a stale plan may carry expired credentials or
-a stale transcode decision.
+a stale transcode decision. The re-resolve, and any metadata read for the restored entries, waits for
+the person to choose Connect or Reconnect when the launch is into a saved account (§13.1): until then
+the queue shows from the device, paused, a downloaded current track plays from the device, and Play on
+one that needs the server says it needs Reconnect.
 
 ### 18.11 Observability without telemetry
 
@@ -6347,7 +6368,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-09b | every declared distinct account-connect render state is reachable, including idle, in-progress, saved/disconnected, connected, domain-error, and credential-persistence-error states |
 | CONF-09c | every closed account-error presentation kind has actionable copy; TLS, internationalized-host, and cross-origin redirect remedies retain their decided specifics |
 | CONF-10a | when the platform-secure credential facility is unavailable to the caller, the write returns a typed failure, leaves no active-account pointer, and does not fall back to weaker storage; platform-specific secure-item properties require their own evidence |
-| CONF-10b | persisted credentials prefill the form after relaunch without a network request until explicit Connect |
+| CONF-10b | a relaunch into persisted credentials sends no network request (library, artwork, playback, plays) until an explicit Connect or Reconnect, except to continue downloads queued earlier; where a form is shown, the credentials prefill it |
 | CONF-10c | an explicitly configured HTTP forward proxy returns 407 Basic while a matching ambient credential is retrievable; account connect emits `Auth.UnsupportedAuthenticationChallenge` and no `Proxy-Authorization` reaches the fixture |
 | CONF-10e | an app-hosted simulator test saves through `DulcetKeychainCredentialStore`, requires the save-produced active-account marker, and reads the exact data-protection-Keychain item's attributes with an accessibility-unconstrained, synchronizable-any query; a deliberately wrong-accessibility control must be observed before the production item is required to report `AfterFirstUnlockThisDeviceOnly` and non-synchronizable storage; this observes stored values only, not enforcement or device-equivalent semantics |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
@@ -7645,10 +7666,11 @@ in core-ci on the API 34 phone and Android TV emulators against the disposable s
 from an install with no saved account and is driven by touches at each control's place on the screen,
 or by the remote and the TV's own keyboard. Each state comes from a production transition: a wrong
 password refused by the server (error 40, read from the wire), the server unreachable, a held request
-cancelled, a save the device refuses (the preferences directory read-only), connected, a relaunch with
-the server unreachable, and a relaunch after the saved account's Keystore key is deleted. On Android,
-connected is the library and saved-and-disconnected is that library opened at relaunch and saying it
-is offline; neither app has separate cards for them. The TV used to open an empty connect form beside
+cancelled, a save the device refuses (the preferences directory read-only), connected, a relaunch
+into the saved account with the server up and nothing sent to it until Reconnect, and a relaunch
+after the saved account's Keystore key is deleted. On Android, connected is the library and
+saved-and-disconnected is that library opened at relaunch and saying the account on that server is
+saved and not connected; neither app has separate cards for them. The TV used to open an empty connect form beside
 Sign out, saying nothing, when the saved account could not be read. It now says the saved account
 could not be read on this TV and offers to connect again or sign it out; the line goes once the
 account is signed out. The TV proof failed on that step before the change (core-ci run 37637171382).
@@ -7659,11 +7681,30 @@ selects them, and read-only again once the remote leaves.
 The same proofs first OBSERVED that a relaunch with a saved account opened the library and the
 reader connected to the server before any Connect (core-ci, both emulators). That contradicted
 §13.1, which governs a launch into a saved account on every platform; the foreground and reachability
-rules of §16.11 and §16.14 apply to a session connected in this process, and are now worded so. Android
-now conforms: a launch into a saved account opens the library on what this device has seen, says the
-account on that server is saved and not connected, and sends nothing — no library read, no cover art
-(only what the device kept), no reconnect on reachability or the foreground — until the person
-chooses Reconnect or Try again, which reconnects in place. On the TV, Reconnect sits under the bar,
+rules of §16.11 and §16.14 apply to a session connected in this process, and are now worded so. The
+ruling, now in §13.1: saved-and-not-connected sends nothing on the person's behalf until they choose
+Reconnect or Connect — no playback re-resolve or metadata fill, no scrobble or outbox drain, no
+favourite, rating or lyrics read, on every entry point, TV Now Playing included. The restored queue
+may show from the device, paused; a downloaded track plays from the device; Play on a track that
+needs the server says it needs Reconnect and offers it rather than sending. The outbox drains after
+Reconnect, as the connected path already does. Downloads the person explicitly queued earlier
+continue in the background, as Apple's background transfer session continues them through the OS.
+Android now conforms: a launch into a saved account opens the library on what this device has seen,
+says the account on that server is saved and not connected, and sends nothing — no library read, no
+cover art (only what the device kept), no reconnect on reachability or the foreground — until the
+person chooses Reconnect or Try again, which reconnects in place. An independent review found the
+first cut gated only the library, search and artwork: the playback service still drained the outbox,
+re-resolved the restored queue and named it from the server at launch, and the TV's Now Playing,
+opened with no library behind it, built a library session of its own that read the server. Playback
+now waits for the same choice (`AndroidServerContact`): it restores the queue paused from the device,
+plays downloads, keeps plays in the outbox, and says Play needs Reconnect, which the phone's and the
+TV's players offer; the TV player's session is gated like the library's. Host proofs drive the
+production playback service from a relaunch with a persisted queue whose current song is not
+downloaded and an unsent play: the loopback server records no request through launch and Play, and
+after Reconnect the play is delivered and the entry read (`SavedLaunchPlaybackTest`, phone;
+`TvSavedLaunchNowPlayingTest`, the TV's cold Now Playing). Each fails with its gate removed. Apple,
+read statically, already sends nothing before Reconnect: playback and downloads are configured only
+by the connect-success path, and restores no queue until then. On the TV, Reconnect sits under the bar,
 one DOWN from any place on it and the first place UP out of the library, wherever the bar's tabs
 fall; on the emulator's layout it had lined up with neither. Connect on the form connects the session that follows, and a session connected
 in this process reads in every later screen host. Each emulator has a CONF-10b proof that connects

@@ -13,6 +13,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.PlaybackService
 import org.junit.Assert.*
@@ -37,6 +38,9 @@ class PlaybackBackgroundTest {
         awaitQueuedBroadcastsDelivered()
         LoopbackAudio().use { fixture ->
             val account = credentials.save("Fixture", fixture.url, "USER_CANARY", "PASSWORD_CANARY", true)
+            // Saved as the connect form saves it, and connected in this process: a saved account the
+            // person has not connected plays nothing from the server until Reconnect (spec §13.1).
+            SavedAccountConnection.connectedOnTheForm(account.id)
             val connected = CountDownLatch(1)
             var service: PlaybackService? = null
             val connection = object : ServiceConnection {
