@@ -6,6 +6,18 @@ final class DulcetTVUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
     private static let sections = ["library", "search", "nowPlaying", "settings"]
 
+    /// Server cleanup a test registers once it has made something on the disposable server; run
+    /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
+    /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
+    private var afterTest: [() -> Void] = []
+
+    override func tearDown() {
+        let cleanups = afterTest
+        afterTest = []
+        cleanups.reversed().forEach { $0() }
+        super.tearDown()
+    }
+
     /// The account is DEBUG setup, because typing credentials raises a system save-password
     /// dialog no app-side query can reach. Everything else -- reaching Search, entering the
     /// query, ranked rendering, remote activation, playback, and the return to Library --
@@ -606,6 +618,202 @@ final class DulcetTVUITests: XCTestCase {
             + " setup=debug-account-only")
     }
 
+    /// The hearts on an album page and an artist page (spec §16.20), every step by remote: the
+    /// album is found by Search and its result pressed; the header's heart, then the heart beside
+    /// a track's row, then -- the artist found in Library > Artists -- the artist page's heart each take
+    /// focus, and Select fills it at once and the star reaches the server for that album, track or
+    /// artist; Select again empties it and unstars it, so the server is left as it was found.
+    @MainActor
+    func testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This control requires a tvOS simulator")
+        let server = try disposableServer()
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        let artist = "Dulcet Fixtures"
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+
+        // The album, by Search: its result pressed opens its page.
+        try openSearchResult(app, query: album, named: album, kind: "Album")
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == album,
+            "Pressing the result must open \(album): " + app.debugDescription)
+
+        // 1. The album's own heart, in its header.
+        let albumHeart = app.buttons["dulcet.album.favorite"].firstMatch
+        XCTAssertTrue(albumHeart.waitForExistence(timeout: 10), "The album page must offer its heart: " + app.debugDescription)
+        try pressHeartAndProve(albumHeart, named: "\(album)'s heart", in: app) {
+            self.readServerStarred("album", named: album, server: server)
+        }
+
+        // 2. The heart beside the track's row: the one whose frame sits in the row's.
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "\(album) must list \(track): " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(row, in: app), "\(track)'s row must take remote focus: " + app.debugDescription)
+        let rowHearts = app.buttons.matching(identifier: "dulcet.reader.favorite").allElementsBoundByIndex
+            .filter { $0.frame.midY > row.frame.minY && $0.frame.midY < row.frame.maxY }
+        XCTAssertEqual(rowHearts.count, 1, "Exactly one heart must sit beside \(track)'s row: " + app.debugDescription)
+        let rowHeart = try XCTUnwrap(rowHearts.first)
+        try pressHeartAndProve(rowHeart, named: "\(track)'s row heart", in: app) {
+            self.readServerSongStarred(track, album: album, server: server)
+        }
+
+        // 3. The artist page's heart. Apple TV's album page names its artist without a link, so the
+        // artist is reached from Library > Artists, its row pressed. Search opened the album onto
+        // Library's own stack, so Menu goes back from it, one page, to Library's sections -- not to
+        // the app's bar with the album still showing.
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForNonExistence(timeout: 5),
+            "Menu on the album page must go back from it: " + app.debugDescription)
+        XCTAssertNil(focusedSection(app), "Menu on a pushed page must go back, not move focus to the bar")
+        let artists = app.buttons["dulcet.reader.section.artists"].firstMatch
+        XCTAssertTrue(artists.waitForExistence(timeout: 15), "Library must offer Artists: " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(artists, in: app), "Artists must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let artistRow = app.buttons.matching(identifier: "dulcet.library.artist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", artist)).firstMatch
+        XCTAssertTrue(artistRow.waitForExistence(timeout: 30), "Artists must list \(artist): " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(artistRow, in: app), "\(artist)'s row must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        XCTAssertTrue(artistTitle.waitForExistence(timeout: 15) && artistTitle.label == artist,
+            "Pressing the row must open \(artist)'s page: " + app.debugDescription)
+        let artistHeart = app.buttons["dulcet.artist.favorite"].firstMatch
+        XCTAssertTrue(artistHeart.waitForExistence(timeout: 10), "The artist page must offer its heart: " + app.debugDescription)
+        try pressHeartAndProve(artistHeart, named: "\(artist)'s heart", in: app) {
+            self.readServerStarred("artist", named: artist, server: server)
+        }
+        print("DULCET TV HEARTS PASS album=\(album.debugDescription) track=\(track.debugDescription)"
+            + " artist=\(artist.debugDescription) starred=true->false each by remote-select setup=debug-account-only")
+    }
+
+    /// Types `query` into Search, then focuses and presses the result named `name` of `kind`
+    /// ("Album", "Artist", ...) by remote.
+    @MainActor
+    private func openSearchResult(_ app: XCUIApplication, query: String, named name: String, kind: String) throws {
+        typeSearchQuery(app, query: query)
+        var found: XCUIElement?
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        repeat {
+            found = (0..<8).lazy
+                .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
+                .first { $0.exists && $0.label.hasPrefix("\(name), ") && $0.label.hasSuffix(", \(kind)") }
+            if found == nil { Thread.sleep(forTimeInterval: 0.25) }
+        } while found == nil && ContinuousClock.now < deadline
+        let result = try XCTUnwrap(found, "Search must list \(name) as \(kind): " + app.debugDescription)
+        XCTAssertTrue(focusByRemote(result, in: app), "\(name)'s result must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+    }
+
+    /// Moves remote focus onto `target` one press at a time, re-read after every press, the way a
+    /// viewer steers: along the axis with the larger gap first, the other axis when a press leaves
+    /// focus where it was or returns it somewhere already visited. False when the bound passes first.
+    @MainActor
+    private func focusByRemote(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 16) -> Bool {
+        func name(_ button: XCUIRemote.Button) -> String {
+            switch button {
+            case .up: "up"
+            case .down: "down"
+            case .left: "left"
+            default: "right"
+            }
+        }
+        func focusedFrame() -> CGRect? {
+            let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            return focused.exists ? focused.frame : nil
+        }
+        var presses: [String] = []
+        var visited: [CGRect] = []
+        var swapAxes = false
+        while !(target.exists && target.hasFocus), presses.count < bound {
+            guard let from = focusedFrame() else {
+                XCUIRemote.shared.press(.down)
+                presses.append("down")
+                continue
+            }
+            visited.append(from)
+            let to = target.frame
+            let dy = to.midY - from.midY, dx = to.midX - from.midX
+            let vertical: XCUIRemote.Button = dy > 0 ? .down : .up
+            let horizontal: XCUIRemote.Button = dx > 0 ? .right : .left
+            // An axis on which the target lies outside the focused control's extent leads; where
+            // the two overlap on both (a focused control grows), the larger centre offset does.
+            let verticalGap = to.maxY < from.minY || to.minY > from.maxY ? abs(dy) : 0
+            let horizontalGap = to.maxX < from.minX || to.minX > from.maxX ? abs(dx) : 0
+            let leadsVertically = verticalGap == horizontalGap ? abs(dy) >= abs(dx) : verticalGap > horizontalGap
+            var order = leadsVertically ? [vertical, horizontal] : [horizontal, vertical]
+            if swapAxes { order.reverse() }
+            swapAxes = false
+            for direction in order {
+                XCUIRemote.shared.press(direction)
+                presses.append(name(direction))
+                guard let now = focusedFrame() else { break }
+                if now == from { continue }
+                // Back somewhere already visited: the next step leads with the other axis.
+                swapAxes = visited.contains(now)
+                break
+            }
+        }
+        print("DULCET TV FOCUS target=\(target.identifier) presses=\(presses.joined(separator: ",")) reached=\(target.hasFocus)")
+        return target.exists && target.hasFocus
+    }
+
+    /// Focuses `heart` by remote and, from what the server holds, Select stars and Select again
+    /// unstars: each fills or empties the heart at once, reaches the server, and leaves focus on it.
+    @MainActor
+    private func pressHeartAndProve(
+        _ heart: XCUIElement,
+        named name: String,
+        in app: XCUIApplication,
+        read: @escaping () -> Bool?
+    ) throws {
+        XCTAssertTrue(focusByRemote(heart, in: app), "\(name) must take remote focus: " + app.debugDescription)
+        func awaitServer(_ expected: Bool) -> Bool? {
+            let deadline = Date().addingTimeInterval(30)
+            var observed = read()
+            while observed != nil, observed != expected, Date() < deadline {
+                Thread.sleep(forTimeInterval: 1)
+                observed = read()
+            }
+            return observed
+        }
+        if heart.label == "Remove Favorite" {
+            // An earlier run's favourite, cleared first so the change below is observable.
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5))
+            XCTAssertEqual(awaitServer(false), false, "\(name): an earlier run's favourite must clear first")
+        }
+        XCTAssertEqual(read(), false, "The control: the server must not already hold the favourite \(name) makes")
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "\(name) must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServer(true), true, "\(name): the star must reach the server")
+        XCTAssertTrue(heart.hasFocus, "\(name): the press must leave focus on it: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(name) must empty at once")
+        XCTAssertEqual(awaitServer(false), false, "\(name): removing the favourite must reach the server")
+    }
+
+    /// Whether the server holds the named album or artist as a favourite, read over
+    /// `/rest/search3`. Nil, with the reason printed, unless exactly one matches.
+    private func readServerStarred(_ kind: String, named name: String, server: Server) -> Bool? {
+        guard let envelope = restCall("search3", [
+            URLQueryItem(name: "query", value: name),
+            URLQueryItem(name: "songCount", value: "0"),
+            URLQueryItem(name: "albumCount", value: kind == "album" ? "20" : "0"),
+            URLQueryItem(name: "artistCount", value: kind == "artist" ? "20" : "0"),
+        ], server: server) else { return nil }
+        let found = (envelope["searchResult3"] as? [String: Any])?[kind] as? [[String: Any]] ?? []
+        let matches = found.filter { $0["name"] as? String == name }
+        guard matches.count == 1, let match = matches.first else {
+            print("DULCET REST search3 matched \(matches.count) \(kind)s named \(name); exactly one is required")
+            return nil
+        }
+        // Subsonic carries `starred` only on a favourite.
+        return match["starred"] != nil
+    }
+
     /// The lyrics panel's other states on Apple TV, every step by remote (spec §18.4): plain
     /// lyrics whose lines each take focus, so Down reads from one to the next; a track with none
     /// says so; and a failed read says so and offers Try Again, which the remote reaches and
@@ -781,6 +989,689 @@ final class DulcetTVUITests: XCTestCase {
             + " metered-presses=\(metered) unmetered-presses=\(unmetered) server-streams=\(summary) setup=debug-account-only")
     }
 
+    /// The Apple TV library, by the remote alone, against what the disposable server holds (spec
+    /// §16.18, §18.9). From Connection the section bar reaches Library, whose Home shelf fills
+    /// with the server's newest albums. The Library's own bar opens Albums; the grid lists the
+    /// server's albums in its title order, and Left and Right walk it tile by tile. Select opens
+    /// an album whose page lists the server's tracks in its order; Down walks them and Select on
+    /// the second plays it, from that track. Library chosen again shows the album where it was
+    /// left, and Menu goes back to the grid with focus on the album that was opened. Then Artists:
+    /// the list is the server's, an artist opens its page of the server's albums for it, one of
+    /// them opens, and each Menu goes back one page, focus on what opened it. Every expectation is
+    /// read from the server first; nothing here counts the corpus.
+    @MainActor
+    func testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+
+        // What the server holds, read before the app is launched.
+        let albumList = try XCTUnwrap(
+            restCall("getAlbumList2", [URLQueryItem(name: "type", value: "alphabeticalByName"),
+                                       URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"] as? [String: Any],
+            "The server must list its albums")
+        let albums = (albumList["album"] as? [[String: Any]] ?? []).compactMap { album -> (id: String, name: String)? in
+            guard let id = album["id"] as? String, let name = album["name"] as? String else { return nil }
+            return (id, name)
+        }
+        let newestList = try XCTUnwrap(
+            restCall("getAlbumList2", [URLQueryItem(name: "type", value: "newest"),
+                                       URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"] as? [String: Any],
+            "The server must list its newest albums")
+        let newest = (newestList["album"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+        let albumName = "Threshold Boundary"
+        let albumIndex = try XCTUnwrap(albums.firstIndex { $0.name == albumName }, "The server must hold \(albumName)")
+        XCTAssertGreaterThan(albumIndex, 0, "The album opened must not be the grid's first, or reaching it walks nothing")
+        let albumPage = try XCTUnwrap(
+            restCall("getAlbum", [URLQueryItem(name: "id", value: albums[albumIndex].id)], server: server)?["album"] as? [String: Any],
+            "The server must read \(albumName)")
+        let tracks = (albumPage["song"] as? [[String: Any]] ?? []).compactMap { $0["title"] as? String }
+        // The track played is the fixture made for playback, never one a later proof needs unplayed,
+        // and not the album's first, so playing from it is told apart from playing the album.
+        let playedTrack = "UI Playback Canary"
+        let playedIndex = try XCTUnwrap(tracks.firstIndex(of: playedTrack), "\(albumName) must hold \(playedTrack): \(tracks)")
+        XCTAssertGreaterThan(playedIndex, 0, "\(playedTrack) must not be the album's first track")
+        let artistIndexes = try XCTUnwrap(
+            restCall("getArtists", [], server: server)?["artists"] as? [String: Any], "The server must list its artists")
+        let artists = (artistIndexes["index"] as? [[String: Any]] ?? [])
+            .flatMap { $0["artist"] as? [[String: Any]] ?? [] }
+            .compactMap { artist -> (id: String, name: String)? in
+                guard let id = artist["id"] as? String, let name = artist["name"] as? String else { return nil }
+                return (id, name)
+            }
+        let artistName = "Dulcet Fixtures"
+        let artistIndex = try XCTUnwrap(artists.firstIndex { $0.name == artistName }, "The server must hold \(artistName)")
+        XCTAssertGreaterThan(artistIndex, 0, "The artist opened must not be the list's first, or reaching it walks nothing")
+        let artistPage = try XCTUnwrap(
+            restCall("getArtist", [URLQueryItem(name: "id", value: artists[artistIndex].id)], server: server)?["artist"] as? [String: Any],
+            "The server must read \(artistName)")
+        let artistAlbums = (artistPage["album"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+        // An album whose name is its own on this page, and not the first, so the label that has
+        // focus after Back can name only it.
+        let artistAlbumIndex = try XCTUnwrap(
+            artistAlbums.indices.first { index in index > 0 && artistAlbums.filter { $0 == artistAlbums[index] }.count == 1 },
+            "\(artistName) must have a uniquely named album after its first: \(artistAlbums)")
+        let artistAlbum = artistAlbums[artistAlbumIndex]
+        print("DULCET TV LIBRARY SERVER albums=\(albums.map(\.name)) newest=\(newest) tracks=\(tracks)"
+            + " artists=\(artists.map(\.name)) artist-albums=\(artistAlbums)")
+
+        // Launch and the live connection on Connection; then Library through the section bar.
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
+
+        // Home's newest shelf fills from the server: its tiles are the server's newest albums, in
+        // its order, and Down from the bars reaches them.
+        let shelf = app.descendants(matching: .any)["dulcet.reader.home.recentlyAdded"].firstMatch
+        XCTAssertTrue(shelf.waitForExistence(timeout: 30), "Home must show its Recently Added shelf: " + app.debugDescription)
+        let shelfTiles = shelf.descendants(matching: .button).matching(identifier: "dulcet.library.album")
+        XCTAssertTrue(shelfTiles.firstMatch.waitForExistence(timeout: 30), "The shelf must fill with albums: " + app.debugDescription)
+        let shelfLabels = shelfTiles.allElementsBoundByIndex.map(\.label)
+        XCTAssertFalse(shelfLabels.isEmpty)
+        for (index, label) in shelfLabels.enumerated() {
+            XCTAssertTrue(index < newest.count && Self.names(label, newest[index]),
+                "Shelf tile \(index) is \(label.debugDescription); the server's newest albums are \(newest)")
+        }
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down from the bars must reach the shelf: " + app.debugDescription)
+        let arrival = try XCTUnwrap(focusedElement(app))
+        XCTAssertTrue(shelf.frame.contains(CGPoint(x: arrival.frame.midX, y: arrival.frame.midY)),
+            "Down must land on the first shelf, Recently Added; focus=\(arrival) shelf=\(shelf.frame)")
+        pressToTheStart(app)
+        XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", newest[0]),
+            "Left along the shelf must end on its first album, the server's newest; focus=\(focusedElement(app).debugDescription)")
+
+        // The Library's own bar: Up to it, across to Albums, Select.
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
+            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        let gridTiles = app.buttons.matching(identifier: "dulcet.library.album")
+        XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
+        XCTAssertTrue(gridTiles.firstMatch.waitForExistence(timeout: 30), "The grid must fill: " + app.debugDescription)
+
+        // Into the grid, to its first tile, then across it tile by tile: each step lands on the
+        // server's next album in title order, up to the one to open.
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down must reach the grid: " + app.debugDescription)
+        pressToTheStart(app)
+        var gridWalk: [String] = []
+        for index in 0...albumIndex {
+            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
+            XCTAssertEqual(focus.id, "dulcet.library.album")
+            XCTAssertTrue(Self.names(focus.label, albums[index].name),
+                "Grid tile \(index) is \(focus.label.debugDescription); the server's album \(index) is \(albums[index].name)")
+            gridWalk.append(focus.label)
+            if index < albumIndex {
+                XCUIRemote.shared.press(.right)
+                XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3),
+                    "Right must move from grid tile \(index): " + app.debugDescription)
+            }
+        }
+
+        // Open it: the page is the album's, and its tracks are the server's, in its order.
+        XCUIRemote.shared.press(.select)
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 30), "Select must open the album: " + app.debugDescription)
+        XCTAssertTrue(waitForLabel(albumName, of: albumTitle, timeout: 15), "The page must be \(albumName)'s; title=\(albumTitle.label)")
+        let trackRows = app.buttons.matching(identifier: "dulcet.reader.track")
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while trackRows.count < tracks.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        let rowLabels = trackRows.allElementsBoundByIndex.map(\.label)
+        XCTAssertEqual(rowLabels.count, tracks.count, "The page must list every track the server holds: \(rowLabels)")
+        for (index, title) in tracks.enumerated() where index < rowLabels.count {
+            XCTAssertTrue(Self.names(rowLabels[index], title),
+                "Track row \(index) is \(rowLabels[index].debugDescription); the server's track \(index) is \(title)")
+        }
+        let play = app.buttons["dulcet.album.play"].firstMatch
+        let enabled = ContinuousClock.now.advanced(by: .seconds(15))
+        while !play.isEnabled, ContinuousClock.now < enabled { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertTrue(play.isEnabled, "Play must be offered for an album of playable tracks: " + app.debugDescription)
+
+        // Down walks the tracks in the server's order to the one played; Select plays from it.
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.reader.track" },
+            "Down from the album's header must reach its tracks: " + app.debugDescription)
+        for index in 0...playedIndex {
+            let focus = try XCTUnwrap(focusedElement(app), "A track row must hold focus: " + app.debugDescription)
+            XCTAssertTrue(focus.id == "dulcet.reader.track" && Self.names(focus.label, tracks[index]),
+                "Down must reach track \(index), \(tracks[index]); focus=\(focus)")
+            if index < playedIndex {
+                XCUIRemote.shared.press(.down)
+                XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Down must move from track \(index)")
+            }
+        }
+        XCUIRemote.shared.press(.select)
+        let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(nowPlayingTitle.waitForExistence(timeout: 30), "Select on a track must present Now Playing: " + app.debugDescription)
+        XCTAssertTrue(waitForLabel(playedTrack, of: nowPlayingTitle, timeout: 15),
+            "Now Playing must show the track selected, not the album's first; title=\(nowPlayingTitle.label)")
+        XCTAssertTrue(app.staticTexts["Playing from \(albumName)"].firstMatch.waitForExistence(timeout: 5),
+            "Now Playing must say it plays from the album: " + app.debugDescription)
+        let progress = app.progressIndicators["Now Playing"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 30), "The track must begin playing")
+        let initialProgress = (try? progress.snapshot())?.value as? String ?? ""
+        let advances = NSPredicate { _, _ in
+            guard let value = (try? progress.snapshot())?.value as? String else { return false }
+            return value != initialProgress
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: advances, object: nil)], timeout: 15),
+            .completed, "Media time must advance for the track played from the album")
+        let observedProgress = (try? progress.snapshot())?.value as? String ?? "missing"
+
+        // Library again, as it was left: the album. Menu goes back to the grid, on the album.
+        XCTAssertTrue(selectSection(app, "library"), "The section bar must return to Library from Now Playing: " + app.debugDescription)
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == albumName,
+            "Library must come back on the album it was left on: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") },
+            "Down from the section bar must reach the album page: " + app.debugDescription)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertEqual(app.state, .runningForeground, "Menu on an album must go back, not leave the app")
+        XCTAssertTrue(awaitFocus(app, timeout: 10) { $0.id == "dulcet.library.album" && Self.names($0.label, albumName) },
+            "Menu on the album must go back to the grid with focus on \(albumName); focus=\(focusedElement(app).debugDescription): "
+                + app.debugDescription)
+        XCTAssertFalse(albumTitle.exists, "Back must leave the album page")
+        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Albums")
+
+        // Artists: the list is the server's, walked in order to the artist.
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
+            "Up from the grid must reach the Library's sections: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "artists"), "The Library's bar must reach Artists: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Artists", in: app, timeout: 30), "Artists must open: " + app.debugDescription)
+        let artistRows = app.buttons.matching(identifier: "dulcet.library.artist")
+        XCTAssertTrue(artistRows.firstMatch.waitForExistence(timeout: 30), "The artist list must fill: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.artist" },
+            "Down must reach the artist list: " + app.debugDescription)
+        for index in 0...artistIndex {
+            let focus = try XCTUnwrap(focusedElement(app), "An artist row must hold focus: " + app.debugDescription)
+            XCTAssertEqual(focus.id, "dulcet.library.artist", "Down must stay on the artist rows: " + app.debugDescription)
+            XCTAssertTrue(Self.names(focus.label, artists[index].name),
+                "Artist row \(index) is \(focus.label.debugDescription); the server's artist \(index) is \(artists[index].name)")
+            if index < artistIndex {
+                XCUIRemote.shared.press(.down)
+                XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Down must move from artist row \(index)")
+            }
+        }
+        let artistRowLabel = try XCTUnwrap(focusedElement(app)?.label)
+
+        // The artist's page: the server's albums for that artist, in its order, walked to one.
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts[artistName].firstMatch.waitForExistence(timeout: 30),
+            "Select must open \(artistName)'s page: " + app.debugDescription)
+        let artistTiles = app.buttons.matching(identifier: "dulcet.library.album")
+        let artistDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        let artistTileLabels = artistTiles.allElementsBoundByIndex.map(\.label)
+        XCTAssertEqual(artistTileLabels.count, artistAlbums.count, "The page must show every album of the artist's: \(artistTileLabels)")
+        for (index, name) in artistAlbums.enumerated() where index < artistTileLabels.count {
+            XCTAssertTrue(Self.names(artistTileLabels[index], name),
+                "Artist album \(index) is \(artistTileLabels[index].debugDescription); the server's is \(name)")
+        }
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.library.album" },
+            "Down must reach the artist's albums: " + app.debugDescription)
+        pressToTheStart(app)
+        for index in 0...artistAlbumIndex {
+            let focus = try XCTUnwrap(focusedElement(app))
+            XCTAssertTrue(focus.id == "dulcet.library.album" && Self.names(focus.label, artistAlbums[index]),
+                "Artist album tile \(index) is \(focus.label.debugDescription); the server's is \(artistAlbums[index])")
+            if index < artistAlbumIndex {
+                XCUIRemote.shared.press(.right)
+                XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from artist album \(index)")
+            }
+        }
+
+        // Open the album from the artist; each Menu goes back one page, on what opened it.
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 30), "Select must open the album from the artist: " + app.debugDescription)
+        XCTAssertTrue(waitForLabel(artistAlbum, of: albumTitle, timeout: 15), "The page must be \(artistAlbum)'s; title=\(albumTitle.label)")
+        // A person presses Back once the page is there to press it on: a control of the page holds
+        // focus.
+        XCTAssertTrue(awaitFocus(app, timeout: 15) { $0.id.hasPrefix("dulcet.album.") || $0.id.hasPrefix("dulcet.reader.") },
+            "A control of \(artistAlbum)'s page must take focus; focus=\(focusedElement(app).debugDescription): " + app.debugDescription)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(awaitFocus(app, timeout: 10) { $0.id == "dulcet.library.album" && Self.names($0.label, artistAlbum) },
+            "Menu on the album must go back to the artist with focus on \(artistAlbum); focus=\(focusedElement(app).debugDescription): "
+                + app.debugDescription)
+        XCTAssertTrue(app.staticTexts[artistName].firstMatch.exists, "Back must land on \(artistName)'s page")
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(awaitFocus(app, timeout: 10) { $0.id == "dulcet.library.artist" && $0.label == artistRowLabel },
+            "Menu on the artist must go back to the list with focus on \(artistName); focus=\(focusedElement(app).debugDescription): "
+                + app.debugDescription)
+        XCTAssertEqual(app.navigationBars.firstMatch.identifier, "Artists")
+        XCTAssertEqual(app.state, .runningForeground)
+        print("DULCET TV LIBRARY PASS shelf=\(shelfLabels) grid-walk=\(gridWalk) album=\(albumName) tracks=\(rowLabels.count)"
+            + " played=\(playedTrack.debugDescription) progress=\(initialProgress)->\(observedProgress)"
+            + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
+    }
+
+    /// Add to Playlist on Apple TV by remote, the way Apple Music on tvOS offers it: a press and hold
+    /// on a track row opens its menu, Add to Playlist… opens the chooser, New Playlist… names one
+    /// and creates it holding that track; a second track is then added to that playlist from the
+    /// same chooser. The server's own reads are the expectation and the outcome.
+    @MainActor
+    func testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+        let album = try playlistProofAlbum(server: server)
+        let songs = album.songs
+        // Two tracks after the album's first, the later one added first: the playlist's order is
+        // then the order of the adds, told apart from the album's.
+        let firstIndex = 2
+        let secondIndex = 1
+        let name = "TV Remote Playlist \(UUID().uuidString.prefix(6))"
+        XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
+        deleteEveryPlaylist(named: name, afterTestOn: server)
+
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        try openAlbumByRemote(app, album)
+
+        // The first add: the track's menu, Add to Playlist…, New Playlist…, the name, Create.
+        try createPlaylistByRemote(app, named: name, holding: songs[firstIndex].title)
+        let created = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[firstIndex].id], server: server),
+            "The server must hold \(name) with exactly \(songs[firstIndex].title)")
+
+        // The second add, to that playlist from the same chooser.
+        try addToPlaylistByRemote(app, named: name, track: songs[secondIndex].title)
+        let updated = try XCTUnwrap(
+            awaitServerPlaylist(named: name, entries: [songs[firstIndex].id, songs[secondIndex].id], server: server),
+            "The server's \(name) must hold \(songs[firstIndex].title) then \(songs[secondIndex].title)")
+        XCTAssertEqual(updated.id, created.id, "The second add must reach the playlist the first created, not a new one")
+        XCTAssertEqual(app.state, .runningForeground)
+        print("DULCET TV PLAYLIST ADD PASS album=\(album.name) first=\(songs[firstIndex].title.debugDescription)"
+            + " second=\(songs[secondIndex].title.debugDescription) entries=\(updated.entries.count) setup=debug-account-only")
+    }
+
+    /// A create whose answer is lost (spec §18.6), answered by remote. The app talks to the server
+    /// through `tools/conformance-env/lyrics-fault-proxy`, armed to forward the create and answer it
+    /// with a gateway's 502, so the server holds the playlist and the app cannot know it. Another
+    /// client then adds a song to it, so it no longer holds just what was sent and the core cannot
+    /// adopt it on its own. The question is asked on the next reconnect -- here the return from the
+    /// Home screen -- as an alert whose lone candidate can be kept; keeping it sends nothing, and a
+    /// later add from the chooser reaches that same playlist. The proxy's count shows the create was
+    /// never sent again.
+    @MainActor
+    func testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This proof requires a tvOS simulator")
+        let server = try disposableServer()
+        let proxyURL = try XCTUnwrap(ProcessInfo.processInfo.environment["DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL"],
+            "DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL must name the fault proxy")
+        XCTAssertTrue(Self.isLoopbackURL(proxyURL), "The fault proxy must be a loopback host")
+        let album = try playlistProofAlbum(server: server)
+        let songs = album.songs
+        let proxied = (url: proxyURL, username: server.username, password: server.password)
+        XCTAssertEqual(playlistProofAlbum(server: proxied, quietly: true)?.songs.map(\.id), songs.map(\.id),
+            "The fault proxy must front the disposable server")
+        let name = "TV Lost Answer \(UUID().uuidString.prefix(6))"
+        let encodedName = try XCTUnwrap(name.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+        XCTAssertNil(serverPlaylist(named: name, server: server), "No playlist may be named \(name) before the proof")
+        deleteEveryPlaylist(named: name, afterTestOn: server)
+        let armed = try XCTUnwrap(proxyControl("POST", "/__dulcet/create-answer-loss?name=\(encodedName)&state=on", proxyURL: proxyURL))
+        XCTAssertEqual(armed["armed"] as? Bool, true, "The proxy must arm the loss: \(armed)")
+        defer { _ = proxyControl("POST", "/__dulcet/create-answer-loss?name=\(encodedName)&state=off", proxyURL: proxyURL) }
+
+        let app = try launchAndConnect(serverURL: proxyURL, server: server)
+        try openAlbumByRemote(app, album)
+        try createPlaylistByRemote(app, named: name, holding: songs[2].title)
+        // The server holds it; the app heard a gateway fail.
+        let created = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[2].id], server: server),
+            "The server must hold \(name), whose answer was lost")
+        let lost = try XCTUnwrap(proxyControl("GET", "/__dulcet/create-observations?name=\(encodedName)", proxyURL: proxyURL))
+        XCTAssertEqual(lost["lost"] as? Int, 1, "The proxy must have lost the create's answer: \(lost)")
+        XCTAssertEqual(lost["creates"] as? Int, 1, "One create must have been sent: \(lost)")
+        // Another client adds a song, straight to the server.
+        XCTAssertNotNil(restCall("updatePlaylist", [URLQueryItem(name: "playlistId", value: created.id),
+                                                    URLQueryItem(name: "songIdToAdd", value: songs[0].id)], server: server))
+        XCTAssertNotNil(awaitServerPlaylist(named: name, entries: [songs[2].id, songs[0].id], server: server),
+            "Another client's add must reach \(name)")
+        let title = DulcetTVUITests.questionTitle
+        XCTAssertFalse(app.alerts[title].exists, "Nothing may be asked before the next reconnect")
+
+        // The next reconnect: away to the Home screen and back.
+        XCUIRemote.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 15) || app.wait(for: .runningBackgroundSuspended, timeout: 15),
+            "Home must send the app to the background")
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15), "The app must return to the foreground")
+        let question = app.alerts[title]
+        XCTAssertTrue(question.waitForExistence(timeout: 45),
+            "The reconnect must ask whether \(name) is the person's: " + app.debugDescription)
+        XCTAssertTrue(question.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.exists,
+            "The question must name \(name): " + question.debugDescription)
+        // tvOS draws each alert action as a button inside a button of the same label: the outer
+        // one holds focus.
+        func action(_ label: String) -> XCUIElement {
+            question.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        let keep = action(DulcetTVUITests.keepItsMine)
+        XCTAssertTrue(keep.exists, "A lone candidate must be offered as theirs: " + question.debugDescription)
+        XCTAssertTrue(action(DulcetTVUITests.noneOfThese).exists, question.debugDescription)
+        XCTAssertTrue(action(DulcetTVUITests.decideLater).exists, question.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, keep, .up, limit: 4),
+            "Yes, It's Mine must take remote focus: " + question.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(question.waitForNonExistence(timeout: 15), "Keeping it must close the question: " + app.debugDescription)
+
+        // Kept: never created again, and the chooser's add reaches that playlist.
+        try addToPlaylistByRemote(app, named: name, track: songs[1].title)
+        let updated = try XCTUnwrap(awaitServerPlaylist(named: name, entries: [songs[2].id, songs[0].id, songs[1].id], server: server),
+            "The add must reach the kept \(name)")
+        XCTAssertEqual(updated.id, created.id, "The add must reach the playlist whose answer was lost, not a new one")
+        let after = try XCTUnwrap(proxyControl("GET", "/__dulcet/create-observations?name=\(encodedName)", proxyURL: proxyURL))
+        XCTAssertEqual(after["creates"] as? Int, 1, "Keeping it must never send the create again: \(after)")
+        XCTAssertEqual(app.state, .runningForeground)
+        print("DULCET TV CREATE IN DOUBT PASS name=\(name.debugDescription) lost=\(lost["lost"] ?? "?")"
+            + " creates=\(after["creates"] ?? "?") entries=\(updated.entries.count) setup=debug-account-only")
+    }
+
+    private static let questionTitle = "Was this playlist already created?"
+    private static let keepItsMine = "Yes, It\u{2019}s Mine"
+    private static let noneOfThese = "None of These \u{2014} Create It"
+    private static let decideLater = "Decide Later"
+
+    private struct PlaylistProofAlbum {
+        let index: Int
+        let name: String
+        let songs: [(id: String, title: String)]
+    }
+
+    /// Threshold Boundary, read from the server: its place in the alphabetical grid and its tracks,
+    /// three or more with distinct titles.
+    private func playlistProofAlbum(server: Server, quietly: Bool = false) -> PlaylistProofAlbum? {
+        let albumName = "Threshold Boundary"
+        let list = restCall("getAlbumList2", [URLQueryItem(name: "type", value: "alphabeticalByName"),
+                                              URLQueryItem(name: "size", value: "500")], server: server)?["albumList2"] as? [String: Any]
+        let albums = (list?["album"] as? [[String: Any]] ?? []).compactMap { album -> (id: String, name: String)? in
+            guard let id = album["id"] as? String, let name = album["name"] as? String else { return nil }
+            return (id, name)
+        }
+        guard let index = albums.firstIndex(where: { $0.name == albumName }),
+              let page = restCall("getAlbum", [URLQueryItem(name: "id", value: albums[index].id)], server: server)?["album"]
+                as? [String: Any] else {
+            if !quietly { XCTFail("The server must hold and read \(albumName)") }
+            return nil
+        }
+        let songs = (page["song"] as? [[String: Any]] ?? []).compactMap { song -> (id: String, title: String)? in
+            guard let id = song["id"] as? String, let title = song["title"] as? String else { return nil }
+            return (id, title)
+        }
+        if !quietly {
+            XCTAssertGreaterThanOrEqual(songs.count, 3, "\(albumName) must hold three tracks: \(songs.map(\.title))")
+            XCTAssertEqual(Set(songs.map(\.title)).count, songs.count, "\(albumName)'s titles must be distinct")
+        }
+        return PlaylistProofAlbum(index: index, name: albumName, songs: songs)
+    }
+
+    private func playlistProofAlbum(server: Server) throws -> PlaylistProofAlbum {
+        try XCTUnwrap(playlistProofAlbum(server: server, quietly: false))
+    }
+
+    /// Deletes every playlist named `name` after the test: a defect that creates two must not leave
+    /// both behind.
+    private func deleteEveryPlaylist(named name: String, afterTestOn server: Server) {
+        afterTest.append {
+            let list = self.restCall("getPlaylists", [], server: server)?["playlists"] as? [String: Any]
+            for playlist in list?["playlist"] as? [[String: Any]] ?? [] where playlist["name"] as? String == name {
+                if let id = playlist["id"] as? String {
+                    _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: id)], server: server)
+                }
+            }
+        }
+    }
+
+    /// The album, by remote: Library, Albums, the grid walked to it, Select; then focus on its tracks.
+    @MainActor
+    private func openAlbumByRemote(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
+        XCTAssertTrue(selectSection(app, "library"), "The section bar must reach Library: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30), "Library must present Home: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down from the bars must reach Home's shelf: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 4) { $0.id.hasPrefix("dulcet.reader.section.") },
+            "Up from the shelf must reach the Library's sections: " + app.debugDescription)
+        XCTAssertTrue(selectLibrarySection(app, "albums"), "The Library's bar must reach Albums: " + app.debugDescription)
+        XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
+            "The grid must fill: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+            "Down must reach the grid: " + app.debugDescription)
+        pressToTheStart(app)
+        for index in 0..<album.index {
+            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
+            XCUIRemote.shared.press(.right)
+            XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
+        }
+        XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", album.name),
+            "The walk must end on \(album.name); focus=\(focusedElement(app).debugDescription)")
+        XCUIRemote.shared.press(.select)
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(albumTitle.waitForExistence(timeout: 30), "Select must open the album: " + app.debugDescription)
+        XCTAssertTrue(waitForLabel(album.name, of: albumTitle, timeout: 15), "The page must be \(album.name)'s; title=\(albumTitle.label)")
+        let trackRows = app.buttons.matching(identifier: "dulcet.reader.track")
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while trackRows.count < album.songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertEqual(trackRows.count, album.songs.count, "The page must list every track the server holds: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.reader.track" },
+            "Down from the album's header must reach its tracks: " + app.debugDescription)
+    }
+
+    /// `track`'s menu, Add to Playlist…, New Playlist…, `name` typed, Create; the chooser closes.
+    @MainActor
+    private func createPlaylistByRemote(_ app: XCUIApplication, named name: String, holding track: String) throws {
+        try focusTrackRow(app, title: track)
+        try chooseAddToPlaylist(app, track: track)
+        let newPlaylist = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
+        XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, newPlaylist, .up, limit: 6),
+            "New Playlist… must take focus in the chooser: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let field = app.textFields["dulcet.playlist.name"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "New Playlist… must ask for a name: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, field, .up, limit: 4), "The name field must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Select on the field must bring up the keyboard")
+        field.typeText(name)
+        let done = app.buttons["done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !done.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(done.hasFocus, "Keyboard Done must have remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let create = app.descendants(matching: .any)["dulcet.playlist.name.confirm"].firstMatch
+        XCTAssertTrue(create.waitForExistence(timeout: 5), "The name prompt must offer Create: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, create, .down, limit: 4), "Create must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Create must close the chooser: " + app.debugDescription)
+    }
+
+    /// `track`'s menu, Add to Playlist…, then `name`'s row in the chooser; the chooser closes.
+    @MainActor
+    private func addToPlaylistByRemote(_ app: XCUIApplication, named name: String, track: String) throws {
+        try focusTrackRow(app, title: track)
+        try chooseAddToPlaylist(app, track: track)
+        let newPlaylist = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
+        XCTAssertTrue(newPlaylist.waitForExistence(timeout: 15), "Add to Playlist… must open the chooser: " + app.debugDescription)
+        let row = app.descendants(matching: .any).matching(identifier: "dulcet.addToPlaylist.playlist")
+            .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "The chooser must list \(name): " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, row, .down, limit: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Choosing a playlist must close the chooser: " + app.debugDescription)
+    }
+
+    // MARK: - Playlist helpers
+
+    /// Down or Up along the album's track rows until `title`'s row holds focus.
+    @MainActor
+    private func focusTrackRow(_ app: XCUIApplication, title: String) throws {
+        let matches: (Focus) -> Bool = { $0.id == "dulcet.reader.track" && Self.names($0.label, title) }
+        if pressUntilFocus(app, .down, limit: 12, matches) { return }
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 12, matches), "\(title)'s row must take focus: " + app.debugDescription)
+    }
+
+    /// A press and hold on the focused track row, then Add to Playlist… in its menu.
+    @MainActor
+    private func chooseAddToPlaylist(_ app: XCUIApplication, track: String) throws {
+        XCUIRemote.shared.press(.select, forDuration: 1.5)
+        let item = app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 10),
+            "A press and hold on \(track) must open its menu with Add to Playlist…: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocused(app, item, .down, limit: 10),
+            "Add to Playlist… must take remote focus in the menu: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+    }
+
+    /// Whether `element` holds remote focus: itself, or -- for a menu item or a list row, which
+    /// the system draws inside a cell -- the focused cell it sits in.
+    @MainActor
+    private func isFocused(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
+        guard let target = try? element.snapshot() else { return false }
+        if target.hasFocus { return true }
+        guard let cell = try? app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.snapshot() else { return false }
+        return cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+    }
+
+    /// Presses `button` until `element` holds focus, at most `limit` times.
+    @MainActor
+    private func pressUntilFocused(_ app: XCUIApplication, _ element: XCUIElement, _ button: XCUIRemote.Button, limit: Int) -> Bool {
+        func settles() -> Bool {
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(1500))
+            repeat {
+                if isFocused(app, element) { return true }
+                Thread.sleep(forTimeInterval: 0.2)
+            } while ContinuousClock.now < deadline
+            return false
+        }
+        if settles() { return true }
+        for _ in 0..<limit {
+            XCUIRemote.shared.press(button)
+            if settles() { return true }
+        }
+        return false
+    }
+
+    private struct ServerPlaylist {
+        let id: String
+        let entries: [String]
+    }
+
+    /// The disposable account's one playlist named `name`, with its entries' song ids in order.
+    private func serverPlaylist(named name: String, server: Server) -> ServerPlaylist? {
+        guard let list = restCall("getPlaylists", [], server: server)?["playlists"] as? [String: Any] else { return nil }
+        let named = (list["playlist"] as? [[String: Any]] ?? []).filter { $0["name"] as? String == name }
+        guard named.count == 1, let id = named[0]["id"] as? String,
+              let playlist = restCall("getPlaylist", [URLQueryItem(name: "id", value: id)], server: server)?["playlist"]
+                as? [String: Any] else { return nil }
+        return ServerPlaylist(id: id, entries: (playlist["entry"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+    }
+
+    /// Polls until the server's `name` holds exactly `entries`; nil, with what it held, if it never does.
+    private func awaitServerPlaylist(named name: String, entries: [String], server: Server) -> ServerPlaylist? {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        var last: ServerPlaylist?
+        repeat {
+            last = serverPlaylist(named: name, server: server)
+            if let last, last.entries == entries { return last }
+            Thread.sleep(forTimeInterval: 0.5)
+        } while ContinuousClock.now < deadline
+        print("DULCET TV PLAYLIST server held \(last.map { "\($0.entries)" } ?? "no such playlist"); expected \(entries)")
+        return nil
+    }
+
+    // MARK: - Library helpers
+
+    /// Whether a row's or tile's label names `title`: the title alone, or the title then its line.
+    private static func names(_ label: String, _ title: String) -> Bool {
+        label == title || label.hasPrefix(title + ", ")
+    }
+
+    /// The focused element: its identifier, its label and where it is -- two albums may share a
+    /// name and so a label, and only the frame tells a move between them from no move at all.
+    private struct Focus: Equatable {
+        let id: String
+        let label: String
+        let frame: CGRect
+    }
+
+    /// The button holding remote focus, from one snapshot. Every control the library proof moves
+    /// through is a button, and asking only buttons for focus spares a query that otherwise reads
+    /// the focus attribute of every element on the screen.
+    @MainActor
+    private func focusedElement(_ app: XCUIApplication) -> Focus? {
+        let element = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        guard let snapshot = try? element.snapshot() else { return nil }
+        return Focus(id: snapshot.identifier, label: snapshot.label, frame: snapshot.frame)
+    }
+
+    @MainActor
+    private func awaitFocus(_ app: XCUIApplication, timeout: TimeInterval, _ matches: (Focus) -> Bool) -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
+        repeat {
+            if let focus = focusedElement(app), matches(focus) { return true }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while ContinuousClock.now < deadline
+        return false
+    }
+
+    /// The focus after it leaves `previous`, or nil if it stays there for `timeout`.
+    @MainActor
+    private func awaitFocusChange(_ app: XCUIApplication, from previous: Focus, timeout: TimeInterval) -> Focus? {
+        var changed: Focus?
+        _ = awaitFocus(app, timeout: timeout) { focus in
+            if focus != previous { changed = focus }
+            return focus != previous
+        }
+        return changed
+    }
+
+    /// Presses `button` until focus matches, at most `limit` times, re-reading focus after each.
+    @MainActor
+    private func pressUntilFocus(
+        _ app: XCUIApplication, _ button: XCUIRemote.Button, limit: Int, _ matches: (Focus) -> Bool
+    ) -> Bool {
+        if awaitFocus(app, timeout: 1, matches) { return true }
+        for _ in 0..<limit {
+            XCUIRemote.shared.press(button)
+            if awaitFocus(app, timeout: 1.5, matches) { return true }
+        }
+        return false
+    }
+
+    /// Left until focus stops moving: the start of the row it is on.
+    @MainActor
+    private func pressToTheStart(_ app: XCUIApplication, limit: Int = 40) {
+        for _ in 0..<limit {
+            guard let current = focusedElement(app) else { return }
+            XCUIRemote.shared.press(.left)
+            if awaitFocusChange(app, from: current, timeout: 1) == nil { return }
+        }
+    }
+
+    /// From a control on the Library's own bar, across to `section` and Select.
+    @MainActor
+    private func selectLibrarySection(_ app: XCUIApplication, _ section: String) -> Bool {
+        let order = ["home", "albums", "artists", "genres", "playlists", "favourites"]
+        guard let target = order.firstIndex(of: section) else { return false }
+        for _ in 0...order.count {
+            guard let focus = focusedElement(app), focus.id.hasPrefix("dulcet.reader.section."),
+                  let index = order.firstIndex(of: String(focus.id.dropFirst("dulcet.reader.section.".count))) else { return false }
+            if index == target {
+                XCUIRemote.shared.press(.select)
+                return true
+            }
+            XCUIRemote.shared.press(index > target ? .left : .right)
+            _ = awaitFocusChange(app, from: focus, timeout: 2)
+        }
+        return false
+    }
+
+    @MainActor
+    private func waitForNavigationTitle(_ title: String, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
+        while app.navigationBars.firstMatch.identifier != title, ContinuousClock.now < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return app.navigationBars.firstMatch.identifier == title
+    }
+
     // MARK: - Lyrics and streaming-quality helpers
 
     private typealias Server = (url: String, username: String, password: String)
@@ -923,6 +1814,31 @@ final class DulcetTVUITests: XCTestCase {
     /// track's row focused and pressed -- and waits for Now Playing to show it.
     @MainActor
     private func playFromSearch(_ app: XCUIApplication, query: String, track: String) throws {
+        typeSearchQuery(app, query: query)
+        let rowPrefix = "\(track), "
+        var trackRow: XCUIElement?
+        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
+        repeat {
+            trackRow = (0..<8).lazy
+                .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
+                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Track") }
+            if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
+        } while trackRow == nil && ContinuousClock.now < rowsDeadline
+        let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
+        for _ in 0..<10 where !(row.exists && row.hasFocus) {
+            XCUIRemote.shared.press(.down)
+        }
+        XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
+        XCTAssertTrue(waitForLabel(track, of: title, timeout: 15), "Now Playing must show \(track); title=\(title.label)")
+    }
+
+    /// Search through the section bar, the query typed by remote and handed over with Done, then
+    /// waits for the app's own field to hold it.
+    @MainActor
+    private func typeSearchQuery(_ app: XCUIApplication, query: String) {
         XCTAssertTrue(selectSection(app, "search"), "The section bar must reach Search: " + app.debugDescription)
         let field = app.textFields["dulcet.search.field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 40), "Search must present its field: " + app.debugDescription)
@@ -950,24 +1866,6 @@ final class DulcetTVUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.1)
         }
         XCTAssertEqual(field.value as? String, query, "The typed query must reach the app's field")
-        let rowPrefix = "\(track), "
-        var trackRow: XCUIElement?
-        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
-        repeat {
-            trackRow = (0..<8).lazy
-                .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
-                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Track") }
-            if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
-        } while trackRow == nil && ContinuousClock.now < rowsDeadline
-        let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
-        for _ in 0..<10 where !(row.exists && row.hasFocus) {
-            XCUIRemote.shared.press(.down)
-        }
-        XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
-        XCUIRemote.shared.press(.select)
-        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
-        XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
-        XCTAssertTrue(waitForLabel(track, of: title, timeout: 15), "Now Playing must show \(track); title=\(title.label)")
     }
 
     /// Down from the transport to the footer row, Right to Lyrics, Select; returns the panel.

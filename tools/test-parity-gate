@@ -961,6 +961,18 @@ passing_cases = """\
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator" time="0.1" />
   <testcase classname="DulcetKeychainIOSTests"
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIPadOSSimulator" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPhone" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPhone" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPhone" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPadOS" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPadOS" time="0.1" />
+  <testcase classname="DulcetKeychainIOSTests"
+            name="testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPadOS" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="searchQueryRanksAndActivatesTrackThroughHostedAppUI" time="0.1" />
   <testcase classname="DulcetiOSUITests"
@@ -1057,6 +1069,18 @@ passing_cases = """\
             name="conf90AStaleIndexIsPreventedNotSent[macosArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[macosArm64]"
             name="conf91AnotherUsersPlaylistIsNotEditable[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.StarConformanceTest[macosArm64]"
+            name="conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.StarConformanceTest[iosSimulatorArm64]"
+            name="conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.StarConformanceTest[tvosSimulatorArm64]"
+            name="conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted[tvosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.RatingConformanceTest[macosArm64]"
+            name="conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt[macosArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.RatingConformanceTest[iosSimulatorArm64]"
+            name="conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt[iosSimulatorArm64]" time="0.1" />
+  <testcase classname="com.legitimateapps.dulcet.conformance.RatingConformanceTest[tvosSimulatorArm64]"
+            name="conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt[tvosSimulatorArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
             name="conf88PlaylistWritesOnTheReferenceServer[iosSimulatorArm64]" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.PlaylistConformanceTest[iosSimulatorArm64]"
@@ -1102,6 +1126,12 @@ passing_cases = """\
             name="testTheNowPlayingHeartFillsAtOnceAndReachesTheServerOnIPadOS" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote" time="0.1" />
+  <testcase classname="DulcetTVUITests"
+            name="testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote" time="0.1" />
   <testcase classname="DulcetMacAccountConnectAppTest"
             name="readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw" time="0.1" />
   <testcase classname="DulcetiOSUITests"
@@ -1116,6 +1146,20 @@ passing_cases = """\
             name="everyPlaylistEditReachesTheServerThroughTheHostedMacApp" time="0.1" />
   <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
             name="nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacReaderCountedAppTest"
+            name="conf76ACachedOpenPublishesBeforeAnyAnswerThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacReaderCountedAppTest"
+            name="conf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacReaderCountedAppTest"
+            name="conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetMacRatingsAndPlaylistsAppTest"
+            name="aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS" time="0.1" />
+  <testcase classname="DulcetiOSUITests"
+            name="testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS" time="0.1" />
   <testcase classname="DulcetTVUITests"
             name="testAStreamingQualityChosenByRemoteCapsTheStream" time="0.1" />
   <testcase classname="DulcetTVUITests"

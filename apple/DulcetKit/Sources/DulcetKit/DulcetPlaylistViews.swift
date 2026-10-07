@@ -6,7 +6,8 @@ import SwiftUI
 // Playlist" from a track's or album's context menu. Every edit is in the next publication of every
 // screen showing the playlist before any request (the core's overlay); what is still to reach the
 // server, and what could not, is said on the playlist itself. Another user's playlist is drawn
-// read-only with its owner, with no edit affordance at all. tvOS lists and plays playlists only.
+// read-only with its owner, with no edit affordance at all. tvOS lists and plays playlists, and adds
+// to one or creates one from a track's or album's menu; its playlist page edits nothing.
 
 private extension DulcetPresentationStore {
     var playlistEditor: DulcetPlaylistEditor? { librarySession?.playlists }
@@ -575,8 +576,19 @@ private struct DulcetAddToPlaylistSheet: View {
         NavigationStack {
             DulcetReaderScreen(query: .playlists) { model in
                 List {
+#if os(tvOS)
+                    // A page of its own rather than the name alert: the TV's keyboard is a screen of
+                    // its own, entered from a field the remote can reach.
+                    NavigationLink {
+                        DulcetNewPlaylistPage(addition: addition)
+                    } label: {
+                        Label(DulcetStrings.playlistNewEllipsis, systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("dulcet.addToPlaylist.new")
+#else
                     Button(DulcetStrings.playlistNewEllipsis, systemImage: "plus") { naming = true }
                         .accessibilityIdentifier("dulcet.addToPlaylist.new")
+#endif
                     let editable = (model.window?.items ?? []).filter(\.isEditable)
                     if let window = model.window, editable.isEmpty, window.freshness != .loading {
                         Text(DulcetStrings.playlistNoneEditable).dulcetForeground(.secondaryTextOnWindow)
@@ -614,4 +626,28 @@ private struct DulcetAddToPlaylistSheet: View {
         }
     }
 }
+
+#if os(tvOS)
+/// New Playlist on the TV: a name, then Create, which makes the playlist holding the addition and
+/// closes the chooser.
+private struct DulcetNewPlaylistPage: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let addition: DulcetPlaylistAddition
+    @State private var name = ""
+
+    var body: some View {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        Form {
+            TextField(DulcetStrings.playlistName, text: $name)
+                .accessibilityIdentifier("dulcet.playlist.name")
+            Button(DulcetStrings.playlistCreate) {
+                store.playlistEditor?.createPlaylist(named: trimmed, with: addition)
+            }
+            .disabled(trimmed.isEmpty)
+            .accessibilityIdentifier("dulcet.playlist.name.confirm")
+        }
+        .navigationTitle(DulcetStrings.playlistNew)
+    }
+}
+#endif
 #endif

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """A forwarding proxy in front of the disposable server that can fail one song's lyrics read.
 
-It can also hold one playlist's reads -- see "Holding a playlist read" below.
+It can also hold one playlist's reads -- see "Holding a playlist read" below --, drop every
+request for a while -- see "An outage" below --, count, hold or fail the reader's requests --
+see "Counting" below -- and lose one create's answer -- see "Losing a create's answer".
 
 The Apple lyrics proofs need a lyrics read that fails, then succeeds when the person presses Try
 Again (spec §18.4). The disposable server answers every lyrics read, and nothing about the corpus
@@ -36,6 +38,48 @@ Every other request passes straight through, and a hold never outlives HOLD_LIMI
 test released them, and `timedOut` those forwarded only because the limit passed. Arming starts all
 three from zero.
 
+An outage: the Apple playlist pending-state proofs need the server to go away while the app is
+open, and come back (spec §18.6). During an outage every `/rest` request is dropped -- its
+connection reset with no answer, as a server that went away leaves it -- until the test ends it.
+The controls keep answering throughout.
+
+    POST /__dulcet/outage?state=on|off
+    GET  /__dulcet/outage    {"outage": bool, "dropped": {endpoint: n}, "forwardedAfterOutage": {endpoint: n}}
+
+`dropped` counts, by endpoint name, the requests dropped since the outage began, and
+`forwardedAfterOutage` those forwarded since it last ended. Each switch starts its count from zero,
+so a proof can show that its edit met the outage and was sent after it.
+
+Counting: the Apple reader proofs (CONF-76, CONF-77, CONF-86) count what the app sends, in order,
+and hold or fail chosen requests, as the Android app tests' counting proxy does. Every `/rest`
+request is logged as its endpoint name (without `.view`), its `type` and `id` parameters when it has
+them -- neither carries a credential --, whether it has been answered, and the status the app got
+(0 for a request dropped unanswered).
+
+    GET  /__dulcet/requests?since=<n>
+         {"total": n, "requests": [{"endpoint": e, "type": t, "id": i, "answered": bool, "status": s}, ...]}
+    POST /__dulcet/rule?action=hold|fail&state=on&endpoint=<e>[&type=<t>]
+    POST /__dulcet/rule?action=hold|fail&state=off
+         {"hold": {"endpoint": e, "type": t} | null, "fail": ... | null, "held": n}
+
+`since` is an index into the whole log, so a proof marks the log's `total` and reads what came
+after. A hold rule keeps every matching request unanswered until the rule is switched off (or the
+hold limit passes); a fail rule answers every matching request with a 500 and no body, a server
+error rather than an unreachable server. `type` narrows a rule to one `getAlbumList2` order. One rule
+of each action at a time; switching it on again replaces it.
+
+Losing a create's answer: the Apple proofs of a create in doubt need a `createPlaylist` the server
+applies whose answer never reaches the app (spec §18.6), which no server does on demand. Armed for a
+playlist name, the next `createPlaylist` of that name is forwarded upstream and the server's answer
+read and dropped; the app is answered HTTP 502 with a gateway's HTML page instead, which proves
+nothing about whether the create landed. One create is lost per arming, and the arming then ends.
+
+    POST /__dulcet/create-answer-loss?name=<name>&state=on|off
+    GET  /__dulcet/create-observations?name=<name>   {"armed": bool, "lost": n, "creates": n}
+
+`lost` counts the answers dropped, and `creates` every `createPlaylist` of that name forwarded, lost
+or not, since it was last armed; a proof shows from it that the app never sent the create again.
+
 Requests carry credentials in their query strings, so nothing here ever prints a request line,
 a query or a header: the base handler's request log is silenced, and the only output is the
 listening line and the names of the endpoints that were failed.
@@ -44,8 +88,11 @@ listening line and the names of the endpoints that were failed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import http.client
 import json
+import socket
+import struct
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,6 +100,7 @@ from urllib.parse import parse_qs, urlsplit
 
 LYRICS_ENDPOINTS = {"getLyricsBySongId", "getLyricsBySongId.view"}
 PLAYLIST_ENDPOINTS = {"getPlaylist", "getPlaylist.view"}
+CREATE_ENDPOINTS = {"createPlaylist", "createPlaylist.view"}
 # Longer than any proof keeps a read waiting, shorter than the app's own request timeout.
 HOLD_LIMIT_SECONDS = 45
 # Hop-by-hop headers (RFC 9110 §7.6.1) are this connection's, never forwarded.
@@ -73,6 +121,111 @@ class FaultState:
         self.held: dict[str, int] = {}
         self.released: dict[str, int] = {}
         self.timed_out: dict[str, int] = {}
+        self.losing: set[str] = set()
+        self.lost: dict[str, int] = {}
+        self.creates: dict[str, int] = {}
+        self.outage = False
+        self.dropped: dict[str, int] = {}
+        self.forwarded_after_outage: dict[str, int] = {}
+        self.log: list[dict[str, object]] = []
+        self.rules: dict[str, tuple[str, str | None] | None] = {"hold": None, "fail": None}
+        self.rule_gate = threading.Event()
+        self.rule_held = 0
+
+    def record(self, endpoint: str, fields: dict[str, list[str]]) -> dict[str, object]:
+        """Logs a `/rest` request by its endpoint and its `type` and `id`, never anything else."""
+        entry: dict[str, object] = {"endpoint": endpoint, "answered": False, "status": 0}
+        for name in ("type", "id"):
+            if fields.get(name):
+                entry[name] = fields[name][0]
+        with self.lock:
+            self.log.append(entry)
+        return entry
+
+    def answered(self, entry: dict[str, object], status: int) -> None:
+        with self.lock:
+            entry["answered"] = True
+            entry["status"] = status
+
+    def requests(self, since: int) -> dict[str, object]:
+        with self.lock:
+            return {"total": len(self.log), "requests": [dict(entry) for entry in self.log[since:]]}
+
+    def set_rule(self, action: str, endpoint: str | None, list_type: str | None) -> None:
+        with self.lock:
+            self.rules[action] = (endpoint, list_type) if endpoint else None
+            if action == "hold":
+                # Whatever the old rule held goes on; a new rule holds from now.
+                self.rule_gate.set()
+                self.rule_gate = threading.Event()
+                if endpoint is not None:
+                    self.rule_held = 0
+
+    def matches(self, action: str, entry: dict[str, object]) -> bool:
+        with self.lock:
+            rule = self.rules[action]
+        return rule is not None and entry["endpoint"] == rule[0] and (rule[1] is None or entry.get("type") == rule[1])
+
+    def hold_gate(self, entry: dict[str, object]) -> threading.Event | None:
+        if not self.matches("hold", entry):
+            return None
+        with self.lock:
+            self.rule_held += 1
+            return self.rule_gate
+
+    def rule_observations(self) -> dict[str, object]:
+        with self.lock:
+            def shown(rule: tuple[str, str | None] | None) -> dict[str, object] | None:
+                return None if rule is None else {"endpoint": rule[0], "type": rule[1]}
+            return {"hold": shown(self.rules["hold"]), "fail": shown(self.rules["fail"]), "held": self.rule_held}
+
+    def lose_create(self, name: str, on: bool) -> None:
+        with self.lock:
+            if on:
+                self.losing.add(name)
+                self.lost[name] = 0
+                self.creates[name] = 0
+            else:
+                self.losing.discard(name)
+
+    def create_forwarded(self, name: str | None) -> bool:
+        """Counts a create of `name` and returns whether its answer is the one to lose."""
+        with self.lock:
+            if name is None or name not in self.creates:
+                return False
+            self.creates[name] += 1
+            if name in self.losing:
+                self.losing.discard(name)
+                self.lost[name] += 1
+                return True
+            return False
+
+    def create_observations(self, name: str) -> dict[str, object]:
+        with self.lock:
+            return {"armed": name in self.losing, "lost": self.lost.get(name, 0), "creates": self.creates.get(name, 0)}
+
+    def set_outage(self, on: bool) -> None:
+        with self.lock:
+            self.outage = on
+            if on:
+                self.dropped = {}
+            else:
+                self.forwarded_after_outage = {}
+
+    def admit(self, endpoint: str) -> bool:
+        """Whether a `/rest` request for `endpoint` is forwarded; counted either way."""
+        with self.lock:
+            counts = self.dropped if self.outage else self.forwarded_after_outage
+            counts[endpoint] = counts.get(endpoint, 0) + 1
+            return not self.outage
+
+    def outage_observations(self) -> dict[str, object]:
+        with self.lock:
+            return {
+                "outage": self.outage,
+                "dropped": dict(self.dropped),
+                "forwardedAfterOutage": dict(self.forwarded_after_outage),
+            }
 
     def hold(self, playlist: str, on: bool) -> None:
         with self.lock:
@@ -137,6 +290,21 @@ class FaultState:
             }
 
 
+def rest_endpoint(path: str) -> str:
+    """The endpoint a `/rest` path names, without a `.view` suffix: `/rest/ping.view` is `ping`."""
+    name = path[len("/rest/"):].split("/", 1)[0]
+    return name[:-len(".view")] if name.endswith(".view") else name
+
+
+def request_fields(query: str, body: bytes, content_type: str) -> dict[str, list[str]]:
+    """A request's parameters, from its query and its form body."""
+    fields = parse_qs(query)
+    if content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded":
+        for name, values in parse_qs(body.decode("utf-8", "replace")).items():
+            fields.setdefault(name, []).extend(values)
+    return fields
+
+
 def lyrics_song(path: str, query: str, body: bytes, content_type: str) -> str | None:
     """The song id of a `getLyricsBySongId` request, from its query or its form body; else None."""
     return request_id(LYRICS_ENDPOINTS, path, query, body, content_type)
@@ -147,14 +315,18 @@ def playlist_read(path: str, query: str, body: bytes, content_type: str) -> str 
     return request_id(PLAYLIST_ENDPOINTS, path, query, body, content_type)
 
 
+def create_name(path: str, query: str, body: bytes, content_type: str) -> str | None:
+    """The new playlist's name of a `createPlaylist` request, from its query or form body; else None."""
+    if not path.startswith("/rest/") or path[len("/rest/"):] not in CREATE_ENDPOINTS:
+        return None
+    names = request_fields(query, body, content_type).get("name") or []
+    return names[0] if names else None
+
+
 def request_id(endpoints: set[str], path: str, query: str, body: bytes, content_type: str) -> str | None:
     if not path.startswith("/rest/") or path[len("/rest/"):] not in endpoints:
         return None
-    fields = parse_qs(query)
-    if content_type.split(";", 1)[0].strip().lower() == "application/x-www-form-urlencoded":
-        for name, values in parse_qs(body.decode("utf-8", "replace")).items():
-            fields.setdefault(name, []).extend(values)
-    ids = fields.get("id") or []
+    ids = request_fields(query, body, content_type).get("id") or []
     return ids[0] if ids else None
 
 
@@ -182,10 +354,29 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if parts.path.startswith("/__dulcet/"):
             self._control(parts.path, parse_qs(parts.query))
             return
+        state = self.server.state
+        entry = None
+        if parts.path.startswith("/rest/"):
+            endpoint = rest_endpoint(parts.path)
+            entry = state.record(endpoint, request_fields(parts.query, body, self.headers.get("Content-Type", "")))
+            if not state.admit(endpoint):
+                state.answered(entry, 0)
+                self._drop()
+                return
+            gate = state.hold_gate(entry)
+            if gate is not None:
+                gate.wait(HOLD_LIMIT_SECONDS)
+            if state.matches("fail", entry):
+                print(f"LYRICS FAULT PROXY failed {parts.path} by rule", flush=True)
+                self._send_status(500)
+                state.answered(entry, 500)
+                return
         song = lyrics_song(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
-        if self.server.state.should_fail(song):
+        if state.should_fail(song):
             print(f"LYRICS FAULT PROXY failed {parts.path}", flush=True)
             self._send_json(500, {"error": "lyrics read failed by the fault proxy"})
+            if entry is not None:
+                state.answered(entry, 500)
             return
         playlist = playlist_read(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
         gate = self.server.state.gate(playlist)
@@ -193,7 +384,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             released = gate.wait(HOLD_LIMIT_SECONDS)
             self.server.state.passed(playlist, released)
             print(f"LYRICS FAULT PROXY held {parts.path} until {'released' if released else 'the limit'}", flush=True)
-        self._forward(body)
+        name = create_name(parts.path, parts.query, body, self.headers.get("Content-Type", ""))
+        status = self._forward(body, lose_answer=self.server.state.create_forwarded(name))
+        if entry is not None:
+            state.answered(entry, status)
 
     def _control(self, path: str, query: dict[str, list[str]]) -> None:
         if path == "/__dulcet/health":
@@ -201,6 +395,29 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         if path in {"/__dulcet/playlist-hold", "/__dulcet/playlist-observations"}:
             self._playlist_control(path, query)
+            return
+        if path in {"/__dulcet/create-answer-loss", "/__dulcet/create-observations"}:
+            self._create_control(path, query)
+            return
+        if path == "/__dulcet/requests":
+            since = (query.get("since") or ["0"])[0]
+            if not since.isdigit():
+                self._send_json(400, {"error": "since must be a log index"})
+                return
+            self._send_json(200, self.server.state.requests(int(since)))
+            return
+        if path == "/__dulcet/rule":
+            self._rule_control(query)
+            return
+        if path == "/__dulcet/outage":
+            if self.command == "POST":
+                state = (query.get("state") or [""])[0]
+                if state not in {"on", "off"}:
+                    self._send_json(400, {"error": "state must be on or off"})
+                    return
+                self.server.state.set_outage(state == "on")
+                print(f"LYRICS FAULT PROXY outage {state}", flush=True)
+            self._send_json(200, self.server.state.outage_observations())
             return
         song = (query.get("song") or [""])[0]
         if not song:
@@ -219,6 +436,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"error": "unknown control"})
 
+    def _rule_control(self, query: dict[str, list[str]]) -> None:
+        if self.command != "POST":
+            self._send_json(404, {"error": "unknown control"})
+            return
+        action = (query.get("action") or [""])[0]
+        state = (query.get("state") or [""])[0]
+        endpoint = (query.get("endpoint") or [""])[0]
+        if action not in {"hold", "fail"} or state not in {"on", "off"} or (state == "on") != bool(endpoint):
+            self._send_json(400, {"error": "action must be hold or fail; state on needs an endpoint, state off takes none"})
+            return
+        list_type = (query.get("type") or [None])[0] if state == "on" else None
+        self.server.state.set_rule(action, endpoint if state == "on" else None, list_type)
+        print(f"LYRICS FAULT PROXY rule {action} {state}", flush=True)
+        self._send_json(200, self.server.state.rule_observations())
+
     def _playlist_control(self, path: str, query: dict[str, list[str]]) -> None:
         playlist = (query.get("playlist") or [""])[0]
         if not playlist:
@@ -235,7 +467,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.server.state.hold(playlist, state == "on")
         self._send_json(200, self.server.state.playlist_observations(playlist))
 
-    def _forward(self, body: bytes) -> None:
+    def _create_control(self, path: str, query: dict[str, list[str]]) -> None:
+        name = (query.get("name") or [""])[0]
+        if not name:
+            self._send_json(400, {"error": "name is required"})
+            return
+        if path == "/__dulcet/create-answer-loss":
+            if self.command != "POST":
+                self._send_json(404, {"error": "unknown control"})
+                return
+            state = (query.get("state") or [""])[0]
+            if state not in {"on", "off"}:
+                self._send_json(400, {"error": "state must be on or off"})
+                return
+            self.server.state.lose_create(name, state == "on")
+        self._send_json(200, self.server.state.create_observations(name))
+
+    def _forward(self, body: bytes, lose_answer: bool = False) -> int:
+        """Forwards the request and relays the answer -- or, with `lose_answer`, a gateway's 502 in
+        its place; returns the status the app got."""
         upstream = http.client.HTTPConnection(self.server.upstream_host, self.server.upstream_port, timeout=60)
         try:
             headers = {
@@ -245,6 +495,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             headers["Host"] = f"{self.server.upstream_host}:{self.server.upstream_port}"
             upstream.request(self.command, self.path, body=body or None, headers=headers)
             response = upstream.getresponse()
+            if lose_answer:
+                # The server has applied it; the app hears only that a gateway failed.
+                response.read()
+                print(f"LYRICS FAULT PROXY lost the answer to {urlsplit(self.path).path}", flush=True)
+                page = b"<html><body>502 Bad Gateway</body></html>"
+                self.send_response(502, "Bad Gateway")
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(page)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(page)
+                return 502
             self.send_response(response.status, response.reason)
             length = response.getheader("Content-Length")
             for name, value in response.getheaders():
@@ -261,6 +523,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
             if length is None:
                 self.close_connection = True
+            return response.status
         except (OSError, http.client.HTTPException) as error:
             # The kind only: an exception's text can carry the request, and so its credentials.
             print(f"LYRICS FAULT PROXY upstream error {type(error).__name__}", flush=True)
@@ -269,8 +532,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self._send_json(502, {"error": "upstream unavailable"})
             except OSError:
                 pass
+            return 502
         finally:
             upstream.close()
+
+    def _drop(self) -> None:
+        """Resets the connection with no answer: a zero linger makes the handler's close a reset."""
+        self.close_connection = True
+        with contextlib.suppress(OSError):
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+
+    def _send_status(self, status: int) -> None:
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send_json(self, status: int, value: object) -> None:
         data = json.dumps(value, separators=(",", ":")).encode()

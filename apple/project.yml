@@ -147,6 +147,8 @@ targets:
     platform: macOS
     sources:
       - DulcetMacTests
+      # The counted reader proofs, shared with the iOS and iPadOS app-host bundle.
+      - DulcetAppleAppHostTests/DulcetReaderCountedProofs.swift
     dependencies:
       - target: DulcetMac
       - package: DulcetKit

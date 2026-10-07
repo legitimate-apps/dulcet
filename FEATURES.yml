@@ -648,15 +648,10 @@
       "conformance": ["CONF-76", "CONF-77", "CONF-82", "CONF-86", "CONF-87"],
       "platforms": {
         "macos": {
-          "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-76": "The macOS app-host proof observes the cached paint with no loading state, the grid-only header offline and online and the never-seen album unavailable, but counts no request, so publishing before any request is not observed.",
-            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test in :core:macosArm64Test, which counts no request through this app; no test drives the home screen's rows through this app."
-          },
+          "status": "shipped",
           "evidence": [
             {
-              "observes": "inside the macOS app host, over the production reader session, Kotlin facade and database against the disposable server, a connected launch publishes the albums live and the production root renders a tile the reader published; a relaunch with the account saved opens device-only, and its first album-list and album-page publications are what this device saw, cached offline, in the order seen, with no loading state; offline, an album seen only in the grid shows its cached header with its tracks unavailable and an album never seen is unavailable; Reconnect brings the library live in place, where the grid-only album paints its cached header with its tracks loading before they arrive live. No request is counted",
+              "observes": "inside the macOS app host, over the production reader session, Kotlin facade and database against the disposable server, a connected launch publishes the albums live and the production root renders a tile the reader published; a relaunch with the account saved opens device-only, and its first album-list and album-page publications are what this device saw, cached offline, in the order seen, with no loading state; offline, an album seen only in the grid shows its cached header with its tracks unavailable and an album never seen is unavailable; Reconnect brings the library live in place, where the grid-only album paints its cached header with its tracks loading before they arrive live. Its requests are counted by the CONF-76, CONF-77 and CONF-86 rows: the relaunch paints with no request sent, a cached open publishes while its read is held unanswered, a reconnect sends the star made offline first and once, then getMusicFolders and getScanStatus, then home's four row reads and nothing else (no download exists, so there is no downloaded album to recheck), and with the favourites row failed and most played held the other rows go live on their own",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacAccountConnectAppTest/readerLibraryPaintsLiveThenReopensFromWhatThisDeviceSaw"
@@ -672,22 +667,30 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
+            },
+            {
+              "conformance": "CONF-76",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacReaderCountedAppTest/conf76ACachedOpenPublishesBeforeAnyAnswerThroughTheHostedMacApp"
+            },
+            {
+              "conformance": "CONF-77",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacReaderCountedAppTest/conf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseThroughTheHostedMacApp"
+            },
+            {
+              "conformance": "CONF-86",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacReaderCountedAppTest/conf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveThroughTheHostedMacApp"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
-          },
-          "reason": "The macOS app-host proof runs the production reader session, Kotlin facade and database against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier. Its credential store is in memory, because an ad-hoc signed host cannot reach the data-protection Keychain, so what it proves starts at the store boundary. It reads publications at the facade boundary and renders one tile through the production root; it does not drive the library screens by keyboard or pointer. CONF-82 and CONF-87 run as the core reader's own conformance tests on macOS (macosArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
+          "reason": "The macOS app-host proof runs the production reader session, Kotlin facade and database against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier. Its credential store is in memory, because an ad-hoc signed host cannot reach the data-protection Keychain, so what it proves starts at the store boundary. It reads publications at the facade boundary and renders one tile through the production root; it does not drive the library screens by keyboard or pointer. CONF-76, CONF-77 and CONF-86 are counted through the hosted app at the fault proxy in front of the disposable server. CONF-82 and CONF-87 run as the core reader's own conformance tests on macOS (macosArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "ios": {
-          "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-76": "The iPhone proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
-            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on the iPhone simulator (compact, tab navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
@@ -706,22 +709,30 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
+            },
+            {
+              "conformance": "CONF-76",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPhone"
+            },
+            {
+              "conformance": "CONF-77",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPhone"
+            },
+            {
+              "conformance": "CONF-86",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPhone"
             }
           ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
-          },
-          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
+          "reason": "The iPhone UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-76, CONF-77 and CONF-86 are counted through this app on the iPhone simulator at the fault proxy in front of the disposable server, by the app-hosted reader tests. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
         },
         "ipados": {
-          "status": "partial",
-          "unevidenced_conformance": {
-            "CONF-76": "The iPad proof observes a saved account reopening into what this device saw and the album page saying so, but counts no request and does not assert that no loading state was shown, that a grid-only album paints its header first online, or that a never-opened album is unavailable offline.",
-            "CONF-77": "No Apple test counts the requests a reconnect makes. The app proofs observe only that Reconnect brings the library back live in place, not that it performs the outbox flush, epoch read, visible-screen revalidation and downloaded-album recheck and nothing else.",
-            "CONF-86": "Home rows publishing independently, one failing row leaving the others live, is exercised by the Apple facade's core test, which apple-ci runs on macOS only, never on an iOS simulator; no test drives the home screen's rows through this app."
-          },
+          "status": "shipped",
           "evidence": [
             {
               "observes": "on the iPad simulator (regular width, sidebar navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
@@ -740,18 +751,51 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "ReaderWindowConformanceTest/conf87LookAheadStaysWithin24PerSettledViewportAnd2InFlightFetchesNothingWhileFlingingOrConstrainedAndALookedAheadAlbumOpensWithZeroRequests"
+            },
+            {
+              "conformance": "CONF-76",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf76ACachedOpenPublishesBeforeAnyAnswerOnIPadOS"
+            },
+            {
+              "conformance": "CONF-77",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf77AReconnectFlushesReadsTheEpochRevalidatesTheVisibleScreenAndNothingElseOnIPadOS"
+            },
+            {
+              "conformance": "CONF-86",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKeychainIOSTests/testConf86HomeRowsPublishIndependentlyAndOneFailureLeavesTheOthersLiveOnIPadOS"
+            }
+          ],
+          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-76, CONF-77 and CONF-86 are counted through this app on the iPad simulator at the fault proxy in front of the disposable server, by the app-hosted reader tests. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64, the universal target this iPad app runs): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
+        },
+        "tvos": {
+          "status": "partial",
+          "unevidenced_conformance": {
+            "CONF-76": "The Apple TV proof browses a connected library only: it never relaunches into what this device saw, never goes offline and counts no request, so publishing before any request is not observed.",
+            "CONF-77": "No Apple test counts the requests a reconnect makes, and the Apple TV proof never reconnects.",
+            "CONF-82": "Window tearing, rebasing, scanning mode and anchor keeping are exercised by core tests of the reader; apple-ci runs the core's tests on macOS only, never on a tvOS simulator (the tvOS simulator runs the core-conformance suite only), and the albums grid the proof walks holds eight albums, so it never spans a second page.",
+            "CONF-86": "The proof observes Home's Recently Added shelf filling from the server, tile for tile in the server's newest order, but not that rows publish independently or that one failing row leaves the others live.",
+            "CONF-87": "Bounded detail look-ahead is exercised by core tests of the reader, which never run on a tvOS simulator; the proof observes no look-ahead read."
+          },
+          "evidence": [
+            {
+              "observes": "on Apple TV, driven by the remote against the disposable server and asserted against the server's own reads, Library opens on Home and its Recently Added shelf fills with the server's newest albums in order; Albums fills its grid and Right walks it in the server's alphabetical order to an album, whose page shows the server's tracks in order; Select on a later track plays it, Now Playing names it and its album and its position advances; Back pops the album page and puts focus on the album that opened it, in the Albums grid; Artists lists the server's artists, an artist's page shows its albums in the server's order and is reached by the remote, a control of the album opened from it holds focus before Back is pressed, and Back returns focus to that album and then to the artist's row in Artists. No request is counted",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
             "blocked_on": "apple-reader-request-counting-app-proofs",
-            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed, and no Apple test drives home rows (CONF-86) through this app. Until such tests exist no workflow, job or test can be named."
+            "reason": "No Apple harness counts the reader's requests: the app proofs talk to the disposable server directly, with no loopback forwarder between them, so publish-before-request (CONF-76) and the reconnect budget (CONF-77) cannot be observed; no Apple TV proof relaunches offline or reconnects, none drives home rows failing independently (CONF-86), and the core reader tests that exercise window tearing and rebasing (CONF-82) and look-ahead (CONF-87) never run on a tvOS simulator. Until such tests exist no workflow, job or test can be named."
           },
-          "reason": "The iPad UI proof runs the production app on its own simulator destination against the disposable server in apple-ci and exports its JUnit to the required apple-ci execution verifier; it fails on any other idiom or window class, so it evidences this cell only. It observes what the screen shows, not the reader's publications. CONF-82 and CONF-87 run as the core reader's own conformance tests on the iOS simulator (iosSimulatorArm64, the universal target this iPad app runs): the production LibraryReader against a server scripted inside the test, because the disposable corpus (eight albums, a window paged at 500) can reach neither, with every clause checked against a production mutant. They evidence the reader this app reads through, not a screen."
-        },
-        "tvos": {
-          "status": "planned",
-          "reason": "The Apple TV app reads the library through the reader (spec 16.18), but no test drives the TV library on the reader against a server, by the remote or otherwise, so no evidence exists for any declared id. The tvOS UI proofs in apple-ci cover search, the section bar and Now Playing, not library browse."
+          "reason": "The Apple TV UI proof runs the production app on a tvOS simulator against the disposable server in apple-ci's conformance job and exports its JUnit to the required apple-ci execution verifier. It drives every step by the remote and observes what the screen shows and where focus is, not the reader's publications."
         },
         "android": {
           "status": "shipped",
@@ -901,14 +945,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacRatingsAndPlaylistsAppTest/nowPlayingStarsRateTheTrackOnTheServerThroughTheHostedMacApp"
+            },
+            {
+              "conformance": "CONF-84",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"
+            },
+            {
+              "observes": "the core's production reader session in the macosArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "mac-heart-ui-proof-and-conf84-star-half",
-            "reason": "The Mac rating proof executed and passed, so the rating UI proof no longer blocks the cell. Two things remain. No test drives the Mac app's heart, the toolbar's or a row's, against the server, so favouriting itself is not driven through the Mac app. And the cell cites no a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it."
+            "blocked_on": "mac-heart-ui-proof",
+            "reason": "The Mac rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's macosArm64 core-conformance runtime in apple-ci against the disposable server. What remains: no test drives the Mac app's heart, the toolbar's or a row's, against the server, so favouriting itself is not driven through the Mac app."
           },
-          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. No test drives the Mac app's heart against the server and no row labelled CONF-84 is cited, so the cell is partial."
+          "reason": "The Mac app offers a heart on album, artist and track rows and, for the playing track, in the Now Playing window's toolbar; the footer never draws a second one. What runs for the heart is the DulcetKit model on macOS: the heart is offered only while the reader holds the playing track's account, and it pends, holds and settles as a row's does. The five stars beside the heart are driven through the Mac app hosted over the production root view against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): each star is clicked where it is drawn, the rating shows at once and the server's userRating reads it back, a rating written to the server by another client is what the reopened app shows, and a click on the star shown removes it. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. No test drives the Mac app's heart against the server, so the cell is partial."
         },
         "ios": {
           "status": "partial",
@@ -936,14 +992,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone"
+            },
+            {
+              "conformance": "CONF-84",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"
+            },
+            {
+              "observes": "the core's production reader session in the iosSimulatorArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "conf84-star-half-evidence-on-apple",
-            "reason": "The iPhone rating proof executed and passed, so the rating UI proof no longer blocks the cell. What remains is a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it. Artist and track-row hearts are driven by no wired UI proof."
+            "blocked_on": "iphone-artist-and-track-row-hearts-ui-proof",
+            "reason": "The iPhone rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's iosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: artist and track-row hearts are driven by no wired UI proof; only the album's heart and Now Playing's are."
           },
-          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Artist and track-row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main."
+          "reason": "apple-ci drives the iPhone app on a simulator against the disposable server: Now Playing's heart fills with the tap and the star, then the unstar, reach the server for the playing track, read back over /rest. The five stars are driven the same way (testNowPlayingStarsRateTheTrackOnTheServerOnIPhone): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched Now Playing shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The heart is the rows' heart through the same session (DulcetKit), so a pending, held or saved change reads the same on the player as on the track's row. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. Artist and track-row hearts are not driven by a wired UI proof, so the cell is partial. The UI proofs run in the conformance leg, which a pull request does not run; they are resolved on main."
         },
         "ipados": {
           "status": "partial",
@@ -965,14 +1033,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS"
+            },
+            {
+              "conformance": "CONF-84",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"
+            },
+            {
+              "observes": "the core's production reader session in the iosSimulatorArm64 (the iOS and iPadOS runtime) core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "conf84-star-half-evidence-on-apple",
-            "reason": "The iPad rating proof executed and passed, so the rating UI proof no longer blocks the cell. What remains is a row labelled CONF-84, which a shipped cell must cite for every declared id. The core's RatingConformanceTest runs in this platform's core-conformance runtime and describes itself as CONF-84's rating half (a rating shows before its send, is sent once and held by the server, compacts offline 5 then 2 to one send of 2, and 0 removes it); nothing exported by an evidence-verified job evidences the star half, that a revalidation which lands before the send does not remove the star and that the echoed value is adopted, which the core's MutationOutboxTest covers in :core:macosArm64Test, whose results no evidence-verified job exports (library.browse records the same limit). Either export that evidence for Apple or add an app-level proof of it. Artist and track-row hearts are driven by no wired UI proof."
+            "blocked_on": "ipad-artist-and-track-row-hearts-ui-proof",
+            "reason": "The iPad rating proof executed and passed, so the rating UI proof no longer blocks the cell. The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's iosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: artist and track-row hearts are driven by no wired UI proof; only the album's heart and Now Playing's are."
           },
-          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. Artist and track-row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. Resolved on main, as the iPhone proof is."
+          "reason": "apple-ci runs the Now Playing heart proof on an iPad simulator as its own run, against the disposable server; the iPad test fails on an iPhone's window class, so an iPhone run does not evidence this cell. The five stars are driven on an iPad simulator in their own test (testNowPlayingStarsRateTheTrackOnTheServerOnIPadOS, which fails on an iPhone idiom): a tap on a star shows the rating at once and the server's userRating reads it back, a rating another client wrote is what a relaunched player shows, and a tap on the star shown removes it. An album favourited live is shown at once, reaches the server and is still shown after a relaunch with the account saved. The new proofs executed and passed, one testcase with no failure and none skipped each, in main's apple-ci push run on 054b6656. The CONF-84 row is the core's star and rating conformance in this platform's core-conformance runtime. Artist and track-row hearts are not driven by a wired UI proof, so the cell is partial. Resolved on main, as the iPhone proof is."
         },
         "tvos": {
           "status": "partial",
@@ -980,10 +1060,14 @@
             {"observes": "on Apple TV, driven by the remote against the disposable server, Down from the transport reaches the playing track's heart, Select fills it at once and the star reaches the server for that track, and Select again empties it and unstars the track, with focus kept on the heart; and Right from the heart moves across the five stars in order, Select on the third rates the track 3 and the server's own userRating reads back 3, and Select on the star shown removes the rating and the server reads back 0", "workflow": "apple-ci", "job": "apple-ci",
              "test": "DulcetTVUITests/testNowPlayingHeartAndLyricsAreReachedAndPressedByRemote"},
             {"observes": "the Apple TV player's footer offers the heart, its stars, then Lyrics, and neither heart nor stars while the reader does not hold the playing track's account", "workflow": "apple-ci", "job": "apple-ci",
-             "test": "DulcetKitTVOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"}
+             "test": "DulcetKitTVOSTests/theNowPlayingFooterOffersTheHeartAndLyricsOnEveryApplePlatform"},
+            {"conformance": "CONF-84", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "StarConformanceTest/conf84AStarShowsWithTheTapSurvivesARevalidationBeforeItsSendAndTheEchoIsAdopted"},
+            {"observes": "the core's production reader session in the tvosSimulatorArm64 core-conformance runtime, against the disposable server: a rating shows in the next publication before its send, is sent once and held by the server, offline 5 then 2 is sent once as 2 on reconnect, and 0 removes it on the server, each read back raw", "workflow": "apple-ci", "job": "apple-ci",
+             "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"}
           ],
-          "promotion_condition": {"status": "blocked", "blocked_on": "tvos-conf84-row-and-row-hearts-ui-proof", "reason": "The Apple TV remote proof now covers both halves of what the player offers: the heart (star and unstar read back) and the stars (a press rates the track and the server's userRating reads back, a second press on the star shown reads back 0). It executed and passed in three green apple-ci runs on main (the apple-conformance job, junit written by the tvos-now-playing phase, one testcase, no failure and none skipped, with the test's own rating line reporting rated=3 before=0). The cell stays partial for two reasons that remain. It cites no row labelled CONF-84, which a shipped cell must for every declared id: the core's RatingConformanceTest runs in the tvOS simulator's core-conformance runtime, but it is not cited here, and nothing yet says which test evidences the star half of CONF-84 on Apple TV. And album, artist and row hearts are not driven by a wired UI proof on Apple TV; only the Now Playing heart and stars are."},
-          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server, and the five stars are crossed in order, one pressed and the server's userRating read back as 3, then the same star pressed again and read back as 0. It is the rows' heart through the same session. Album, artist and row hearts are not driven by a wired UI proof, and no row labelled CONF-84 is cited, so the cell is partial. Resolved on main."
+          "promotion_condition": {"status": "blocked", "blocked_on": "tvos-row-hearts-ui-proof", "reason": "The Apple TV remote proof now covers both halves of what the player offers: the heart (star and unstar read back) and the stars (a press rates the track and the server's userRating reads back, a second press on the star shown reads back 0). It executed and passed in three green apple-ci runs on main (the apple-conformance job, junit written by the tvos-now-playing phase, one testcase, no failure and none skipped, with the test's own rating line reporting rated=3 before=0). The CONF-84 row is cited: the core's StarConformanceTest (the star half) and RatingConformanceTest (the rating half) run in this platform's tvosSimulatorArm64 core-conformance runtime in apple-ci against the disposable server. What remains: album, artist and row hearts are not driven by a wired UI proof on Apple TV; only the Now Playing heart and stars are."},
+          "reason": "apple-ci drives the Apple TV app on a simulator with the remote alone: the heart is reached under the transport and pressed, and the star and the unstar are read back from the disposable server, and the five stars are crossed in order, one pressed and the server's userRating read back as 3, then the same star pressed again and read back as 0. It is the rows' heart through the same session. The CONF-84 row is the core's star and rating conformance in the tvOS simulator's core-conformance runtime. Album, artist and row hearts are not driven by a wired UI proof, so the cell is partial. Resolved on main."
         },
         "android": {
           "status": "shipped",
@@ -1521,14 +1605,20 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacRatingsAndPlaylistsAppTest/everyPlaylistEditReachesTheServerThroughTheHostedMacApp"
+            },
+            {
+              "observes": "through the Mac app hosted over the production root view against the disposable server, a playlist made for the run in an order unlike its album's is opened from the Playlists list and its Play pressed with nothing playing: the playlist's own first entry becomes current, the queue holds the playlist's entries in the playlist's order with the first current, and its media time advances",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMacRatingsAndPlaylistsAppTest/aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "mac-playlist-play-ui-proof",
-            "reason": "The Mac playlist edit proof executed and passed: create, add an album, add a track, remove, move up, rename, delete and a failed rename, each read back from the server. What remains of this cell's original condition is play: no test opens a playlist on the Mac and plays it, so playing in the playlist's own order, as the iPhone proof does, is not driven through the Mac app. A drag reorder is not driven either; the Move Up accessibility action is."
+            "blocked_on": "mac-playlist-play-proof-first-main-run",
+            "reason": "The Mac playlist edit proof executed and passed: create, add an album, add a track, remove, move up, rename, delete and a failed rename, each read back from the server. Play now has a proof, aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp: a playlist opened on the Mac plays in its own order, the queue read back, wired into the conformance leg. What remains is its first passing run on main, which a pull request does not run. A drag reorder is not driven either; the Move Up accessibility action is."
           },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. No test opens a playlist on the Mac and plays it, so playing in the playlist's own order is not driven through the Mac app, and the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the macosArm64 core-conformance runtime against the disposable reference server. The Mac shell's Playlists section, playlist page, Add to Playlist and edit controls are built on that core, and their presentation rules run as DulcetKit tests on macOS. The Mac app's edits are driven through the production root view hosted in the app, against the disposable server (DulcetMacRatingsAndPlaylistsAppTest, in the conformance leg, which a pull request does not run): create, add an album, add a track, remove by position, move, rename, delete and a failed rename, the server read back after each. The page's Rename and Delete menu is a menu button named More that the test opens by an accessibility press. Reorder is driven by the entry's Move Up accessibility action, the path VoiceOver uses, not by a drag. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. Playing a playlist in its own order is driven through the Mac app by aPlaylistPlaysInItsOwnOrderThroughTheHostedMacApp in the same leg; until it has passed on main the cell stays partial."
         },
         "ios": {
           "status": "partial",
@@ -1574,21 +1664,27 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPhone"
+            },
+            {
+              "observes": "through the iPhone app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone"
             }
           ],
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "iphone-playlist-pending-state-ui-proof",
-            "reason": "The iPhone edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server, beside the existing open, play-in-order and rename proof. What remains of this cell's original condition is the pending state: no test makes an edit while the server is unreachable and observes the iPhone app show it pending and send it at reconnect."
+            "blocked_on": "iphone-playlist-pending-proof-first-main-run",
+            "reason": "The iPhone edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server, beside the existing open, play-in-order and rename proof. The pending state now has a proof, testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone: a rename made during the fault proxy's outage shows pending and reaches the server at the reconnect, wired into the conformance leg. What remains is its first passing run on main, which a pull request does not run."
           },
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values only, not driven through the UI, so the cell stays partial."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the iPhone app is driven on a simulator: a playlist opens from Library, plays in its own order, and a rename reaches the server; and every edit is made where a person makes it and read back from the server (testEveryPlaylistEditReachesTheServerOnIPhone): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit. The new proof executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The pending state, an edit made while the server is unreachable, is driven through the iPhone app by testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone in the same leg; until it has passed on main the cell stays partial."
         },
         "ipados": {
           "status": "partial",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "ipad-playlist-play-in-order-and-pending-state-ui-proof",
-            "reason": "The iPad edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server. What remains is what the iPhone cell also requires: no test plays a playlist in its own order on the iPad, and no test makes an edit while the server is unreachable and observes the iPad app show it pending and send it at reconnect."
+            "blocked_on": "ipad-playlist-play-and-pending-proofs-first-main-run",
+            "reason": "The iPad edit proof executed and passed: create, Add to Playlist for an album and a track, removal, reorder, rename, delete and a failed edit, each read back from the server. Both remaining parts now have proofs that fail on an iPhone idiom, wired into the conformance leg: testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS plays a playlist in its own order on the iPad, and testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS shows a rename made during the fault proxy's outage pending, then sent at the reconnect. What remains is their first passing run on main, which a pull request does not run."
           },
           "evidence": [
             {
@@ -1626,13 +1722,68 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testEveryPlaylistEditReachesTheServerOnIPadOS"
+            },
+            {
+              "observes": "the iPad app in its regular-width window opens a server playlist from Library > Playlists, Play starts the playlist's own first entry rather than its album's, and a rename made on the page shows at once and is read back from the server",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS"
+            },
+            {
+              "observes": "through the iPad app on a simulator, connected through the fault proxy in front of the disposable server, a playlist made for the run is renamed on its page during the proxy's outage, which drops every request unanswered: the page shows the new name at once, Playlists says the playlist has changes not yet on the server, the server still holds the old name and the proxy dropped the rename's send; once the outage ends a return to the foreground reconnects, the server holds the new name read back directly, the proxy forwarded the rename after the outage, and the pending words go away",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetiOSUITests/testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS"
             }
           ],
-          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order is driven on the iPhone and not on the iPad, and the pending state, an edit queued while the server is unreachable, is covered as core behaviour and as presentation values, not driven through the UI."
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the iosSimulatorArm64 core-conformance runtime against the disposable reference server. The iPad shell shares the iPhone's playlist views, and their presentation rules run as DulcetKit tests on an iPad simulator. The iPad app's playlist page and every edit are driven on an iPad simulator in its regular-width window, against the disposable server (testEveryPlaylistEditReachesTheServerOnIPadOS, which fails on an iPhone idiom): create, Add to Playlist for an album and for a track, removal by position, reorder by drag, rename, delete and a failed edit, each read back from the server. It executed and passed, one testcase with no failure and none skipped, in main's apple-ci push run on 054b6656. The UI proof runs in the conformance leg, which a pull request does not run; it is resolved on main. Playing a playlist in its own order and the pending state, an edit made while the server is unreachable, are driven on the iPad by two proofs in the same leg; until they have passed on main the cell stays partial."
         },
         "tvos": {
-          "status": "planned",
-          "reason": "tvOS lists playlists and opens a read-only page that plays; editing is not offered on tvOS. No test drives that surface yet."
+          "status": "partial",
+          "evidence": [
+            {
+              "conformance": "CONF-88",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf88PlaylistWritesOnTheReferenceServer"
+            },
+            {
+              "conformance": "CONF-89",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf89EveryEditThroughTheEditorIsReadBack"
+            },
+            {
+              "conformance": "CONF-90",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf90AStaleIndexIsPreventedNotSent"
+            },
+            {
+              "conformance": "CONF-91",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "PlaylistConformanceTest/conf91AnotherUsersPlaylistIsNotEditable"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server: a press and hold on an album's track row opens its menu, Add to Playlist… opens the chooser, New Playlist… takes a name from the keyboard and Create makes the playlist holding that track; a second track's Add to Playlist… lists that playlist and choosing it appends the track. getPlaylist reads back exactly the first track, then both in the order added, under the same playlist id.",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testATrackIsAddedToANewPlaylistAndThenToThatPlaylistByRemote"
+            },
+            {
+              "observes": "on the Apple TV simulator, by remote against the disposable server through the fault proxy: a create made from the chooser reaches the server and its answer is replaced by a gateway's 502; another client adds a song to it; on the return from the Home screen the app asks whether the playlist named is the person's, Yes, It's Mine keeps it without sending the create again (the proxy counts one create), and a later add from the chooser reaches that same playlist",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetTVUITests/testACreateWhoseAnswerWasLostIsAskedAboutAndKeptByRemote"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "tvos-playlist-page-and-pending-ui-proof",
+            "reason": "No tvOS test opens a playlist from the Library and observes it play in its own order, and none makes an add while the server is unreachable and observes it shown pending and sent at reconnect. Until such tests exist no workflow, job or test can be named for them."
+          },
+          "reason": "apple-ci executes CONF-88 to CONF-91 in the tvosSimulatorArm64 core-conformance runtime against the disposable reference server. In the same job the Apple TV app is driven by remote on a simulator: a track row's press-and-hold menu offers Add to Playlist…, which creates a playlist holding the track and appends a second to it, each read back from the server. A create whose answer was lost is asked about over the screen and kept by remote, with no second create sent. tvOS offers adding to a playlist and creating one, as Apple Music on tvOS does (OBSERVED: the Apple TV user guide on support.apple.com); a playlist tile's menu also offers Delete for the person's own playlist, confirmed first, which no tvOS test drives. Rename, removal and reorder stay on iPhone, iPad and Mac; the playlist page on tvOS lists and plays read-only."
         },
         "android": {
           "status": "shipped",
@@ -1732,13 +1883,43 @@
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aTrackItsAlbumAndAnotherTrackGoIntoANewPlaylistWithTheRemoteAndTheServerHoldsEach"
+            },
+            {
+              "observes": "a create in doubt with one candidate is asked in a dialog with Yes, use that one focused; the remote walks its three controls, and the centre key on it gives the core that candidate and closes the question with nothing left waiting",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/aLoneCandidateIsKeptWithTheRemote"
+            },
+            {
+              "observes": "a create in doubt rebuilt from the outbox with two candidates offers neither as theirs; Decide later closes it sending nothing and the playlist's page then says it waits, and the centre key on its Choose… (focus placed on it) asks again, and None of these — create it gives the core no candidate and the page stops waiting",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/severalCandidatesAreNeverOfferedAndDecideLaterIsAskedAgainFromThePage"
+            },
+            {
+              "observes": "while an answer is out the question's three controls are disabled and Back (sent to the dialog's back dispatcher) keeps the question; an answer the core refuses is said in the dialog with the question kept and focus on Keep, and Back then decides later, sending nothing",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/whileAnAnswerIsOutBackDoesNothingAndARefusalIsSaidWithFocusKept"
+            },
+            {
+              "observes": "a playlist change that did not land is said on the playlist's page in the shared words, the centre key on Dismiss (focus placed on it) clears it, and a change that landed says nothing",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistQuestionTest/aChangeThatDidNotLandIsSaidOnThePageAndDismissed"
+            },
+            {
+              "observes": "over the TV's library entry and the production session, reader and playlist editor, against a loopback server that makes the playlist without the song sent and answers the create 502: Create from a track row's Add to Playlist… sends one create, and once the app returns to the foreground the core's question is presented over the album with Keep focused; Decide later sends nothing and the playlist, opened from Library > Playlists, says it waits; Choose… asks again and Keep closes it with no second create, the page following to the server's playlist, which a saved-state restore after the reader is closed reopens on that id",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvPlaylistCreateInDoubtSessionTest/aCreateWhoseAnswerWasLostIsAskedOverTheScreenAndKeepingItWritesNoSecondPlaylist"
             }
           ],
-          "reason": "The TV app browses and plays playlists: a Playlists grid in the Library and a read-only playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. It adds to playlists through the core editor: Add to Playlist… on a track row's and an album header's queue button opens a chooser of the playlists the account can edit, with New Playlist… first, which creates one from what is being added. Observed against the disposable server and read back from it: a new playlist made from a track, an album appended to it, and a track appended to it (Compose/Robolectric, not a physical-device claim). ASSUMED, not driven on the TV: a new playlist made from an album, the one-choice-per-presentation guard, a refused edit said in the chooser, and the chooser listing only editable playlists; they follow the phone sheet's code. Add to Playlist… is offered only where Play Next is, which needs a bound playback service and a queueable track. Not on the TV: rename, delete, remove and reorder; and a create whose answer was lost has no way to be resolved on the TV, so it stays waiting (the core neither adopts nor resends it), and a playlist change that did not land is not said.",
+          "reason": "The TV app browses and plays playlists: a Playlists grid in the Library and a read-only playlist page that plays, shuffles and plays from an entry, saying whose a playlist is. It adds to playlists through the core editor: Add to Playlist… on a track row's and an album header's queue button opens a chooser of the playlists the account can edit, with New Playlist… first, which creates one from what is being added. Observed against the disposable server and read back from it: a new playlist made from a track, an album appended to it, and a track appended to it (Compose/Robolectric, not a physical-device claim). ASSUMED, not driven on the TV: a new playlist made from an album, the one-choice-per-presentation guard, a refused edit said in the chooser, and the chooser listing only editable playlists; they follow the phone sheet's code. Add to Playlist… is offered only where Play Next is, which needs a bound playback service and a queueable track. A create whose answer was lost is asked about in a dialog over whatever screen is showing, as the tvOS shell asks it, with the phone's choices; Decide later leaves it waiting on the playlist's page, which asks again on Choose…, and a change that did not land is said on the page with Dismiss. These are driven with the remote over a fake core's outbox, as the phone's are, and once end to end over the library entry and the production core against a loopback server that loses a create's answer: the question presented over the screen showing, Decide later, Choose… from the page, Keep, and the page following the local id to the server's. Not on the TV: rename, delete, remove and reorder.",
           "promotion_condition": {
             "status": "blocked",
-            "blocked_on": "androidtv-playlist-in-doubt-question-and-remaining-edits",
-            "reason": "The TV adds and creates through the core editor, driven with key presses and read back from the server. The cell stays partial until the TV resolves a create in doubt and says a change that did not land, and until rename, delete, remove and reorder are offered on the TV or the row is split into add and full editing."
+            "blocked_on": "androidtv-playlist-remaining-edits",
+            "reason": "The TV adds and creates through the core editor, driven with key presses and read back from the server, and asks about a create in doubt and says a change that did not land. The cell stays partial until rename, delete, remove and reorder are offered on the TV or the row is split into add and full editing."
           }
         }
       }

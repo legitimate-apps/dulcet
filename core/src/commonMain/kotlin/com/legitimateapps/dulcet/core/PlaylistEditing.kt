@@ -258,7 +258,8 @@ internal sealed interface PendingPlaylistRow {
          * The playlists the person was told may be what a send in doubt made
          * ([PlaylistEditOutcome.PossibleDuplicate]): the create is not sent again until they choose
          * ([PlaylistEditor.chooseCreated]) or withdraw it. A candidate another create settles leaves
-         * this list, and the person is asked again with those that remain.
+         * this list, and so does one a flush no longer finds listed on the server; the person is asked
+         * again with those that remain, and with none left the create is looked at again.
          */
         val candidates: List<String>? = null,
         /**
@@ -1242,7 +1243,8 @@ internal class PlaylistEditor(
 
     /**
      * Sends every pending playlist change, oldest first, passing over a create that waits for the
-     * person's choice. A refused change is dropped and told; one the server answered for without
+     * person's choice — whose candidates it first checks against the server's list, once
+     * ([recheckWaitingCreates]). A refused change is dropped and told; one the server answered for without
      * applying — or refused access alone, while a ping is answered — stays pending and the flush moves
      * on, until [MAX_FAILURES]; a server that cannot be reached stops the flush with every change kept,
      * and one that refuses the account or asks to wait stops it and is told (the class comment's
@@ -1270,7 +1272,9 @@ internal class PlaylistEditor(
     }
 
     private suspend fun flushLocked(tally: Tally): PlaylistFlushReport {
-        while (reader.canSend) {
+        // A failure of the waiting creates' listing that holds every change stops the flush before any.
+        val stopped = reader.canSend && reader.busyError() == null && !recheckWaitingCreates(tally)
+        while (!stopped && reader.canSend) {
             // The server asked for quiet (a 429): no change begins until the wait has passed. Checked
             // before each row, not once, so a wait the favourites flush's 429 sets meanwhile stops
             // this flush too; a change already under way is not recalled and may finish its requests.
@@ -1296,20 +1300,7 @@ internal class PlaylistEditor(
                 tombstonesProvenUnsent.remove(row.key) ||
                     (!row.cancelled && (outbox.find(row.playlistId, row.kind) as? PendingPlaylistRow.Create)?.cancelled == true)
                 )
-            // A refusal of access holds every change only when the ACCOUNT is refused: one ping asks,
-            // once per flush. Answered, it was this request's own refusal, and fails like one.
-            var error: DomainError = failure
-            val failureClass = when {
-                !failure.refusesAccess -> failure.failureClass()
-                tally.accountAnswers -> PlaylistFailureClass.ThisChange
-                else -> when (val pinged = reader.pingAfterRefusal()) {
-                    null -> PlaylistFailureClass.ThisChange.also { tally.accountAnswers = true }
-                    else -> {
-                        error = pinged
-                        if (pinged.failureClass() == PlaylistFailureClass.Transport) PlaylistFailureClass.Transport else PlaylistFailureClass.Held
-                    }
-                }
-            }
+            val (error, failureClass) = classify(failure, tally)
             when (failureClass) {
                 PlaylistFailureClass.Refused -> {
                     outbox.removeIfUnchanged(outbox.current(row) ?: row)
@@ -1337,21 +1328,11 @@ internal class PlaylistEditor(
                     }
                 }
                 PlaylistFailureClass.Held -> {
-                    tally.stoppedBy = error
-                    // A 429 is told once per run of them, not once per retry. Every 429 this flush
-                    // meets keeps its run going. One for a change withdrawn or undone while its
-                    // request was out, or for a create deleted here meanwhile (a tombstone is not a
-                    // queued change), still sets the wait, but nothing of it is queued: it neither
-                    // begins nor lengthens a run, and is not told.
-                    val tell = if (error is DomainError.Server.Busy) {
-                        val queued = outbox.find(row.playlistId, row.kind)
-                            ?.let { it !is PendingPlaylistRow.Create || !it.cancelled } == true
-                        tally.met429 = true
-                        reader.noteBusy(busyRun, error.retryAfter, count = queued)
-                    } else {
-                        true
-                    }
-                    if (tell) emit(PlaylistEditOutcome.Held(row.playlistId, row.kind, error))
+                    // One for a change withdrawn or undone while its request was out, or for a create
+                    // deleted here meanwhile (a tombstone is not a queued change), is not queued.
+                    val queued = outbox.find(row.playlistId, row.kind)
+                        ?.let { it !is PendingPlaylistRow.Create || !it.cancelled } == true
+                    hold(row.playlistId, row.kind, error, queued, tally)
                     break
                 }
                 PlaylistFailureClass.Transport -> {
@@ -1366,6 +1347,37 @@ internal class PlaylistEditor(
             tally.sent, tally.saved, tally.refused, tally.changedElsewhere, tally.diverged, tally.deferred.size,
             tally.stoppedBy, pending,
         )
+    }
+
+    /**
+     * How a request's [failure] bears on the flush, and the error that tells it. A refusal of access
+     * holds every change only when the ACCOUNT is refused: one ping asks, once per flush. Answered, it
+     * was this request's own refusal, and fails like one.
+     */
+    private suspend fun classify(failure: DomainError, tally: Tally): Pair<DomainError, PlaylistFailureClass> = when {
+        !failure.refusesAccess -> failure to failure.failureClass()
+        tally.accountAnswers -> failure to PlaylistFailureClass.ThisChange
+        else -> when (val pinged = reader.pingAfterRefusal()) {
+            null -> (failure to PlaylistFailureClass.ThisChange).also { tally.accountAnswers = true }
+            else -> pinged to if (pinged.failureClass() == PlaylistFailureClass.Transport) PlaylistFailureClass.Transport else PlaylistFailureClass.Held
+        }
+    }
+
+    /**
+     * Every change is held by [error], met on a request for [playlistId]'s [kind]. A 429 is told once
+     * per run of them, not once per retry, and every 429 this flush meets keeps its run going; one for
+     * a change no longer [queued] still sets the wait, but neither begins nor lengthens a run, and is
+     * not told.
+     */
+    private fun hold(playlistId: String, kind: PlaylistRowKind, error: DomainError, queued: Boolean, tally: Tally) {
+        tally.stoppedBy = error
+        val tell = if (error is DomainError.Server.Busy) {
+            tally.met429 = true
+            reader.noteBusy(busyRun, error.retryAfter, count = queued)
+        } else {
+            true
+        }
+        if (tell) emit(PlaylistEditOutcome.Held(playlistId, kind, error))
     }
 
     private class Tally {
@@ -1790,6 +1802,44 @@ internal class PlaylistEditor(
         return settled
     }
 
+    /**
+     * Creates waiting for the person's choice, checked against the server's list at the start of each
+     * flush that may send — not while a 429's wait runs — since no flush sends one while it waits
+     * (§18.6). One listing serves every waiting create; a create it leaves with no candidate is listed
+     * for again when it is delivered. A candidate the server no longer lists — deleted
+     * there, by another client — leaves the choice. A create left with candidates is asked again with
+     * those, never adopting one the person passed over; one left with none waits no longer, and this
+     * flush looks for what its send made again, as for any create in doubt. A listing that fails
+     * changes no choice. A failure that holds every change — a 429, the account refused, the server
+     * unreachable — stops the flush as a change's own would, told for the oldest waiting create, and
+     * false is returned; any other is the listing's own, and the flush goes on.
+     */
+    private suspend fun recheckWaitingCreates(tally: Tally): Boolean {
+        val waiting = outbox.all().filter { it is PendingPlaylistRow.Create && it.awaitsChoice }
+        if (waiting.isEmpty()) return true
+        val listed = try {
+            listPlaylists().map { it.id }.toSet()
+        } catch (thrown: LibraryRequestFailure) {
+            val (error, failureClass) = classify(thrown.error, tally)
+            when (failureClass) {
+                PlaylistFailureClass.Held -> hold(waiting.first().playlistId, PlaylistRowKind.Create, error, queued = true, tally)
+                PlaylistFailureClass.Transport -> tally.stoppedBy = error
+                PlaylistFailureClass.Refused, PlaylistFailureClass.ThisChange -> return true
+            }
+            return false
+        }
+        for (row in waiting.filterIsInstance<PendingPlaylistRow.Create>()) {
+            val next = rewriteCurrent(row) { current ->
+                if (!current.awaitsChoice || current.candidates!!.all { it in listed }) return@rewriteCurrent current
+                current.copy(candidates = current.candidates.filter { it in listed }.takeIf { it.isNotEmpty() })
+            } ?: continue
+            if (next.candidates == row.candidates) continue
+            changed(setOf(row.playlistId))
+            if (next.awaitsChoice) offer(PlaylistEditOutcome.PossibleDuplicate(next.playlistId, next.sentName ?: next.name, next.candidates!!))
+        }
+        return true
+    }
+
     /** Whether the create [localId] was deleted on this device after its send. */
     private fun deletedHere(localId: String): Boolean =
         (outbox.find(localId, PlaylistRowKind.Create) as PendingPlaylistRow.Create?)?.cancelled == true
@@ -2006,7 +2056,7 @@ internal class PlaylistEditor(
     ): SentResponse = try {
         slot?.sendRepeatedChecked(endpoint, parameters, formPost) ?: reader.sendRepeatedChecked(endpoint, parameters, formPost)
     } catch (thrown: LibraryRequestFailure) {
-        if (thrown.error.provesNotApplied() && unmarkUnapplied(row)) changed(setOf(row.playlistId))
+        if (thrown.provesNotApplied() && unmarkUnapplied(row)) changed(setOf(row.playlistId))
         throw thrown
     } finally {
         beforeMark.remove(row.key)
@@ -2211,12 +2261,15 @@ private fun DomainError.failureClass(): PlaylistFailureClass = when (this) {
     else -> PlaylistFailureClass.Transport
 }
 
-/** Whether a failure proves the request never changed the server. */
-private fun DomainError.provesNotApplied(): Boolean = when (this) {
-    DomainError.Transport.Unreachable -> true
+/**
+ * Whether a failure proves the request never changed the server: unreachable only when it cannot
+ * have arrived — a connection lost once made may have carried it (§18.6).
+ */
+private fun LibraryRequestFailure.provesNotApplied(): Boolean = when (val error = error) {
+    DomainError.Transport.Unreachable -> !mayHaveArrived
     is DomainError.Security -> true
     is DomainError.Auth -> true
-    is DomainError.Server.HttpStatus -> provesNotApplied
+    is DomainError.Server.HttpStatus -> error.provesNotApplied
     is DomainError.Server -> true
     else -> false
 }

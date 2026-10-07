@@ -363,7 +363,7 @@ class DarwinEstimatedLengthBodyTest {
  * [Served.endFollowedDelivery].
  */
 @OptIn(ExperimentalForeignApi::class)
-private class OneShotLoopbackServer(
+internal class OneShotLoopbackServer(
     private val response: ByteArray,
     private val holdEnd: (() -> Boolean)? = null,
 ) {

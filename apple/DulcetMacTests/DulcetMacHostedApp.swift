@@ -484,6 +484,9 @@ final class HostedApp {
         _ = object.perform(press)
     }
 
+    /// The window's content area in screen coordinates, the space `frame(_:)` reports in.
+    var contentScreenFrame: NSRect { window.convertToScreen(window.contentLayoutRect) }
+
     func frame(_ element: Any) throws -> NSRect {
         let accessible = try XCTUnwrap(element as? any NSAccessibilityElementProtocol, "no frame on \(type(of: element))")
         return accessible.accessibilityFrame()
@@ -667,6 +670,18 @@ struct LiveServer {
         return song?["userRating"] as? Int ?? 0
     }
 
+    /// Whether the server holds one song as a favourite: Subsonic carries `starred` only then.
+    func starred(_ songID: String) async throws -> Bool {
+        let song = try await call("getSong", [URLQueryItem(name: "id", value: songID)])["song"] as? [String: Any]
+        _ = try XCTUnwrap(song, "getSong must return the song")
+        return song?["starred"] != nil
+    }
+
+    /// Stars or unstars one song as another client would.
+    func setStarred(_ songID: String, _ starred: Bool) async throws {
+        _ = try await call(starred ? "star" : "unstar", [URLQueryItem(name: "id", value: songID)])
+    }
+
     /// Writes a rating as another client would.
     func setRating(_ songID: String, _ rating: Int) async throws {
         _ = try await call("setRating", [URLQueryItem(name: "id", value: songID), URLQueryItem(name: "rating", value: String(rating))])
@@ -695,7 +710,13 @@ struct LiveServer {
 
     /// Makes a playlist as another client would.
     func createPlaylist(_ name: String, songID: String) async throws -> String {
-        let playlist = try await call("createPlaylist", [URLQueryItem(name: "name", value: name), URLQueryItem(name: "songId", value: songID)])["playlist"] as? [String: Any]
+        try await createPlaylist(name, songIDs: [songID])
+    }
+
+    /// Makes a playlist holding `songIDs` in that order, as another client would.
+    func createPlaylist(_ name: String, songIDs: [String]) async throws -> String {
+        let items = [URLQueryItem(name: "name", value: name)] + songIDs.map { URLQueryItem(name: "songId", value: $0) }
+        let playlist = try await call("createPlaylist", items)["playlist"] as? [String: Any]
         return try XCTUnwrap(playlist?["id"] as? String, "createPlaylist must return the playlist's id")
     }
 

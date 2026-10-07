@@ -4902,9 +4902,13 @@ about publication, not about the cache:
   outcome for an earlier value (4 saved while a later 5 is still on its way) records the 4 as the
   server's and leaves the 5 shown, pending or held, until its own outcome. On every platform an
   unknown rating's stars are also dimmed, so it looks different from a known 0. Track menus offer the rating where the platform has one (iOS, macOS, Android phone);
-  Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84's
-  rating half runs against the disposable server through the production session
-  (`RatingConformanceTest`), reading the server's `userRating` back after every write.
+  Apple TV and Android TV have no per-track menu, so a track is rated there while it plays. CONF-84
+  runs against the disposable server through the production session, in every core-conformance
+  runtime: the rating half (`RatingConformanceTest`) reads the server's `userRating` back after every
+  write; the star half (`StarConformanceTest`) holds the `star` send at the transport, before the
+  server, while the screen is re-read, so the server answers that re-read with no star and only the
+  overlay keeps it shown, then reads the star back raw and checks that the session holds the echo with
+  nothing pending.
 - The same mechanism serves any future set-to-value mutation. Playlist edits are not set-to-value;
   they use the same outbox and the same publish-time overlay with a verified delivery of their own
   (§18.6).
@@ -5072,8 +5076,9 @@ retry loop.
   `withdraw(target, field)` removes one — a held one included — so a change the server will not take
   never stays stuck in the queue. Withdrawing cannot unsend, and says so: a change none of whose
   sends has gone out, or every send of which was answered in a way that proves it was not applied —
-  a 429, another 4xx, an error envelope, or no connection at all — is `CompactedAway`; only one whose
-  send is under way, or whose answer was lost or does not prove it unapplied (a 5xx), is
+  a 429, another 4xx, an error envelope, or a connection never made — is `CompactedAway`; only one whose
+  send is under way, or whose answer was lost or does not prove it unapplied (a 5xx, or a connection
+  that closed or reset after it was made, which the person also sees as unreachable), is
   `AlreadySent` — too late to undo, since the server may hold it already — and the item then shows what the server answers, or its next read (fourth
   and fifth review rounds, maintainer's decisions).
 - An ambiguous send is retried; these operations are set-to-value rather than increment, so
@@ -5636,8 +5641,15 @@ not enter into it either.
   answer. The person is told the candidates (`PossibleDuplicate`, naming them) and the
   create waits for them: `chooseCreated(localId, id)` adopts the one they pick,
   `chooseCreated(localId, null)` says none is theirs and sends it again, and `withdraw` takes the
-  create back. Later flushes pass a waiting create over, and `pendingChanges` lists it with its
-  candidates.
+  create back. Later flushes send nothing for a waiting create, and `pendingChanges` lists it with
+  its candidates. While any create waits, each flush that may send (not while a 429's wait runs)
+  first lists the server's playlists, one listing for every waiting create, and a candidate no
+  longer listed — deleted by another client — leaves the choice: the create is asked again with the
+  candidates that remain (`PossibleDuplicate`), never adopting one the person passed over, and with
+  none left it waits no longer and that flush looks for what its send made again, listing again, as
+  for any create in doubt. A listing that fails changes no choice; a failure that would hold every
+  change — a 429, the account refused, the server unreachable — stops the flush as a change's own
+  would, a 429's wait included, and any other is the listing's own and the flush goes on.
 - A create **deleted here** while its send was in doubt deletes **nothing** — whether it was deleted
   before the flush looked for it or while the flush was looking. The person is told the candidates'
   ids (`PossiblyCreated`): the shell offers "A playlist named *X* may have been created. Delete it on
@@ -5773,8 +5785,10 @@ create's refusal always meant the server held no such playlist).
 A pending change can always be withdrawn — held, waiting for a choice, or failing — so none is ever
 stuck in the queue (`pendingChanges`, `withdraw`; §18.3 for favourites). Withdrawing cannot unsend,
 and says so: a change none of whose sends has gone out, or every send of which was answered in a
-way that proves it was not applied — a 429, another 4xx, an error envelope, or no connection at all
-— is `CompactedAway`, a header change or a create edited here while that send was out included
+way that proves it was not applied — a 429, another 4xx, an error envelope, or a connection never
+made (refused, no route, an unresolved name, or stopped by the local-HTTP policy; not one that
+closed or reset once made, §18.3) — is
+`CompactedAway`, a header change or a create edited here while that send was out included
 (sixth review round); only one whose send is under way, or whose answer was lost or does not prove
 it unapplied (a 5xx), is `AlreadySent` (fifth review round) — and a list change edited here while
 its send was out, which stays `AlreadySent` even when that send is answered 429: the list it was
@@ -7601,6 +7615,61 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-07 — A create waiting for the person's choice drops a candidate the server no longer
+lists (§18.6).** A waiting create was passed over by every flush, so a candidate another client
+deleted stayed in the choice, and the shells asked about it again at each launch. While any create
+waits, each flush that may send now lists the server's playlists first, and a candidate not listed
+leaves the choice: the create is asked again with the rest, never adopting the one left, and with
+none left it is looked at again and, nothing of its name being listed, sent again. That listing's
+failure is classified as a change's would be: a 429 sets the wait and holds every change, a refused
+account or an unreachable server stops the flush, and the listing's own failure changes nothing.
+OBSERVED with the fake server (`PlaylistWaitingCreateRecheckTest`): with the check removed the
+drop-and-ask-again and the look-again tests fail; with every listing failure swallowed the 429 and
+timeout tests fail; one listing per flush while a create waits and none otherwise is counted.
+
+**2026-10-07 — A connection that drops after it was made leaves a write in doubt (§18.3, §18.6).**
+Both outboxes took every unreachable failure as proof that nothing arrived, so a write whose
+connection closed or reset after the request went out was sent again as if it had never gone: a
+second playlist for a create, and a star compacted away with its unstar, leaving the server with the
+star the person removed. Only a connection never made proves the request never arrived. Each
+platform now says so from its own typed failure (`provesNeverConnected`): on the JVM and Android a
+`ConnectException`, `NoRouteToHostException`, `UnknownHostException` or `UnresolvedAddressException`
+in the cause chain; on Apple an `NSURLErrorDomain` code of -1003, -1004 or -1006, and never -1005
+(connection lost), which NSURLSession reports after a request was written (OBSERVED below). The
+no-network codes (-1009, -1018, -1020) are left out: whether NSURLSession can report them for a path
+that drops while a request is out is not known (ASSUMED possible), and a write taken back on that
+guess would be sent twice. A refusal by the local-HTTP policy, which stops a request before any
+socket opens, is never sent too. Any other unreachable failure is a lost answer: a playlist write is in doubt, as a timed-out
+one is, and a favourite or rating stays `AlreadySent`. OBSERVED through the real HTTP stacks against
+loopback sockets: a server that reads the request whole and closes is unreachable and not
+never-connected on the JVM (a GET and a form POST) and on macOS (a form POST); a closed port is
+never-connected on both (`RequestDeliveryTransportTest`, `RequestDeliveryAppleTest`). Mutants of the
+old rule in either outbox, and of the reader dropping the platform's answer, each fail a test. Also
+OBSERVED on macOS: NSURLSession sends a GET again by itself when its connection closes without an
+answer (the fixture, serving up to three connections, served three to one call; the test requires
+at least two) and a POST never, so a write sent without `formPost`
+may reach the server more than once below the core; the test pins that platform fact. The
+wording of §18.3 and §18.6 ("no connection at all") now says "a connection never made".
+
+**2026-10-06 — The Android TV asks about a create in doubt and says a playlist change that did not land (§18.6).** A create whose answer was lost waits in the device's outbox, and only that device can settle it, so
+the TV now asks rather than leaving it waiting for good. The question is a dialog over whatever
+screen is showing, the oldest first, as the tvOS shell's alert is, with the phone's choices: Yes,
+use that one (a lone candidate only), Not mine / None of these — create it, and Decide later; a
+create deleted here that may have been made gets Dismiss. Back is Decide later or Dismiss, and does
+nothing while an answer is out. A deferred create's playlist page says it waits, with Choose… to ask
+again; the page says a change that did not land, in the shared words, with Dismiss; and a page
+opened under a local id follows the playlist to the server's id. OBSERVED with D-pad and centre keys in the dialog,
+focus placed on the page's controls and Back sent to the dialog's dispatcher, over a fake core's
+outbox (`TvPlaylistQuestionTest`, as the phone's `PlaylistCreateInDoubtTest`); a mutant
+that let Back drop a question whose answer was out failed it. OBSERVED end to end over the TV's
+library entry and the production session, reader and editor, against a loopback server that makes the
+playlist without the song sent and answers the create 502 (`TvPlaylistCreateInDoubtSessionTest`): the
+question presented over the album once the app returns to the foreground, Decide later, Choose… from
+the page, Keep with no second create, and the page on the server's id, which a saved-state restore
+after the reader closes reopens; a mutant without the follow failed it, the restore showing the
+playlist as unavailable. This supersedes the
+entry below where it says the TV cannot resolve a create in doubt or say a change that did not land.
+
 **2026-10-06 — The Android TV adds to playlists and creates them (§18.6).** This supersedes the
 2026-09-29 line "The TV browses and plays playlists and edits none" for adding and creating. The
 queue button on a TV track row and on an album's header now offers Add to Playlist… after Play Next
@@ -7619,6 +7688,32 @@ Next is, so only while a playback service is bound and on a queueable track; sea
 not offer it. Not on the TV yet: rename, delete, remove and reorder. A create whose answer was lost
 waits in this device's outbox and only this device can resolve it; the TV cannot yet, so it stays
 waiting, neither adopted nor resent. A playlist change that did not land is not said on the TV.
+
+**2026-10-06 — On Apple TV, a press and hold opens a track's or a tile's menu, and Add to Playlist…
+creates a playlist or adds to one (§18.6).** The tvOS shell had no context menus. A comment said the
+focus engine owns the long press, but nothing recorded backed it, and the platform says otherwise
+(OBSERVED: SwiftUI `contextMenu` is available from tvOS 14, and the Human Interface Guidelines list
+context menus with no tvOS-specific considerations). Apple Music on tvOS adds a song to a playlist
+and creates playlists (OBSERVED: the Apple TV user guide on support.apple.com), so a TV that only
+read playlists fell below it. Track rows, album and playlist tiles now offer on tvOS the same menu
+they offer on iPhone, iPad and Mac: Play, Play Next and Add to Queue while the queue can be edited,
+Add to Playlist…, Rating or Favorite, Go to Album and Go to Artist, and Delete for the person's own
+playlist (confirmed first). Only Add to Playlist… is driven on tvOS; the rest are offered, not yet
+observed there. Add to Playlist… opens the shared chooser, through the same
+`DulcetPlaylistEditor` and the same one-choice-per-presentation rule. On tvOS, New Playlist… is a
+page pushed inside the chooser (a name field, which opens the system keyboard, then Create) rather
+than the name alert the other platforms use: driven by remote, Select on New Playlist… presented no
+alert from inside the chooser's sheet (OBSERVED on the tvOS 26.5 simulator). Two alerts this makes
+reachable on tvOS are presented from the root rather than a sheet. The Delete confirmation is
+ASSUMED to present there (if it never shows, nothing is deleted). The question a create in doubt
+asks is OBSERVED there: a tvOS proof loses a create's answer through the fault proxy, another client
+adds a song so the core cannot adopt the playlist on its own, and on the return from the Home
+screen the question is presented over the screen; Yes, It's Mine is reached by remote and no second
+create is sent. Until it is answered the app asks again at each launch, over its first screen. Rename, removal and reorder
+stay on the playlist page of iPhone, iPad and Mac; the tvOS playlist page still lists and plays
+read-only. This supersedes the 2026-09-29 record's "tvOS lists and plays playlists read-only" for
+the menus. The new tvOS proof drives it by remote against the disposable server and reads each
+write back with `getPlaylist`.
 
 **2026-10-06 — The iPadOS and iPhone conformance proofs run as two parallel members (§21.5).**
 `apple-conformance-ipad-iphone` ran the iPad proofs and then the iPhone proofs in one step capped at
@@ -7644,6 +7739,32 @@ the iPad member passed in 49 minutes; the iPhone member's first proof ran on a d
 time 12 s after its 201 s first boot, at load1 567 with 749 MB swapped out, and the app's account
 request ran out its 30-second limit before reaching the server. That proof's connect now also takes
 Try Again, as a person does, for that timeout only.
+
+**2026-10-06 — On Apple TV, Back goes back one Library page and focus returns to what opened it;
+a page opened takes focus on its first control (§16.18, §18.9).** Driven by the remote against the
+disposable server (OBSERVED in the new tvOS proof before each fix), four things kept a person from
+browsing the library the way the platform's own Music app does. (1) Menu on an album the Library
+had pushed was consumed by the app's exit handler, which moved focus to the app's section bar
+instead of going back; a second Menu left the app. While the Library has a page to go back to, the
+app now leaves Menu to the navigation stack, which pops one page; elsewhere Menu still returns focus
+to the bar, and from the bar it still leaves the app. (2) After going back, focus landed on the
+Library's own section bar (Home), and the person had lost their place in the grid. The store now
+records the page Back landed on and the item that page had opened (`readerReturn`), and that tile
+or row takes focus. (3) On an artist's page the albums could not be reached: Down from the artist's
+heart, at the trailing edge, found nothing below it. The albums grid is now one full-width focus
+section, so Down enters it from anywhere above. (4) An album opened from an artist's page -- the
+300-track fixture album, none of whose tracks has a length, so Play and Shuffle are disabled -- was
+shown with focus still on the app's Library tab (and once on nothing), and Back there did not go
+back. The page publishes after it is pushed, and when the focus engine settles first nothing moves
+focus onto the page when its content arrives. A page just opened (`readerArrival`) now puts focus on
+its first control once that control can hold it: Play, or the album's heart when nothing is
+playable, or the artist's heart. (4) is a race with the host's speed: it was OBSERVED on two loaded
+runs, and the proof passed once on an idle host with the claim disabled, so the proof catches it
+only when the host is slow; the store test covers the arrival record. Red without the change: the
+proof `testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt`, which reads every list it
+walks from the server and asserts where focus is after each press, for (1), (2) and (3); and the
+store test `aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened` for the records (2)
+and (4) rest on.
 
 **2026-10-05 — A connection made on Connection lands on the library (§10.2).**
 A successful connect submitted from Connection (the Settings destination) published "connected" and

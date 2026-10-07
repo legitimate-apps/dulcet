@@ -1688,7 +1688,21 @@ final class DulcetiOSUITests: XCTestCase {
     /// deleted afterwards, whatever the outcome.
     @MainActor
     func testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer() {
-        guard let configuration = livePlaybackConfiguration() else { return }
+        provePlaylistOpensPlaysInItsOrderAndARenameReachesTheServer(compact: true)
+    }
+
+    /// The same on iPad, in its regular-width window, through the sidebar.
+    @MainActor
+    func testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServerOnIPadOS() {
+        provePlaylistOpensPlaysInItsOrderAndARenameReachesTheServer(compact: false)
+    }
+
+    /// Fails on the other device class, so an iPhone run cannot stand as iPad evidence.
+    @MainActor
+    private func provePlaylistOpensPlaysInItsOrderAndARenameReachesTheServer(compact expectedCompact: Bool) {
+        guard requireSimulator(expectedCompact ? .phone : .pad,
+                               "The playlist play-in-order proof on \(expectedCompact ? "iPhone" : "iPad")"),
+              let configuration = livePlaybackConfiguration() else { return }
         let first = "UI Playback Canary"
         let second = "Thirty One Seconds"
         let name = "Dulcet UI Proof " + UUID().uuidString.prefix(8)
@@ -1726,6 +1740,10 @@ final class DulcetiOSUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
         let compact = window.frame.width < 700
+        guard compact == expectedCompact else {
+            XCTFail("The proof expects a \(expectedCompact ? "compact" : "regular") window; width=\(window.frame.width)")
+            return
+        }
         guard awaitLiveAccountConnection(in: app, compact: compact) else {
             XCTFail("The live account connection must succeed first")
             return
@@ -1805,6 +1823,131 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(serverName, renamed, "The rename must reach the server")
         print("DULCET PLAYLIST PROOF PASS destination=\(compact ? "compact" : "regular") first=\(first.debugDescription)"
             + " server-name=\((serverName ?? "<none>").debugDescription)")
+    }
+
+    /// A playlist edit made while the server is unreachable shows as pending on iPhone, and is
+    /// sent at the reconnect (spec §18.6).
+    @MainActor
+    func testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPhone() {
+        provePlaylistEditMadeOfflineIsPendingThenSent(compact: true)
+    }
+
+    /// The same on iPad, in its regular-width window.
+    @MainActor
+    func testAPlaylistEditMadeOfflineShowsPendingAndIsSentAtReconnectOnIPadOS() {
+        provePlaylistEditMadeOfflineIsPendingThenSent(compact: false)
+    }
+
+    /// The app is connected through `tools/conformance-env/lyrics-fault-proxy`, which fronts the
+    /// disposable server; the test reads and writes the server directly. With a playlist made for
+    /// this run open on its page:
+    ///
+    /// 1. the proxy's outage begins: every `/rest` request the app sends is dropped unanswered;
+    /// 2. the playlist is renamed on its page, which shows the new name at once;
+    /// 3. Playlists says the playlist has "Changes not yet on your server", the server still holds
+    ///    the old name, and the proxy dropped an `updatePlaylist` -- the edit met the outage;
+    /// 4. the outage ends and the app returns to the foreground, a reconnect (§16.14): the server
+    ///    gets the new name, the proxy forwarded an `updatePlaylist` after the outage, and the
+    ///    pending words go away.
+    ///
+    /// The outage is ended and the playlist deleted afterwards, pass or fail. The test fails on the
+    /// other device class, so an iPhone run cannot stand as iPad evidence.
+    @MainActor
+    private func provePlaylistEditMadeOfflineIsPendingThenSent(compact expectedCompact: Bool) {
+        guard requireSimulator(expectedCompact ? .phone : .pad,
+                               "The offline playlist edit proof on \(expectedCompact ? "iPhone" : "iPad")"),
+              let configuration = livePlaybackConfiguration(),
+              let proxy = lyricsFaultProxyConfiguration(server: configuration) else { return }
+        let pendingWords = "Changes not yet on your server"
+        let name = "Dulcet Offline Edit Proof " + UUID().uuidString.prefix(8)
+        let renamed = name + " Renamed"
+        guard let canaryID = serverSongID("UI Playback Canary", album: "Threshold Boundary", configuration: configuration),
+              let playlistID = (restCall("createPlaylist", [
+                  URLQueryItem(name: "name", value: name), URLQueryItem(name: "songId", value: canaryID),
+              ], configuration: configuration)?["playlist"] as? [String: Any])?["id"] as? String else {
+            XCTFail("The run's playlist could not be made on the disposable server")
+            return
+        }
+        afterTest.append { [configuration] in
+            _ = self.proxyRequest("POST", "/__dulcet/outage?state=off", proxy: proxy)
+            _ = self.restCall("deletePlaylist", [URLQueryItem(name: "id", value: playlistID)], configuration: configuration)
+        }
+        guard proxyOutage(nil, proxy: proxy)?.outage == false else {
+            XCTFail("The control: the proxy must start with no outage")
+            return
+        }
+        guard let app = launchConnected(serverURL: proxy.url, configuration: configuration, compact: expectedCompact),
+              openLibraryPlaylists(in: app, compact: expectedCompact) else { return }
+        let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else {
+            XCTFail("Playlists must list the run's playlist: " + app.debugDescription)
+            return
+        }
+        XCTAssertFalse(row.label.contains(pendingWords), "The control: nothing is pending before the outage; label=\(row.label)")
+        guard openPlaylistRow(name, in: app) else { return }
+
+        // 1-2. The server goes away; the rename is made on the page and shown at once.
+        guard proxyOutage(true, proxy: proxy)?.outage == true else {
+            XCTFail("The proxy's outage must begin")
+            return
+        }
+        let title = app.staticTexts["dulcet.playlist.title"].firstMatch
+        guard renamePlaylist(to: renamed, in: app) else { return }
+        XCTAssertTrue(waitForLabel(renamed, of: title, timeout: 5), "The page must show the new name at once; title=\(title.label)")
+
+        // 3. Pending: said in Playlists, not on the server, and the edit met the outage.
+        guard openLibraryPlaylistsFromAnywhere(in: app, compact: expectedCompact) else { return }
+        let pendingRow = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", renamed, pendingWords)).firstMatch
+        XCTAssertTrue(pendingRow.waitForExistence(timeout: 15),
+            "Playlists must say the renamed playlist has changes not yet on the server: " + app.debugDescription)
+        let duringOutage = proxyOutage(nil, proxy: proxy)
+        XCTAssertGreaterThanOrEqual(duringOutage?.dropped["updatePlaylist"] ?? 0, 1,
+            "The fixture: the rename's send must have met the outage; dropped=\(String(describing: duringOutage?.dropped))")
+        let serverNameDuringOutage = (restCall("getPlaylist", [URLQueryItem(name: "id", value: playlistID)], configuration: configuration)?[
+            "playlist"] as? [String: Any])?["name"] as? String
+        XCTAssertEqual(serverNameDuringOutage, name, "The server must still hold the old name during the outage")
+
+        // 4. The server is back; a return to the foreground reconnects, and the edit is sent.
+        guard proxyOutage(false, proxy: proxy)?.outage == false else {
+            XCTFail("The proxy's outage must end")
+            return
+        }
+        XCUIDevice.shared.press(.home)
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        app.activate()
+        XCTAssertEqual(awaitServerPlaylistName(playlistID, renamed, configuration: configuration), renamed,
+            "The rename made offline must reach the server after the reconnect")
+        let afterOutage = proxyOutage(nil, proxy: proxy)
+        XCTAssertGreaterThanOrEqual(afterOutage?.forwardedAfterOutage["updatePlaylist"] ?? 0, 1,
+            "The rename must be sent after the outage; forwarded=\(String(describing: afterOutage?.forwardedAfterOutage))")
+        let settledRow = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", renamed)).firstMatch
+        let settled = NSPredicate(format: "NOT (label CONTAINS %@)", pendingWords)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: settledRow)], timeout: 15), .completed,
+            "Once sent, Playlists must stop saying the change is pending; label=\(settledRow.label)")
+        print("DULCET PENDING PLAYLIST PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " dropped=\(duringOutage?.dropped ?? [:]) forwarded-after=\(afterOutage?.forwardedAfterOutage ?? [:])"
+            + " server-during=\((serverNameDuringOutage ?? "<none>").debugDescription)")
+    }
+
+    private struct ProxyOutage {
+        let outage: Bool
+        let dropped: [String: Int]
+        let forwardedAfterOutage: [String: Int]
+    }
+
+    /// Begins (true) or ends (false) the proxy's outage, or only reads it (nil).
+    private func proxyOutage(_ on: Bool?, proxy: LyricsFaultProxy) -> ProxyOutage? {
+        let body = proxyRequest(on == nil ? "GET" : "POST",
+                                "/__dulcet/outage" + (on.map { "?state=\($0 ? "on" : "off")" } ?? ""), proxy: proxy)
+        guard let body, let outage = body["outage"] as? Bool else {
+            XCTFail("The fault proxy must report its outage")
+            return nil
+        }
+        return ProxyOutage(outage: outage, dropped: body["dropped"] as? [String: Int] ?? [:],
+                           forwardedAfterOutage: body["forwardedAfterOutage"] as? [String: Int] ?? [:])
     }
 
     /// Every playlist edit through the iPhone app (spec §18.6, CONF-88..90).
@@ -3659,6 +3802,139 @@ final class DulcetiOSUITests: XCTestCase {
             observed = readServerSongStarred(track, album: album, configuration: configuration)
         }
         return observed
+    }
+
+    /// A track row's heart and an artist page's heart (spec §16.20) on iPhone.
+    @MainActor
+    func testATrackRowHeartAndAnArtistHeartReachTheServerOnIPhone() {
+        proveTrackRowAndArtistHeartsReachTheServer(compact: true)
+    }
+
+    /// The same hearts on iPad, through the sidebar.
+    @MainActor
+    func testATrackRowHeartAndAnArtistHeartReachTheServerOnIPadOS() {
+        proveTrackRowAndArtistHeartsReachTheServer(compact: false)
+    }
+
+    /// The heart beside a track on an album page, then the heart on that album's artist page: each
+    /// fills with the tap, before the server answers, and the star reaches the server for that
+    /// track or artist; taking it off empties it at once and unstars it, so the server ends as it
+    /// started. The artist page is reached through the album page's artist link, the way a person
+    /// reaches it. Each destination has its own test, and each fails on the other's window class.
+    @MainActor
+    private func proveTrackRowAndArtistHeartsReachTheServer(compact expectedCompact: Bool) {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let album = "Threshold Boundary"
+        let track = "Twenty Nine Seconds"
+        let artist = "Dulcet Fixtures"
+        guard let app = launchConnected(
+            serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact
+        ) else { return }
+        guard openLibraryAlbum(album, in: app, compact: expectedCompact) else { return }
+
+        // 1. The track row's heart: the one beside the row, by the row's own frame.
+        let row = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", track + ", ")).firstMatch
+        guard row.waitForExistence(timeout: 15), scrollIntoView(row, in: app) else {
+            XCTFail("\(album) must list \(track): " + app.debugDescription)
+            return
+        }
+        let rowHearts = app.buttons.matching(identifier: "dulcet.reader.favorite").allElementsBoundByIndex
+            .filter { $0.frame.midY > row.frame.minY && $0.frame.midY < row.frame.maxY }
+        guard rowHearts.count == 1, let rowHeart = rowHearts.first else {
+            XCTFail("Exactly one heart must sit beside \(track)'s row; found \(rowHearts.count): " + app.debugDescription)
+            return
+        }
+        let songStarred = { self.readServerSongStarred(track, album: album, configuration: configuration) }
+        let awaitSong = { (expected: Bool) in
+            self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: expected, timeout: 30)
+        }
+        guard toggleHeartAndProve(rowHeart, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
+
+        // 2. The artist page's heart, reached through the album's artist link.
+        let link = app.buttons.matching(NSPredicate(format: "label == %@", artist)).firstMatch
+        guard link.waitForExistence(timeout: 10), scrollIntoView(link, in: app) else {
+            XCTFail("The album page must link its artist \(artist): " + app.debugDescription)
+            return
+        }
+        link.tap()
+        let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        guard artistTitle.waitForExistence(timeout: 15), artistTitle.label == artist else {
+            XCTFail("The artist link must open \(artist)'s page: " + app.debugDescription)
+            return
+        }
+        let artistHeart = app.buttons["dulcet.artist.favorite"].firstMatch
+        guard artistHeart.waitForExistence(timeout: 10) else {
+            XCTFail("The artist page must offer its heart: " + app.debugDescription)
+            return
+        }
+        let artistStarred = { self.readServerArtistStarred(artist, configuration: configuration) }
+        let awaitArtist = { (expected: Bool) -> Bool? in
+            let deadline = Date().addingTimeInterval(30)
+            var observed = artistStarred()
+            while observed != nil, observed != expected, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(1))
+                observed = artistStarred()
+            }
+            return observed
+        }
+        guard toggleHeartAndProve(artistHeart, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
+        print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+            + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
+    }
+
+    /// From a known starting point whatever an earlier run left: the heart fills with the tap, the
+    /// star reaches the server, and a second tap empties it at once and unstars it there.
+    @MainActor
+    private func toggleHeartAndProve(
+        _ heart: XCUIElement,
+        what: String,
+        read: () -> Bool?,
+        awaitServer: (Bool) -> Bool?
+    ) -> Bool {
+        if heart.label == "Remove Favorite" {
+            heart.tap()
+            guard waitForLabel("Favorite", of: heart, timeout: 5), awaitServer(false) == false else {
+                XCTFail("An earlier run's favourite on \(what) could not be cleared first")
+                return false
+            }
+        }
+        guard read() == false else {
+            XCTFail("The control: the server must not already hold the favourite on \(what) this proof makes")
+            return false
+        }
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+            "\(what): the heart must fill at once, before the server answers; label=\(heart.label)")
+        XCTAssertEqual(awaitServer(true), true, "\(what): the star must reach the server")
+        heart.tap()
+        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(what): the heart must empty at once")
+        XCTAssertEqual(awaitServer(false), false, "\(what): removing the favourite must reach the server")
+        return true
+    }
+
+    /// Whether the server holds the named artist as a favourite, read over `/rest/search3`. Nil,
+    /// with the reason printed, unless exactly one artist matches.
+    @MainActor
+    private func readServerArtistStarred(_ artist: String, configuration: LivePlaybackConfiguration) -> Bool? {
+        guard let envelope = restCall("search3", [
+            URLQueryItem(name: "query", value: artist),
+            URLQueryItem(name: "songCount", value: "0"),
+            URLQueryItem(name: "albumCount", value: "0"),
+            URLQueryItem(name: "artistCount", value: "20"),
+        ], configuration: configuration) else { return nil }
+        let artists = (envelope["searchResult3"] as? [String: Any])?["artist"] as? [[String: Any]] ?? []
+        let matches = artists.filter { $0["name"] as? String == artist }
+        guard matches.count == 1, let match = matches.first else {
+            print("DULCET REST search3 matched \(matches.count) artists named \(artist); exactly one is required")
+            return nil
+        }
+        // Subsonic carries `starred` only on a favourite.
+        return match["starred"] != nil
     }
 
     /// Now Playing's stars for the playing track (spec §16.20, CONF-84) on iPhone, in the sheet.

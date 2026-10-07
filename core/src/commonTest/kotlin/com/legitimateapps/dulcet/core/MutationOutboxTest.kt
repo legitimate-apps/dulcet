@@ -340,6 +340,31 @@ class MutationOutboxTest {
         assertEquals(0L, favourites.pendingCount())
     }
 
+    /**
+     * The same, when the star's connection drops after the server applied it: the client sees it as
+     * unreachable, which proves nothing arrived only when no connection was made (§18.3). Taken back
+     * as unsent, the star would compact away with the unstar, nothing would be sent, and the server
+     * would keep the star the person removed.
+     */
+    @Test
+    fun aChangeWhoseConnectionDroppedIsNeverCompactedAway() = sessionTest { env ->
+        val opened = openGrid(env)
+        val favourites = opened.session.favourites
+        env.server.applyThenDrop["star"] = kotlinx.io.IOException("connection reset")
+        favourites.setFavourite(album4, true)
+        advanceUntilIdle()
+        env.server.applyThenDrop.clear()
+        assertTrue(env.server.base.albums[4].starred, "fixture: the server applied it")
+        opened.session.setOnline(false)
+        assertEquals(MutationRecord.Pending, favourites.setFavourite(album4, false),
+            "the star may be on the server, so the unstar must be sent")
+        opened.session.setOnline(true)
+        opened.session.reader.reconnect()
+        advanceUntilIdle()
+        assertEquals("unstar", sends(env).last().endpoint)
+        assertFalse(env.server.base.albums[4].starred)
+    }
+
     @Test
     fun aPossiblyDeliveredChangeIsNeverCompactedAway() = sessionTest { env ->
         val opened = openGrid(env)
