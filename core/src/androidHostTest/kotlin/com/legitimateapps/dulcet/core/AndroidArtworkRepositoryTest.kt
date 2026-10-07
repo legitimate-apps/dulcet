@@ -38,6 +38,21 @@ class AndroidArtworkRepositoryTest {
             assertFalse(files.single().path.contains(secret), "Cache paths carry only digests")
     }
 
+    /** An account saved and not connected (spec §13.1) reads covers this device kept, and sends nothing. */
+    @Test fun aCachedOnlyReadSendsNothingAndStillReturnsWhatTheDeviceKept() = runBlocking {
+        val requested = mutableListOf<String>()
+        val repository = repository { id -> requested += id; PNG }
+        assertContentEquals(PNG, repository.load("kept", 200), "control: the cover is fetched and kept")
+        assertEquals(listOf("kept"), requested)
+
+        assertContentEquals(PNG, repository.load("kept", 200, cachedOnly = true), "A kept cover is read from the device")
+        assertNull(repository.load("never-seen", 200, cachedOnly = true), "A cover the device lacks is not fetched")
+        assertEquals(listOf("kept"), requested, "A cached-only read sends nothing")
+
+        assertContentEquals(PNG, repository.load("never-seen", 200), "Once connected, the cover the device lacked loads")
+        assertEquals(listOf("kept", "never-seen"), requested)
+    }
+
     @Test fun missingArtworkIsRememberedForTheProcess() = runBlocking {
         var requests = 0
         val repository = repository { requests++; NOT_FOUND_70 }

@@ -110,7 +110,7 @@ class TvSearchActivity : ComponentActivity() {
                         }
                     } else {
                         val presenter = rememberSearchPresenter(current, searchDependencies)
-                        TvLibraryEntry(current) { navigator, playback ->
+                        TvLibraryEntry(current, untilReconnectChosen = true) { navigator, playback ->
                             TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator),
                                 playback = playback)
                         }

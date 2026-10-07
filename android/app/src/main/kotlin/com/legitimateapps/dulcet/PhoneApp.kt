@@ -90,7 +90,9 @@ private fun List<String>.toMutableStateList() = mutableStateListOf<String>().als
 /**
  * The phone app once an account exists. Presentation state lives here and in the screens; library
  * data comes from the existing [LibrarySession] read and playback from the service's controller,
- * [playback], null until the service binds.
+ * [playback], null until the service binds. [untilReconnectChosen]: the app opened on the saved
+ * account, so nothing is sent until the person connects it in this process (spec §13.1, CONF-10b);
+ * the app's entry passes true.
  */
 @Composable
 internal fun PhoneApp(
@@ -98,6 +100,7 @@ internal fun PhoneApp(
     dependencies: SearchHostDependencies,
     requests: PhonePlaybackRequests,
     playback: AndroidPlaybackController? = rememberPlaybackController(),
+    untilReconnectChosen: Boolean = false,
 ) {
     val context = LocalContext.current
     val preferences = remember { runCatching { context.getSharedPreferences("dulcet.ui", 0) }.getOrNull() }
@@ -114,7 +117,7 @@ internal fun PhoneApp(
     val playbackState by remember(playback) { playback?.state ?: MutableStateFlow(AndroidPlaybackState()) }
         .collectAsStateWithLifecycle()
     val foreground = hostInForeground()
-    val library = remember(account) { LibrarySession(context, account, foreground) }
+    val library = remember(account) { LibrarySession(context, account, foreground, untilReconnectChosen) }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect
@@ -180,6 +183,8 @@ internal fun PhoneApp(
 
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
         back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
+        // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
+        if (tab == PhoneTab.Library && routes.isEmpty()) SavedAccountNotice(library, account)
         NavigationBar {
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),

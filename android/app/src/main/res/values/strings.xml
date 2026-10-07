@@ -54,6 +54,8 @@
     <string name="error_capability_message">This server does not provide a capability required for account setup.</string>
     <string name="error_capability_recovery">Update the server or use a compatible OpenSubsonic endpoint.</string>
     <string name="error_persistence_title">The account could not be saved</string>
+    <string name="error_unreadable_title">The saved account could not be read</string>
+    <string name="error_unreadable_body">Android Keystore could not read the saved account on this phone. Connect again, or sign it out.</string>
     <string name="error_persistence_body">Dulcet left the account disconnected because Android Keystore persistence failed.</string>
     <string name="search_title">Search</string>
     <string name="search_hint">Artists, albums, and tracks</string>

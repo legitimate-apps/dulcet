@@ -128,6 +128,7 @@ import com.legitimateapps.dulcet.library.isFavourite
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
 import com.legitimateapps.dulcet.library.favouriteTarget
@@ -214,11 +215,16 @@ internal fun TvLibraryEntry(
     account: SearchAccount,
     /** The playback service's controller, null until it binds. */
     playback: AndroidPlaybackController? = rememberPlaybackController(),
+    /**
+     * The app opened on the saved account, so nothing is sent until the person connects it in this
+     * process (spec §13.1, CONF-10b); the app's entry passes true.
+     */
+    untilReconnectChosen: Boolean = false,
     search: @Composable (TvNavigator, AndroidPlaybackController?) -> Unit,
 ) {
     val context = LocalContext.current
     val foreground = hostInForeground()
-    val session = remember(account) { LibrarySession(context, account, foreground) }
+    val session = remember(account) { LibrarySession(context, account, foreground, untilReconnectChosen) }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
@@ -257,6 +263,9 @@ internal fun TvLibraryEntry(
                 onLibrary = { show(routes, states, memory, ROUTE_LIBRARY) },
                 onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) },
                 onAccount = { if (routes.last() != ROUTE_ACCOUNT) routes += ROUTE_ACCOUNT })
+            // Under the bar on the library's home, the screen that offers to reconnect the saved account:
+            // one DOWN from the Library tab the remote starts on.
+            if (top == ROUTE_LIBRARY) TvSavedAccountNotice(session, account)
             Box(Modifier.fillMaxWidth().weight(1f)) {
             states.SaveableStateProvider(top) {
                 CompositionLocalProvider(
@@ -685,6 +694,22 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 }
             }
         }
+    }
+}
+
+/**
+ * The saved account waiting for the person (spec §13.1, CONF-10b): Reconnect, one DOWN from the bar,
+ * and the line saying nothing is sent until it is chosen. Nothing while the account is connected.
+ */
+@Composable
+private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount) {
+    val connection by session.connection.collectAsState()
+    val resources = libraryResources()
+    val line = resources.savedAccountLine(connection, account) ?: return
+    Row(Modifier.fillMaxWidth().padding(start = 56.dp, end = 56.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        TvAction(resources.getString(SharedR.string.library_reconnect), "library.reconnect", onClick = session::connectSavedAccount)
+        TvStatement(line, "library.saved")
     }
 }
 

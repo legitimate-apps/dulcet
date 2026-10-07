@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.library.SavedAccountConnection
 import java.net.URI
 
 /** What connecting an account ended in. Carries no credential and no URL beyond the saved server's. */
@@ -39,13 +40,15 @@ public suspend fun connectAndSaveAccount(
                     .ifBlank { result.account.normalizedBaseUrl }
             }
             try {
-                store.save(
+                val saved = store.save(
                     serverName = serverName,
                     serverUrl = result.account.normalizedBaseUrl,
                     username = request.username,
                     password = request.password,
                     allowLocalHttp = request.allowLocalHttp,
                 )
+                // The person chose Connect: the library this opens reads the server (spec §13.1).
+                SavedAccountConnection.connectedOnTheForm(saved.id)
                 AccountConnectOutcome.Connected(serverName, result.account.normalizedBaseUrl)
             } catch (_: CredentialStoreException) {
                 AccountConnectOutcome.PersistenceFailed

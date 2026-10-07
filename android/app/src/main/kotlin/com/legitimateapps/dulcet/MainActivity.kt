@@ -101,7 +101,7 @@ internal fun AccountConnectScreen(
             )
         }
         CompositionLocalProvider(LocalAccountActions provides actions) {
-            PhoneApp(storedAccount, searchDependencies, requests)
+            PhoneApp(storedAccount, searchDependencies, requests, untilReconnectChosen = true)
         }
         return
     }
@@ -243,6 +243,12 @@ private fun AccountStatusCard(status: AccountConnectStatus) {
         AccountConnectStatus.PersistenceFailed -> StatusCard(
             title = stringResource(R.string.error_persistence_title),
             body = stringResource(R.string.error_persistence_body),
+            tag = "account.status.persistence-failed",
+        )
+        // The same declared state as a refused save, said as what happened: a read, not a save.
+        AccountConnectStatus.Unreadable -> StatusCard(
+            title = stringResource(R.string.error_unreadable_title),
+            body = stringResource(R.string.error_unreadable_body),
             tag = "account.status.persistence-failed",
         )
     }

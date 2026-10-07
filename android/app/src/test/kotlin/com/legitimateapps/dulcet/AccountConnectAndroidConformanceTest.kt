@@ -387,6 +387,7 @@ private fun AccountConnectStatus.renderStateName(): String = when (this) {
     is AccountConnectStatus.Connected -> "connected"
     is AccountConnectStatus.Failed -> "failed"
     AccountConnectStatus.PersistenceFailed -> "persistence-failed"
+    AccountConnectStatus.Unreadable -> "persistence-failed"
 }
 
 private fun storedAccount(): StoredAccount = StoredAccount(

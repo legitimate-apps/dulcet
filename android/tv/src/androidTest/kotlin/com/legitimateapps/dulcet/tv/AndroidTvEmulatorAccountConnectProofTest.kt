@@ -42,7 +42,9 @@ import org.junit.runner.RunWith
  * server; an unreachable server said as such; in progress, with Cancel, and nothing saved by the
  * request answered after Cancel; the device refusing the save (its preferences directory read-only),
  * said and nothing on disk; connected, the library opening with the remote on it and no keyboard;
- * a relaunch with the server unreachable opening the saved account's library, offline; and a relaunch
+ * a relaunch into the library this device has seen, saying the account is saved and not connected
+ * and sending the server nothing — the relay counts no connection in five seconds — until the remote
+ * chooses Reconnect, one DOWN from the Library tab, which reconnects in place; and a relaunch
  * after the Keystore lost the account's key, said, with Sign out reachable by the remote.
  *
  * The keyboard comes up only when the person selects a field with the centre key, never because the
@@ -167,20 +169,46 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     observed += "connected"
                 }
 
-                // Relaunch, with the server unreachable: the saved account's library, offline.
-                relay.makeUnreachable()
-                val triedBefore = relay.refusedConnections.get()
+                // Relaunch into the saved account (spec §13.1): the library this device has seen, said to
+                // be saved and not connected, and NOTHING sent to the server until the person chooses
+                // Reconnect with the remote — one DOWN from the Library tab — which reconnects in place.
+                // The process's reader is closed first, as a new process has none; this instrumentation
+                // shares the app's process.
+                endProcessConnection()
+                val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
+                val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
                 launch().use { scenario ->
-                    awaitNode("the library for the saved account at relaunch") { exists("library.surface") }
+                    awaitNode("the library for the saved account at relaunch, the remote on the Library tab") {
+                        exists("library.surface") && focused("library.open")
+                    }
                     check(!exists("tv.connect.submit")) { "A saved account must not be asked for again" }
                     check(!keyboardShown(scenario)) { "No keyboard at relaunch" }
-                    awaitNode("the library saying it is offline", 60_000) { saysOffline() }
-                    observed += "saved-disconnected(relaunch, tried=${relay.refusedConnections.get() - triedBefore})"
+                    awaitNode("the library saying the account is saved and not connected") {
+                        exists("library.saved") && exists("library.reconnect")
+                    }
+                    check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
+                        "The saved line names the saved account's server: ${label("library.saved")}"
+                    }
+                    awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
+                    SystemClock.sleep(SAVED_SETTLE_MILLIS)
+                    val triedBeforeReconnect = tried()
+                    check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
+                    observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
+
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    awaitNode("DOWN from the Library tab reaches Reconnect") { focused("library.reconnect") }
+                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    awaitNode("Reconnect reaching the server, in place", 60_000) {
+                        tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.surface")
+                    }
+                    check(!exists("tv.connect.submit")) { "Reconnect connects in place, without the form" }
+                    awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
+                    observed += "reconnected(in-place, tried=${tried()})"
                 }
 
                 // Relaunch after the Keystore lost the saved account's key.
+                endProcessConnection()
                 loseSavedAccountKey(context)
-                relay.makeReachable()
                 launch().use { scenario ->
                     awaitNode("the connect form, with Sign out for the unreadable account") {
                         exists("tv.connect.submit") && exists("tv.account.signout")
@@ -279,6 +307,13 @@ class AndroidTvEmulatorAccountConnectProofTest {
     private fun checked(tag: String) = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
         .getOrNull(SemanticsProperties.ToggleableState) == androidx.compose.ui.state.ToggleableState.On
 
+    /** Closes the process's connection to the account and waits until it is closed: what a new process starts without. */
+    private fun endProcessConnection() {
+        val closed = java.util.concurrent.CountDownLatch(1)
+        com.legitimateapps.dulcet.core.AndroidLibraryReader.closeCurrent { closed.countDown() }
+        check(closed.await(60, java.util.concurrent.TimeUnit.SECONDS)) { "The library reader did not close" }
+    }
+
     private fun saysOffline() = compose.onAllNodes(hasText(text(SharedR.string.library_reason_offline), substring = true))
         .fetchSemanticsNodes().isNotEmpty()
 
@@ -315,6 +350,9 @@ class AndroidTvEmulatorAccountConnectProofTest {
         compose.waitUntil(what, timeoutMillis) { runCatching(condition).getOrDefault(false) }
 
     private companion object {
+        /** How long a launch into the saved account is watched for any request before Reconnect. */
+        const val SAVED_SETTLE_MILLIS = 5_000L
+
         const val WRONG_PASSWORD = "not-the-password"
 
         /** How long a field must keep the keyboard down after the remote lands on it. */

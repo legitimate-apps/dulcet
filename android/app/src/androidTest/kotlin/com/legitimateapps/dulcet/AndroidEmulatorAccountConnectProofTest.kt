@@ -54,8 +54,9 @@ import org.junit.runner.RunWith
  *   read-only), so the server accepted the account and the app says it could not be saved, stays on
  *   the form, and nothing is on disk.
  * - **connected**: the library, the server's albums in it, the account on disk.
- * - **saved, disconnected**: a relaunch with the server unreachable opens the library for the saved
- *   account and says it is offline.
+ * - **saved, disconnected**: a relaunch opens the library this device has seen for the saved account,
+ *   says it is saved and not connected, and sends the server nothing — the relay counts no connection
+ *   in five seconds — until the person touches Reconnect, which reconnects in place (spec §13.1).
  * - **credential-persistence error at launch**: the saved account's Keystore key lost, as a Keystore
  *   reset loses it; the relaunch says the account could not be read and offers to sign it out, and
  *   signing it out leaves an empty install.
@@ -167,29 +168,49 @@ class AndroidEmulatorAccountConnectProofTest {
                     observed += "connected"
                 }
 
-                // Relaunch, with the server unreachable: the saved account's library, offline.
-                relay.makeUnreachable()
-                val triedBefore = relay.refusedConnections.get()
+                // Relaunch into the saved account (spec §13.1): the library this device has seen, said to
+                // be saved and not connected, and NOTHING sent to the server until the person touches
+                // Reconnect — which then reconnects in place. The process's reader is closed first, as a
+                // new process has none; this instrumentation shares the app's process.
+                endProcessConnection()
+                val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
+                val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
+                var triedBeforeReconnect = -1
                 launch().use { scenario ->
                     awaitNode("the library for the saved account at relaunch") { exists("library.open") }
                     check(!exists("account.submit")) { "A saved account must not be asked for again" }
-                    awaitNode("the library saying it is offline", 60_000) { saysOffline() }
-                    touch("account.open", scenario)
-                    awaitNode("the account named") {
-                        exists("account.dialog") && compose.onAllNodes(hasText(DisposableServerProbe.USER, substring = true))
-                            .fetchSemanticsNodes().isNotEmpty()
+                    awaitNode("the library saying the account is saved and not connected") {
+                        exists("library.saved") && exists("library.reconnect")
                     }
-                    observed += "saved-disconnected(relaunch, tried=${relay.refusedConnections.get() - triedBefore})"
+                    check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
+                        "The saved line names the saved account's server: ${label("library.saved")}"
+                    }
+                    awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
+                    SystemClock.sleep(SAVED_SETTLE_MILLIS)
+                    triedBeforeReconnect = tried()
+                    check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
+                    observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
+
+                    touch("library.reconnect", scenario)
+                    awaitNode("Reconnect reaching the server, in place", 60_000) {
+                        tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.open")
+                    }
+                    check(!exists("account.submit")) { "Reconnect connects in place, without the form" }
+                    awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
+                    observed += "reconnected(in-place, tried=${tried()})"
                 }
 
                 // Relaunch after the Keystore lost the saved account's key.
+                endProcessConnection()
                 loseSavedAccountKey(context)
-                relay.makeReachable()
                 launch().use { scenario ->
                     awaitNode("the unreadable account said at launch") {
                         exists("account.status.persistence-failed") && exists("account.signout-unreadable")
                     }
                     check(!exists("library.open")) { "An unreadable account must not open the library" }
+                    check(cardSays("account.status.persistence-failed", R.string.error_unreadable_title)) {
+                        "An account that could not be read is said as unreadable, not as one that could not be saved"
+                    }
                     observed += "credential-persistence-error(load)"
                     touch("account.signout-unreadable", scenario)
                     awaitNode("the sign-out question") { exists("signout.anyway") }
@@ -312,6 +333,13 @@ class AndroidEmulatorAccountConnectProofTest {
     private fun cardSays(tag: String, title: Int) =
         compose.onAllNodes(hasText(text(title)) and hasAnyAncestor(hasTestTag(tag))).fetchSemanticsNodes().isNotEmpty()
 
+    /** Closes the process's connection to the account and waits until it is closed: what a new process starts without. */
+    private fun endProcessConnection() {
+        val closed = java.util.concurrent.CountDownLatch(1)
+        com.legitimateapps.dulcet.core.AndroidLibraryReader.closeCurrent { closed.countDown() }
+        check(closed.await(60, java.util.concurrent.TimeUnit.SECONDS)) { "The library reader did not close" }
+    }
+
     private fun saysOffline() = compose.onAllNodes(hasText(text(SharedR.string.library_reason_offline), substring = true))
         .fetchSemanticsNodes().isNotEmpty()
 
@@ -334,6 +362,9 @@ class AndroidEmulatorAccountConnectProofTest {
 
     private companion object {
         const val WRONG_PASSWORD = "not-the-password"
+
+        /** How long a launch into the saved account is watched for any request before Reconnect. */
+        const val SAVED_SETTLE_MILLIS = 5_000L
 
         /** Long enough for a held request, released, to be answered by the local server. */
         const val SETTLE_MILLIS = 3_000L

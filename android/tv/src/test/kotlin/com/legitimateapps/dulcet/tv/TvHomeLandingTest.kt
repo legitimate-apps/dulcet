@@ -53,6 +53,19 @@ class TvHomeLandingTest {
     }
 
     /**
+     * CONF-10b (spec §13.1): the saved account, not yet connected in this process, says so under the
+     * bar, and Reconnect is one DOWN from the Library tab the remote starts on; choosing it ends the wait.
+     */
+    @Test fun aSavedAccountSaysItWaitsForReconnectWhichIsOneDownFromTheBar() {
+        await("the remote on the bar's Library tab") { focused("library.open") }
+        assertTrue(exists("library.saved"), "The library says the account is saved and not connected")
+        key(Key.DirectionDown)
+        assertFocused("library.reconnect")
+        key(Key.DirectionCenter)
+        await("Reconnect ends the wait") { !exists("library.saved") && !exists("library.reconnect") }
+    }
+
+    /**
      * Should-fixes 4 and 5: along the bar to Account, which opens on Back and not on Sign out; DOWN
      * reaches Sign out, whose dialog opens on Stay signed in; and Back from Account returns to the
      * library with the remote where it was.

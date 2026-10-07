@@ -34,6 +34,8 @@ internal sealed interface AccountConnectStatus {
     data class Connected(val serverName: String) : AccountConnectStatus
     data class Failed(val presentation: AccountFailurePresentation) : AccountConnectStatus
     data object PersistenceFailed : AccountConnectStatus
+    /** The saved account's record could not be read at launch (its Keystore key lost, say). */
+    data object Unreadable : AccountConnectStatus
 }
 
 internal data class AccountFailurePresentation(
@@ -154,7 +156,7 @@ internal class AccountConnectViewModel internal constructor(
                 status = AccountConnectStatus.Saved(saved.serverName),
             )
         } catch (_: CredentialStoreException) {
-            mutableState.update { it.copy(status = AccountConnectStatus.PersistenceFailed) }
+            mutableState.update { it.copy(status = AccountConnectStatus.Unreadable) }
         }
     }
 
