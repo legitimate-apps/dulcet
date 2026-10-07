@@ -290,20 +290,19 @@ class AndroidTvEmulatorAccountConnectProofTest {
             check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
             observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
 
-            // Reconnect lies between the bar and the rows: one DOWN from the Library tab; from the first
-            // card, UP past the row's own Try again (itself a reconnect for a saved account).
+            // Reconnect lies under the bar, one DOWN from the Library tab. From the first card the remote
+            // goes UP to the bar — over the row's Try again and the library's sections, which UP from the
+            // content passes (OBSERVED in core-ci) — and then DOWN.
             val landing = if (focused("library.open")) "library-tab" else "first-card"
             var presses = 0
-            if (landing == "library-tab") {
-                remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                presses = 1
-            } else {
-                while (!focused("library.reconnect") && presses < 3) {
-                    remote(KeyEvent.KEYCODE_DPAD_UP)
-                    presses += 1
-                    compose.waitForIdle()
-                }
+            while (!focused("library.open") && presses < 5) {
+                remote(KeyEvent.KEYCODE_DPAD_UP)
+                presses += 1
+                compose.waitForIdle()
             }
+            check(focused("library.open")) { "UP from the $landing did not reach the Library tab; focus on ${focusedTags()}" }
+            remote(KeyEvent.KEYCODE_DPAD_DOWN)
+            presses += 1
             awaitNode("the remote reaching Reconnect from the $landing in $presses presses") { focused("library.reconnect") }
             check(tried() == 0) { "Moving the remote to Reconnect contacted the server ${tried()} times" }
             remote(KeyEvent.KEYCODE_DPAD_CENTER)

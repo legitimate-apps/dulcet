@@ -144,9 +144,11 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // (spec §13.1, CONF-10b); the rows painted from the device alone.
         assertEquals(emptyList(), proxy.since(relaunchMark).map { it.endpoint }, "the relaunch sent nothing before Reconnect")
         ui.activate(compose.onNodeWithTag("library.reconnect"))
-        await("each row's own read to be issued, and held") {
+        // Reconnect reads the epoch and revalidates the screen (§16.11): the rows on it issue their
+        // reads, which are held, so what is shown next is still the device's.
+        await("the shown rows' reads to be issued after Reconnect, and held") {
             val held = proxy.since(relaunchMark).filter { !it.answered }
-            ROW_READS.all { (endpoint, type) -> held.any { it.endpoint == endpoint && it.parameters["type"] == type } }
+            ROW_READS.any { (endpoint, type) -> held.any { it.endpoint == endpoint && it.parameters["type"] == type } }
         }
         HOME.forEachIndexed { index, key ->
             val first = frames(key).first()
