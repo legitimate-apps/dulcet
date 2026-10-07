@@ -836,6 +836,24 @@ final class DulcetiOSUITests: XCTestCase {
             XCTAssertTrue(bar.label.contains(title), "The bar must name \(title); label=\(bar.label)")
         }
         bar.tap()
+        // A tap synthesized while the host is starved can be lost: main's run 37550927017 tapped
+        // the bar at load1 315 on three cores and no Now Playing surface followed in 15 s, with the
+        // bar still showing and the track playing. Only a tap that left the bar showing, hittable
+        // and with no Now Playing surface is repeated, once, and the repeat is printed, so a bar
+        // that ignores taps still fails here.
+        let surface = [
+            app.staticTexts["dulcet.now-playing.title"].firstMatch,
+            app.buttons["dulcet.now-playing.close"].firstMatch,
+            app.buttons["dulcet.now-playing.lyrics"].firstMatch,
+        ]
+        let deadline = Date().addingTimeInterval(15)
+        while !surface.contains(where: \.exists), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        if !surface.contains(where: \.exists), bar.exists, bar.isHittable {
+            print("DULCET NOW PLAYING RETAP the first tap on the bar presented nothing in 15 s")
+            bar.tap()
+        }
         return true
     }
 
@@ -4446,6 +4464,8 @@ final class DulcetiOSUITests: XCTestCase {
         let renderedResultCount = "4 results"
 
         let app = XCUIApplication()
+        // The delivery marker is the other proof of playback below, for a canary that has ended.
+        app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
         app.launchArguments += [
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url",
@@ -4680,8 +4700,18 @@ final class DulcetiOSUITests: XCTestCase {
             app.staticTexts["Playing from Search"].firstMatch.waitForExistence(timeout: 5),
             "The Now Playing source line must report the search-sourced queue"
         )
-        XCTAssertTrue(
-            app.sliders["Now Playing"].firstMatch.waitForExistence(timeout: 30),
+        // The canary is 31 s long. On a starved runner the steps from the tap to here have taken
+        // longer than that (apple-ci run 37556579512: the queue had finished, Play showing and
+        // the bar back at 0:00 of 0:31, and a finished, unseekable track draws a progress bar,
+        // not the slider). The app's delivered play is the other proof: it is sent only after
+        // 15.5 s of progressing media time (§15.2), which the slider's presence never showed.
+        let deliveryMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
+        let playbackEvidence = waitForPlaybackEvidence(
+            slider: app.sliders["Now Playing"].firstMatch, deliveryMarker: deliveryMarker, timeout: 30
+        )
+        print("DULCET SEARCH PLAYBACK EVIDENCE \(playbackEvidence ?? "none") marker=\(deliveryMarker.label)")
+        XCTAssertNotNil(
+            playbackEvidence,
             "Real playback of the activated track must begin and expose progressing media time"
         )
         print(
@@ -5320,6 +5350,23 @@ final class DulcetiOSUITests: XCTestCase {
         application.buttons.allElementsBoundByIndex.map { button in
             button.label.isEmpty ? "<empty>" : button.label
         }
+    }
+
+    /// "slider" once Now Playing shows the seekable slider, "delivered" once the app reports a play
+    /// delivered (past the scrobble threshold), or nil when neither happens within `timeout`.
+    @MainActor
+    private func waitForPlaybackEvidence(
+        slider: XCUIElement, deliveryMarker: XCUIElement, timeout: TimeInterval
+    ) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if slider.exists { return "slider" }
+            if let counts = scrobbleDeliveryCounts(from: deliveryMarker.label), (counts["delivered"] ?? 0) >= 1 {
+                return "delivered"
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return nil
     }
 
     /// Polls the delivery marker's label (`dulcet-scrobble persisted=N delivered=N ...`) until
