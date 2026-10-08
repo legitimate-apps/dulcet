@@ -94,9 +94,9 @@ base is an error naming that document; the gate never substitutes a different ba
 
 CONF-09b asks that every account-connect render state the account-connect path can originate is
 reached through the app's own transitions; the capability error, which the path never originates
-(below), is named rather than reached. It is evidenced on the `ios`, `ipados` and `tvos`
-`account.connect` cells and on both Android cells, through the production apps on the simulators
-and emulators, and is a named gap on `macos`.
+(below), is named rather than reached. It is evidenced on every `account.connect` cell: through the
+production apps on the simulators and emulators, and on `macos` through the hosted Mac app together
+with the signed, entitled Mac host's main run.
 
 **Apple app proofs.** One proof per platform drives the app against the local disposable server and
 reads each state back from what the app shows: `DulcetAccountConnectStatesUITests` on an iPhone and
@@ -127,11 +127,15 @@ form's fields and calls the same submission Connect calls, because a typed passw
 accepted raises the system's save-password prompt, which no UI test can dismiss (`docs/TRAPS.md`
 33). A failing Keychain save has no simulator trigger.
 
-**Why macOS stays a gap.** The Mac host is signed ad hoc without entitlements, so its Keychain refuses
-every save: the proof reaches both persistence errors for real, but connected and saved/disconnected
-over an in-memory credential store, with the production connector, reader, data source and view. A
-real Keychain save on macOS, and a relaunch that reads it back, need the entitled signed host. The
-Mac proof is cited as an `observes` row.
+**How macOS is evidenced.** The hosted Mac host is signed ad hoc without entitlements, so its
+Keychain refuses every save: `DulcetMacAccountConnectStatesAppTest` reaches both persistence errors
+for real, but connected and saved/disconnected over an in-memory credential store, with the
+production connector, reader, data source and view. The signed, entitled host
+(`DulcetSignedMacAccountConnectTests`, §21.3.1) supplies the Keychain half on main, in separate app
+processes: a real save and the connected UI, a relaunch that reads the item back into the saved
+library, Reconnect through the rendered action, and the load-time persistence error once the item
+is deleted. That run is cited through its committed receipt; the hosted proof carries the CONF-09b
+row and the signed proof an `observes` row.
 
 **The earlier presentation test.** `accountPresentationTransitionsGivenConnectorOutcomes` submits
 through the production `DulcetPresentationStore` into `DulcetAccountDataSource` but injects the

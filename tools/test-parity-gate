@@ -14,6 +14,46 @@ from typing import Callable
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
+def restore_signed_mac_gap(root: Path) -> None:
+    """Give the fixture account.connect/macos as it stood before any receipt row.
+
+    The receipt, named-gap and promotion cases below were written against that cell's CONF-09b
+    gap, and each builds its own receipt against the fixture's commit. The real cell now cites a
+    receipt whose head_sha no fixture repository contains, so the fixture restores the partial
+    shape: the receipt rows removed, CONF-09b named as a gap, the hosted proof an observation.
+    The real cell is checked by the parity gate on the repository itself.
+    """
+    path = root / "FEATURES.yml"
+    document = json.loads(path.read_text())
+    restore_signed_mac_gap_cell(document)
+    path.write_text(json.dumps(document, indent=2) + "\n")
+
+
+def restore_signed_mac_gap_cell(document: dict[str, object]) -> None:
+    cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["macos"]
+    evidence = [row for row in cell["evidence"] if "receipt" not in row]
+    for row in evidence:
+        if row.get("conformance") == "CONF-09b":
+            row.pop("conformance")
+            row["observes"] = "in the hosted Mac app, every declared account-connect render state"
+            # Keep observes first, as the original row had it.
+            row_items = [("observes", row.pop("observes"))] + list(row.items())
+            row.clear()
+            row.update(row_items)
+    cell.clear()
+    cell.update({
+        "status": "partial",
+        "unevidenced_conformance": {"CONF-09b": "The Keychain half awaits the signed host's main run."},
+        "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "signed-mac-main-run",
+            "reason": "The signed Mac host's main run has not been recorded.",
+        },
+        "evidence": evidence,
+        "reason": "CONF-09b is a named gap until the signed host's main run is recorded.",
+    })
+
+
 def materialize(root: Path) -> None:
     for relative in (
         "FEATURES.yml",
@@ -61,6 +101,7 @@ def materialize(root: Path) -> None:
     assert not duplicates, f"materialize lists a directory twice: {sorted(set(duplicates))}"
     for relative in trees:
         shutil.copytree(REPOSITORY / relative, root / relative)
+    restore_signed_mac_gap(root)
     if "--source-ref" in sys.argv:
         reference = sys.argv[sys.argv.index("--source-ref") + 1]
         (root / "tools/parity_gate.py").write_text(subprocess.check_output(
@@ -203,6 +244,7 @@ def pin_fixture_cell(document: dict[str, object]) -> None:
 
 def comparison_documents() -> tuple[dict[str, object], dict[str, object]]:
     document = json.loads((REPOSITORY / "FEATURES.yml").read_text())
+    restore_signed_mac_gap_cell(document)
     base, current = copy_document(document), copy_document(document)
     pin_fixture_cell(base)
     pin_fixture_cell(current)

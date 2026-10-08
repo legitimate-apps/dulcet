@@ -15,9 +15,10 @@ sys.path.insert(0, str(REPOSITORY / "tools"))
 import verify_promotion_conditions as verifier  # noqa: E402
 
 
-def account_macos(features: dict) -> dict:
+def account_partial(features: dict) -> dict:
+    # Any partial cell carrying a promotion condition serves; account.connect/ios is one.
     account = next(feature for feature in features["features"] if feature["id"] == "account.connect")
-    return account["platforms"]["macos"]
+    return account["platforms"]["ios"]
 
 
 features = json.loads((REPOSITORY / "FEATURES.yml").read_text())
@@ -28,7 +29,7 @@ if baseline_errors:
 with tempfile.TemporaryDirectory(prefix="dulcet-unresolved-promotion-") as directory:
     root = Path(directory)
     mutated = copy.deepcopy(features)
-    account_macos(mutated)["promotion_condition"] = {
+    account_partial(mutated)["promotion_condition"] = {
         "status": "named",
         "targets": [
             {"kind": "workflow", "name": "signed-release-validation"},
@@ -65,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-unresolved-promotion-") as direc
 with tempfile.TemporaryDirectory(prefix="dulcet-resolved-promotion-") as directory:
     root = Path(directory)
     mutated = copy.deepcopy(features)
-    account_macos(mutated)["promotion_condition"] = {
+    account_partial(mutated)["promotion_condition"] = {
         "status": "named",
         "targets": [
             {"kind": "workflow", "name": "apple-ci"},
@@ -88,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-resolved-promotion-") as directo
 with tempfile.TemporaryDirectory(prefix="dulcet-missing-promotion-") as directory:
     root = Path(directory)
     mutated = copy.deepcopy(features)
-    del account_macos(mutated)["promotion_condition"]
+    del account_partial(mutated)["promotion_condition"]
     path = root / "FEATURES.yml"
     path.write_text(json.dumps(mutated))
     errors = verifier.validate(REPOSITORY, path)
@@ -105,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-blocked-target-") as directory:
         "blocked_on": "promotion-control-prerequisite",
         "reason": "The negative-control prerequisite has not been supplied.",
     }
-    account_macos(mutated)["promotion_condition"] = condition
+    account_partial(mutated)["promotion_condition"] = condition
     path = root / "FEATURES.yml"
     path.write_text(json.dumps(mutated))
     errors = verifier.validate(REPOSITORY, path)
@@ -122,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix="dulcet-blocked-target-") as directory:
 with tempfile.TemporaryDirectory(prefix="dulcet-nonpartial-promotion-") as directory:
     root = Path(directory)
     mutated = copy.deepcopy(features)
-    account_macos(mutated)["status"] = "shipped"
+    account_partial(mutated)["status"] = "shipped"
     path = root / "FEATURES.yml"
     path.write_text(json.dumps(mutated))
     errors = verifier.validate(REPOSITORY, path)
