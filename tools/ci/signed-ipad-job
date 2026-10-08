@@ -99,6 +99,8 @@ def job():
         token = os.environ.pop('DULCET_CHECKOUT_TOKEN')
         environment = dict(os.environ, DULCET_SIGNED_IPAD_CONFIG=str(paths['proof_config']),
                            DULCET_SIGNED_IPAD_LOCAL_RESULTS=str(local))
+        for key in ('GITHUB_STEP_SUMMARY','GITHUB_ENV','GITHUB_OUTPUT','GITHUB_PATH','GITHUB_STATE'):
+            environment.pop(key,None)
         print('Checkout main started', flush=True)
         request = urllib.request.Request(
             'https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+'/tarball/'+os.environ['GITHUB_SHA'],

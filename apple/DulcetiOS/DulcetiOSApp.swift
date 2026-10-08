@@ -19,6 +19,9 @@ struct DulcetiOSApp: App {
     @UIApplicationDelegateAdaptor(DulcetiOSAppDelegate.self) private var appDelegate
     @State private var presentation: DulcetPresentationStore
     private let downloadController: DulcetCoreDownloadController?
+#if DEBUG && DULCET_SIGNED_IPAD_PROOF
+    @State private var signedIPadProbe: DulcetSignedIPadAccountProbe?
+#endif
 #if DEBUG
     @State private var scrobbleDeliveryMarker: DulcetDebugScrobbleDeliveryMarker?
     @State private var downloadHandoff: DulcetDebugDownloadHandoff?
@@ -41,6 +44,10 @@ struct DulcetiOSApp: App {
             return
         }
 
+#if DULCET_SIGNED_IPAD_PROOF
+        let signedProbe = DulcetSignedIPadAccountProbe()
+        _signedIPadProbe = State(initialValue: signedProbe)
+#endif
         let composition = DulcetAppleProduction.makeIOSComposition()
         let presentation = composition.store
         downloadController = composition.downloads
@@ -86,6 +93,9 @@ struct DulcetiOSApp: App {
             presentation.submitAccountConnection()
         }
         _presentation = State(initialValue: presentation)
+#if DULCET_SIGNED_IPAD_PROOF
+        signedProbe.observe(presentation)
+#endif
 #else
         let composition = DulcetAppleProduction.makeIOSComposition()
         _presentation = State(initialValue: composition.store)
@@ -108,6 +118,15 @@ struct DulcetiOSApp: App {
     var body: some Scene {
         WindowGroup {
             DulcetRootView(store: presentation)
+#if DEBUG && DULCET_SIGNED_IPAD_PROOF
+                .overlay(alignment: .bottom) {
+                    if let signedIPadProbe {
+                        Text(signedIPadProbe.text).font(.caption2.monospaced())
+                            .allowsHitTesting(false)
+                            .accessibilityIdentifier(DulcetSignedIPadAccountProbe.markerID)
+                    }
+                }
+#endif
 #if DEBUG
                 .overlay(alignment: .top) {
                     if let scrobbleDeliveryMarker {
