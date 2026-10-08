@@ -22,6 +22,9 @@ def materialize(root: Path) -> None:
         "docs/superpowers/specs/2026-08-18-dulcet-design.md",
         ".github/workflows/parity-gate.yml",
         ".github/workflows/branch-protection-drift.yml",
+        # The macOS account.connect promotion target must resolve in the copy too.
+        ".github/workflows/signed-mac-account-connect.yml",
+        "apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift",
     ):
         source = REPOSITORY / relative
         target = root / relative

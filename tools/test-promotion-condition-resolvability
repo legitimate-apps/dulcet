@@ -98,10 +98,22 @@ with tempfile.TemporaryDirectory(prefix="dulcet-missing-promotion-") as director
 with tempfile.TemporaryDirectory(prefix="dulcet-blocked-target-") as directory:
     root = Path(directory)
     mutated = copy.deepcopy(features)
-    account_macos(mutated)["promotion_condition"]["targets"] = [
+    # Construct the blocked state explicitly: this cell may gain named targets as
+    # new evidence workflows land, without changing the blocked-state contract.
+    condition = {
+        "status": "blocked",
+        "blocked_on": "promotion-control-prerequisite",
+        "reason": "The negative-control prerequisite has not been supplied.",
+    }
+    account_macos(mutated)["promotion_condition"] = condition
+    path = root / "FEATURES.yml"
+    path.write_text(json.dumps(mutated))
+    errors = verifier.validate(REPOSITORY, path)
+    if errors:
+        raise AssertionError(f"valid blocked condition was rejected: {errors}")
+    condition["targets"] = [
         {"kind": "workflow", "name": "apple-ci"}
     ]
-    path = root / "FEATURES.yml"
     path.write_text(json.dumps(mutated))
     errors = verifier.validate(REPOSITORY, path)
     if not any("named targets are not permitted" in error for error in errors):

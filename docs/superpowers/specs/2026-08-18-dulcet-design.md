@@ -2575,24 +2575,23 @@ against the legacy Keychain, never records an active-account pointer, and the co
 no matching legacy generic-password item exists. This proves the failure is loud and prevents a
 silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
 
-**ASSUMED signed-Keychain properties; no resolvable promotion condition:** the accessibility,
-non-sync, and resulting device-migration properties above remain ASSUMED. The earlier proposed
-workflow `signed-release-validation`, job `entitled-keychain`, and test
-`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` do not resolve to repository
-definitions and are not a runnable promotion plan. `FEATURES.yml` therefore records
-`promotion_condition.status = blocked` on `operator-signing-identity-decision`, names no runnable
-target, and leaves `account.connect / macos` at `partial`. Pull-request workflows receive no signing
-identity, and hosted run `32598531311` already established that an ad-hoc-signed host carrying the
-production Keychain access group cannot launch. The operator must first select the signed execution
-environment and signing identity. After that decision, a real workflow, job, and test may be added;
-the machine-readable promotion condition may name them only after each resolves in the repository.
-The eventual entitled control must add, update, read, and delete the real data-protection-Keychain
-item, read back `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and
-`kSecAttrSynchronizable = false`, and observe the item absent after deletion. CONF-10a does not claim
-those properties.
+**Signed-host proof selected; main execution pending:** `account.connect / macos` stays partial.
+The locally signed host class in §21.3.1 now supplies a resolvable promotion target:
+`signed-mac-account-connect` / `signed-account-connect` /
+`DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI`.
+It runs the production Mac composition in an isolated development-signed, entitled app against
+its own disposable fixture. It observes the active pointer, reads the production credential,
+checks stored accessibility and non-sync attributes without filtering expected values after a
+wrong-accessibility control, and checks the connected UI. It also exercises update and deletion,
+including an unfiltered absence check. Only a green run on main and the named checked JUnit can
+supply public workflow evidence. The parity gate currently counts only branch-required jobs
+wired to executed-test verification; counting a manual main-run receipt requires an explicit
+evidence-policy follow-up, rather than making a dispatch-only job a required PR status.
+Reboot, unlock, migration and background enforcement remain
+ASSUMED. The separate CONF-09b declared-state gap remains; a signed success alone cannot ship it.
 
 CONF-10e narrows that retained boundary for simulator-stored values on iOS, iPadOS, and tvOS only;
-the macOS promotion condition and its signed-host requirements remain unchanged.
+the macOS control above supplies its own signed-host requirement.
 
 **OBSERVED simulator-stored attributes; enforcement and macOS remain ASSUMED:** CONF-10e saves with
 the production Apple credential store inside app-hosted iOS, iPadOS, and tvOS simulator test
@@ -2605,13 +2604,9 @@ observes what the simulator Keychain stored. It does not establish that the OS e
 property, that simulator data-protection semantics are device-equivalent, or that the item behaves
 as intended across migration, reboot, first unlock, or background execution.
 
-The macOS attributes remain ASSUMED. Pull-request `apple-ci` has no signing material and hosted run
-`32598531311` already established that an ad-hoc-signed macOS host carrying the production Keychain
-access group cannot launch. The earlier proposed workflow `signed-release-validation`, job
-`entitled-keychain`, and test
-`DulcetMacEntitledKeychainTests/credentialsCarryDeviceOnlyAccessibility` do not resolve to repository
-definitions and are not a runnable promotion plan. CONF-10a continues to claim only the unentitled
-fail-closed boundary; CONF-10e is separate platform-specific evidence.
+The macOS attributes await the signed-host main run above. Pull-request `apple-ci` carries no
+signing material and retains the unentitled fail-closed control. CONF-10e remains a separate
+simulator-only control; the signed macOS proof does not establish lifecycle enforcement.
 
 **ASSUMED background behavior:** `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` is intended to
 let a background task run after the device's first post-reboot unlock while preventing migration to
@@ -6455,7 +6450,7 @@ change rather than either a silent pass or a permanently red build.
 ### 21.1 The split, and why — corrected 2026-08-18
 
 **Apple builds run on GitHub-hosted `macos-latest`. Kotlin, Android, lint, conformance and the parity
-gate run on `ubuntu-latest`. There is no self-hosted runner in this project.**
+gate run on `ubuntu-latest`. Ordinary CI uses hosted runners; §21.3.1 bounds the evidence exceptions.**
 
 Revision 2 specified a self-hosted macOS runner on the premise that hosted macOS had to be avoided on
 cost grounds — the well-known 10x billing multiplier for `macos-*` runners. **That premise is false for
@@ -6559,10 +6554,10 @@ cannot access secrets at all, and cannot dispatch a workflow — has no path to 
 maintainer, so the person who dispatches a release also approves it. The approval is a deliberate
 second click that no automation can supply, not an independent review.
 
-### 21.3 OQ-1 is CLOSED for the CI matrix — one narrow exception, in §21.3.1
+### 21.3 OQ-1 is CLOSED for the CI matrix — narrow evidence exceptions, in §21.3.1
 
 **Status: closed 2026-08-18 for all build and test CI. Amended 2026-09-04 by §21.3.1, which admits
-a single device-attached exception on the evidenced burden this section itself sets out below.**
+device-attached and signed-entitled-host evidence on the burden this section itself sets out below.**
 
 OQ-1 asked for a choice between attaching a self-hosted runner to a public repo — which is a known bad
 practice, since a fork PR can compromise a persistent runner — and standing up a separate private
@@ -6583,34 +6578,47 @@ are insufficient — cite this section and the two URLs in §21.1. What still bi
 non-Apple CI on `ubuntu-latest`, and never reach for a larger runner (§21.1 caveat 1), which is the one
 place real money can still appear.
 
-### 21.3.1 The one admitted exception: device-attached evidence, dispatch-only
+### 21.3.1 Admitted evidence classes: device-attached and signed-entitled-host, dispatch-only
 
 **Added 2026-09-04.** §21.3 sets the burden for reopening as *"show why free hosted runners are
-insufficient."* That burden is met for exactly one class of work, and for nothing else.
+insufficient."* Amended 2026-10-07: that burden is met for the two evidence classes below.
 
 **The showing.** A GitHub-hosted runner is an ephemeral virtual machine with no physical device
 attached. Several `FEATURES.yml` rows claim behaviour on a real iPad, and no hosted runner can
 observe a physical device at all. This is a **capability** gap, not a cost preference — which is
 precisely the distinction §21.3 was drawing when it withdrew the original question as malformed.
 
+**OBSERVED signed-host showing:** [hosted run 32598531311](https://github.com/legitimate-apps/dulcet/actions/runs/32598531311),
+job `apple-ci`, built the host but launchd refused its ad-hoc signature carrying
+`keychain-access-groups` before test code ran. The existing unentitled control can reach the live
+persistence-failure state, but cannot prove a production Keychain save or its connected UI.
+`signed-mac-account-connect` supplies that bounded signed-host class with locally held signing
+material. This changes neither the ordinary hosted CI matrix nor the §22 distribution flow.
+
 **What is admitted:**
 
-- A self-hosted macOS runner, scoped to this repository, with a physical device attached, carrying
-  a label used by no other job.
+- A self-hosted macOS runner, scoped to this repository, carrying a label used by no other job,
+  for either attached-device evidence or a development-signed, entitled Mac app-host proof.
 - 🚨 **It accepts `workflow_dispatch` runs on `main` only. Never `pull_request`, never `push`.**
   This is the whole safety argument and is normative, not advisory: `workflow_dispatch` requires
   write access to this repository, so a fork pull request cannot reach the runner at all. The
   exposure §21.3 named — *a fork PR can modify the very workflow that contains the guard* — is
   removed by the trigger, not by a guard inside the workflow that a fork could edit.
 - The runner registers `--ephemeral`, so one job never inherits another's working state.
-- Its jobs read **no release signing secrets**; signing stays in the manual-approval environment
-  described in §22.
+- Its jobs read **no repository secrets**. The signed-host class signs locally in a dedicated
+  keychain with a certificate whose CN contains only the API-created identity. Release signing
+  stays in the manual-approval environment described in §22.
+- The signed-host runner starts on demand for one job, exits, and has no service or scheduler.
+  The runner name and process-visible hostname are neutral. Raw build/test output stays outside
+  its workspace and is never uploaded; only the exact passing JUnit case may be published after
+  a fail-closed check against locally derived private tokens. App bundles and xcresult are local.
+  A private rehearsal audits the full downloaded job log and artifact before public registration.
 
 **What is NOT admitted, and stays exactly as §21.3 left it:** every ordinary Apple build and test
 job runs on hosted `macos-latest`; non-Apple CI stays on `ubuntu-latest`; no larger or premium
 runner label, ever (§21.1 caveat 1), which remains the one place real money can appear.
 
-⚠️ **If the device workflow is ever changed to accept `pull_request` or `push`, the exposure in
+⚠️ **If either evidence workflow is ever changed to accept `pull_request` or `push`, the exposure in
 §21.3 returns in full and this exception is void.** A reviewer seeing such a diff should reject it
 on this paragraph alone.
 
@@ -7600,7 +7608,7 @@ argue against the recorded rationale — not as filling in a blank.
 
 | id | decision | notes |
 |---|---|---|
-| **OQ-1** | **CLOSED by correction.** Apple CI runs on GitHub-hosted standard runners; there is no self-hosted runner in this project. | The premise was false — standard hosted runners are free on public repositories, so there was no cost reason to use self-hosted hardware and therefore no fork-PR exposure to mitigate. Reasoning and both primary sources: **§21.3**. Amended 2026-09-04 by **§21.3.1**, which admits one dispatch-only, device-attached exception on §21.3's own evidenced burden; the CI matrix itself stays hosted. |
+| **OQ-1** | **CLOSED by correction.** Ordinary Apple CI runs on GitHub-hosted standard runners; §21.3.1 admits bounded evidence exceptions. | The premise was false — standard hosted runners are free on public repositories, so there was no cost reason to use self-hosted hardware and therefore no fork-PR exposure to mitigate. Reasoning and both primary sources: **§21.3**. Amended 2026-09-04 by **§21.3.1**, which admits dispatch-only device-attached and signed-entitled-host evidence on §21.3's own burden; the CI matrix itself stays hosted. |
 | **OQ-2** | **Apache-2.0.** | Approved. Explicit patent grant; permissive; App Store compatible subject to the dependency licence audit, which stays a Phase-0 deliverable (§24.2). |
 | **OQ-3** | **macOS 14 / iOS 17 / tvOS 17.** ✅ **DECIDED, and re-confirmed 2026-08-18 on corrected facts.** | Apple Silicon only. ⚠️ **The original justification was half wrong** — it cited `@Observable` *and* "the modern navigation APIs", but `NavigationStack` and `NavigationSplitView` are available at iOS 16 / macOS 13 / tvOS 16, a full major version below the floor. That error was caught, flagged, and the question returned to the maintainer rather than kept silently. **Re-examined on `@Observable` alone, the floor survived:** `ObservableObject` invalidates a whole view on any published change while `@Observable` invalidates per property, which is a real difference on a screen scrolling tens of thousands of rows — the one surface that must never stutter. And the reach cost is close to nil: iOS 17 shipped September 2023 and is three OS generations old, so 16/13/16 would buy a sliver of installed base and pay for it with the coarser observation model forever. **The 16/13/16 alternative was considered and rejected.** 🚫 Do not re-derive this from the old navigation premise, and do not reopen it because the original reason was false — the reason was false, the conclusion stands (§4.1). |
 | **OQ-4** | **A small public Navidrome on Railway**, seeded with royalty-free audio, existing solely to give App Review working credentials. ⚠️ **It must run PERMANENTLY, not per review window.** | **Never a private or personal server instance** (§23.5). **OBSERVED:** Apple requires *"(and turn on your back-end service!)"* and App Store Connect states **"The demo account… must not expire."** An ephemeral server is a rejection risk on **every update review**, not just the first. 💰 **So this is standing infrastructure with a small ongoing hosting bill and a maintenance burden** — patching, uptime, and a corpus that stays legally clean — not a submission-time task. The original framing understated it. Still a Phase-6 blocker; Phase 2's TestFlight work does not depend on it. |
@@ -7658,6 +7666,16 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-07 — Signed, entitled Mac app-host evidence admitted as a dispatch-only class.**
+
+§21.3.1 adds locally signed host evidence to the attached-device class, on the observed launch
+failure in hosted run 32598531311. `signed-mac-account-connect` runs only on main, on a separately
+labelled repository-scoped ephemeral runner with no repository secrets. Signing and raw logs stay
+local; an exact passing JUnit is scrub-checked before publication, and a private rehearsal checks
+the complete runner log and artifacts first. The production Mac composition is exercised in a
+separate host namespace. `account.connect/macos` remains partial until main supplies that evidence;
+the existing CONF-09b gap and lifecycle-enforcement assumptions remain explicit.
 
 **2026-10-07 — CONF-09b names the states the path can originate, and a failed launch-time read has
 its own copy (§13.1, §20.4).** CONF-09b asked that "every declared distinct account-connect render
