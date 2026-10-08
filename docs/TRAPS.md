@@ -333,3 +333,21 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     field use the full-size form. To find a hang like this, sample the test thread's stack from a
     second thread and print each window root's `isLayoutRequested`. The point where the heap runs
     out says nothing about the cause.
+
+51. **On macOS and the Apple simulators, a loopback port that is bound but not listening is not
+    refused.** A test that wants a connection the system refuses at once, and holds a port with
+    `bind` alone to keep it from being reused, gets a connect that waits until the request's time
+    limit instead (30 s for the account connector), and the app shows the timeout's copy, not the
+    unreachable one. OBSERVED on 2026-10-07 in the account-connect states proofs. Close the socket
+    right after `bind` and `getsockname` have named a free port: the port is then refused at once.
+    The account-connect proofs hold their silent port (one that accepts and never answers) with a
+    real `listen`, and release their refused port as soon as it is named.
+
+52. **The Apple TV keyboard's return button carries the field's `submitLabel`, and a field whose
+    `onSubmit` moves focus opens the next field's keyboard.** A UI test that waits for `done` on an
+    account field finds only `next`; selecting `next` on the server address or username submits it
+    and the keyboard comes straight back for the following field. OBSERVED on 2026-10-07 on the
+    tvOS 26.5 simulator. The account-connect states proof selects `next`, then presses Menu only
+    when another account field holds keyboard focus, so a keyboard that is merely slow to close
+    never sends Menu to the app. In the same proofs the system keyboard also kept 10 of 31 typed
+    characters under host load: verify each typed field and retype a short one, never accept it.
