@@ -14,6 +14,9 @@ struct DulcetMacApp: App {
         _presentation = State(initialValue: composition.store)
         downloadController = composition.downloads
 #if DEBUG
+        // A read-only observation seam for the app-hosted relaunch proof. The test
+        // observes this launch's composition; it supplies no account at launch.
+        DulcetMacProduction.recordLaunchedStore(composition.store)
         // The killed-process download proof launches this app as a process of its own, so the
         // account and the download it asks for arrive as launch arguments, and only with the
         // proof's namespace active.
@@ -61,6 +64,13 @@ struct DulcetMacApp: App {
 /// The single production composition root shared by the application and its app-hosted control.
 @MainActor
 enum DulcetMacProduction {
+#if DEBUG
+    private(set) static weak var launchedPresentationStore: DulcetPresentationStore?
+
+    static func recordLaunchedStore(_ store: DulcetPresentationStore) {
+        launchedPresentationStore = store
+    }
+#endif
     static func makeComposition() -> DulcetMacProductionComposition {
         DulcetAppleProduction.makeMacComposition()
     }

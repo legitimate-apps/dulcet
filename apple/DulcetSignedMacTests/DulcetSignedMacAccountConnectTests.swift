@@ -7,9 +7,189 @@ import XCTest
 
 @MainActor
 final class DulcetSignedMacAccountConnectTests: XCTestCase {
+    /// The driver invokes this case in four separate host processes, checking
+    /// termination between them. Only the save phase supplies account input.
+    private func proveRelaunchReadsKeychainThenReconnectsAndRejectsMissingItem() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let nonce = try XCTUnwrap(environment["DULCET_SIGNED_PROOF_NONCE"])
+        guard UUID(uuidString: nonce) != nil else { throw ProofError.invalidFixture }
+        let phase = try XCTUnwrap(environment["DULCET_SIGNED_PROOF_PHASE"])
+        let baseURL = try XCTUnwrap(environment["DULCET_CONFORMANCE_BASE_URL"])
+        let url = try XCTUnwrap(URLComponents(string: baseURL))
+        guard Bundle.main.bundleIdentifier == "com.legitimateapps.dulcet.signed-host",
+              url.scheme == "http", url.host == "127.0.0.1",
+              (15781...15789).contains(url.port ?? 0),
+              environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true" else {
+            throw ProofError.invalidFixture
+        }
+        XCTAssertFalse(ProcessInfo.processInfo.arguments.contains("-dulcet-debug-connect-account"))
+        XCTAssertNil(DulcetDownloadHandoffProbe.namespace, "A file-backed account hook must not be active")
+        let store = DulcetKeychainCredentialStore()
+        let ownershipKey = "com.legitimateapps.dulcet.signed-proof.owner"
+        let accountKey = "com.legitimateapps.dulcet.signed-proof.account"
+        let defaults = UserDefaults.standard
+        if phase == "save" {
+            guard store.activeAccountID == nil, defaults.string(forKey: ownershipKey) == nil else {
+                throw ProofError.inheritedAccount
+            }
+            defaults.set(nonce, forKey: ownershipKey)
+        } else {
+            guard defaults.string(forKey: ownershipKey) == nonce else {
+                throw ProofError.inheritedAccount
+            }
+        }
+        if phase == "cleanup" {
+            // Also runs after a failed phase, but only for this driver's nonce.
+            try store.delete()
+            if let accountID = defaults.string(forKey: accountKey) {
+                var q = query(service: DulcetKeychainCredentialStore.productionService, account: accountID)
+                q[kSecReturnAttributes as String] = kCFBooleanTrue
+                XCTAssertEqual(SecItemCopyMatching(q as CFDictionary, nil), errSecItemNotFound)
+            }
+            XCTAssertNil(store.activeAccountID)
+            XCTAssertNil(try store.load())
+            defaults.removeObject(forKey: ownershipKey)
+            defaults.removeObject(forKey: accountKey)
+            try writeReceipt(phase: phase, nonce: nonce)
+            return
+        }
+        // This is the store created by DulcetMacApp.init(), not a second test composition.
+        let presentation = try XCTUnwrap(DulcetMacProduction.launchedPresentationStore)
+        let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
+        NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
+        defer { NSApp.accessibilitySetValue(previous, forAttribute: enhancedUI) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !NSApp.windows.contains(where: { $0.isVisible && $0.contentView != nil }),
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let window = try XCTUnwrap(NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }))
+        let host = try XCTUnwrap(window.contentView)
+        switch phase {
+        case "save":
+            XCTAssertEqual(presentation.snapshot.state, .accountConnectIdle)
+            presentation.accountServerURL = baseURL
+            presentation.accountUsername = "dulcet-admin"
+            presentation.accountPassword = "dulcet-ci-canary-password"
+            presentation.accountAllowLocalHTTP = true
+            presentation.submitAccountConnection()
+            try await requireConnected(presentation, host: host)
+            let accountID = try XCTUnwrap(store.activeAccountID)
+            defaults.set(accountID, forKey: accountKey)
+            XCTAssertEqual(try store.load()?.serverURL, baseURL)
+            try assertStoredAttributes(accountID: accountID)
+            // Keep the item and pointer: the driver must end this process before restore.
+        case "restore":
+            let accountID = try XCTUnwrap(defaults.string(forKey: accountKey))
+            XCTAssertEqual(store.activeAccountID, accountID, "Relaunch changed the saved account identity")
+            let request = try XCTUnwrap(store.load())
+            XCTAssertEqual(request.serverURL, baseURL)
+            XCTAssertEqual(request.username, "dulcet-admin")
+            XCTAssertEqual(request.password, "dulcet-ci-canary-password")
+            XCTAssertTrue(request.allowLocalHTTP)
+            try assertStoredAttributes(accountID: accountID)
+            XCTAssertFalse(presentation.snapshot.accountConnected)
+            XCTAssertEqual(presentation.selectedDestination, .library)
+            guard case let .saved(serverName) = presentation.snapshot.accountConnection else {
+                throw ProofError.notSavedDisconnected
+            }
+            XCTAssertEqual(presentation.accountServerURL, request.serverURL)
+            XCTAssertEqual(presentation.accountUsername, request.username)
+            XCTAssertEqual(presentation.accountPassword, request.password)
+            let reconnectLabel = DulcetStrings.reconnectToServer(serverName)
+            _ = try await element(in: host, labelContaining: reconnectLabel)
+            _ = try await element(in: host, identifier: "dulcet.reader.reconnect")
+            presentation.selectDestination(.settings)
+            XCTAssertEqual(presentation.snapshot.state, .accountSavedDisconnected)
+            _ = try await element(in: host, labelContaining: reconnectLabel)
+            XCTAssertFalse(descendants(host).contains { label($0) == DulcetStrings.signOut })
+            presentation.selectDestination(.library)
+            // Drive the rendered library's Reconnect action, with no form input on this launch.
+            let button = try await element(in: host, identifier: "dulcet.reader.reconnect")
+            let object = try XCTUnwrap(button as? NSObject)
+            let press = #selector(NSAccessibilityProtocol.accessibilityPerformPress)
+            guard object.responds(to: press) else { throw ProofError.missingAction }
+            _ = object.perform(press)
+            try await requireConnected(presentation, host: host)
+            XCTAssertEqual(store.activeAccountID, accountID)
+            XCTAssertEqual(try store.load(), request)
+            // Delete the actual item after reconnect, leaving its pointer untouched.
+            // The next process must distinguish this from the successful saved launch.
+            XCTAssertEqual(SecItemDelete(query(service: DulcetKeychainCredentialStore.productionService,
+                                               account: accountID) as CFDictionary), errSecSuccess)
+            XCTAssertEqual(store.activeAccountID, accountID)
+        case "missing":
+            let accountID = try XCTUnwrap(defaults.string(forKey: accountKey))
+            XCTAssertEqual(store.activeAccountID, accountID)
+            XCTAssertThrowsError(try store.load()) { error in
+                XCTAssertEqual(error as? DulcetCredentialStoreError, .credentialMissing)
+            }
+            XCTAssertEqual(presentation.snapshot.state, .accountErrorPersistence)
+            XCTAssertFalse(presentation.snapshot.accountConnected)
+            guard case let .failed(failure) = presentation.snapshot.accountConnection else {
+                throw ProofError.missingPersistenceError
+            }
+            XCTAssertEqual(failure.kind, .credentialPersistenceFailed)
+            _ = try await element(in: host, labelContaining: failure.message)
+            XCTAssertFalse(descendants(host).contains {
+                objectValue("accessibilityIdentifier", of: $0) as? String == "dulcet.reader.reconnect"
+            }, "Missing Keychain item was presented as a saved library")
+        default:
+            throw ProofError.invalidFixture
+        }
+        try writeReceipt(phase: phase, nonce: nonce)
+    }
+
+    private func requireConnected(_ presentation: DulcetPresentationStore, host: NSView) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while !presentation.snapshot.accountConnected && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard case let .connected(account) = presentation.snapshot.accountConnection else {
+            throw ProofError.notConnected
+        }
+        XCTAssertTrue(presentation.snapshot.accountConnected)
+        presentation.selectDestination(.settings)
+        _ = try await element(in: host, labelContaining: DulcetStrings.connectedTo(account.serverName))
+        _ = try await element(in: host, labelContaining: DulcetStrings.signOut)
+    }
+
+    private func element(in host: NSView, identifier: String? = nil,
+                         labelContaining: String? = nil) async throws -> Any {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        repeat {
+            host.layoutSubtreeIfNeeded()
+            if let found = descendants(host).first(where: { element in
+                if let identifier {
+                    return objectValue("accessibilityIdentifier", of: element) as? String == identifier
+                }
+                return label(element)?.contains(labelContaining ?? "") == true
+            }) { return found }
+            try await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+        XCTFail("Expected production app control was not rendered")
+        throw ProofError.missingAction
+    }
+
+    private func writeReceipt(phase: String, nonce: String) throws {
+        let directory = try FileManager.default.url(for: .applicationSupportDirectory,
+                                                    in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("dulcet-signed-proof").appendingPathComponent(nonce)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: [
+            "phase": phase, "nonce": nonce, "pid": ProcessInfo.processInfo.processIdentifier
+        ])
+        try data.write(to: directory.appendingPathComponent(phase + ".json"), options: .atomic)
+    }
+
     /// Live production composition -> Keychain item and marker -> visible connected root.
     /// A fresh isolated host namespace prevents a prior save from satisfying this proof.
     func testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI() async throws {
+        if ProcessInfo.processInfo.environment["DULCET_SIGNED_PROOF_PHASE"] != "connected" {
+            try await proveRelaunchReadsKeychainThenReconnectsAndRejectsMissingItem()
+            return
+        }
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.legitimateapps.dulcet.signed-host")
         let environment = ProcessInfo.processInfo.environment
         let baseURL = try XCTUnwrap(environment["DULCET_CONFORMANCE_BASE_URL"])
@@ -157,5 +337,8 @@ final class DulcetSignedMacAccountConnectTests: XCTestCase {
             ?? objectValue("accessibilityTitle", of: element) as? String
             ?? objectValue("accessibilityValue", of: element) as? String
     }
-    private enum ProofError: Error { case invalidFixture, inheritedAccount, notConnected }
+    private enum ProofError: Error {
+        case invalidFixture, inheritedAccount, notConnected, notSavedDisconnected
+        case missingAction, missingPersistenceError
+    }
 }
