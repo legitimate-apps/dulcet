@@ -1,0 +1,36 @@
+name: signed-mac-account-connect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-mac-account-connect
+  cancel-in-progress: true
+
+jobs:
+  main-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = refs/heads/main
+  signed-account-connect:
+    needs: main-only
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, dulcet-signed-mac]
+    timeout-minutes: 60
+    steps:
+      - name: Prove signed connection and scrub evidence
+        env:
+          DULCET_CHECKOUT_TOKEN: ${{ github.token }}
+        run: /private/tmp/dulcet-signed-control/job
+      - name: Publish checked JUnit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-signed-mac-junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/proof.xml
+          if-no-files-found: error
+          retention-days: 7

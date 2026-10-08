@@ -79,6 +79,57 @@ targets:
           # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+  DulcetSignedMacHost:
+    type: application
+    platform: macOS
+    sources:
+      - DulcetMac
+      - DulcetAppleShared
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.signed-host
+        PRODUCT_MODULE_NAME: DulcetMac
+        PRODUCT_NAME: Dulcet Signed Host
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_ENTITLEMENTS: DulcetSignedMacTests/Host.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: "$(DULCET_SIGNED_HOST_PROFILE)"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+    info:
+      path: DulcetSignedMacTests/Host-Info.plist
+      properties:
+        CFBundleDisplayName: Dulcet Signed Host
+        NSLocalNetworkUsageDescription: "Dulcet connects to the disposable test server."
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+  DulcetSignedMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: DulcetSignedMacTests
+        excludes:
+          - Host.entitlements
+          - Host-Info.plist
+    dependencies:
+      - target: DulcetSignedMacHost
+      - package: DulcetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.signed-host.tests
+        CODE_SIGN_STYLE: Manual
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet Signed Host.app/Contents/MacOS/Dulcet Signed Host"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   DulcetMacRelease:
     type: application
     platform: macOS
@@ -484,6 +535,22 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Dulcet DEV"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
+  DulcetSignedMacProof:
+    build:
+      targets:
+        DulcetSignedMacHost: all
+        DulcetSignedMacTests: [test]
+    test:
+      targets:
+        - DulcetSignedMacTests
+      environmentVariables:
+        - variable: DULCET_CONFORMANCE_BASE_URL
+          value: "$(DULCET_TEST_CONFORMANCE_BASE_URL)"
+          isEnabled: true
+        - variable: DULCET_CONFORMANCE_DISPOSABLE
+          value: "$(DULCET_TEST_CONFORMANCE_DISPOSABLE)"
+          isEnabled: true
+
   DulcetPlaybackIntegration:
     build:
       targets:

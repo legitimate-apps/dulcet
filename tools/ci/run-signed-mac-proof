@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Signed macOS account proof. The caller captures all output into private local storage.
+
+Signing configuration and fixture binaries are provisioned locally, outside the checkout.
+Only a checked JUnit report is eligible for publication; app and xcresult stay local.
+"""
+import json
+import fcntl
+import os
+from pathlib import Path
+import plistlib
+import shutil
+import socket
+import signal
+import subprocess
+import time
+
+repo = Path(__file__).resolve().parents[2]
+config = json.loads(Path(os.environ['DULCET_SIGNED_CONFIG']).read_text())
+root = Path(os.environ['DULCET_SIGNED_LOCAL_RESULTS']).resolve()
+workspace = Path(os.environ.get('GITHUB_WORKSPACE', repo)).resolve()
+if root == workspace or workspace in root.parents:
+    raise SystemExit('Private results must be outside the workspace')
+root.mkdir(parents=True, exist_ok=True)
+dd = Path('/private/tmp/claude-501/dd-signedmac')
+case = 'testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI'
+lease = None
+server = None
+server_log = None
+proof_lock = None
+owns_dd = False
+
+def run(args, **kwargs):
+    subprocess.run([str(a) for a in args], cwd=repo, check=True, **kwargs)
+
+def interrupted(signum, frame):
+    raise InterruptedError('Signed proof interrupted')
+signal.signal(signal.SIGTERM, interrupted)
+signal.signal(signal.SIGINT, interrupted)
+
+try:
+    # One local proof owns the shared DerivedData and fixture port at a time.
+    proof_lock = open('/private/tmp/dulcet-signed-mac-proof.lock', 'a')
+    fcntl.flock(proof_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    lease = subprocess.check_output(['leg-lease', 'create', '--kind', 'build', '--session',
+                                    'dulcet-signed-mac', '--pid', str(os.getpid()), '--wait', '1800'], text=True).strip()
+    # Check only after lease wait, then establish the child owns LISTEN before
+    # health-check's admin bootstrap may send any request to this endpoint.
+    with socket.socket() as reservation:
+        reservation.bind(('127.0.0.1', 15781))
+    owns_dd = True
+    fixture = root / 'fixture'
+    fixture.mkdir()
+    # A fresh database on every run. Only the static, checked corpus is shared.
+    run(['tools/conformance-env/render-config', '--output', fixture/'navidrome.toml',
+         '--music-folder', config['music'], '--data-folder', fixture/'data',
+         '--cache-folder', fixture/'cache', '--address', '127.0.0.1', '--port', '15781',
+         '--ffmpeg-path', config['ffmpeg']])
+    server_log = (root/'navidrome.log').open('wb')
+    server = subprocess.Popen([config['navidrome'], '--configfile', str(fixture/'navidrome.toml')],
+                              stdout=server_log, stderr=subprocess.STDOUT)
+    deadline = time.monotonic() + 60
+    while True:
+        if server.poll() is not None:
+            raise RuntimeError('Owned fixture exited before listening')
+        listener = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-p', str(server.pid),
+                                   '-iTCP:15781', '-sTCP:LISTEN', '-Fp'], capture_output=True, text=True)
+        if listener.returncode == 0 and ('p'+str(server.pid)) in listener.stdout.splitlines():
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Owned fixture did not acquire its listener')
+        try:
+            server.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            pass
+    env = dict(os.environ, TZ='UTC', DULCET_CONFORMANCE_BASE_URL='http://127.0.0.1:15781',
+               DULCET_CONFORMANCE_DISPOSABLE='true')
+    run(['tools/conformance-env/health-check', '--base-url', env['DULCET_CONFORMANCE_BASE_URL'],
+         '--runtime', 'darwin/arm64', '--expected-server-version',
+         subprocess.check_output(['tools/conformance-env/read-pin', 'navidrome.version'], text=True).strip(),
+         '--expected-ffmpeg-version', subprocess.check_output(['tools/conformance-env/read-pin', 'ffmpeg.darwin.version'], text=True).strip(),
+         '--ffmpeg-command-json', json.dumps([config['ffmpeg']]),
+         '--corpus-manifest', Path(config['music'])/'corpus-manifest.json'], env=env)
+    if server.poll() is not None:
+        raise RuntimeError('Owned disposable fixture exited')
+    # Xcode builds the launch manifest with an ad-hoc identity. The host is then
+    # development-signed explicitly using the dedicated local keychain, so signing
+    # requires no change to the user's keychain search list.
+    settings = ['CODE_SIGN_STYLE=Manual', 'CODE_SIGN_IDENTITY=-',
+                'CODE_SIGN_ENTITLEMENTS=', 'DEVELOPMENT_TEAM=',
+                'PROVISIONING_PROFILE_SPECIFIER=',
+                'DULCET_TEST_CONFORMANCE_BASE_URL='+env['DULCET_CONFORMANCE_BASE_URL'],
+                'DULCET_TEST_CONFORMANCE_DISPOSABLE=true']
+    common = ['-project', 'apple/Dulcet.xcodeproj', '-scheme', 'DulcetSignedMacProof',
+              '-configuration', 'Debug', '-destination', 'platform=macOS,arch=arm64',
+              '-derivedDataPath', dd, '-parallel-testing-enabled', 'NO']
+    run(['xcodebuild', 'build-for-testing', *common, *settings], env=env)
+    app = dd/'Build/Products/Debug/Dulcet Signed Host.app'
+    profile = plistlib.loads(subprocess.check_output(['security', 'cms', '-D', '-i', config['profile_file']]))
+    shutil.copyfile(config['profile_file'], app/'Contents/embedded.provisionprofile')
+    generated = dd/'Build/Intermediates.noindex/Dulcet.build/Debug/DulcetSignedMacHost.build/Dulcet Signed Host.app.xcent'
+    expanded = plistlib.loads(generated.read_bytes())
+    expanded.update(profile['Entitlements'])
+    expanded['keychain-access-groups'] = ['3LTL47SJ8C.com.legitimateapps.dulcet.signed-host']
+    expanded['com.apple.security.app-sandbox'] = True
+    expanded['com.apple.security.network.client'] = True
+    entitlement_file = root/'host.entitlements'
+    entitlement_file.write_bytes(plistlib.dumps(expanded))
+    sign = ['codesign', '--force', '--sign', config['identity'], '--keychain', config['keychain']]
+    # The test bundle is loaded into the entitled host process and has no own profile.
+    for bundle in sorted(app.rglob('*.xctest')):
+        run([*sign, bundle])
+    run([*sign, '--entitlements', entitlement_file, app])
+    run(['codesign', '--verify', '--strict', app])
+    entitlements = plistlib.loads(subprocess.check_output(['codesign', '-d', '--entitlements', ':-', app], stderr=subprocess.DEVNULL))
+    assert entitlements['keychain-access-groups'] == ['3LTL47SJ8C.com.legitimateapps.dulcet.signed-host']
+    assert entitlements['com.apple.security.app-sandbox'] is True
+    result = root/'proof.xcresult'
+    run(['xcodebuild', 'test-without-building', *common, '-resultBundlePath', result,
+         '-only-testing:DulcetSignedMacTests/DulcetSignedMacAccountConnectTests/'+case, *settings], env=env)
+    run(['python3', 'tools/verify-xcode-test-execution', result, 'DulcetSignedMacTests.DulcetSignedMacAccountConnectTests', case])
+    run(['python3', 'tools/swift-testing-junit', result, root/'proof.xml', 'DulcetSignedMacAccountConnectTests'])
+finally:
+    if server is not None and server.poll() is None:
+        server.terminate()
+        server.wait(timeout=30)
+    if server_log is not None:
+        server_log.close()
+    if lease:
+        subprocess.run(['leg-lease', 'release', lease], check=False)
+    if owns_dd:
+        shutil.rmtree(dd, ignore_errors=True)
+    if proof_lock:
+        proof_lock.close()

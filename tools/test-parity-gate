@@ -40,6 +40,7 @@ def materialize(root: Path) -> None:
         # the tree, so without these the fixture rejects a correct FEATURES.yml for citing tests
         # that do not exist -- a false negative that reads exactly like a bad promotion.
         "apple/DulcetMacTests",
+        "apple/DulcetSignedMacTests",
         "apple/DulcetTVUITests",
         # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
         # verifies that every cited evidence test NAME exists in the tree. Without this the fixture
@@ -905,6 +906,8 @@ expect_rejection(
 # count that disagreed with the list it claims to summarize -- which is exactly the defect this
 # fixture exists to detect in real reports.
 passing_cases = """\
+  <testcase classname="DulcetSignedMacAccountConnectTests"
+            name="testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.AndroidProductionLibraryReaderAppConformanceTest"
             name="conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvProductionLibraryReaderAppConformanceTest"
