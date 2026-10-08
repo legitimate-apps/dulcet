@@ -1,0 +1,283 @@
+#!/opt/homebrew/bin/python3
+"""Trusted local job template: exact main checkout, private output, checked XML only.
+
+Copy this executable into the runner-account-owned control directory after local
+review. Its sibling configuration.json supplies proof_config, results_root and
+private_tokens as local absolute paths. Signing material is read locally only.
+"""
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+
+REPOS = ('legitimate-apps/dulcet', 'legitimate-apps/dulcet-signed-ipad-privacy-check')
+
+
+def private(path, mode):
+    info = path.lstat()
+    if (path.is_symlink() or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != mode):
+        raise ValueError('control is not private')
+    return path
+
+
+def read_config(control, workspace):
+    private(control, 0o700)
+    private(control/'job', 0o700)
+    config_path = private(control/'configuration.json', 0o600)
+    config = json.loads(config_path.read_text())
+    if set(config) != {'proof_config', 'results_root', 'private_tokens'}:
+        raise ValueError('invalid local configuration')
+    paths = {key: Path(value) for key, value in config.items()}
+    if any(not path.is_absolute() or path == workspace or workspace in path.resolve().parents
+           for path in paths.values()):
+        raise ValueError('local files must stay outside workspace')
+    private(paths['results_root'], 0o700)
+    private(paths['proof_config'], 0o600)
+    private(paths['private_tokens'], 0o600)
+    return paths
+
+
+def admitted(environment):
+    if (environment.get('GITHUB_REF') != 'refs/heads/main'
+            or environment.get('GITHUB_EVENT_NAME') != 'workflow_dispatch'
+            or environment.get('GITHUB_REPOSITORY') not in REPOS
+            or not re.fullmatch(r'[0-9a-f]{40}', environment.get('GITHUB_SHA', ''))
+            or not re.fullmatch(r'[1-9]\d*', environment.get('GITHUB_RUN_ID', ''))
+            or not re.fullmatch(r'[1-9]\d*', environment.get('GITHUB_RUN_ATTEMPT', ''))):
+        raise ValueError('invalid dispatch identity')
+
+
+def checkout_archive(raw, workspace):
+    with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as archive:
+        members = archive.getmembers()
+        if not members:
+            raise ValueError('empty checkout')
+        prefix = PurePosixPath(members[0].name).parts[0]
+        names = set()
+        for member in members:
+            path = PurePosixPath(member.name)
+            if (path.is_absolute() or '..' in path.parts or '\\' in member.name
+                    or not (member.isdir() or member.isfile())):
+                raise ValueError('unsafe checkout')
+            relative = path.relative_to(prefix)
+            if relative in names:
+                raise ValueError('duplicate checkout member')
+            names.add(relative)
+            member.name = str(relative)
+        # Validate the full archive before removing the previous workspace state.
+        for path in workspace.iterdir():
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        for member in members:
+            if member.name != '.':
+                archive.extract(member, path=workspace, filter='data')
+
+
+def job():
+    raw = None
+    try:
+        admitted(os.environ)
+        workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
+        control = Path(__file__).absolute().parent
+        paths = read_config(control, workspace)
+        label = 'run-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']
+        local = paths['results_root']/label
+        local.mkdir(mode=0o700)
+        raw = (local/'job.log').open('xb')
+        (local/'job.log').chmod(0o600)
+        token = os.environ.pop('DULCET_CHECKOUT_TOKEN')
+        environment = dict(os.environ, DULCET_SIGNED_IPAD_CONFIG=str(paths['proof_config']),
+                           DULCET_SIGNED_IPAD_LOCAL_RESULTS=str(local))
+        print('Checkout main started', flush=True)
+        request = urllib.request.Request(
+            'https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+'/tarball/'+os.environ['GITHUB_SHA'],
+            headers={'Authorization': 'Bearer '+token, 'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(request, timeout=90) as response:
+            archive = response.read()
+        del token, request
+        checkout_archive(archive, workspace)
+        print('Checkout main PASS', flush=True)
+        for label, command in (
+            ('Privacy controls', ['python3', 'tools/verify_signed_ipad_privacy.py', '--self-test']),
+            ('Receipt controls', ['python3', 'tools/audit_signed_ipad_receipt.py', '--self-test']),
+            ('Signed iPad proof', ['python3', 'tools/ci/run-signed-ipad-proof']),
+            ('Evidence scrub', ['python3', 'tools/verify_signed_ipad_privacy.py', '--tokens',
+                                str(paths['private_tokens']), '--junit', str(local/'proof.xml')]),
+        ):
+            print(label+' started', flush=True)
+            result = subprocess.run(command, cwd=workspace, env=environment,
+                                    stdout=raw, stderr=subprocess.STDOUT)
+            if result.returncode:
+                print(label+' FAIL; output retained locally', flush=True)
+                return 1
+            print(label+' PASS', flush=True)
+        evidence = workspace/'evidence'
+        evidence.mkdir(exist_ok=True)
+        (evidence/'proof.xml').write_bytes((local/'proof.xml').read_bytes())
+        print('Signed iPad proof PASS tests=1 failures=0 skipped=0', flush=True)
+        return 0
+    except Exception:
+        if raw:
+            import traceback
+            raw.write(traceback.format_exc().encode())
+        print('Signed iPad proof FAIL; evidence withheld; output retained locally', flush=True)
+        return 1
+    finally:
+        if raw:
+            raw.close()
+
+
+def self_test():
+    import contextlib
+    from unittest.mock import patch
+
+    def archive(member_name, kind=tarfile.REGTYPE):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode='w:gz') as tar:
+            root = tarfile.TarInfo('checkout')
+            root.type = tarfile.DIRTYPE
+            tar.addfile(root)
+            member = tarfile.TarInfo(member_name)
+            member.type = kind
+            member.size = 7 if kind == tarfile.REGTYPE else 0
+            member.linkname = '../outside'
+            tar.addfile(member, io.BytesIO(b'neutral') if member.size else None)
+        return stream.getvalue()
+
+    good = dict(GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
+                GITHUB_REPOSITORY=REPOS[0], GITHUB_SHA='a'*40, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1')
+    admitted(good)
+    count = 0
+    for key, value in (('GITHUB_REF', 'refs/heads/topic'), ('GITHUB_EVENT_NAME', 'pull_request'),
+                       ('GITHUB_REPOSITORY', 'example/unrelated'), ('GITHUB_SHA', '../outside'),
+                       ('GITHUB_RUN_ID', 'x'), ('GITHUB_RUN_ATTEMPT', '0')):
+        try:
+            admitted(dict(good, **{key: value}))
+        except ValueError:
+            count += 1
+        else:
+            raise AssertionError('unadmitted dispatch accepted')
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        workspace = root/'workspace'
+        workspace.mkdir()
+        checkout_archive(archive('checkout/file'), workspace)
+        assert (workspace/'file').read_text() == 'neutral'
+        for name, kind in (('checkout/../outside', tarfile.REGTYPE), ('/outside', tarfile.REGTYPE),
+                           ('checkout/link', tarfile.SYMTYPE), ('checkout/link', tarfile.LNKTYPE)):
+            try:
+                checkout_archive(archive(name, kind), workspace)
+            except ValueError:
+                count += 1
+            else:
+                raise AssertionError('unsafe checkout accepted')
+            assert (workspace/'file').read_text() == 'neutral'
+        control = root/'control'
+        control.mkdir(mode=0o700)
+        config = {'proof_config': str(root/'proof.json'), 'results_root': str(root/'results'),
+                  'private_tokens': str(root/'tokens.json')}
+        (root/'results').mkdir(mode=0o700)
+        for key in ('proof_config', 'private_tokens'):
+            Path(config[key]).write_text('{}')
+            Path(config[key]).chmod(0o600)
+        (control/'job').write_text('neutral')
+        (control/'job').chmod(0o700)
+        (control/'configuration.json').write_text(json.dumps(config))
+        (control/'configuration.json').chmod(0o600)
+        assert read_config(control, workspace)['results_root'] == root/'results'
+        for path, mode in ((control, 0o700), (control/'job', 0o700),
+                           (control/'configuration.json', 0o600), (root/'tokens.json', 0o600)):
+            path.chmod(0o755)
+            try:
+                read_config(control, workspace)
+            except ValueError:
+                count += 1
+            else:
+                raise AssertionError('nonprivate control accepted')
+            path.chmod(mode)
+        (control/'job').unlink()
+        (control/'job').symlink_to(root/'proof.json')
+        try:
+            read_config(control, workspace)
+        except ValueError:
+            count += 1
+        else:
+            raise AssertionError('symlink control accepted')
+    # Exercise the actual checkout/control/proof/scrub pipeline without a device
+    # or network. The fake proof deliberately prints a registry token; it belongs
+    # in the private raw log and must never enter the public summaries.
+    sources = Path(__file__).resolve().parents[2]
+    xml = ('<testsuite tests="1"><testcase classname="DulcetSignedIPadAccountConnectUITests" '
+           'name="testSignedIPadConnectKeychainRelaunchAndTouchReconnect"/></testsuite>')
+    for label, produced in (('pass', xml), ('bad-xml', xml.replace('tests="1"', 'tests="2"')),
+                             ('token-xml', xml.replace('/>', ' time="private-fixture-value"/>'))):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root/'workspace'
+            workspace.mkdir()
+            control = root/'control'
+            control.mkdir(mode=0o700)
+            (control/'job').write_text('neutral')
+            (control/'job').chmod(0o700)
+            (root/'results').mkdir(mode=0o700)
+            (root/'proof.json').write_text('{}')
+            (root/'proof.json').chmod(0o600)
+            (root/'tokens.json').write_text('["private-fixture-value"]')
+            (root/'tokens.json').chmod(0o600)
+            (control/'configuration.json').write_text(json.dumps({
+                'proof_config': str(root/'proof.json'), 'results_root': str(root/'results'),
+                'private_tokens': str(root/'tokens.json')}))
+            (control/'configuration.json').chmod(0o600)
+            stream = io.BytesIO()
+            with tarfile.open(fileobj=stream, mode='w:gz') as tar:
+                base = tarfile.TarInfo('checkout')
+                base.type = tarfile.DIRTYPE
+                tar.addfile(base)
+                for name in ('tools/verify_signed_ipad_privacy.py', 'tools/audit_signed_ipad_receipt.py'):
+                    data = (sources/name).read_bytes()
+                    member = tarfile.TarInfo('checkout/'+name)
+                    member.size = len(data)
+                    tar.addfile(member, io.BytesIO(data))
+                data = ('import os,pathlib\nprint("private-fixture-value")\n'
+                        'pathlib.Path(os.environ["DULCET_SIGNED_IPAD_LOCAL_RESULTS"],"proof.xml").write_text('
+                        +repr(produced)+')\n').encode()
+                member = tarfile.TarInfo('checkout/tools/ci/run-signed-ipad-proof')
+                member.size = len(data)
+                tar.addfile(member, io.BytesIO(data))
+            environment = dict(good, GITHUB_WORKSPACE=str(workspace),
+                               DULCET_CHECKOUT_TOKEN='fixture-automatic-token', PATH=os.environ['PATH'])
+            public = io.StringIO()
+            with patch.dict(os.environ, environment, clear=True), \
+                    patch.dict(globals(), {'__file__': str(control/'job')}), \
+                    patch.object(urllib.request, 'urlopen', return_value=io.BytesIO(stream.getvalue())), \
+                    contextlib.redirect_stdout(public):
+                result = job()
+            assert 'private-fixture-value' not in public.getvalue()
+            assert 'fixture-automatic-token' not in public.getvalue()
+            assert str(root) not in public.getvalue()
+            assert 'private-fixture-value' in (root/'results/run-123-1/job.log').read_text()
+            assert result == (0 if label == 'pass' else 1)
+            assert (workspace/'evidence/proof.xml').exists() == (label == 'pass')
+            count += 1
+    print('iPad trusted job controls PASS count='+str(count))
+
+
+if __name__ == '__main__':
+    if sys.argv[1:] == ['--self-test']:
+        self_test()
+    elif sys.argv[1:]:
+        print('Signed iPad proof FAIL; invalid launcher arguments')
+        raise SystemExit(1)
+    else:
+        raise SystemExit(job())
