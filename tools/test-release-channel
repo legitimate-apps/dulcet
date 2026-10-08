@@ -470,7 +470,10 @@ IOS_PROD_ANCHOR = '        PROVISIONING_PROFILE_SPECIFIER: "Dulcet CI iOS App St
 IOS_PLIST = "apple/DulcetiOSRelease/Info.plist"
 IOS_PROD_TARGET = "  DulcetiOSRelease:\n    type: application\n"
 IOS_PROD_SCHEME = "  DulcetiOSRelease:\n    build:\n      targets:\n        DulcetiOSRelease: all\n    archive:\n      config: Release\n"
-IOS_PROD_SOURCES = "        excludes:\n          - BackgroundAudio.plist\n      - DulcetAppleShared\n"
+# Starts at the PROD target's own comment: the signed iPad host repeats the rest verbatim.
+IOS_PROD_SOURCES = ("      # its own, below, and carries the background audio mode itself.\n"
+                    "      - path: DulcetiOS\n        excludes:\n          - BackgroundAudio.plist\n"
+                    "      - DulcetAppleShared\n")
 DEV_IOS_RELEASE = "          PROVISIONING_PROFILE_SPECIFIER: \"Dulcet CI Dev iOS App Store\"\n"
 
 

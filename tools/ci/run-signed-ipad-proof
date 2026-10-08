@@ -33,6 +33,12 @@ nonce = str(uuid.uuid4())
 lease = server = server_log = proof_lock = None
 owns_dd = may_have_installed = False
 
+def device_unlocked(state):
+    # devicectl's lockState result (jsonVersion 3, OBSERVED on the authorized iPad) is
+    # {passcodeRequired, unlockedSinceBoot}; unlocked now means no passcode is required.
+    # Any other shape is unknown and fails closed.
+    return state.get('passcodeRequired') is False and state.get('unlockedSinceBoot') is True
+
 def run(args, **kwargs):
     return subprocess.run([str(a) for a in args], cwd=repo, check=True, **kwargs)
 
@@ -74,7 +80,32 @@ def own_container_absent(bundle, output):
                 yield from messages(child)
     pattern = (r"(?:application|app)\s+(?:with\s+(?:the\s+)?bundle\s+identifier\s+)?['\"`]?"
         + re.escape(bundle) + r"['\"`]?\s*(?::\s*)?(?:is not installed|could not be found|was not found)(?:[.!]|$)")
-    return any(re.search(pattern,message,re.IGNORECASE) for message in messages(document.get('error',{})))
+    if any(re.search(pattern,message,re.IGNORECASE) for message in messages(document.get('error',{}))):
+        return True
+    # OBSERVED on the authorized iPad: an absent app's container answers a generic
+    # CoreDevice.ActionError 3 ("failed to get a list of files") that names no app, while a
+    # dropped connection answers CoreDeviceError 4000. The generic shape is admitted only when
+    # a bundle id that cannot exist answers the identical error and the device then answers
+    # its lock state, unlocked; anything else still fails closed.
+    def signature(doc):
+        error = doc.get('error') or {}
+        info = error.get('userInfo') or {}
+        debug = (info.get('NSDebugDescription') or {}).get('string', '')
+        return (error.get('domain'), error.get('code'), debug)
+    observed = signature(document)
+    if observed[:2] != ('CoreDevice.ActionError', 3) or 'failed to get a list of files' not in observed[2]:
+        return False
+    control_bundle = 'com.legitimateapps.dulcet.absent-control.' + uuid.uuid4().hex
+    control = device('info','files','--domain-type','appDataContainer',
+        '--domain-identifier',control_bundle, output='control-'+output,check=False)
+    if control.returncode == 0:
+        return False
+    if signature(json.loads((root/('control-'+output)).read_text())) != observed:
+        return False
+    live = device('info','lockState',output='lock-'+output,check=False)
+    if live.returncode != 0:
+        return False
+    return device_unlocked(json.loads((root/('lock-'+output)).read_text())['result'])
 
 def copy_cleanup(output):
     return device('copy', 'from', '--domain-type', 'appDataContainer', '--domain-identifier',
@@ -90,7 +121,8 @@ def cleanup_and_remove():
         if clean:
             clean = json.loads((root/'cleanup.json').read_text()) == {'nonce': nonce, 'cleanup': 'PASS'}
         if not clean:
-            device('process', 'launch', '--terminate-existing', host_id,
+            # '--' keeps devicectl from parsing the app's dash-prefixed arguments as its own.
+            device('process', 'launch', '--terminate-existing', host_id, '--',
                 '-dulcet-signed-ipad-phase', 'cleanup', '-dulcet-signed-ipad-nonce', nonce,
                 output='launch-cleanup.json')
             deadline = time.monotonic() + 15
@@ -118,7 +150,7 @@ def cleanup_and_remove():
                 for bundle,label in ((host_id,'host'),(runner_id,'runner'))])
             device('info','lockState',output='lock-after-uninstall.json')
             lock = json.loads((root/'lock-after-uninstall.json').read_text())['result']
-            container_absent = container_absent and lock.get('isLocked') is False
+            container_absent = container_absent and device_unlocked(lock)
         except Exception:
             container_absent = False
         removed = not remaining and not removal_errors and container_absent
@@ -209,7 +241,7 @@ try:
     if available.returncode!=0:
         raise RuntimeError('iPad unavailable; operator wake or unlock required')
     state=json.loads((root/'lock-state.json').read_text())['result']
-    if state.get('isLocked') is not False:
+    if not device_unlocked(state):
         raise RuntimeError('iPad locked or lock state unknown; operator unlock required')
     if owned_apps('apps-before.json'):
         raise RuntimeError('Refusing inherited Dulcet proof installation')

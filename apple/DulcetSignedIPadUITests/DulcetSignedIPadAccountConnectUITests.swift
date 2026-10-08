@@ -16,6 +16,7 @@ final class DulcetSignedIPadAccountConnectUITests: XCTestCase {
         let marker = app.staticTexts["dulcet.signed-ipad.proof"].firstMatch
         func launch(_ phase: String, account: Bool = false) {
             app.launchArguments = ["-dulcet-signed-ipad-phase", phase, "-dulcet-signed-ipad-nonce", nonce]
+            if phase == "prime" { app.launchArguments += ["-dulcet-signed-ipad-prime-url", url] }
             if account {
                 app.launchArguments += ["-dulcet-debug-connect-account",
                     "-dulcet-debug-account-server-url", url,
@@ -43,6 +44,23 @@ final class DulcetSignedIPadAccountConnectUITests: XCTestCase {
         }
         let connected = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Connected to'")).firstMatch
         let saved = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Reconnect to'")).firstMatch
+        // A fresh install asks for Local Network consent on its first fixture request.
+        // Accept only that prompt, only for this host, before any state is written.
+        launch("prime")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let primeDeadline = Date().addingTimeInterval(65)
+        while Date() < primeDeadline, !(marker.exists && marker.label.contains("primed=PASS")) {
+            let alert = springboard.alerts.firstMatch
+            if alert.exists, alert.label.contains("Dulcet Signed iPad Host"),
+               alert.label.localizedCaseInsensitiveContains("local network") {
+                let allow = alert.buttons["Allow"].firstMatch
+                XCTAssertTrue(allow.exists, "The Local Network prompt must offer Allow"); allow.tap()
+            }
+            if marker.exists, marker.label.contains("FAIL") { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        expectMarker("primed=PASS")
+        quit()
         launch("connect", account: true)
         expectMarker("connected=PASS")
         connection()

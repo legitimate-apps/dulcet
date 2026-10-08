@@ -17,6 +17,7 @@ final class DulcetSignedIPadAccountProbe {
     private let phase: String
     private let nonce: String
     private let keychain = DulcetKeychainCredentialStore()
+    private var primeURL: URL?
 
     init() {
         let args = ProcessInfo.processInfo.arguments
@@ -27,7 +28,7 @@ final class DulcetSignedIPadAccountProbe {
         guard Bundle.main.bundleIdentifier == "com.legitimateapps.dulcet.signed-ipad",
               UIDevice.current.userInterfaceIdiom == .pad,
               let phase = value("-dulcet-signed-ipad-phase"),
-              ["connect", "read", "missing", "cleanup"].contains(phase),
+              ["prime", "connect", "read", "missing", "cleanup"].contains(phase),
               let nonce = value("-dulcet-signed-ipad-nonce"), UUID(uuidString: nonce) != nil else {
             fatalError("Signed iPad proof requires its isolated host and phase")
         }
@@ -37,7 +38,16 @@ final class DulcetSignedIPadAccountProbe {
         self.phase = phase
         self.nonce = nonce
         let defaults = UserDefaults.standard
-        if phase == "connect" {
+        if phase == "prime" {
+            // Raises only the system Local Network consent for this isolated host. No
+            // credential, pointer or ownership state is written.
+            guard keychain.activeAccountID == nil, defaults.string(forKey: Self.ownerKey) == nil,
+                  let url = value("-dulcet-signed-ipad-prime-url"), Self.validFixture(url),
+                  !args.contains("-dulcet-debug-connect-account") else {
+                fatalError("Signed iPad prime refuses inherited state or an invalid fixture")
+            }
+            primeURL = URL(string: url)
+        } else if phase == "connect" {
             guard keychain.activeAccountID == nil, defaults.string(forKey: Self.ownerKey) == nil,
                   let url = value("-dulcet-debug-account-server-url"), Self.validFixture(url),
                   value("-dulcet-debug-account-username") == "dulcet-admin",
@@ -80,11 +90,40 @@ final class DulcetSignedIPadAccountProbe {
                     fatalError("Signed iPad cleanup refuses an unowned pointer")
                 }
                 do { try keychain.delete() } catch { fatalError("Signed iPad Keychain cleanup failed") }
+                // The host has no shared access group, so this reaches only its own
+                // namespace: it also removes items an interrupted earlier run left behind.
+                let sweep: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: DulcetKeychainCredentialStore.productionService,
+                    kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
+                    kSecAttrSynchronizable as String: kSecAttrSynchronizableAny]
+                let swept = SecItemDelete(sweep as CFDictionary)
+                guard swept == errSecSuccess || swept == errSecItemNotFound,
+                      SecItemCopyMatching(sweep as CFDictionary, nil) == errSecItemNotFound else {
+                    fatalError("Signed iPad Keychain namespace sweep failed")
+                }
             }
         }
     }
 
     func observe(_ presentation: DulcetPresentationStore) {
+        if phase == "prime", let primeURL {
+            Task { [weak self] in
+                let config = URLSessionConfiguration.ephemeral
+                config.timeoutIntervalForRequest = 3
+                let session = URLSession(configuration: config)
+                let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+                while ContinuousClock.now < deadline {
+                    // Any HTTP response from the fixture proves local-network reach.
+                    if let reply = try? await session.data(from: primeURL), reply.1 is HTTPURLResponse {
+                        self?.text = "signed-ipad=PASS primed=PASS"
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                self?.text = "signed-ipad=FAIL"
+            }
+            return
+        }
         do {
             if phase == "read" {
                 guard case .saved = presentation.snapshot.accountConnection else { throw ProbeError.failed }
