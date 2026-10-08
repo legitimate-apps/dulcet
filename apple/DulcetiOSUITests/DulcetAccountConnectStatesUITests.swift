@@ -511,14 +511,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return false
         }
         // Synthesized typing on a loaded host can drop keystrokes or land before the field takes
-        // focus, so each attempt is verified and a short field is retyped, never accepted. A secure
-        // field offers no Select All and reports one bullet per character, so it is cleared by
-        // deleting what it reports.
+        // focus, so each attempt is verified and a short field is retyped, never accepted.
+        // Clear with ordinary Delete input: Command-A attaches a synthetic hardware keyboard.
+        // In the timed-out iPad CI proof its minimize/placement animations began immediately
+        // before the animation-idle replies stopped, although the main run loop still idled.
+        // Tap beyond these short loopback credentials to put the insertion point at the end;
+        // secure fields report one bullet per character and are cleared the same way.
         var observed = ""
         for attempt in 1...3 {
             var focused = false
             for _ in 0..<4 where !focused {
-                field.tap()
+                field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
                 let deadline = Date().addingTimeInterval(3)
                 while !(field.value(forKey: "hasKeyboardFocus") as? Bool ?? false), Date() < deadline {
                     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -529,14 +532,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 XCTFail("The \(name) field must take keyboard focus on a tap")
                 return false
             }
-            if secure {
-                let existing = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
-                if !existing.isEmpty {
-                    field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
-                }
-            } else {
-                field.typeKey("a", modifierFlags: .command)
-                field.typeKey(.delete, modifierFlags: [])
+            let existing = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
+            if !existing.isEmpty {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
             }
             field.typeText(value)
             observed = field.value as? String ?? ""

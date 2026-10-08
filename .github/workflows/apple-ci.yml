@@ -78,6 +78,8 @@ jobs:
         run: python3 tools/verify_promotion_conditions.py
       - name: Prove account-removal recovery rejects stale cleanup
         run: python3 tools/test-account-removal-recovery
+      - name: Prove account-state text entry avoids hardware keyboard transitions
+        run: python3 tools/test-account-connect-text-entry
       - name: Prove nonexistent promotion targets are rejected
         run: python3 tools/test-promotion-condition-resolvability
       - name: Read toolchain pins
