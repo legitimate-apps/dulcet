@@ -2579,8 +2579,9 @@ against the legacy Keychain, never records an active-account pointer, and the co
 no matching legacy generic-password item exists. This proves the failure is loud and prevents a
 silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
 
-**Signed-host proof selected; main execution pending:** `account.connect / macos` stays partial.
-The locally signed host class in §21.3.1 now supplies a resolvable promotion target:
+**Signed-host proof OBSERVED on main:** `account.connect / macos` stays partial.
+The locally signed host class in §21.3.1 supplies the control
+(main run 37771411282 at `0d238733`, one passing JUnit case, full logs audited for private values):
 `signed-mac-account-connect` / `signed-account-connect` /
 `DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI`.
 It runs the production Mac composition in an isolated development-signed, entitled app against
@@ -2588,7 +2589,8 @@ its own disposable fixture. It observes the active pointer, reads the production
 checks stored accessibility and non-sync attributes without filtering expected values after a
 wrong-accessibility control, and checks the connected UI. It also exercises update and deletion,
 including an unfiltered absence check. Only a green run on main and the named checked JUnit can
-supply public workflow evidence. The parity gate currently counts only branch-required jobs
+supply public workflow evidence; a relaunch that reads the saved account back is not part of it. The
+parity gate currently counts only branch-required jobs
 wired to executed-test verification; counting a manual main-run receipt requires an explicit
 evidence-policy follow-up, rather than making a dispatch-only job a required PR status.
 Reboot, unlock, migration and background enforcement remain
