@@ -515,8 +515,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // Clear with ordinary Delete input: Command-A attaches a synthetic hardware keyboard.
         // In the timed-out iPad CI proof its minimize/placement animations began immediately
         // before the animation-idle replies stopped, although the main run loop still idled.
-        // Tap beyond these short loopback credentials to put the insertion point at the end;
-        // secure fields report one bullet per character and are cleared the same way.
+        // A tap near the trailing edge lands at the end of text that fits the field, but text wider
+        // than the field puts the insertion point under the tap instead (iPhone CI kept 3 of a
+        // longer address's characters), so clearing repeats until the field reads empty.
+        // Secure fields report one bullet per character and are cleared the same way.
         var observed = ""
         for attempt in 1...3 {
             var focused = false
@@ -532,9 +534,19 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 XCTFail("The \(name) field must take keyboard focus on a tap")
                 return false
             }
-            let existing = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
-            if !existing.isEmpty {
+            func remaining() -> String {
+                (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
+            }
+            for round in 0..<4 {
+                let existing = remaining()
+                if existing.isEmpty { break }
+                if round > 0 { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
                 field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+            }
+            let left = remaining()
+            guard left.isEmpty else {
+                print("DULCET ACCOUNT STATES clear field=\(name) attempt=\(attempt) remaining-length=\(left.count)")
+                continue
             }
             field.typeText(value)
             observed = field.value as? String ?? ""

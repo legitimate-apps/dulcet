@@ -3,7 +3,8 @@
 
 This checks the input protocol, not UIKit animation completion. The field models a cursor,
 secure bullets, placeholders and dropped typing. Hardware-key events are recorded because
-CI's stalled iPad edit began with Command-A minimizing its software keyboard. --source-ref
+CI's stalled iPad edit began with Command-A minimizing its software keyboard. A trailing-edge
+tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
 replays the original helper to prove that the control rejects that input protocol.
 """
 import argparse
@@ -56,7 +57,8 @@ final class XCUIElement {
         let point: CGVector
         func tap() {
             field.focused = true
-            field.cursor = point.dx > 0.9 ? field.text.count : field.text.count / 2
+            // The field shows 20 characters; a trailing-edge tap on wider text lands under the tap.
+            field.cursor = point.dx > 0.9 ? min(field.text.count, 20) : field.text.count / 2
         }
     }
     func coordinate(withNormalizedOffset point: CGVector) -> Coordinate { Coordinate(field: self, point: point) }
@@ -100,6 +102,7 @@ struct Controls {
         let proof = Proof()
         for (name, old, wanted, secure, dropped) in [
             ("plain", "ftp://127.0.0.1/library", "http://127.0.0.1:4533", false, false),
+            ("overflowing", "http://127.0.0.1:50364/lyrics-fault/proxy/path", "http://127.0.0.1:4533", false, false),
             ("placeholder", "", "dulcet-admin", false, false),
             ("secure", "wrong-password", "canary-password", true, false),
             ("repeated", "dulcet-admin", "dulcet-admin", false, false),
