@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Prove verify-evidence-receipt accepts a matching run and rejects each defect for its own reason.
+
+Offline: a fake `gh` (DULCET_GH) serves a recorded run, its jobs, its artifacts and the artifact zip.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+TOOLS = Path(__file__).resolve().parent
+VERIFIER = TOOLS / "verify-evidence-receipt"
+RUN_ID = "4242"
+HEAD = "a" * 40
+TEST = "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI"
+PASSING_JUNIT = (
+    b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase '
+    b'classname="DulcetSignedMacAccountConnectTests" '
+    b'name="testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI" time="0.1" /></testsuite>'
+)
+FAILING_JUNIT = PASSING_JUNIT.replace(b'time="0.1" />', b'time="0.1"><failure /></testcase>')
+
+FAKE_GH = """#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+served = json.loads((Path(__file__).parent / "served.json").read_text())
+path = sys.argv[2].split("?")[0]
+if path.endswith("/zip"):
+    sys.stdout.buffer.write((Path(__file__).parent / "artifact.zip").read_bytes())
+elif path in served:
+    print(json.dumps(served[path]))
+else:
+    print("not found: " + path, file=sys.stderr)
+    raise SystemExit(1)
+"""
+
+
+def receipt(junit: bytes) -> dict:
+    return {
+        "workflow": "signed-mac-account-connect",
+        "job": "signed-account-connect",
+        "run_id": RUN_ID,
+        "run_url": f"https://github.com/legitimate-apps/dulcet/actions/runs/{RUN_ID}",
+        "head_sha": HEAD,
+        "conclusion": "success",
+        "tests": [{"name": TEST, "result": "passed"}],
+        "junit_sha256": hashlib.sha256(junit).hexdigest(),
+        "test_sources": {"apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift": "b" * 40},
+        "audit": {"tool": "tools/verify_signed_mac_privacy.py", "result": "pass", "files_scanned": 3, "tokens_checked": 4},
+    }
+
+
+def served() -> dict:
+    base = f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}"
+    return {
+        base: {
+            "name": "signed-mac-account-connect", "head_sha": HEAD, "head_branch": "main",
+            "event": "workflow_dispatch", "conclusion": "success",
+            "html_url": f"https://github.com/legitimate-apps/dulcet/actions/runs/{RUN_ID}",
+        },
+        f"{base}/jobs": {"jobs": [
+            {"name": "main-only", "conclusion": "success"},
+            {"name": "signed-account-connect", "conclusion": "success"},
+        ]},
+        f"{base}/artifacts": {"artifacts": [{"id": 7, "expired": False}]},
+    }
+
+
+def run(record: dict, api: dict, junit: bytes, *flags: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="dulcet-receipt-verify-") as directory:
+        root = Path(directory)
+        fake = root / "fake-gh"
+        fake.write_text(FAKE_GH)
+        fake.chmod(0o755)
+        (root / "served.json").write_text(json.dumps(api))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("proof.xml", junit)
+        (root / "artifact.zip").write_bytes(buffer.getvalue())
+        path = root / "evidence/receipts" / f"signed-mac-account-connect-{RUN_ID}.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(record))
+        return subprocess.run(
+            [sys.executable, str(VERIFIER), *flags, f"evidence/receipts/signed-mac-account-connect-{RUN_ID}.json"],
+            cwd=root, env={**os.environ, "DULCET_GH": str(fake)}, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        )
+
+
+def expect(label: str, result: subprocess.CompletedProcess[str], code: int, text: str) -> None:
+    if result.returncode != code or text not in result.stdout:
+        raise AssertionError(f"{label}: expected rc={code} and {text!r}; rc={result.returncode} output={result.stdout!r}")
+
+
+good = receipt(PASSING_JUNIT)
+expect("matching run", run(good, served(), PASSING_JUNIT), 0, "VERIFIED")
+
+api = served()
+api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}"]["head_sha"] = "c" * 40
+expect("run built another commit", run(good, api, PASSING_JUNIT), 1, "head_sha is")
+
+api = served()
+api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}"]["conclusion"] = "failure"
+expect("run did not succeed", run(good, api, PASSING_JUNIT), 1, "conclusion is 'failure'")
+
+api = served()
+api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}/jobs"]["jobs"][1]["conclusion"] = "failure"
+expect("receipt job failed", run(good, api, PASSING_JUNIT), 1, "is not exactly one successful job")
+
+expect("artifact differs from the recorded digest", run(good, served(), PASSING_JUNIT + b"\n"), 1, "hashes to")
+
+failing = receipt(FAILING_JUNIT)
+expect("recorded artifact holds a failed testcase", run(failing, served(), FAILING_JUNIT), 1, "is failure in the JUnit artifact")
+
+absent = copy.deepcopy(good)
+absent["tests"][0]["name"] = "DulcetSignedMacAccountConnectTests/testNeverRan"
+expect("receipt test absent from the artifact", run(absent, served(), PASSING_JUNIT), 1, "is absent in the JUnit artifact")
+
+api = served()
+api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}/artifacts"]["artifacts"][0]["expired"] = True
+expect("expired artifact fails by default", run(good, api, PASSING_JUNIT), 1, "no unexpired artifact")
+expect("expired artifact, metadata only on request", run(good, api, PASSING_JUNIT, "--allow-expired-artifact"), 0, "METADATA ONLY")
+
+extra = dict(good, note="extra")
+expect("schema is exact", run(extra, served(), PASSING_JUNIT), 1, "schema: requires exactly")
+
+print("verify-evidence-receipt tests pass: 10 cases")

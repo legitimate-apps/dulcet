@@ -2589,10 +2589,10 @@ its own disposable fixture. It observes the active pointer, reads the production
 checks stored accessibility and non-sync attributes without filtering expected values after a
 wrong-accessibility control, and checks the connected UI. It also exercises update and deletion,
 including an unfiltered absence check. Only a green run on main and the named checked JUnit can
-supply public workflow evidence; a relaunch that reads the saved account back is not part of it. The
-parity gate currently counts only branch-required jobs
-wired to executed-test verification; counting a manual main-run receipt requires an explicit
-evidence-policy follow-up, rather than making a dispatch-only job a required PR status.
+supply public workflow evidence; a relaunch that reads the saved account back is not part of it. A
+`FEATURES.yml` row cites that run through a committed receipt
+(`evidence/receipts/signed-mac-account-connect-37771411282.json`, §21.3.1), never by making the
+dispatch-only job a required PR status; no row cites it yet.
 Reboot, unlock, migration and background enforcement remain
 ASSUMED. The separate CONF-09b declared-state gap remains; a signed success alone cannot ship it.
 
@@ -6634,6 +6634,25 @@ material. This changes neither the ordinary hosted CI matrix nor the §22 distri
   a fail-closed check against locally derived private tokens. App bundles and xcresult are local.
   A private rehearsal audits the full downloaded job log and artifact before public registration.
 
+**How its evidence reaches `FEATURES.yml` (2026-10-08).** A dispatch-only job is never a required
+pull-request status, so `verify-parity-evidence` never runs for it inside a required job. An evidence
+row cites one audited green main run of it through a committed receipt instead:
+`{observes|conformance, receipt, test}`, where `receipt` is
+`evidence/receipts/<workflow>-<run_id>.json`. The receipt holds exactly `workflow`, `job`, `run_id`,
+`run_url`, the 40-hex `head_sha`, `conclusion` (`success`), `tests` (each `{name, result: passed}`),
+`junit_sha256` (the uploaded JUnit file's digest), `test_sources` (each test source path's git blob
+SHA at `head_sha`) and `audit` (`{tool, result: pass, files_scanned, tokens_checked}`), with neutral
+values only. On every pull request `tools/parity_gate.py` requires the schema to be exact; the job to
+be listed in `tools/evidence_receipts.py`, the one list of these classes, and to run on a self-hosted
+runner, which `verify_ci_policy.py` confines to `workflow_dispatch`-only workflows; the cited test to
+be recorded as passed, to be defined in a recorded source and to exist in the tree; every recorded
+source's blob to be unchanged, so a receipt goes stale the moment its test changes and must be
+replaced by a new main run's; and `head_sha` to be reachable from `HEAD` (the job checks out full
+history and fails closed on a shallow clone). Coverage, one-test-one-claim, promotion and regression
+rules apply unchanged. `tools/verify-evidence-receipt` re-checks a receipt against the public run and
+its JUnit artifact while the artifact lives (seven days for the signed host); the pull-request gate
+cannot, because artifacts expire. OBSERVED 2026-10-08: it verified run 37771411282's receipt.
+
 **What is NOT admitted, and stays exactly as §21.3 left it:** every ordinary Apple build and test
 job runs on hosted `macos-latest`; non-Apple CI stays on `ubuntu-latest`; no larger or premium
 runner label, ever (§21.1 caveat 1), which remains the one place real money can appear.
@@ -7686,6 +7705,16 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-08 — FEATURES evidence can cite an audited receipt for a dispatch-only main run**
+
+A §21.3.1 job can never be a required pull-request status, so no evidence row could cite its green
+main run. Rows may now cite a committed receipt, `{observes|conformance, receipt, test}`, which the
+parity gate checks offline: exact schema, a listed dispatch-only self-hosted job, a passing recorded
+test that still exists, unchanged test-source blobs (a changed test makes the receipt stale) and a
+`head_sha` reachable from `HEAD`. `tools/verify-evidence-receipt` re-checks a receipt against GitHub
+while its artifact lives. The worked example records main run 37771411282; `account.connect/macos`
+does not cite it and stays partial.
 
 **2026-10-07 — Signed, entitled Mac app-host evidence admitted as a dispatch-only class.**
 

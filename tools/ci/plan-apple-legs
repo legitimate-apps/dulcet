@@ -38,6 +38,7 @@ import sys
 NOT_APPLE_TOOLS = (
     "tools/app_store_connect.py",
     "tools/design_rating.py",
+    "tools/evidence_receipts.py",
     "tools/generate_migration_fixture.py",
     "tools/migration_gate.py",
     "tools/parity_gate.py",
@@ -67,7 +68,9 @@ NOT_APPLE_TOOLS = (
     "tools/test-spec-evidence-boundaries",
     "tools/test-spec-evidence-boundary-mutations",
     "tools/test-verify-ci-policy",
+    "tools/test-verify-evidence-receipt",
     "tools/test-xcode-script-phases",
+    "tools/verify-evidence-receipt",
     "tools/verify_branch_protection.py",
     "tools/verify_ci_policy.py",
     "tools/verify_project_spec_paths.py",
