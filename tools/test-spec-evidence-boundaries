@@ -68,8 +68,8 @@ for marker in (
     "The signed execution environment and identity are now selected",
     "signed-mac-account-connect / signed-account-connect / DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI",
     "after a wrong-accessibility control",
-    "The cell stays partial pending a green main run and its checked JUnit evidence",
-    "Local or private rehearsal passes do not replace that main evidence",
+    "OBSERVED on main: run",
+    "Local or private rehearsal passes did not replace that main evidence",
     "immutable main-run receipts",
 ):
     if marker not in account_reason:
@@ -191,7 +191,7 @@ for marker in (
     "97085139126",
     "DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement",
     "no matching legacy generic-password item exists",
-    "**Signed-host proof selected; main execution pending:**",
+    "**Signed-host proof OBSERVED on main:**",
     "`account.connect / macos` stays partial",
     "`signed-mac-account-connect` / `signed-account-connect` /",
     "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI",
