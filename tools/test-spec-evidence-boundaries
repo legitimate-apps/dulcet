@@ -42,38 +42,40 @@ account_connect = next(
     feature for feature in features["features"] if feature["id"] == "account.connect"
 )
 macos_account_connect = account_connect["platforms"]["macos"]
-if macos_account_connect.get("status") != "partial":
+if macos_account_connect.get("status") != "shipped":
     errors.append(
-        "account.connect/macos must remain partial until the signed app persistence and "
-        "connected effect execute"
+        "account.connect/macos ships on the hosted state proof plus the audited signed main run; "
+        "a lower status is an undeclared regression"
     )
+macos_rows = macos_account_connect.get("evidence", [])
+if not any(
+    row.get("conformance") == "CONF-09b"
+    and row.get("test")
+    == "DulcetMacAccountConnectStatesAppTest/everyAccountConnectStateIsReachedThroughTheHostedMacApp"
+    for row in macos_rows
+):
+    errors.append("account.connect/macos must cite the hosted Mac state proof for CONF-09b")
+if not any(
+    row.get("receipt", "").startswith("evidence/receipts/signed-mac-account-connect-")
+    and row.get("test")
+    == "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI"
+    for row in macos_rows
+):
+    errors.append("account.connect/macos must cite the signed main run's receipt for the Keychain half")
 account_reason = macos_account_connect.get("reason", "")
 for marker in (
-    "32598531311",
-    "launchd refuse an ad-hoc-signed host",
-    "before application or test code ran",
-    "32599896419",
-    "only two failing offscreen-accessibility assertions",
-    "after every production-state guard passed",
-    "Kotlin main dispatcher to @MainActor completion",
+    "DulcetMacAccountConnectStatesAppTest",
+    "in-memory credential store",
+    "Keychain half on main",
+    "separate host processes",
+    "private-token audit",
+    "tools/verify-evidence-receipt",
+    "capabilityUnsupported has no account-connect origin",
     "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState",
-    "accountErrorPersistence",
-    "credentialPersistenceFailed",
-    "OBSERVES the live CI-runnable seam",
-    "SwiftUI rendering of that live-derived state is not observed here",
-    "connected root UI",
-    "unentitled SwiftPM process",
-    "missingDataProtectionKeychainEntitlement",
-    "legacy-Keychain item",
-    "The signed execution environment and identity are now selected",
-    "signed-mac-account-connect / signed-account-connect / DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI",
-    "after a wrong-accessibility control",
-    "OBSERVED on main: run",
-    "Local or private rehearsal passes did not replace that main evidence",
-    "immutable main-run receipts",
+    "migration and background enforcement of the saved item remain ASSUMED",
 ):
     if marker not in account_reason:
-        errors.append(f"account.connect/macos partial reason is missing {marker!r}")
+        errors.append(f"account.connect/macos shipped reason is missing {marker!r}")
 
 derived_revision_header = (
     "**Revision:** derived from the highest dated §28 record; "
@@ -192,14 +194,14 @@ for marker in (
     "DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement",
     "no matching legacy generic-password item exists",
     "**Signed-host proof OBSERVED on main:**",
-    "`account.connect / macos` stays partial",
+    "`account.connect / macos` is shipped",
     "`signed-mac-account-connect` / `signed-account-connect` /",
     "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI",
     "after a wrong-accessibility control",
     "Only a green run on main and the named checked JUnit can supply public workflow evidence",
     "through a committed receipt",
     "never by making the dispatch-only job a required PR status",
-    "a signed success alone cannot ship it",
+    "it evidences CONF-09b on macOS",
     "performs **no network request until the person chooses Connect**",
     "credential-persistence error surface",
 ):

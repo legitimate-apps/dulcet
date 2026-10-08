@@ -2579,9 +2579,9 @@ against the legacy Keychain, never records an active-account pointer, and the co
 no matching legacy generic-password item exists. This proves the failure is loud and prevents a
 silent downgrade, but cannot inspect an entitled data-protection-Keychain item.
 
-**Signed-host proof OBSERVED on main:** `account.connect / macos` stays partial.
+**Signed-host proof OBSERVED on main:** `account.connect / macos` is shipped.
 The locally signed host class in §21.3.1 supplies the control
-(main run 37771411282 at `0d238733`, one passing JUnit case, full logs audited for private values):
+(first main run 37771411282 at `0d238733`, one passing JUnit case, full logs audited for private values):
 `signed-mac-account-connect` / `signed-account-connect` /
 `DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI`.
 It runs the production Mac composition in an isolated development-signed, entitled app against
@@ -2590,19 +2590,19 @@ checks stored accessibility and non-sync attributes without filtering expected v
 wrong-accessibility control, and checks the connected UI. It also exercises update and deletion,
 including an unfiltered absence check. Only a green run on main and the named checked JUnit can
 supply public workflow evidence; that main run did not include a relaunch that reads the saved
-account back. The continuation of the same test is now **written and passing locally, awaiting its
-main run**: the driver requires each signed host process to exit before starting the next, verifies distinct
+account back. The continuation of the same test is **OBSERVED on main (run 37852059883 at
+908b4530)**: the driver requires each signed host process to exit before starting the next, verifies distinct
 PIDs and their termination, and observes the app-init composition and production window with no
 account launch hook. The saved account opens its library with Reconnect, and Connection names the
 server. Reconnect is pressed through the rendered library action and reaches connected against the
 disposable fixture. A later launch whose real saved item was deleted, with its active pointer
 retained, must show the load-time persistence error rather than the saved library. The final phase
 removes the item and pointer; the public JUnit case is emitted only after all phases pass. A
-`FEATURES.yml` row cites a main run through a committed receipt (§21.3.1; the first is
-`evidence/receipts/signed-mac-account-connect-37771411282.json`), never by making the
-dispatch-only job a required PR status; no row cites one yet.
-Reboot, unlock, migration and background enforcement remain
-ASSUMED. The separate CONF-09b declared-state gap remains; a signed success alone cannot ship it.
+`FEATURES.yml` row cites a main run through a committed receipt (§21.3.1), never by making the
+dispatch-only job a required PR status; `account.connect/macos` cites
+`evidence/receipts/signed-mac-account-connect-37852059883.json`. With the hosted Mac proof's
+declared states, it evidences CONF-09b on macOS. Reboot, unlock, migration and background
+enforcement remain ASSUMED.
 
 CONF-10e narrows that retained boundary for simulator-stored values on iOS, iPadOS, and tvOS only;
 the macOS control above supplies its own signed-host requirement.
@@ -7713,6 +7713,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-08 — `account.connect/macos` ships: the signed relaunch proof ran on main.**
+
+Main run 37852059883 at 908b4530 passed the extended signed control, and its full public log and
+JUnit passed the private-token audit; `tools/verify-evidence-receipt` re-checked the committed
+receipt against the run. With the hosted Mac proof, which reaches every state the path can
+originate over an in-memory store, the signed host's real Keychain save, relaunch into the saved
+library, Reconnect and missing-item persistence error evidence CONF-09b on macOS. The cell cites
+the hosted proof for CONF-09b and the receipt as an `observes` row, and is `shipped`. The earlier
+receipt for run 37771411282 is removed: #282 changed its test source, which made it stale. Reboot,
+first-unlock, migration and background enforcement remain ASSUMED.
 
 **2026-10-08 — Signed Mac Keychain relaunch proof written and passing locally, awaiting main.**
 

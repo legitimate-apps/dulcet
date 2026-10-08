@@ -1,9 +1,9 @@
 {
   "workflow": "signed-mac-account-connect",
   "job": "signed-account-connect",
-  "run_id": "37771411282",
-  "run_url": "https://github.com/legitimate-apps/dulcet/actions/runs/37771411282",
-  "head_sha": "0d2387339bcfd7ce1328586cf6add436e20d6649",
+  "run_id": "37852059883",
+  "run_url": "https://github.com/legitimate-apps/dulcet/actions/runs/37852059883",
+  "head_sha": "908b453072b1e9f6a17a0ebcbab7f4bc6770f4a8",
   "conclusion": "success",
   "tests": [
     {
@@ -11,9 +11,9 @@
       "result": "passed"
     }
   ],
-  "junit_sha256": "fac5921f19d8eb9a8950bc45b97eb42680315826e140ad9d2d55c5e316ebaf73",
+  "junit_sha256": "85bcb4155a5d00087909c5d4b73ea7ebfc246116c58c9575135b8ddd72978afa",
   "test_sources": {
-    "apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift": "4911d673dadeaf67409f665d9382cc8da142f5dd"
+    "apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift": "76f1c0bc9ea7169125e17786d544029d39b86c6c"
   },
   "audit": {
     "tool": "tools/verify_signed_mac_privacy.py",
