@@ -110,6 +110,70 @@ class DownloadPolicyTest {
     }
 
     @Test
+    fun relaunchSchedulesPreviouslyCompletedAndStaleDownloadsWhoseFilesAreMissing() {
+        for (stale in listOf(false, true)) withFixture { fixture ->
+            fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+            val row = fixture.engine.enqueue(request())
+            fixture.engine.writeCompletedTemporaryFile(row.downloadId, MP3_BYTES)
+            val promoted = assertIs<DownloadPromotionResult.Promoted>(fixture.engine.promote(
+                row.downloadId,
+                DownloadResponseMetadata("audio/mpeg", PlaybackContentLength.Exact(MP3_BYTES.size.toLong())),
+            )).record
+            if (stale) fixture.engine.reconcileServerItem(
+                row.identity,
+                DownloadServerSnapshot(durationMilliseconds = 2_000, sizeBytes = MP3_BYTES.size.toLong()),
+                NOW + 1,
+            )
+            assertEquals(if (stale) DownloadState.Stale else DownloadState.Complete,
+                fixture.engine.record(row.downloadId)?.state)
+            FileSystem.SYSTEM.delete(fixture.files.destinationPath(promoted))
+
+            // Apple's saved launch calls reconcile and then schedule, without a new enqueue or
+            // Reconnect. A lost file must therefore be fetched again, even for a completed row.
+            val relaunched = DownloadPolicyEngine(fixture.database.database, fixture.files)
+            val result = relaunched.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+            assertEquals(setOf(row.downloadId), result.interruptedRows)
+            assertEquals(DownloadState.Interrupted, relaunched.record(row.downloadId)?.state)
+            val scheduled = assertIs<DownloadScheduleResult.Start>(relaunched.schedule(scheduleContext()))
+            assertEquals(row.downloadId, scheduled.record.downloadId)
+            assertEquals(row.identity, scheduled.record.identity)
+            assertEquals(1L, scheduled.record.credentialGeneration)
+            assertEquals(DownloadScheduleResult.NothingQueued, relaunched.schedule(scheduleContext()))
+        }
+    }
+
+    @Test
+    fun relaunchSchedulesPreviouslyCompletedAndStaleDownloadsAfterCredentialGenerationChanges() {
+        for (stale in listOf(false, true)) withFixture { fixture ->
+            fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+            val row = fixture.engine.enqueue(request())
+            fixture.engine.writeCompletedTemporaryFile(row.downloadId, MP3_BYTES)
+            assertIs<DownloadPromotionResult.Promoted>(fixture.engine.promote(
+                row.downloadId,
+                DownloadResponseMetadata("audio/mpeg", PlaybackContentLength.Exact(MP3_BYTES.size.toLong())),
+            ))
+            if (stale) fixture.engine.reconcileServerItem(
+                row.identity,
+                DownloadServerSnapshot(durationMilliseconds = 2_000, sizeBytes = MP3_BYTES.size.toLong()),
+                NOW + 1,
+            )
+
+            // An unchanged generation keeps the existing file and schedules nothing. Changing
+            // it requeues even a downloaded row; Apple's launch scheduler then starts a read.
+            val unchanged = DownloadPolicyEngine(fixture.database.database, fixture.files)
+            unchanged.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
+            assertEquals(DownloadScheduleResult.NothingQueued, unchanged.schedule(scheduleContext()))
+            val changed = DownloadPolicyEngine(fixture.database.database, fixture.files)
+            changed.reconcile(emptyList(), mapOf(SERVER_ID to 2L))
+            val scheduled = assertIs<DownloadScheduleResult.Start>(changed.schedule(scheduleContext()))
+            assertEquals(row.downloadId, scheduled.record.downloadId)
+            assertEquals(row.identity, scheduled.record.identity)
+            assertEquals(2L, scheduled.record.credentialGeneration)
+            assertEquals(DownloadScheduleResult.NothingQueued, changed.schedule(scheduleContext()))
+        }
+    }
+
+    @Test
     fun exactLengthMustMatchBeforePromotionAndEstimatedLengthNeverRejectsTerminalBodyEnd() =
         withFixture { fixture ->
             fixture.engine.reconcile(emptyList(), mapOf(SERVER_ID to 1L))
@@ -523,6 +587,34 @@ class DownloadPolicyTest {
         activeTranscodes = activeTranscodes,
         playbackSessionActive = playbackSessionActive,
     )
+
+    /**
+     * What the reader treats as on the device (§16.14): one server's tracks whose download is
+     * complete, or stale and still playable -- never one queued, running or interrupted, and never
+     * another server's.
+     */
+    @Test
+    fun theReadersDownloadSourceIsTheServersCompleteAndStaleDownloads() = withFixture { fixture ->
+        val queries = fixture.database.database.downloadsQueries
+        fun row(server: String, rawId: String, state: String) {
+            val id = "download-$server-$rawId"
+            queries.insertDownload(server, rawId, "original", id, "$rawId.part", null)
+            queries.insertDownloadPolicyState(server, rawId, "original", "mp3", null, null, 0, 0, NOW)
+            queries.updateDownloadState(state, id)
+        }
+        row(SERVER_ID, "complete-track", "complete")
+        row(SERVER_ID, "stale-track", "stale")
+        row(SERVER_ID, "queued-track", "queued")
+        row(SERVER_ID, "downloading-track", "downloading")
+        row(SERVER_ID, "interrupted-track", "interrupted")
+        row(OTHER_SERVER_ID, "other-server-track", "complete")
+
+        val source = DownloadedTrackSource.fromDownloads(fixture.database.database)
+
+        assertEquals(setOf("complete-track", "stale-track"), source.downloadedTrackRawIds(SERVER_ID))
+        assertEquals(setOf("other-server-track"), source.downloadedTrackRawIds(OTHER_SERVER_ID))
+        assertEquals(emptySet(), DownloadedTrackSource.None.downloadedTrackRawIds(SERVER_ID))
+    }
 
     private fun withFixture(block: (Fixture) -> Unit) = withFixture(FileSystem.SYSTEM, block)
 

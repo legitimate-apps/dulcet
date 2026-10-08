@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Execute the account-state proof's credential replacement with Swift collaborators.
+
+This checks the input protocol, not UIKit animation completion. The field models a cursor,
+secure bullets, placeholders and dropped typing. Hardware-key events are recorded to check the chosen
+ordinary-Delete input protocol; this does not diagnose UIKit animation-idle failures. A trailing-edge
+tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
+replays the original helper to prove that the control rejects that input protocol.
+"""
+import argparse
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+PATH = "apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift"
+parser = argparse.ArgumentParser()
+parser.add_argument("--source-ref")
+args = parser.parse_args()
+source = (subprocess.check_output(["git", "show", f"{args.source_ref}:{PATH}"],
+                                  cwd=ROOT, text=True)
+          if args.source_ref else (ROOT / PATH).read_text())
+start = source.index("    private func replaceText(")
+end = source.index("\n    }", start) + len("\n    }")
+method = source[start:end].replace("private func", "func", 1)
+
+collaborators = r'''
+import Foundation
+struct CGVector { let dx: Double; let dy: Double }
+struct Modifiers: OptionSet {
+    let rawValue: Int
+    static let command = Self(rawValue: 1)
+}
+enum XCUIKeyboardKey: String { case delete = "\u{7f}" }
+func XCTFail(_ message: String) { fatalError(message) }
+@MainActor
+final class XCUIElement {
+    var text: String
+    let secure: Bool
+    let placeholderValue: String? = "Credential"
+    var focused = false
+    var cursor = 0
+    var selected = false
+    var hardwareEvents = 0
+    var dropNextInsertion = false
+    var insertions = 0
+    init(_ text: String, secure: Bool = false) { self.text = text; self.secure = secure }
+    var value: Any? {
+        if text.isEmpty { return placeholderValue }
+        return secure ? String(repeating: "•", count: text.count) : text
+    }
+    func value(forKey key: String) -> Any? { precondition(key == "hasKeyboardFocus"); return focused }
+    func waitForExistence(timeout: Double) -> Bool { true }
+    func tap() { focused = true; cursor = text.count / 2 }
+    @MainActor struct Coordinate {
+        let field: XCUIElement
+        let point: CGVector
+        func tap() {
+            field.focused = true
+            // The field shows 20 characters; a trailing-edge tap on wider text lands under the tap.
+            field.cursor = point.dx > 0.9 ? min(field.text.count, 20) : field.text.count / 2
+        }
+    }
+    func coordinate(withNormalizedOffset point: CGVector) -> Coordinate { Coordinate(field: self, point: point) }
+    func typeKey(_ key: String, modifierFlags: Modifiers) {
+        hardwareEvents += 1
+        precondition(key == "a" && modifierFlags == .command)
+        selected = true
+    }
+    func typeKey(_ key: XCUIKeyboardKey, modifierFlags: Modifiers) {
+        hardwareEvents += 1
+        precondition(key == .delete && modifierFlags.isEmpty)
+        typeText(key.rawValue)
+    }
+    func typeText(_ input: String) {
+        precondition(focused)
+        if input.contains(where: { $0 != "\u{7f}" }) {
+            insertions += 1
+            if dropNextInsertion { dropNextInsertion = false; return }
+        }
+        var characters = Array(text)
+        for character in input {
+            if selected { characters = []; cursor = 0; selected = false }
+            if character == "\u{7f}" {
+                if cursor > 0 { cursor -= 1; characters.remove(at: cursor) }
+            } else {
+                characters.insert(character, at: cursor)
+                cursor += 1
+            }
+        }
+        text = String(characters)
+    }
+}
+@MainActor
+struct Proof {
+'''
+controls = r'''
+}
+@main @MainActor
+struct Controls {
+    static func main() {
+        let proof = Proof()
+        for (name, old, wanted, secure, dropped) in [
+            ("plain", "ftp://127.0.0.1/library", "http://127.0.0.1:4533", false, false),
+            ("overflowing", "http://127.0.0.1:50364/lyrics-fault/proxy/path", "http://127.0.0.1:4533", false, false),
+            ("placeholder", "", "dulcet-admin", false, false),
+            ("secure", "wrong-password", "canary-password", true, false),
+            ("repeated", "dulcet-admin", "dulcet-admin", false, false),
+            ("dropped-plain", "previous-user", "dulcet-admin", false, true),
+            ("dropped-secure", "wrong-password", "canary-password", true, true)
+        ] {
+            let field = XCUIElement(old, secure: secure)
+            field.dropNextInsertion = dropped
+            precondition(proof.replaceText(in: field, with: wanted, name: name, secure: secure))
+            precondition(field.text == wanted, "Replacement must clear the old value and type the whole new one")
+            precondition(field.hardwareEvents == 0, "Credential replacement must not attach/minimize a hardware keyboard")
+            precondition(field.insertions == (dropped ? 2 : 1), "Dropped typing must be retried and verified")
+            print("\(name): PASS")
+        }
+    }
+}
+'''
+with tempfile.TemporaryDirectory(prefix="dulcet-account-text-entry-") as directory:
+    swift = Path(directory) / "control.swift"
+    binary = Path(directory) / "control"
+    swift.write_text(collaborators + "    @MainActor\n" + method + controls)
+    subprocess.run(["swiftc", "-parse-as-library", str(swift), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)

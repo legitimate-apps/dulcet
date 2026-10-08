@@ -31,6 +31,7 @@
 "download.state.downloading" = "Downloading";
 "download.state.downloaded" = "Downloaded";
 "action.download.retry" = "Retry Download";
+"download.state.failed" = "Download Failed";
 "download.state.updateAvailable" = "Downloaded — Update Available";
 "action.pause" = "Pause";
 "action.previous" = "Previous Track";

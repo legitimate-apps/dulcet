@@ -5,16 +5,38 @@ import SwiftUI
 struct DulcetMacApp: App {
     @State private var presentation: DulcetPresentationStore
     private let downloadController: DulcetCoreDownloadController?
+#if DEBUG
+    @State private var downloadHandoff: DulcetDebugDownloadHandoff?
+#endif
 
     init() {
         let composition = DulcetMacProduction.makeComposition()
         _presentation = State(initialValue: composition.store)
         downloadController = composition.downloads
+#if DEBUG
+        // The killed-process download proof launches this app as a process of its own, so the
+        // account and the download it asks for arrive as launch arguments, and only with the
+        // proof's namespace active.
+        _downloadHandoff = State(initialValue: DulcetDebugDownloadHandoff.start(
+            controller: composition.downloads,
+            store: composition.store
+        ))
+        if DulcetDownloadHandoffProbe.namespace != nil {
+            DulcetDebugLaunchAccount.connect(composition.store)
+        }
+#endif
     }
 
     var body: some Scene {
         WindowGroup {
             DulcetMacProduction.makeRootView(store: presentation)
+#if DEBUG
+                .overlay(alignment: .bottomTrailing) {
+                    if let downloadHandoff {
+                        DulcetDebugDownloadHandoffOverlay(probe: downloadHandoff)
+                    }
+                }
+#endif
         }
         .defaultSize(width: 1180, height: 760)
         .commands {
@@ -24,6 +46,9 @@ struct DulcetMacApp: App {
         .backgroundTask(.urlSession(
             DulcetCoreDownloadController.productionBackgroundSessionIdentifier
         )) {
+#if DEBUG
+            DulcetDebugDownloadHandoff.recordBackgroundEvents()
+#endif
             await downloadController?.handleBackgroundSessionEvents()
         }
         // Dulcet > Settings…: the streaming quality (spec §12.5), also on the Connection screen.

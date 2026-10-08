@@ -575,6 +575,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var libraryMusicFolders: [DulcetMusicFolder] = []
     private var libraryArtists: [DulcetArtist] = []
     private var libraryAlbums: [DulcetAlbum] = []
+    private var downloadStateChangeHandler: (@MainActor () -> Void)?
+    /// What the controller last said for each track a row asked about, so drawing a list does not
+    /// read the download database once per row per frame. Emptied whenever the controller says
+    /// its answers may have changed.
+    private var downloadStateCache: [DulcetProviderItemID: DulcetDownloadState] = [:]
     private var activeAlbumTracksOperation: (any DulcetLibraryBrowseOperation)?
     private var albumTracksGeneration = 0
     private var selectedAlbumTracksFailure: DulcetLibraryFailure?
@@ -684,7 +689,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         if let librarySession, let providerInstanceID, let restored = restoredForReader {
             // The saved account's library paints at once from what this device has seen, and
-            // nothing is sent until the person chooses Reconnect (CONF-10b).
+            // the library sends nothing until the person chooses Reconnect (CONF-10b).
             librarySession.open(
                 account: Self.readerAccount(
                     request: restored,
@@ -699,6 +704,27 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         downloadController?.setStatusHandler { [weak self] id, state in
             self?.receiveDownloadState(state, for: id)
+        }
+        downloadController?.setStateRefreshHandler { [weak self] in
+            self?.downloadStateCache = [:]
+            self?.downloadStateChangeHandler?()
+        }
+        if let providerInstanceID, let restored = restoredForReader {
+            // Downloads belong to the saved account, not to a connection: a relaunch -- by the
+            // person, or by the system for a transfer that finished while the app was gone --
+            // reconciles them at once (spec §14.5), so a finished download shows as downloaded and
+            // plays offline without a Reconnect the server may never answer. The controller then
+            // schedules queued/interrupted rows with the saved credentials, including previously
+            // complete/stale downloads whose file is missing or whose credential generation
+            // changed. These recovery reads are part of the download exception in §13.1/CONF-10b.
+            downloadController?.configure(account: DulcetPlaybackAccount(
+                providerInstanceID: providerInstanceID,
+                normalizedServerURL: restored.serverURL,
+                username: restored.username,
+                password: restored.password,
+                allowLocalHTTP: restored.allowLocalHTTP,
+                credentialGeneration: credentialStore?.credentialGeneration ?? 0
+            ))
         }
     }
 
@@ -796,6 +822,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             ))
         case let .downloadTrack(id):
             guard let track = libraryAlbums.lazy.flatMap(\.tracks).first(where: { $0.id == id }),
+                  downloadController?.downloadsEnabled == true else { return }
+            downloadController?.requestDownload(track)
+        case let .requestDownload(track):
+            guard track.availability == .playable,
                   downloadController?.downloadsEnabled == true else { return }
             downloadController?.requestDownload(track)
         case let .playbackControl(intent):
@@ -2233,6 +2263,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         _ state: DulcetDownloadState,
         for id: DulcetProviderItemID
     ) {
+        downloadStateCache[id] = state
+        downloadStateChangeHandler?()
         libraryAlbums = libraryAlbums.map { album in
             album.replacingTracks(album.tracks.map { track in
                 track.id == id ? track.replacingDownloadState(state) : track
@@ -2281,6 +2313,20 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             selectedAlbum: currentSnapshot.selectedAlbum,
             libraryFailure: currentSnapshot.libraryFailure
         )
+    }
+}
+
+extension DulcetAccountDataSource: DulcetDownloadStateReading {
+    public func downloadState(for id: DulcetProviderItemID) -> DulcetDownloadState {
+        if let cached = downloadStateCache[id] { return cached }
+        guard let downloadController else { return .notDownloaded }
+        let state = downloadController.status(for: id)
+        downloadStateCache[id] = state
+        return state
+    }
+
+    public func setDownloadStateChangeHandler(_ handler: @escaping @MainActor () -> Void) {
+        downloadStateChangeHandler = handler
     }
 }
 

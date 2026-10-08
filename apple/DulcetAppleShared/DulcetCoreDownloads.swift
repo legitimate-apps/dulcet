@@ -1,4 +1,7 @@
 #if os(macOS) || os(iOS)
+#if DEBUG
+import CryptoKit
+#endif
 import DulcetCore
 import DulcetKit
 import Foundation
@@ -14,6 +17,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     private var client: AppleDownloadClient?
     private var statusHandler:
         (@MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void)?
+    private var stateRefreshHandler: (@MainActor () -> Void)?
     private var prepareOperations: [DulcetProviderItemID: any AppleDownloadOperation] = [:]
     private var pendingTracks: [DulcetTrack] = []
     private var completedTaskIdentifiers: Set<Int> = []
@@ -48,7 +52,23 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
 
     static var productionBackgroundSessionIdentifier: String {
         let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.legitimateapps.dulcet"
+        #if DEBUG
+        if let namespace = DulcetDownloadHandoffProbe.namespace {
+            return "\(bundleIdentifier).downloads.background.debug-handoff-\(namespace)"
+        }
+        #endif
         return "\(bundleIdentifier).downloads.background"
+    }
+
+    /// The database every production component of this app opens; one name, so the reader sees
+    /// the rows the downloads write.
+    static var productionDatabaseName: String {
+        #if DEBUG
+        if let namespace = DulcetDownloadHandoffProbe.namespace {
+            return "dulcet-handoff-\(namespace).db"
+        }
+        #endif
+        return "dulcet.db"
     }
 
     init(
@@ -74,16 +94,22 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first else { return nil }
+        var downloadsDirectory = "Downloads"
+        #if DEBUG
+        if let namespace = DulcetDownloadHandoffProbe.namespace {
+            downloadsDirectory = "Downloads-handoff-\(namespace)"
+        }
+        #endif
         let root = applicationSupport
             .appendingPathComponent("Dulcet", isDirectory: true)
-            .appendingPathComponent("Downloads", isDirectory: true)
+            .appendingPathComponent(downloadsDirectory, isDirectory: true)
         let configuration = URLSessionConfiguration.background(
             withIdentifier: productionBackgroundSessionIdentifier
         )
         configuration.sessionSendsLaunchEvents = true
         configuration.isDiscretionary = false
         return Self(
-            databaseName: "dulcet.db",
+            databaseName: productionDatabaseName,
             downloadRootURL: root,
             sessionConfiguration: configuration
         )
@@ -93,6 +119,10 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     ) {
         statusHandler = handler
+    }
+
+    func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {
+        stateRefreshHandler = handler
     }
 
     func configure(account: DulcetPlaybackAccount) {
@@ -202,6 +232,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         client?.close()
         client = nil
         account = nil
+        stateRefreshHandler?()
     }
 
     func removeAccountData() async -> Bool {
@@ -234,6 +265,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         client.close()
         self.client = nil
         account = nil
+        stateRefreshHandler?()
         return true
     }
 
@@ -272,6 +304,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             return cancel.contains(description)
         }.forEach { $0.cancel() }
         reconciled = true
+        probe("reconciled outstanding=\(identifiers.isEmpty ? "none" : identifiers.joined(separator: ",")) cancelled=\(cancel.count)")
+        stateRefreshHandler?()
         processSecuredDownloads()
         let queued = pendingTracks
         pendingTracks = []
@@ -370,6 +404,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         task.taskDescription = prepared.downloadIdentifier
         publish(.downloading, for: itemID)
         task.resume()
+        probe("task-started download=\(prepared.downloadIdentifier) item=\(itemID.rawID)")
     }
 
     private func handleCompletedDownload(
@@ -381,6 +416,10 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             return
         }
         guard let secured = secureDownloadedFile(task: task, location: location) else { return }
+        probe(
+            "delivered download=\(task.taskDescription ?? "none") "
+                + "status=\(secured.statusCode.map(String.init) ?? "none") bytes=\(secured.deliveredFileLength)"
+        )
         completedTaskIdentifiers.insert(task.taskIdentifier)
         _ = processSecuredDownload(secured)
     }
@@ -458,6 +497,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
             wallClockMilliseconds: Date().downloadWallClockMilliseconds
         )
         removeSecuredMetadata(secured)
+        #if DEBUG
+        probePromotion(downloadIdentifier: downloadIdentifier, rawID: rawID, state: outcome.state)
+        #endif
         publish(DulcetDownloadState(rawValue: outcome.state) ?? .failed, for: itemID)
         scheduleNextDownload()
         return true
@@ -475,6 +517,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
         }
         guard let downloadIdentifier = task.taskDescription,
               let client else { return }
+        probe("task-failed download=\(downloadIdentifier) error=\(error.map { "\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "none")")
         let target = client.fileTarget(downloadIdentifier: downloadIdentifier)
         guard target.errorKind == nil,
               let rawID = target.rawId,
@@ -588,6 +631,43 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling {
     private func publish(_ state: DulcetDownloadState, for id: DulcetProviderItemID) {
         statusHandler?(id, state)
     }
+
+    /// One line in the handoff proof's marker file, in a DEBUG build with the proof's namespace
+    /// active; nothing otherwise.
+    private func probe(_ event: @autoclosure () -> String) {
+        #if DEBUG
+        DulcetDownloadHandoffProbe.record(event())
+        #endif
+    }
+
+    #if DEBUG
+    /// The promoted file as the core will play it: its length and digest, so the proof can hold
+    /// them to the bytes the server sends for the same track.
+    private func probePromotion(downloadIdentifier: String, rawID: String, state: String) {
+        guard DulcetDownloadHandoffProbe.namespace != nil else { return }
+        var bytes = "none"
+        var digest = "none"
+        if let plan = client?.localPlaybackPlan(rawId: rawID).plan,
+           let data = FileManager.default.contents(atPath: plan.filePath) {
+            bytes = String(data.count)
+            digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+        // The durable row as the core reads it back, not the promotion's own answer.
+        let row = client?.status(rawId: rawID).state ?? "none"
+        DulcetDownloadHandoffProbe.record(
+            "promoted download=\(downloadIdentifier) item=\(rawID) state=\(state) row=\(row) bytes=\(bytes) sha256=\(digest)"
+        )
+    }
+
+    /// The background session's own tasks, as the system reports them: each task's download
+    /// identifier and state, for the proof's outstanding-download witness.
+    func debugSessionTasks() async -> [(download: String, state: URLSessionTask.State)] {
+        // Before an account is configured the session is not made here: making it would change
+        // when the system's events for it are delivered, which is what the proof observes.
+        guard client != nil else { return [] }
+        return await allSessionTasks().map { ($0.taskDescription ?? "none", $0.state) }
+    }
+    #endif
 }
 
 extension DulcetCoreDownloadController: URLSessionDownloadDelegate, URLSessionTaskDelegate {
@@ -614,6 +694,7 @@ extension DulcetCoreDownloadController: URLSessionDownloadDelegate, URLSessionTa
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         MainActor.assumeIsolated { [weak self] in
             guard let self else { return }
+            probe("finished-events")
             if let continuation = backgroundEventsContinuation {
                 backgroundEventsContinuation = nil
                 continuation.resume()
@@ -821,4 +902,104 @@ private extension DulcetAudioContainer {
         }
     }
 }
+
+#if DEBUG
+/// DEBUG ONLY: the instrument of the killed-process download handoff proof (spec §14.5,
+/// `docs/download-background-blockers.md`).
+///
+/// A launch argument names a namespace. The app keeps it in its defaults for a quarter of an hour, so a
+/// launch nobody passes arguments to -- the system's own relaunch for the background session
+/// included -- still has it. While it is active the app keeps its background session, database and
+/// downloads apart under that namespace, and appends each step of the download handoff to a marker
+/// file the proof reads: the step, the process, an opaque download identifier, an item identifier,
+/// byte counts and digests. Never a URL, a query or a credential.
+enum DulcetDownloadHandoffProbe {
+    static let launchArgument = "-dulcet-debug-download-handoff"
+    static let clearArgument = "-dulcet-debug-download-handoff-clear"
+    private static let defaultsKey = "com.legitimateapps.dulcet.debug.download-handoff"
+    private static let lifetime: TimeInterval = 15 * 60
+
+    /// Resolved once per process, on first use, so the session identifier cannot change under a
+    /// running app when the quarter hour runs out.
+    static let namespace: String? = resolve(
+        arguments: ProcessInfo.processInfo.arguments,
+        defaults: .standard,
+        now: Date(),
+        bundlePath: Bundle.main.bundlePath
+    )
+
+    /// The stored namespace names the app bundle that stored it. On a Mac every copy of an app
+    /// shares its defaults, and only the copy the proof launched may take the namespace up.
+    static func resolve(arguments: [String], defaults: UserDefaults, now: Date, bundlePath: String) -> String? {
+        if arguments.contains(clearArgument) {
+            defaults.removeObject(forKey: defaultsKey)
+        }
+        if let index = arguments.firstIndex(of: launchArgument),
+           arguments.indices.contains(index + 1),
+           isValid(arguments[index + 1]) {
+            defaults.set(
+                [
+                    "namespace": arguments[index + 1],
+                    "expires": now.addingTimeInterval(lifetime).timeIntervalSince1970,
+                    "bundle": bundlePath,
+                ],
+                forKey: defaultsKey
+            )
+        }
+        guard let stored = defaults.dictionary(forKey: defaultsKey),
+              let namespace = stored["namespace"] as? String,
+              let expires = stored["expires"] as? Double,
+              stored["bundle"] as? String == bundlePath,
+              isValid(namespace) else { return nil }
+        guard now.timeIntervalSince1970 < expires else {
+            defaults.removeObject(forKey: defaultsKey)
+            return nil
+        }
+        return namespace
+    }
+
+    static func isValid(_ namespace: String) -> Bool {
+        (1 ... 48).contains(namespace.count)
+            && namespace.unicodeScalars.allSatisfy {
+                CharacterSet.alphanumerics.contains($0) && $0.isASCII || $0 == "-"
+            }
+    }
+
+    /// `Application Support/Dulcet/DebugDownloadHandoff/<namespace>`, or nil when inactive.
+    static var directoryURL: URL? {
+        guard let namespace,
+              let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        return support
+            .appendingPathComponent("Dulcet", isDirectory: true)
+            .appendingPathComponent("DebugDownloadHandoff", isDirectory: true)
+            .appendingPathComponent(namespace, isDirectory: true)
+    }
+
+    static var markersURL: URL? {
+        directoryURL?.appendingPathComponent("markers.log")
+    }
+
+    /// Appends `<wall-clock ms> pid=<pid> <event>`; does nothing when inactive.
+    static func record(_ event: String) {
+        guard let markersURL, let directoryURL else { return }
+        let milliseconds = Int64((Date().timeIntervalSince1970 * 1_000).rounded())
+        let line = Data("\(milliseconds) pid=\(getpid()) \(event)\n".utf8)
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        if let handle = try? FileHandle(forWritingTo: markersURL) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+        } else {
+            try? line.write(to: markersURL, options: .atomic)
+        }
+    }
+
+    /// Every line recorded so far.
+    static func markers() -> [String] {
+        guard let markersURL, let text = try? String(contentsOf: markersURL, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").map(String.init)
+    }
+}
+#endif
 #endif

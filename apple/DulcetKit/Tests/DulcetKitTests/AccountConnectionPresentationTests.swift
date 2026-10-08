@@ -1,3 +1,4 @@
+import Observation
 import Foundation
 import Security
 import Testing
@@ -1737,6 +1738,117 @@ func cancellingARestoredReconnectReturnsToSavedDisconnectedState() {
     #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
 }
 
+/// A relaunch into a saved account reconciles that account's downloads at once, before any
+/// Reconnect and with nothing sent to the connector (spec §14.5, CONF-10b): a transfer that
+/// finished while the app was gone is reconciled by the replacement process, not left until the
+/// server answers again. Without it a background download completed during process death stayed
+/// "not downloaded" and unplayable offline until the person reconnected.
+/// This fake observes configuration only; DownloadPolicyTest's relaunch recovery tests exercise
+/// the real reconciliation and scheduling of missing files and changed credential generations.
+@Test @MainActor
+func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
+    let connector = ControlledAccountConnector()
+    let downloads = ControlledDownloadController()
+    let source = DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: InstanceCredentialStore(
+            persisted: DulcetAccountConnectRequest(
+                serverURL: "http://127.0.0.1:4533",
+                username: "listener",
+                password: "fixture-password",
+                allowLocalHTTP: true
+            ),
+            providerInstanceID: "provider-instance-saved"
+        ),
+        downloadController: downloads
+    )
+    _ = DulcetPresentationStore(source: source)
+
+    let account = downloads.configuredAccount
+    #expect(account?.providerInstanceID == "provider-instance-saved")
+    #expect(account?.normalizedServerURL == "http://127.0.0.1:4533")
+    #expect(account?.username == "listener")
+    #expect(account?.password == "fixture-password")
+    #expect(account?.allowLocalHTTP == true)
+    #expect(!downloads.configuredBeforeStatusHandler,
+            "a state the reconciliation publishes must reach the presentation")
+    #expect(connector.requests.isEmpty, "reconciling downloads is not a connection")
+}
+
+/// The control: with no saved account there is nothing to reconcile, and nothing is configured.
+@Test @MainActor
+func aLaunchWithoutASavedAccountConfiguresNoDownloads() {
+    let downloads = ControlledDownloadController()
+    _ = DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        credentialStore: MemoryCredentialStore(persisted: nil),
+        downloadController: downloads
+    )
+    #expect(downloads.configuredAccount == nil)
+}
+
+/// A track a reader screen drew is downloaded as itself: the reader's pages are in no album list
+/// the source holds, so a download asked for by identifier alone found nothing and did nothing.
+@Test @MainActor
+func aTrackFromAReaderScreenIsDownloadedAsItself() {
+    let downloads = ControlledDownloadController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        credentialStore: MemoryCredentialStore(persisted: nil),
+        downloadController: downloads
+    ))
+    let track = fixtureLibraryAlbum().tracks[0]
+
+    store.requestDownload(track)
+    #expect(downloads.requestedTracks.map(\.id) == [track.id])
+
+    // The control: the same track by identifier alone reaches nothing, since no album list holds it.
+    store.downloadTrack(track.id)
+    #expect(downloads.requestedTracks.map(\.id) == [track.id])
+}
+
+/// Where a track's download stands is the controller's answer, and a row reading it is drawn
+/// again when the controller reports a change for that track, or says its answers changed (as
+/// once its downloads are reconciled) -- never a stale answer kept from before.
+@Test @MainActor
+func aRowsDownloadStateFollowsTheControllerAndIsRedrawnWhenItChanges() {
+    let downloads = ControlledDownloadController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        credentialStore: MemoryCredentialStore(persisted: nil),
+        downloadController: downloads
+    ))
+    let track = fixtureLibraryAlbum().tracks[0]
+    #expect(store.downloadState(for: track) == .notDownloaded)
+
+    final class Flag: @unchecked Sendable { var raised = false }
+    func redrawn(after change: () -> Void) -> Bool {
+        let changed = Flag()
+        withObservationTracking {
+            _ = store.downloadState(for: track)
+        } onChange: {
+            changed.raised = true
+        }
+        change()
+        return changed.raised
+    }
+
+    // Reconciled: the controller now knows the track was downloaded while the app was gone.
+    downloads.statuses[track.id] = .downloaded
+    #expect(redrawn { downloads.refresh() })
+    #expect(store.downloadState(for: track) == .downloaded)
+
+    // One track's report.
+    #expect(redrawn { downloads.publish(.downloading, for: track.id) })
+    #expect(store.downloadState(for: track) == .downloading)
+
+    // Read once per change, not once per row drawn.
+    let reads = downloads.statusReads
+    _ = store.downloadState(for: track)
+    _ = store.downloadState(for: track)
+    #expect(downloads.statusReads == reads)
+}
+
 @MainActor
 private final class ControlledAccountConnector: DulcetAccountConnecting {
     let operation = ControlledAccountOperation()
@@ -1992,6 +2104,8 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
         self.onRemove = onRemove
     }
 
+    private(set) var configuredBeforeStatusHandler = false
+
     func setStatusHandler(
         _ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void
     ) {
@@ -1999,6 +2113,7 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
     }
 
     func configure(account: DulcetPlaybackAccount) {
+        if handler == nil { configuredBeforeStatusHandler = true }
         configuredAccount = account
     }
 
@@ -2006,8 +2121,22 @@ private final class ControlledDownloadController: DulcetDownloadControlling {
         requestedTracks.append(track)
     }
 
+    var statuses: [DulcetProviderItemID: DulcetDownloadState] = [:]
+    private(set) var statusReads = 0
+    private var refreshHandler: (@MainActor () -> Void)?
+
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState {
-        .notDownloaded
+        statusReads += 1
+        return statuses[id] ?? .notDownloaded
+    }
+
+    func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {
+        refreshHandler = handler
+    }
+
+    /// As the production controller does once its downloads are reconciled.
+    func refresh() {
+        refreshHandler?()
     }
 
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? {

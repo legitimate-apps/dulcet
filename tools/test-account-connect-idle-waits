@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Execute the account-state proof's interaction scope against animation-idle controls.
+
+The supported runtime models an event whose animation-idle notification never arrives, although
+its screen state changes normally. Both event waits must be bypassed and the state still checked.
+A visible button moves during a scroll and must settle before a tap.
+An opening confirmation ignores its first tap; the observed empty form must follow a retry.
+Missing/changed Objective-C methods fall back safely. This checks the test's wait boundary, not
+which UIKit animation prevented CI's reply. --mutant demonstrates the rejected wait boundaries and the confirmation race.
+"""
+import argparse
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target'])
+args = parser.parse_args()
+source = (ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
+
+def method(name):
+    start = source.index('    private func ' + name + '(')
+    opening = source.index('{', start)
+    depth = 1
+    end = opening + 1
+    while depth:
+        depth += (source[end] == '{') - (source[end] == '}')
+        end += 1
+    return source[start:end].replace('private func', 'func', 1)
+
+scope = method('withoutIdleWaits')
+proof = method('proveEveryAccountConnectState')
+sign_out = method('signOut')
+scroll = method('scrollIntoView')
+stable = method('waitForStableHitTarget')
+if args.mutant == 'moving-target':
+    scroll = scroll.replace('waitForStableHitTarget(element, in: window, timeout: 5)', 'element.isHittable')
+if args.mutant == 'confirmation-once':
+    start = sign_out.index('        let confirmationDeadline')
+    end = sign_out.index('        guard primary.waitForExistence', start)
+    sign_out = sign_out[:start] + '        confirm.tap()\n' + sign_out[end:]
+if args.mutant in ('before-only', 'after-only'):
+    scope = scope.replace('perform(app, selector, 3, body)',
+                          'perform(app, selector, ' + ('1' if args.mutant == 'before-only' else '2') + ', body)')
+if args.mutant == 'no-scope':
+    proof = proof.replace('withoutIdleWaits(app)', 'runPlainly(app)')
+
+controls = r'''
+import CoreGraphics
+import Foundation
+import ObjectiveC
+
+enum RuntimeCase { case supported, missing, changed }
+var runtimeCase = RuntimeCase.supported
+func class_getInstanceMethod(_ cls: AnyClass, _ selector: Selector) -> Method? {
+    switch runtimeCase {
+    case .supported: return ObjectiveC.class_getInstanceMethod(cls, selector)
+    case .missing: return nil
+    case .changed:
+        return ObjectiveC.class_getInstanceMethod(ChangedRuntime.self, selector)
+    }
+}
+final class ChangedRuntime: NSObject {
+    @objc(_performWithInteractionOptions:block:)
+    func perform(_ options: UInt64, block: @escaping @convention(block) () -> Void) { fatalError("wrong ABI called") }
+}
+final class XCUIApplication: NSObject {
+    static var latest: XCUIApplication?
+    var options: UInt32 = 0
+    var scopeCalls = 0
+    var state = "idle"
+    var reads = 0
+    override init() { super.init(); Self.latest = self }
+    @objc(_performWithInteractionOptions:block:)
+    func perform(_ options: UInt32, block: @escaping @convention(block) () -> Void) {
+        let previous = self.options
+        self.options = options
+        scopeCalls += 1
+        defer { self.options = previous }
+        block()
+    }
+    var frameReads = 0
+    var lastTargetY = 1_000.0
+    var swipes = 0
+    var windows: Element { Element(app: self, scope: "window", key: "window") }
+    func swipeUp() { swipes += 1 }
+    var confirmationExists = false
+    var confirmTapCount = 0
+    var buttons: ElementQuery { ElementQuery(app: self, scope: "root") }
+    var sheets: ElementQuery { ElementQuery(app: self, scope: "sheet") }
+    var alerts: ElementQuery { ElementQuery(app: self, scope: "alert") }
+    var popovers: ElementQuery { ElementQuery(app: self, scope: "popover") }
+    func tapTryAgain() {
+        // The UI is responsive; only the synthetic event's animation-idle waits cannot finish.
+        precondition(options & 1 != 0, "pre-event animation wait never completes")
+        state = "connecting"
+        state = "error-protocol"
+        precondition(options & 2 != 0, "post-event animation wait never completes")
+    }
+    func readState() -> String { reads += 1; return state }
+}
+struct ElementQuery {
+    let app: XCUIApplication
+    let scope: String
+    var buttons: Self { self }
+    subscript(_ key: String) -> Element { Element(app: app, scope: scope, key: key) }
+}
+struct Element {
+    let app: XCUIApplication
+    let scope: String
+    let key: String
+    var firstMatch: Self { self }
+    var exists: Bool {
+        if key == "moving-button" || key == "window" { return true }
+        if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
+        return key == "Sign Out" && (scope == "root" ? app.state != "signed-out" : scope == "sheet" && app.confirmationExists)
+    }
+    var isHittable: Bool { key == "moving-button" ? app.swipes > 0 : exists }
+    var frame: CGRect {
+        if key == "window" { return CGRect(x: 0, y: 0, width: 400, height: 800) }
+        if app.swipes > 0 {
+            let positions = [300.0, 200.0, 100.0]
+            app.lastTargetY = positions[min(app.frameReads, positions.count - 1)]
+            app.frameReads += 1
+        }
+        return CGRect(x: 20, y: app.lastTargetY, width: 100, height: 30)
+    }
+    var label: String { key == "dulcet.account-connect.primary-action" ? "Connect" : "Sign Out" }
+    func waitForExistence(timeout: TimeInterval) -> Bool { exists }
+    func tap() {
+        if key == "moving-button" {
+            precondition(app.lastTargetY == 100, "the tap must target the button after its scroll finishes")
+            return
+        }
+        if scope == "root" { app.confirmationExists = true; return }
+        app.confirmTapCount += 1
+        // Accessibility can expose an opening popover before UIKit accepts the first tap.
+        if app.confirmTapCount >= 2 { app.state = "signed-out"; app.confirmationExists = false }
+    }
+}
+typealias XCUIElement = Element
+func XCTFail(_ message: String) { preconditionFailure(message) }
+@MainActor
+final class Proof {
+    var driven = 0
+    func dismissPasswordSavePromptIfPresent() {}
+    func driveEveryAccountConnectState(in app: XCUIApplication, compact: Bool) {
+        app.tapTryAgain()
+        precondition(app.readState() == "error-protocol", "the real state predicate still applies")
+        driven += 1
+    }
+    func tap(_ element: Element, in app: XCUIApplication, name: String) -> Bool { element.tap(); return true }
+    func waitForLabel(containing text: String, of element: Element, timeout: TimeInterval) -> Bool { element.label.contains(text) }
+    func runPlainly(_ app: XCUIApplication, _ body: @escaping () -> Void) { body() }
+'''
+checks = r'''
+}
+@main
+struct Check {
+    @MainActor static func main() {
+        let proof = Proof()
+        proof.proveEveryAccountConnectState(compact: false)
+        let app = XCUIApplication.latest!
+        precondition(proof.driven == 1 && app.scopeCalls == 1 && app.reads == 1)
+        precondition(app.options == 0, "interaction options must be restored")
+        print("non-idle-animation / observed-state / restored-options: PASS")
+        let moving = Element(app: app, scope: "root", key: "moving-button")
+        precondition(proof.scrollIntoView(moving, in: app))
+        moving.tap()
+        print("moving visible target / settled tap: PASS")
+        app.state = "connected"
+        precondition(proof.signOut(in: app) && app.confirmTapCount == 2 && !app.confirmationExists)
+        print("opening confirmation / observed empty form: PASS")
+        for condition in [RuntimeCase.missing, .changed] {
+            runtimeCase = condition
+            var calls = 0
+            proof.withoutIdleWaits(app) {
+                precondition(app.options == 0, "fallback must not call a missing or incompatible IMP")
+                calls += 1
+            }
+            precondition(calls == 1 && app.scopeCalls == 1)
+            print("\(condition) runtime fallback: PASS")
+        }
+    }
+}
+'''
+with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
+    path = Path(temporary)
+    swift = path / 'control.swift'
+    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + scroll + '\n' + stable + checks)
+    subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
+    subprocess.run([str(path / 'control')], check=True)

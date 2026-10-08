@@ -300,6 +300,23 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     empty, and gained the track with the system preview or with no menu (OBSERVED, iPhone 17 Pro
     simulator, iOS 26.5). A row that is a drag source uses the system preview;
     `testATrackDraggedOutOfItsContextMenuJoinsUpNextOnIPhone` fails if a custom one comes back.
+    The account-connect state proof uses the same interaction scope and waits for each expected
+    screen state explicitly. On iPad CI with iOS 26.4.1, the main run loop replied idle and the
+    protocol error was drawn after Try Again, but subsequent animation-idle requests received no
+    reply (apple-ci 37740342688). A persistent iPad simulator on the same runtime reproduced the
+    wait after a password-field tap following the drag/search proofs. Read-only debugger inspection found the main thread
+    asleep in its run loop and one animation still counted by XCTest; the window layers had no
+    download spinner. The exact animation was not identified. This scope changes only
+    synthetic event waits: the proof still requires all eleven states, the server's answers, the
+    silent port's accepted connection and Cancel, and the real Keychain read. Its regression tool
+    models a UI that changes state while animation-idle never arrives, checks both event-wait bits
+    and restoration, and rejects missing or changed runtime methods safely. Sign Out also waits
+    for the empty form and retries while its confirmation remains: the opening iPad popover can
+    expose its button before accepting a tap. A control whose first confirmation tap is ignored
+    must still reach the empty form. Before tapping a scrolled control, the proof also requires
+    its visible, hittable frame to stop moving for 0.4 s; accessibility can expose the control
+    during deceleration, when a tap would only stop the scroll. The moving-target control rejects
+    accepting the first visible frame as ready.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the
