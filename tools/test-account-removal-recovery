@@ -83,6 +83,10 @@ struct Outcome { var errorKind: String? = nil }
     var removedTaskIdentifiers: Set<Int> = []
     var account: String?
     var client: Client?
+    // The controller notifies presentation after successful removal. Keep this collaborator
+    // observable so a stale cleanup cannot silently publish a refresh either.
+    var stateRefreshHandler: (@MainActor () -> Void)?
+    var stateRefreshes = 0
     var inboxRemovals = 0
     var shouldSuspend = true
     var continuation: CheckedContinuation<[SessionTask], Never>?
@@ -193,6 +197,7 @@ struct Failure: Error, CustomStringConvertible { var description: String }
         let name = CommandLine.arguments[1]
         do {
             let downloads = Downloads()
+            downloads.stateRefreshHandler = { downloads.stateRefreshes += 1 }
             downloads.configure(account: "kept")
             if name == "superseded" || name == "cancelled" {
                 let old = downloads.client!
@@ -205,7 +210,8 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                 let result = await worker.value
                 try require(!result && active.removals == 0 && old.removals == 0 &&
                             downloads.client === active && downloads.account != nil &&
-                            downloads.inboxRemovals == 0 && downloads.sessionTask.cancellations == 0,
+                            downloads.inboxRemovals == 0 && downloads.sessionTask.cancellations == 0 &&
+                            downloads.stateRefreshes == 0,
                             "stale cleanup mutated active account/client/tasks/inbox")
             } else if name == "timeout-reconnect" {
                 let presentation = Presentation()
@@ -222,6 +228,7 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                 try require(downloads.account == "new" && downloads.client === active &&
                             active.removals == 0 && downloads.inboxRemovals == 0 &&
                             downloads.sessionTask.cancellations == 0 &&
+                            downloads.stateRefreshes == 0 &&
                             presentation.credentialStore?.deletes == 0,
                             "timed-out cleanup deleted reconnected account data")
             } else {
@@ -247,7 +254,8 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                     completion()
                     await worker.value
                     try require(presentation.finished && presentation.credentialStore?.deletes == 1 &&
-                                reader.closes == 1, "removal did not finish once the reader stopped")
+                                reader.closes == 1 && downloads.stateRefreshes == 1,
+                                "removal did not finish and refresh once the reader stopped")
                 } else if name == "keep-account" {
                     try await until { artwork.continuation != nil }
                     try require(downloads.account == nil, "cleanup must clear configuration before recovery")
@@ -256,6 +264,7 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                     artwork.resume()
                     await worker.value
                     try require(downloads.account == "kept" && downloads.client != nil &&
+                                downloads.stateRefreshes == 1 &&
                                 presentation.currentSnapshot.state == .accountConnected &&
                                 presentation.credentialStore?.deletes == 0 && !presentation.finished,
                                 "Keep Account returned connected with downloads unconfigured")
@@ -264,7 +273,8 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                 } else {
                     await worker.value
                     try require(presentation.finished && presentation.credentialStore?.deletes == 1 &&
-                                downloads.account == nil, "ordinary successful removal did not finish")
+                                downloads.account == nil && downloads.stateRefreshes == 1,
+                                "ordinary successful removal did not finish and refresh")
                 }
             }
             print("\(name): PASS")
