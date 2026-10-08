@@ -14,6 +14,8 @@ import socket
 import signal
 import subprocess
 import time
+import uuid
+import xml.etree.ElementTree as ET
 
 repo = Path(__file__).resolve().parents[2]
 config = json.loads(Path(os.environ['DULCET_SIGNED_CONFIG']).read_text())
@@ -24,6 +26,9 @@ if root == workspace or workspace in root.parents:
 root.mkdir(parents=True, exist_ok=True)
 dd = Path('/private/tmp/claude-501/dd-signedmac')
 case = 'testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI'
+nonce = str(uuid.uuid4())
+receipts = (Path.home()/'Library/Containers/com.legitimateapps.dulcet.signed-host/Data'
+            /'Library/Application Support/dulcet-signed-proof'/nonce)
 lease = None
 server = None
 server_log = None
@@ -115,11 +120,73 @@ try:
     entitlements = plistlib.loads(subprocess.check_output(['codesign', '-d', '--entitlements', ':-', app], stderr=subprocess.DEVNULL))
     assert entitlements['keychain-access-groups'] == ['3LTL47SJ8C.com.legitimateapps.dulcet.signed-host']
     assert entitlements['com.apple.security.app-sandbox'] is True
-    result = root/'proof.xcresult'
-    run(['xcodebuild', 'test-without-building', *common, '-resultBundlePath', result,
-         '-only-testing:DulcetSignedMacTests/DulcetSignedMacAccountConnectTests/'+case, *settings], env=env)
-    run(['python3', 'tools/verify-xcode-test-execution', result, 'DulcetSignedMacTests.DulcetSignedMacAccountConnectTests', case])
-    run(['python3', 'tools/swift-testing-junit', result, root/'proof.xml', 'DulcetSignedMacAccountConnectTests'])
+    manifests = list((dd/'Build/Products').glob('*.xctestrun'))
+    assert len(manifests) == 1
+    manifest = plistlib.loads(manifests[0].read_bytes())
+    (root/'launch-manifest.plist').write_bytes(plistlib.dumps(manifest))
+    # Keep the manifest beside its original: __TESTROOT__ paths are relative to it.
+    phase_manifest = manifests[0].with_name('SignedRelaunch.xctestrun')
+    pids = set()
+
+    def test(phase):
+        test_case = case
+        document = plistlib.loads(plistlib.dumps(manifest))
+        targets = ([t for c in document['TestConfigurations'] for t in c['TestTargets']]
+                   if 'TestConfigurations' in document else [document['DulcetSignedMacTests']])
+        assert len(targets) == 1 and targets[0]['BlueprintName'] == 'DulcetSignedMacTests'
+        for key in ('EnvironmentVariables', 'TestHostEnvironmentVariables'):
+            targets[0].setdefault(key, {}).update({
+                'DULCET_SIGNED_PROOF_PHASE': phase, 'DULCET_SIGNED_PROOF_NONCE': nonce,
+                'DULCET_CONFORMANCE_BASE_URL': env['DULCET_CONFORMANCE_BASE_URL'],
+                'DULCET_CONFORMANCE_DISPOSABLE': 'true',
+            })
+        phase_manifest.write_bytes(plistlib.dumps(document))
+        result = root/(phase+'.xcresult')
+        run(['xcodebuild', 'test-without-building', '-xctestrun', phase_manifest,
+             '-destination', 'platform=macOS,arch=arm64', '-parallel-testing-enabled', 'NO',
+             '-resultBundlePath', result,
+             '-only-testing:DulcetSignedMacTests/DulcetSignedMacAccountConnectTests/'+test_case], env=env)
+        run(['python3', 'tools/verify-xcode-test-execution', result,
+             'DulcetSignedMacTests.DulcetSignedMacAccountConnectTests', test_case])
+        xml = root/(phase+'.xml')
+        run(['python3', 'tools/swift-testing-junit', result, xml, 'DulcetSignedMacAccountConnectTests'])
+        suite = ET.parse(xml).getroot()
+        assert suite.attrib['tests'] == '1' and len(suite) == 1
+        assert suite[0].attrib['name'] == test_case and not list(suite[0])
+        if phase != 'connected':
+            receipt = json.loads((receipts/(phase+'.json')).read_text())
+            assert receipt['phase'] == phase and receipt['nonce'] == nonce
+            pid = receipt['pid']
+            assert isinstance(pid, int) and pid > 1 and pid not in pids
+            pids.add(pid)
+            # xcodebuild's test completion must have ended this app session. A new
+            # composition in a still-running process is not relaunch evidence.
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise RuntimeError('Signed host remained alive after its test session')
+        return suite[0]
+
+    connected = test('connected')
+    phases = []
+    try:
+        for phase in ('save', 'restore', 'missing'):
+            phases.append(test(phase))
+    finally:
+        # The cleanup phase refuses another driver's nonce; it never deletes
+        # an inherited account. Every phase's full output remains local.
+        cleanup = test('cleanup')
+    phases.append(cleanup)
+    # One public case represents the complete ordered proof, only after every
+    # invocation, process-death check, negative control and cleanup has passed.
+    combined = ET.Element('testsuite', name='DulcetSignedMacAccountConnectTests',
+                          tests='1', failures='0', errors='0', skipped='0')
+    ET.SubElement(combined, 'testcase', classname='DulcetSignedMacAccountConnectTests',
+                  name=case, time=str(sum(float(p.attrib.get('time', 0)) for p in [connected, *phases])))
+    ET.ElementTree(combined).write(root/'proof.xml', encoding='utf-8', xml_declaration=True)
+    print('Signed relaunch proof PASS phases=4 terminated-hosts=4 tests=1')
 finally:
     if server is not None and server.poll() is None:
         server.terminate()
@@ -132,3 +199,4 @@ finally:
         shutil.rmtree(dd, ignore_errors=True)
     if proof_lock:
         proof_lock.close()
+    shutil.rmtree(receipts, ignore_errors=True)

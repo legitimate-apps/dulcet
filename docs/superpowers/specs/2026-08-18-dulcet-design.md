@@ -2589,10 +2589,18 @@ its own disposable fixture. It observes the active pointer, reads the production
 checks stored accessibility and non-sync attributes without filtering expected values after a
 wrong-accessibility control, and checks the connected UI. It also exercises update and deletion,
 including an unfiltered absence check. Only a green run on main and the named checked JUnit can
-supply public workflow evidence; a relaunch that reads the saved account back is not part of it. A
-`FEATURES.yml` row cites that run through a committed receipt
-(`evidence/receipts/signed-mac-account-connect-37771411282.json`, §21.3.1), never by making the
-dispatch-only job a required PR status; no row cites it yet.
+supply public workflow evidence; that main run did not include a relaunch that reads the saved
+account back. The continuation of the same test is now **written and passing locally, awaiting its
+main run**: the driver requires each signed host process to exit before starting the next, verifies distinct
+PIDs and their termination, and observes the app-init composition and production window with no
+account launch hook. The saved account opens its library with Reconnect, and Connection names the
+server. Reconnect is pressed through the rendered library action and reaches connected against the
+disposable fixture. A later launch whose real saved item was deleted, with its active pointer
+retained, must show the load-time persistence error rather than the saved library. The final phase
+removes the item and pointer; the public JUnit case is emitted only after all phases pass. A
+`FEATURES.yml` row cites a main run through a committed receipt (§21.3.1; the first is
+`evidence/receipts/signed-mac-account-connect-37771411282.json`), never by making the
+dispatch-only job a required PR status; no row cites one yet.
 Reboot, unlock, migration and background enforcement remain
 ASSUMED. The separate CONF-09b declared-state gap remains; a signed success alone cannot ship it.
 
@@ -7705,6 +7713,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-08 — Signed Mac Keychain relaunch proof written and passing locally, awaiting main.**
+
+The signed account-connect control now continues across separate entitled app processes: a real
+production connection saves the account, the next launch reads that same Keychain item into the
+saved-but-disconnected library, Connection names the server, and the rendered Reconnect action
+returns to connected against the disposable fixture. Deleting that item while retaining its
+pointer makes the next launch show the production persistence error. The driver checks process
+termination and distinct PIDs, and the final phase deletes the owned item and pointer. The same
+public test identity and strict one-case JUnit are retained. The extended control is written and
+passing locally; skipping the production launch-time credential read makes the restore phase fail
+and emits no public JUnit. Its main dispatch and audit are still pending. `account.connect/macos` stays
+partial, and its CONF-09b Keychain half still awaits that main evidence. Reboot, first-unlock,
+migration and background enforcement remain ASSUMED.
 
 **2026-10-08 — FEATURES evidence can cite an audited receipt for a dispatch-only main run**
 
