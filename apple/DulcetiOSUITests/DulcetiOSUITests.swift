@@ -3113,10 +3113,20 @@ final class DulcetiOSUITests: XCTestCase {
             // Beside the player: the panel starts right of the player's own title, in one row.
             let title = syncedApp.staticTexts["dulcet.now-playing.title"].firstMatch
             XCTAssertTrue(title.exists, "The player's title must be on screen beside the lyrics")
-            placement = "panel=\(syncedPanel.frame) title=\(title.frame)"
-            XCTAssertGreaterThanOrEqual(syncedPanel.frame.minX, title.frame.maxX,
+            // Every .frame read is a fresh snapshot, so the panel's arrival can move it between two
+            // reads. Assert on one settled pair: the same frames on two reads in a row.
+            var panelFrame = syncedPanel.frame
+            var titleFrame = title.frame
+            for _ in 0..<20 {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                let (nextPanel, nextTitle) = (syncedPanel.frame, title.frame)
+                if nextPanel == panelFrame, nextTitle == titleFrame { break }
+                (panelFrame, titleFrame) = (nextPanel, nextTitle)
+            }
+            placement = "panel=\(panelFrame) title=\(titleFrame)"
+            XCTAssertGreaterThanOrEqual(panelFrame.minX, titleFrame.maxX,
                 "On a regular width the lyrics must sit beside the player, not over or under it; \(placement)")
-            XCTAssertTrue(syncedPanel.frame.minY < title.frame.maxY && title.frame.minY < syncedPanel.frame.maxY,
+            XCTAssertTrue(panelFrame.minY < titleFrame.maxY && titleFrame.minY < panelFrame.maxY,
                 "The lyrics and the player must share a row; \(placement)")
         }
         attachScreenshot(named: "lyrics-synced", app: syncedApp)
