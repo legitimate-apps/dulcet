@@ -8,6 +8,7 @@ import sys
 
 from required_checks import load_required_checks
 from feature_json import loads as strict_loads
+from evidence_receipts import ReceiptError, check_receipt_in_tree, load_receipt, receipt_workflow
 
 PLATFORMS = {"macos", "ios", "ipados", "tvos", "android", "androidtv"}
 STATUSES = {"shipped", "partial", "planned", "blocked", "n/a"}
@@ -273,15 +274,21 @@ def validate(document: dict, source: str, *, base: bool = False) -> dict[str, di
                     if not isinstance(evidence, list) or not evidence:
                         fail(f"{source}: {feature_id}/{platform} evidence must be a non-empty list")
                     entries = evidence
-                    # Two evidence shapes, exact and mutually exclusive by key set.
+                    # Evidence shapes, exact and mutually exclusive by key set.
                     # `conformance` cites a registered contract, including protocol, presentation
                     # and platform-security contracts. `observes` supplies a claim without a
                     # matching registry id; platform/UI behavior is not excluded from the registry.
-                    # Either shape still requires an executed, passing test and is not by itself
-                    # a status promotion.
+                    # Each cites its run either as a required job (`workflow`/`job`, whose
+                    # executed tests verify-parity-evidence checks on every main run) or as a
+                    # committed `receipt` for one audited green main run of a §21.3.1
+                    # dispatch-only job, which can never be a required status (spec §21.3.1).
+                    # Every shape still requires a passing test and is not by itself a status
+                    # promotion.
                     evidence_shapes = {
                         "conformance": {"conformance", "workflow", "job", "test"},
                         "observation": {"observes", "workflow", "job", "test"},
+                        "conformance-receipt": {"conformance", "receipt", "test"},
+                        "observation-receipt": {"observes", "receipt", "test"},
                     }
 
                 evidence_conformance: list[str] = []
@@ -301,7 +308,7 @@ def validate(document: dict, source: str, *, base: bool = False) -> dict[str, di
                         )
                     shape = shape_matches[0]
 
-                    if shape == "observation":
+                    if "observes" in entry:
                         observes = entry["observes"]
                         if not isinstance(observes, str) or not observes.strip():
                             fail(
@@ -310,11 +317,11 @@ def validate(document: dict, source: str, *, base: bool = False) -> dict[str, di
                             )
                         if any(
                             not isinstance(entry[key], str) or not entry[key]
-                            for key in ("workflow", "job", "test")
+                            for key in evidence_shapes[shape] - {"observes"}
                         ):
                             fail(
                                 f"{source}: {feature_id}/{platform} evidence entries require "
-                                f"{sorted(evidence_shapes['observation'])} strings"
+                                f"{sorted(evidence_shapes[shape])} strings"
                             )
                         observation_cited_by.setdefault(entry["test"], []).append(observes)
                     else:
@@ -323,9 +330,36 @@ def validate(document: dict, source: str, *, base: bool = False) -> dict[str, di
                                 f"{source}: {feature_id}/{platform} evidence entries require "
                                 f"{sorted(evidence_shapes[shape])} strings"
                             )
-                        if shape == "conformance":
+                        if "conformance" in entry:
                             evidence_conformance.append(entry["conformance"])
                             conformance_cited_by.setdefault(entry["test"], []).append(entry["conformance"])
+
+                    if "receipt" in entry:
+                        if not base and entry["test"].split("/")[-1].split("#")[-1] not in tests:
+                            fail(f"{source}: {feature_id}/{platform} evidence test does not exist")
+                        if base:
+                            # The change may delete a receipt with the rows citing it, as it may a
+                            # test; the comparison below still sees the base row's test identity.
+                            continue
+                        try:
+                            receipt = load_receipt(entry["receipt"])
+                            check_receipt_in_tree(entry["receipt"], receipt, entry["test"])
+                        except ReceiptError as error:
+                            fail(f"{source}: {feature_id}/{platform} {error}")
+                        receipt_job = jobs.get((receipt["workflow"], receipt["job"]))
+                        if receipt_job is None:
+                            fail(
+                                f"{source}: {feature_id}/{platform} evidence receipt "
+                                f"{entry['receipt']} workflow/job does not exist"
+                            )
+                        # verify_ci_policy.py forces every self-hosted job into a
+                        # workflow_dispatch-only workflow; this binds the registry to that rule.
+                        if "self-hosted" not in receipt_job:
+                            fail(
+                                f"{source}: {feature_id}/{platform} evidence receipt "
+                                f"{entry['receipt']} job does not run on a §21.3.1 self-hosted runner"
+                            )
+                        continue
 
                     if (entry["workflow"], entry["job"]) not in jobs:
                         fail(f"{source}: {feature_id}/{platform} evidence workflow/job does not exist")
@@ -423,12 +457,22 @@ def evidence_rows(cell: dict) -> set[frozenset[tuple[str, str]]]:
 
 
 def evidence_tests(cell: dict) -> set[tuple[str, str, str]]:
-    """The executed tests a cell cites, as (workflow, job, test), whatever its rows' prose says."""
+    """The executed tests a cell cites, as (workflow, job, test), whatever its rows' prose says.
+
+    A receipt row's identity is its workflow, read from the receipt's file name (the file itself
+    may be gone from a base tree), and the job slot `receipt`: replacing a stale receipt with a
+    fresh run of the same workflow and test is therefore not a lost test.
+    """
     evidence = cell.get("evidence")
     if evidence is None:
         return set()
     entries = evidence if isinstance(evidence, list) else [evidence]
-    return {(entry["workflow"], entry["job"], entry["test"]) for entry in entries}
+    return {
+        (receipt_workflow(entry["receipt"]) or entry["receipt"], "receipt", entry["test"])
+        if "receipt" in entry
+        else (entry["workflow"], entry["job"], entry["test"])
+        for entry in entries
+    }
 
 
 def base_document() -> dict:

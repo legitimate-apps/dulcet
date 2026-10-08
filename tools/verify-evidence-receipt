@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Re-check a committed evidence receipt against the public GitHub run it records (spec §21.3.1).
+
+    tools/verify-evidence-receipt evidence/receipts/<workflow>-<run_id>.json [...]
+
+For each receipt: its schema (as the parity gate reads it), then the run's metadata (workflow name,
+head_sha, main, workflow_dispatch, success, the receipt's job succeeded), then the run's JUnit
+artifact: one XML file in it must hash to `junit_sha256` and record every receipt test as passed.
+
+This is for people and release preparation, not the pull-request gate: the artifact expires
+(the signed-host workflow keeps it 7 days) and the check needs the network and a token. An expired
+artifact fails unless --allow-expired-artifact is passed, which verifies the metadata only and says
+so. Runs `gh api` (override with DULCET_GH, which the self-test uses).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from evidence_receipts import REPOSITORY_SLUG, ReceiptError, load_receipt  # noqa: E402
+
+
+class VerifyError(Exception):
+    pass
+
+
+def gh_api(path: str) -> bytes:
+    command = [os.environ.get("DULCET_GH", "gh"), "api", path]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode != 0:
+        raise VerifyError(f"gh api {path} failed: {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout
+
+
+def gh_json(path: str) -> dict:
+    try:
+        return json.loads(gh_api(path))
+    except ValueError as error:
+        raise VerifyError(f"gh api {path} did not return JSON: {error}") from error
+
+
+def verify(path_text: str, allow_expired: bool) -> str:
+    try:
+        receipt = load_receipt(path_text)
+    except ReceiptError as error:
+        raise VerifyError(str(error)) from error
+    run_id = receipt["run_id"]
+    base = f"repos/{REPOSITORY_SLUG}/actions/runs/{run_id}"
+    run = gh_json(base)
+    expected = {
+        "name": receipt["workflow"],
+        "head_sha": receipt["head_sha"],
+        "head_branch": "main",
+        "event": "workflow_dispatch",
+        "conclusion": "success",
+        "html_url": receipt["run_url"],
+    }
+    for key, value in expected.items():
+        if run.get(key) != value:
+            raise VerifyError(f"{path_text}: run {run_id} {key} is {run.get(key)!r}, receipt requires {value!r}")
+    jobs = gh_json(f"{base}/jobs?per_page=100").get("jobs", [])
+    matching = [job for job in jobs if job.get("name") == receipt["job"]]
+    if len(matching) != 1 or matching[0].get("conclusion") != "success":
+        raise VerifyError(
+            f"{path_text}: run {run_id} job {receipt['job']} is not exactly one successful job "
+            f"(found {[(job.get('name'), job.get('conclusion')) for job in matching]})"
+        )
+
+    artifacts = gh_json(f"{base}/artifacts?per_page=100").get("artifacts", [])
+    live = [artifact for artifact in artifacts if not artifact.get("expired")]
+    if not live:
+        message = f"{path_text}: run {run_id} has no unexpired artifact; junit_sha256 and the testcases are unverifiable"
+        if allow_expired:
+            return f"METADATA ONLY {path_text}: run {run_id} metadata verified; {message.split('; ', 1)[1]}"
+        raise VerifyError(message + " (pass --allow-expired-artifact to verify metadata only)")
+    digests: list[str] = []
+    for artifact in live:
+        archive = zipfile.ZipFile(io.BytesIO(gh_api(f"repos/{REPOSITORY_SLUG}/actions/artifacts/{artifact['id']}/zip")))
+        for name in archive.namelist():
+            if not name.endswith(".xml"):
+                continue
+            data = archive.read(name)
+            digest = hashlib.sha256(data).hexdigest()
+            digests.append(digest)
+            if digest != receipt["junit_sha256"]:
+                continue
+            outcomes: dict[str, str] = {}
+            for case in ET.fromstring(data).iter("testcase"):
+                identity = f"{case.get('classname', '').rsplit('.', 1)[-1]}/{case.get('name', '')}"
+                terminal = next((tag for tag in ("failure", "error", "skipped") if case.find(tag) is not None), None)
+                outcomes[identity] = terminal or "passed"
+            for test in receipt["tests"]:
+                if outcomes.get(test["name"]) != "passed":
+                    raise VerifyError(
+                        f"{path_text}: {test['name']} is {outcomes.get(test['name'], 'absent')} in the JUnit artifact"
+                    )
+            return f"VERIFIED {path_text}: run {run_id} at {receipt['head_sha']}, JUnit {digest}, {len(receipt['tests'])} passed"
+    raise VerifyError(
+        f"{path_text}: no JUnit file in run {run_id}'s artifacts hashes to {receipt['junit_sha256']} (found {digests})"
+    )
+
+
+def main(arguments: list[str]) -> int:
+    allow_expired = "--allow-expired-artifact" in arguments
+    paths = [argument for argument in arguments if argument != "--allow-expired-artifact"]
+    if not paths or any(path.startswith("-") for path in paths):
+        print("usage: verify-evidence-receipt [--allow-expired-artifact] <receipt.json> [...]", file=sys.stderr)
+        return 2
+    failed = False
+    for path in paths:
+        try:
+            print(verify(path, allow_expired))
+        except VerifyError as error:
+            print(f"FAILED {error}", file=sys.stderr)
+            failed = True
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

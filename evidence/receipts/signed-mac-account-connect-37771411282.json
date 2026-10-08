@@ -1,0 +1,24 @@
+{
+  "workflow": "signed-mac-account-connect",
+  "job": "signed-account-connect",
+  "run_id": "37771411282",
+  "run_url": "https://github.com/legitimate-apps/dulcet/actions/runs/37771411282",
+  "head_sha": "0d2387339bcfd7ce1328586cf6add436e20d6649",
+  "conclusion": "success",
+  "tests": [
+    {
+      "name": "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI",
+      "result": "passed"
+    }
+  ],
+  "junit_sha256": "fac5921f19d8eb9a8950bc45b97eb42680315826e140ad9d2d55c5e316ebaf73",
+  "test_sources": {
+    "apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift": "4911d673dadeaf67409f665d9382cc8da142f5dd"
+  },
+  "audit": {
+    "tool": "tools/verify_signed_mac_privacy.py",
+    "result": "pass",
+    "files_scanned": 12,
+    "tokens_checked": 28
+  }
+}

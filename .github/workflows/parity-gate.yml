@@ -68,6 +68,8 @@ jobs:
         run: python3 tools/test-run-local-gates
       - name: Prove concurrent Kotlin build phases are serialised
         run: python3 tools/test-run-gradle-exclusive
+      - name: Prove the evidence-receipt verifier rejects each mismatch with the recorded run
+        run: python3 tools/test-verify-evidence-receipt
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
       # Its own cap, so an overrun names this step rather than the job. MEASURED ~30 s in CI at

@@ -21,6 +21,7 @@ def materialize(root: Path) -> None:
         "tools/parity_gate.py",
         "tools/required_checks.py",
         "tools/feature_json.py",
+        "tools/evidence_receipts.py",
         "tools/verify-parity-evidence",
     ):
         source = REPOSITORY / relative
@@ -1403,5 +1404,314 @@ with tempfile.TemporaryDirectory(prefix="dulcet-duplicate-base-") as directory:
     write_document(root, current)
     result = invoke(root)
     assert result.returncode != 0 and "undeclared regression" in result.stdout, result.stdout
+
+
+# --- Receipt evidence for dispatch-only main runs (spec §21.3.1) -------------------------------
+# A receipt row cites a committed record of one audited green main run of a dispatch-only job.
+# Every fixture receipt is built here against the fixture's own tree and commit, so these cases do
+# not depend on the worked example under evidence/receipts, which goes stale by design whenever its
+# test source changes.
+
+RECEIPT_TEST = (
+    "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI"
+)
+RECEIPT_SOURCE = "apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift"
+RECEIPT_PATH = "evidence/receipts/signed-mac-account-connect-111.json"
+
+
+def fixture_receipt(root: Path, run_id: str = "111", **overrides: object) -> dict[str, object]:
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    blob = subprocess.check_output(["git", "hash-object", RECEIPT_SOURCE], cwd=root, text=True).strip()
+    receipt: dict[str, object] = {
+        "workflow": "signed-mac-account-connect",
+        "job": "signed-account-connect",
+        "run_id": run_id,
+        "run_url": f"https://github.com/legitimate-apps/dulcet/actions/runs/{run_id}",
+        "head_sha": head,
+        "conclusion": "success",
+        "tests": [{"name": RECEIPT_TEST, "result": "passed"}],
+        "junit_sha256": "f" * 64,
+        "test_sources": {RECEIPT_SOURCE: blob},
+        "audit": {"tool": "tools/verify_signed_mac_privacy.py", "result": "pass",
+                  "files_scanned": 12, "tokens_checked": 28},
+    }
+    receipt.update(overrides)
+    return receipt
+
+
+def write_receipt(root: Path, receipt: dict[str, object], path: str = RECEIPT_PATH) -> None:
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+def receipt_row(test: str = RECEIPT_TEST, receipt: str = RECEIPT_PATH, **shape: str) -> dict[str, str]:
+    return {**(shape or {"observes": "the entitled signed Mac host saved to the real Keychain"}),
+            "receipt": receipt, "test": test}
+
+
+def cite_receipt(*rows: dict[str, str]) -> Callable[[dict[str, object]], None]:
+    def change(document: dict[str, object]) -> None:
+        macos_evidence(document).extend(copy_document({"rows": list(rows)})["rows"])
+    return change
+
+
+def cite_receipt_for_gap(document: dict[str, object]) -> None:
+    """Close account.connect/macos's CONF-09b gap with a receipt row, keeping coverage exact."""
+    cell = feature_cell(document, "account.connect", "macos")
+    cell.pop("unevidenced_conformance")
+    macos_evidence(document).append(receipt_row(conformance="CONF-09b"))
+
+
+def receipt_case(
+    label: str,
+    change: Callable[[dict[str, object]], None],
+    expected: str | None,
+    arrange: Callable[[Path], None] = lambda root: write_receipt(root, fixture_receipt(root)),
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-receipt-") as directory:
+        root = Path(directory)
+        materialize(root)
+        arrange(root)
+        mutate(root, change)
+        result = invoke(root)
+        if expected is None and result.returncode != 0:
+            raise AssertionError(f"{label}: expected acceptance, output={result.stdout!r}")
+        if expected is not None and (result.returncode == 0 or expected not in result.stdout):
+            raise AssertionError(
+                f"{label}: expected rejection containing {expected!r}, "
+                f"returncode={result.returncode}, output={result.stdout!r}"
+            )
+
+
+receipt_case("an observation row citing a fresh receipt", cite_receipt(receipt_row()), None)
+receipt_case("a conformance row citing a receipt closes a named gap", cite_receipt_for_gap, None)
+
+receipt_case(
+    "the cited receipt file is missing",
+    cite_receipt(receipt_row()),
+    "evidence receipt does not exist: evidence/receipts/signed-mac-account-connect-111.json",
+    arrange=lambda root: None,
+)
+receipt_case(
+    "the receipt carries an extra key",
+    cite_receipt(receipt_row()),
+    "schema: requires exactly",
+    arrange=lambda root: write_receipt(root, fixture_receipt(root, machine="extra")),
+)
+
+
+def _receipt_without(key: str) -> Callable[[Path], None]:
+    def arrange(root: Path) -> None:
+        receipt = fixture_receipt(root)
+        receipt.pop(key)
+        write_receipt(root, receipt)
+    return arrange
+
+
+receipt_case("the receipt lacks a key", cite_receipt(receipt_row()), "schema: requires exactly",
+             arrange=_receipt_without("junit_sha256"))
+receipt_case(
+    "the receipt's audit lacks a key",
+    cite_receipt(receipt_row()),
+    "audit requires exactly",
+    arrange=lambda root: write_receipt(root, fixture_receipt(
+        root, audit={"tool": "tools/verify_signed_mac_privacy.py", "result": "pass", "files_scanned": 12})),
+)
+receipt_case(
+    "the receipt names a job that is not a dispatch-only class",
+    cite_receipt(receipt_row(receipt="evidence/receipts/apple-ci-111.json")),
+    "job apple-ci/apple-ci is not a §21.3.1 dispatch-only evidence class",
+    arrange=lambda root: write_receipt(
+        root, fixture_receipt(root, workflow="apple-ci", job="apple-ci"), "evidence/receipts/apple-ci-111.json"),
+)
+receipt_case(
+    "the registered job no longer runs on the self-hosted runner",
+    cite_receipt(receipt_row()),
+    "job does not run on a §21.3.1 self-hosted runner",
+    arrange=lambda root: (
+        write_receipt(root, fixture_receipt(root)),
+        (root / ".github/workflows/signed-mac-account-connect.yml").write_text(
+            (root / ".github/workflows/signed-mac-account-connect.yml").read_text()
+            .replace("runs-on: [self-hosted, macOS, ARM64, dulcet-signed-mac]", "runs-on: macos-latest")),
+    ),
+)
+receipt_case(
+    "the run did not succeed",
+    cite_receipt(receipt_row()),
+    "conclusion must be success, found 'failure'",
+    arrange=lambda root: write_receipt(root, fixture_receipt(root, conclusion="failure")),
+)
+receipt_case(
+    "the receipt records the cited test as failed",
+    cite_receipt(receipt_row()),
+    "result must be passed, found 'failed'",
+    arrange=lambda root: write_receipt(
+        root, fixture_receipt(root, tests=[{"name": RECEIPT_TEST, "result": "failed"}])),
+)
+receipt_case(
+    "the cited test is absent from the receipt",
+    cite_receipt(receipt_row(test="DulcetKitTests/fixtureRendersEveryDeclaredDistinctState")),
+    "does not record DulcetKitTests/fixtureRendersEveryDeclaredDistinctState as passed",
+)
+receipt_case(
+    "the receipt's test is not defined in its recorded sources",
+    cite_receipt(receipt_row(test="DulcetKitTests/fixtureRendersEveryDeclaredDistinctState")),
+    "is not defined in any of its test_sources",
+    arrange=lambda root: write_receipt(root, fixture_receipt(root, tests=[
+        {"name": "DulcetKitTests/fixtureRendersEveryDeclaredDistinctState", "result": "passed"}])),
+)
+receipt_case(
+    "the cited test no longer exists in the tree",
+    cite_receipt(receipt_row(test="DulcetSignedMacAccountConnectTests/testRemovedSinceTheRun")),
+    "evidence test does not exist",
+    arrange=lambda root: write_receipt(root, fixture_receipt(root, tests=[
+        {"name": "DulcetSignedMacAccountConnectTests/testRemovedSinceTheRun", "result": "passed"}])),
+)
+
+
+def _edit_test_source_after_the_run(root: Path) -> None:
+    write_receipt(root, fixture_receipt(root))
+    source = root / RECEIPT_SOURCE
+    source.write_text(source.read_text() + "\n// changed after the recorded run\n")
+
+
+receipt_case(
+    "the test source changed since the run (stale receipt)",
+    cite_receipt(receipt_row()),
+    "is stale: apple/DulcetSignedMacTests/DulcetSignedMacAccountConnectTests.swift changed since run 111",
+    arrange=_edit_test_source_after_the_run,
+)
+receipt_case(
+    "the stale-receipt message says how to repair it",
+    cite_receipt(receipt_row()),
+    "re-run signed-mac-account-connect on main and commit a new receipt",
+    arrange=_edit_test_source_after_the_run,
+)
+receipt_case(
+    "the receipt's commit is not in this repository",
+    cite_receipt(receipt_row()),
+    "is not in this repository",
+    arrange=lambda root: write_receipt(root, fixture_receipt(root, head_sha="0" * 40)),
+)
+
+
+def _receipt_on_an_unmerged_commit(root: Path) -> None:
+    tree = subprocess.check_output(["git", "write-tree"], cwd=root, text=True).strip()
+    orphan = subprocess.check_output(
+        ["git", "-c", "user.name=legitimate-apps",
+         "-c", "user.email=309192374+legitimate-apps@users.noreply.github.com",
+         "commit-tree", tree, "-m", "a commit main never contained"],
+        cwd=root, text=True,
+    ).strip()
+    write_receipt(root, fixture_receipt(root, head_sha=orphan))
+
+
+receipt_case(
+    "the receipt's commit is not reachable from HEAD",
+    cite_receipt(receipt_row()),
+    "is not reachable from HEAD",
+    arrange=_receipt_on_an_unmerged_commit,
+)
+receipt_case(
+    "a row mixes receipt and workflow/job keys",
+    cite_receipt({**receipt_row(), "workflow": "signed-mac-account-connect", "job": "signed-account-connect"}),
+    "evidence entries require exactly",
+)
+receipt_case(
+    "a receipt row with a blank observation",
+    cite_receipt(receipt_row(observes="  ")),
+    "evidence observes must be a non-empty string",
+)
+receipt_case(
+    "one receipt test cited for two observation claims",
+    cite_receipt(receipt_row(), receipt_row(observes="a second claim on the same receipt test")),
+    "observation claims",
+)
+
+
+def _receipt_conformance_beside_its_gap(document: dict[str, object]) -> None:
+    macos_evidence(document).append(receipt_row(conformance="CONF-09b"))
+
+
+receipt_case(
+    "a receipt conformance row does not exempt the cell from exact coverage",
+    _receipt_conformance_beside_its_gap,
+    "must cover each declared conformance id exactly once",
+)
+
+
+def receipt_comparison(
+    label: str,
+    arrange: Callable[[dict[str, object], dict[str, object]], None],
+    expected: str | None,
+    receipts: Callable[[Path], None] = lambda root: write_receipt(root, fixture_receipt(root)),
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="dulcet-parity-receipt-comparison-") as directory:
+        root = Path(directory)
+        materialize(root)
+        receipts(root)
+        base, current = comparison_documents()
+        arrange(base, current)
+        result = invoke_comparison(root, base, current)
+        if expected is None and result.returncode != 0:
+            raise AssertionError(f"{label}: expected acceptance, output={result.stdout!r}")
+        if expected is not None and (result.returncode == 0 or expected not in result.stdout):
+            raise AssertionError(
+                f"{label}: expected rejection containing {expected!r}, "
+                f"returncode={result.returncode}, output={result.stdout!r}"
+            )
+
+
+def _ship_account_connect_macos(document: dict[str, object]) -> None:
+    cell = feature_cell(document, "account.connect", "macos")
+    cell["status"] = "shipped"
+    cell.pop("promotion_condition", None)
+
+
+def _promote_with_a_new_receipt_row(base: dict[str, object], current: dict[str, object]) -> None:
+    cite_receipt_for_gap(current)
+    _ship_account_connect_macos(current)
+
+
+def _promote_on_an_existing_receipt_row(base: dict[str, object], current: dict[str, object]) -> None:
+    cite_receipt_for_gap(base)
+    cite_receipt_for_gap(current)
+    _ship_account_connect_macos(current)
+
+
+def _shipped_receipt_replaced_by_a_fresh_run(base: dict[str, object], current: dict[str, object]) -> None:
+    cite_receipt_for_gap(base)
+    _ship_account_connect_macos(base)
+    for row in macos_evidence(base):
+        if row.get("receipt") == RECEIPT_PATH:
+            row["receipt"] = "evidence/receipts/signed-mac-account-connect-100.json"
+    cite_receipt_for_gap(current)
+    _ship_account_connect_macos(current)
+
+
+def _shipped_receipt_row_dropped(base: dict[str, object], current: dict[str, object]) -> None:
+    cite_receipt_for_gap(base)
+    _ship_account_connect_macos(base)
+    _ship_account_connect_macos(current)
+    feature_cell(current, "account.connect", "macos").pop("unevidenced_conformance")
+
+
+receipt_comparison("a promotion that adds a receipt row", _promote_with_a_new_receipt_row, None)
+receipt_comparison(
+    "a promotion on a receipt row the base already had",
+    _promote_on_an_existing_receipt_row,
+    "promotion without added evidence: account.connect/macos partial -> shipped",
+)
+receipt_comparison(
+    "a shipped cell whose deleted stale receipt is replaced by a fresh run of the same test",
+    _shipped_receipt_replaced_by_a_fresh_run,
+    None,
+)
+receipt_comparison(
+    "a shipped cell that drops its receipt row",
+    _shipped_receipt_row_dropped,
+    "evidence and named gaps must cover each declared conformance id exactly once",
+)
 
 print("parity-gate mutation and executed-evidence tests pass")
