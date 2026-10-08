@@ -1,4 +1,5 @@
 import Foundation
+import ObjectiveC
 import UIKit
 import XCTest
 
@@ -66,6 +67,14 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func proveEveryAccountConnectState(compact expectedCompact: Bool) {
+        let app = XCUIApplication()
+        withoutIdleWaits(app) { [self] in
+            driveEveryAccountConnectState(in: app, compact: expectedCompact)
+        }
+    }
+
+    @MainActor
+    private func driveEveryAccountConnectState(in app: XCUIApplication, compact expectedCompact: Bool) {
         guard let server = disposableServer(), let proxy = faultProxy() else { return }
         guard let refused = LoopbackTestPort(listening: false),
               let silent = LoopbackTestPort(listening: true) else {
@@ -77,7 +86,6 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let silentURL = "http://127.0.0.1:\(silent.port)"
         print("DULCET ACCOUNT STATES ports refused=\(refused.port) silent=\(silent.port)")
 
-        let app = XCUIApplication()
         installSystemAlertInterruptionMonitors()
         app.launchArguments = []
         app.launch()
@@ -276,6 +284,27 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         print("DULCET ACCOUNT STATES PASS destination=\(compact ? "compact" : "regular")")
     }
 
+    // The proof waits for the actual state of each control below. Waiting for every animation
+    // in the app as well is not a state predicate: iPad CI received main-run-loop idle replies
+    // and drew the protocol error, but never replied to animation-idle requests after Try Again.
+    // Use the same synchronous interaction scope as the row-menu proofs (TRAPS 48), retaining
+    // every field/state/server assertion. The scope includes relaunches; no option escapes it.
+    // If Xcode changes the private call's ABI, fall back to its ordinary waits.
+    @MainActor
+    private func withoutIdleWaits(_ app: XCUIApplication, _ body: @escaping () -> Void) {
+        let selector = NSSelectorFromString("_performWithInteractionOptions:block:")
+        guard let method = class_getInstanceMethod(type(of: app), selector),
+              let encoding = method_getTypeEncoding(method).map({ String(cString: $0) }),
+              encoding.filter({ !$0.isNumber }) == "v@:I@?" else {
+            print("DULCET ACCOUNT STATES interaction scope unavailable; using ordinary idle waits")
+            body()
+            return
+        }
+        typealias Perform = @convention(c) (AnyObject, Selector, UInt32, @convention(block) () -> Void) -> Void
+        let perform = unsafeBitCast(method_getImplementation(method), to: Perform.self)
+        perform(app, selector, 3, body)
+    }
+
     // MARK: - Driving the form
 
     @MainActor
@@ -375,8 +404,15 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTFail("Sign Out must ask for confirmation: " + app.debugDescription)
             return false
         }
-        confirm.tap()
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+        // The popover can be accessible before its opening animation accepts a tap. Wait for
+        // the result and retry only while the confirmation remains, instead of relying on event
+        // quiescence to finish that animation for us.
+        let confirmationDeadline = Date().addingTimeInterval(10)
+        repeat {
+            if confirm.exists && confirm.isHittable { confirm.tap() }
+            if primary.waitForExistence(timeout: 1) { break }
+        } while confirm.exists && Date() < confirmationDeadline
         guard primary.waitForExistence(timeout: 45), waitForLabel(containing: "Connect", of: primary, timeout: 10),
               !primary.label.contains("Reconnect") else {
             XCTFail("Signing out must return Connection to its empty form: " + app.debugDescription)
@@ -513,8 +549,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // Synthesized typing on a loaded host can drop keystrokes or land before the field takes
         // focus, so each attempt is verified and a short field is retyped, never accepted.
         // Clear with ordinary Delete input: Command-A attaches a synthetic hardware keyboard.
-        // In the timed-out iPad CI proof its minimize/placement animations began immediately
-        // before the animation-idle replies stopped, although the main run loop still idled.
+        // This is an input protocol choice; it does not diagnose UIKit animation-idle failures.
         // A tap near the trailing edge lands at the end of text that fits the field, but text wider
         // than the field puts the insertion point under the tap instead (iPhone CI kept 3 of a
         // longer address's characters), so clearing repeats until the field reads empty.
@@ -585,7 +620,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             dismissPasswordSavePromptIfPresent()
             if element.exists {
                 let frame = element.frame
-                if !frame.isEmpty, window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), element.isHittable {
+                if !frame.isEmpty, window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), element.isHittable,
+                   waitForStableHitTarget(element, in: window, timeout: 5) {
                     return true
                 }
             }
@@ -594,6 +630,28 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             }
         }
+        return false
+    }
+
+    /// Accessibility may expose a button while a swipe is still moving it. Observe its actual
+    /// hit target, rather than waiting for every animation in the process to end.
+    @MainActor
+    private func waitForStableHitTarget(_ element: XCUIElement, in window: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previous = CGRect.null
+        var stableSince = Date()
+        repeat {
+            let frame = element.frame
+            let visible = element.exists && element.isHittable && !frame.isEmpty
+                && window.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+            if !visible || frame != previous {
+                previous = frame
+                stableSince = Date()
+            } else if Date().timeIntervalSince(stableSince) >= 0.4 {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
         return false
     }
 

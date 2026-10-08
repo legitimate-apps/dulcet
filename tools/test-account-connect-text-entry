@@ -2,8 +2,8 @@
 """Execute the account-state proof's credential replacement with Swift collaborators.
 
 This checks the input protocol, not UIKit animation completion. The field models a cursor,
-secure bullets, placeholders and dropped typing. Hardware-key events are recorded because
-CI's stalled iPad edit began with Command-A minimizing its software keyboard. A trailing-edge
+secure bullets, placeholders and dropped typing. Hardware-key events are recorded to check the chosen
+ordinary-Delete input protocol; this does not diagnose UIKit animation-idle failures. A trailing-edge
 tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
 replays the original helper to prove that the control rejects that input protocol.
 """
