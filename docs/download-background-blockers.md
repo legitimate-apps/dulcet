@@ -60,6 +60,43 @@ state, so the secured artifact still promotes once; idempotent promotion does no
 prevent the extra server read. The handoff proofs' three-second settle checks observe
 one read in their tested ordering, rather than excluding this race.
 
+### Hosted proof failure diagnostics (2026-10-09)
+
+**Not diagnosed:** two hosted failures stopped at different steps. In
+[run 37857703010, attempt 2](https://github.com/legitimate-apps/dulcet/actions/runs/37857703010/attempts/2),
+the Mac child's markers reported `download-request-failed` with zero search rows.
+Its xcresult system log reported a reader setup `SQLiteExceptionErrorCode`, followed
+by search failures with no session (**OBSERVED**). No download was started and no
+replacement was tested. The old diagnostic omitted the SQLite error code; a
+database lock/schema race is **ASSUMED**, not established.
+
+In [run 37875773587](https://github.com/legitimate-apps/dulcet/actions/runs/37875773587),
+the iPad process died with one stream read held, and the system launched its
+replacement (**OBSERVED**). The replacement's CFNetwork log showed the ordinary
+background-session identifier, while the first process used the probe's namespaced
+identifier. The missing overlay therefore accompanies a lost probe namespace,
+rather than showing a failed promotion in that namespace. The resolver's rejection
+reason was not recorded; missing defaults, bundle-path mismatch and expiration
+remain unproven alternatives. A longer promotion wait cannot restore the session
+identifier selected once at launch.
+
+The DEBUG resolver now logs `DULCET HANDOFF resolution` even when it rejects the
+probe, with a closed result (`missing`, `invalid-record`, `bundle-mismatch`,
+`expired`, `active`) and boolean launch/bundle-match fields. No path or defaults
+value is printed. Cleanup explicitly names the proof namespace and copies its
+marker trail to the app/system log before clearing defaults, including when the
+replacement lost them. The Mac test always attaches its final marker trail as
+`download-handoff-markers`. Reader failures also name the driver's SQLite error
+type and primary code, without its message, SQL or database path.
+
+On the next failure, export the handoff xcresult's attachments and diagnostics
+with `xcresulttool export attachments` and `xcresulttool export diagnostics`.
+Inspect the replacement's resolution line alongside its CFNetwork session
+identifier; inspect `DULCET HANDOFF marker` / the Mac marker attachment and the
+reader's SQLite code. These diagnostics change no timeout or proof assertion.
+`tools/test-download-handoff-diagnostics` executes the real resolver, including
+marker recovery without defaults and canary checks for diagnostic privacy.
+
 ## os-initiated-background-session-delivery
 
 Status: settled per platform (2026-10-07).

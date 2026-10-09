@@ -116,6 +116,9 @@ final class DulcetDebugDownloadHandoff {
                 "download-request-failed downloads=\(store.downloadsEnabled) session=\(store.librarySession != nil)"
                     + " reader=\(store.librarySession?.reader != nil) searched=\(opened)"
                     + " rows=\(search.current?.rows.count ?? -1)"
+                    + " reader-setup-failed=\(store.librarySession?.readerSetupFailed ?? false)"
+                    + " reader-generation=\(store.librarySession?.readerGeneration ?? -1)"
+                    + " online=\(store.librarySession?.isOnline ?? false)"
             )
         }
     }

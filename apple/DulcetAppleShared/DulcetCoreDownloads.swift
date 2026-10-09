@@ -916,6 +916,7 @@ private extension DulcetAudioContainer {
 enum DulcetDownloadHandoffProbe {
     static let launchArgument = "-dulcet-debug-download-handoff"
     static let clearArgument = "-dulcet-debug-download-handoff-clear"
+    static let dumpArgument = "-dulcet-debug-download-handoff-dump"
     private static let defaultsKey = "com.legitimateapps.dulcet.debug.download-handoff"
     private static let lifetime: TimeInterval = 15 * 60
 
@@ -931,7 +932,19 @@ enum DulcetDownloadHandoffProbe {
     /// The stored namespace names the app bundle that stored it. On a Mac every copy of an app
     /// shares its defaults, and only the copy the proof launched may take the namespace up.
     static func resolve(arguments: [String], defaults: UserDefaults, now: Date, bundlePath: String) -> String? {
+        var dumpedNamespace: String?
+        if let index = arguments.firstIndex(of: dumpArgument),
+           arguments.indices.contains(index + 1), isValid(arguments[index + 1]) {
+            dumpedNamespace = arguments[index + 1]
+            logMarkers(namespace: arguments[index + 1])
+        }
         if arguments.contains(clearArgument) {
+            // Cleanup is the last launch even after a failed proof. Preserve the previous
+            // process's trail in the xcresult's app/system log before removing its namespace.
+            if let previous = defaults.dictionary(forKey: defaultsKey)?["namespace"] as? String,
+               isValid(previous), previous != dumpedNamespace {
+                logMarkers(namespace: previous)
+            }
             defaults.removeObject(forKey: defaultsKey)
         }
         if let index = arguments.firstIndex(of: launchArgument),
@@ -946,16 +959,48 @@ enum DulcetDownloadHandoffProbe {
                 forKey: defaultsKey
             )
         }
-        guard let stored = defaults.dictionary(forKey: defaultsKey),
+        let stored = defaults.dictionary(forKey: defaultsKey)
+        // This runs even when the probe is inactive: otherwise the replacement that selected
+        // the ordinary session leaves no evidence of why it rejected the probe's namespace.
+        // Booleans only; bundle paths, defaults values and launch arguments are never logged.
+        let harness = arguments.contains(launchArgument)
+        let cleared = arguments.contains(clearArgument)
+        let bundleMatches = stored?["bundle"] as? String == bundlePath
+        func diagnostic(_ result: String) {
+            NSLog("%@", "DULCET HANDOFF resolution harness=\(harness) cleared=\(cleared)"
+                  + " stored=\(stored != nil) bundle-match=\(bundleMatches) result=\(result)")
+        }
+        guard let stored,
               let namespace = stored["namespace"] as? String,
               let expires = stored["expires"] as? Double,
-              stored["bundle"] as? String == bundlePath,
-              isValid(namespace) else { return nil }
+              isValid(namespace) else {
+            diagnostic(stored == nil ? "missing" : "invalid-record")
+            return nil
+        }
+        guard bundleMatches else {
+            diagnostic("bundle-mismatch")
+            return nil
+        }
         guard now.timeIntervalSince1970 < expires else {
+            diagnostic("expired")
             defaults.removeObject(forKey: defaultsKey)
             return nil
         }
+        diagnostic("active")
         return namespace
+    }
+
+    /// The marker writer admits only public-safe proof fields (never URLs or credentials).
+    /// Log the trail independently of `namespace`, which cleanup is about to clear and which
+    /// a failed replacement may never have resolved in the first place.
+    private static func logMarkers(namespace: String) {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return }
+        let file = support.appendingPathComponent("Dulcet/DebugDownloadHandoff/\(namespace)/markers.log")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return }
+        for line in text.split(separator: "\n") {
+            NSLog("%@", "DULCET HANDOFF marker \(line)")
+        }
     }
 
     static func isValid(_ namespace: String) -> Bool {
