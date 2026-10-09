@@ -133,18 +133,48 @@ private final class WholeRepresentationPlaybackResource: DulcetPlaybackResourceL
 /// (which the core reads as `Playback.NoPlayableSource`), never `.engine`, which the queue stops on.
 @Suite(.serialized)
 struct AVPlayerDecodeFailureTests {
-    @Test
-    func mediaAVFoundationCannotDecodeFailsAsUndecodable() async throws {
-        let resource = InMemoryPlaybackResource(data: mp3FramesWithUndecodablePayloads())
+    @Test(arguments: DecodePlayTiming.allCases)
+    func mediaAVFoundationCannotDecodeFailsAsUndecodable(playTiming: DecodePlayTiming) async throws {
+        let bytes = mp3FramesWithUndecodablePayloads()
+        let immediate = InMemoryPlaybackResource(data: bytes)
+        let suspended = SuspendedPlaybackResource()
+        let resource: any DulcetPlaybackResourceLoading = playTiming == .beforeBytes ? suspended : immediate
+        let requestCount: @Sendable () -> Int = {
+            playTiming == .beforeBytes ? suspended.requestCount : immediate.requests.count
+        }
         let player = AVQueuePlayer()
         let engine = DulcetAVPlayerEngine(player: player)
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
 
-        _ = await execute(engine, .prepare(commandID: .init("undecodable-prepare"), plan: playbackPlan))
-        _ = await execute(engine, .play(commandID: .init("undecodable-play")))
+        let prepareOutcome = await execute(engine, .prepare(commandID: .init("undecodable-prepare"), plan: playbackPlan))
+        #expect(prepareOutcome == .accepted(commandID: .init("undecodable-prepare")))
         let item = try #require(player.items().first)
+        let diagnostics = DecodeVerdictDiagnostics(player: player, item: item)
+        defer { diagnostics.invalidate() }
+        if playTiming == .afterReady {
+            try await waitUntil(
+                "AVFoundation never made the item ready for the play-after-ready control",
+                engine: engine,
+                timeout: realAVFoundationProgressTimeout,
+                mediaState: { diagnostics.describe() }
+            ) { events.containsReady }
+        }
+        let playOutcome = await execute(engine, .play(commandID: .init("undecodable-play")))
+        #expect(playOutcome == .accepted(commandID: .init("undecodable-play")))
+        if playTiming == .beforeBytes {
+            // Force play to arrive while the loader has not delivered even the header. This
+            // controls the ordering without relying on a host being slow enough to hit it.
+            try await waitUntil(
+                "AVFoundation never requested the suspended undecodable bytes",
+                engine: engine,
+                timeout: realAVFoundationProgressTimeout,
+                mediaState: { diagnostics.describe() }
+            ) { suspended.requestCount > 0 }
+            #expect(item.status == .unknown)
+            suspended.resume(with: bytes)
+        }
         let mediaState = PlayerMediaState(player: player, first: item, next: nil)
         let failures: @Sendable () -> [DulcetPlaybackFailure] = {
             events.snapshot.compactMap { event in
@@ -157,7 +187,8 @@ struct AVPlayerDecodeFailureTests {
         let describeState: @Sendable () -> String = {
             "\(mediaState.describe()) item_status=\(item.status.rawValue) " +
                 "item_error=\(item.error.map { ($0 as NSError).code.description } ?? "none") " +
-                "requests=\(resource.requests.count) events=\(events.snapshot.map(eventName))"
+                "requests=\(requestCount()) events=\(events.snapshot.map(eventName)) " +
+                "play_timing=\(playTiming.rawValue) \(diagnostics.describe())"
         }
         let verdictArrived: @Sendable () -> Bool = {
             mediaState.observe()
@@ -167,9 +198,13 @@ struct AVPlayerDecodeFailureTests {
         // well over a minute while the engine queue answers in milliseconds. OBSERVED in CI: about
         // 65-70 s in #154 and #159, and about 88 s on #164's run 36660636272, where an independent
         // AudioQueue primed silence in 0.016 s once the old 60 s budget ran out -- so a working host audio output
-        // does not bound the verdict's latency, and a probe of it cannot decide pass or fail. The
-        // deadline still has teeth: a verdict that never arrives, or arrives as anything but
-        // `.undecodable`, fails.
+        // does not bound the verdict's latency, and a probe of it cannot decide pass or fail.
+        // Run 37944337563 subsequently emitted no verdict at all on tvOS Simulator within 270 s.
+        // That remains undiagnosed: the independent signals below distinguish an engine missing
+        // a notification from AVFoundation publishing none during observation (after prepare,
+        // before play, through the verdict wait). Slow prior runs do not explain a paused player
+        // at time zero. The deadline still has teeth: a verdict that never arrives, or arrives
+        // as anything but `.undecodable`, fails.
         try await waitUntil(
             "AVFoundation never reported the undecodable item as failed",
             engine: engine,
@@ -179,11 +214,145 @@ struct AVPlayerDecodeFailureTests {
         )
         // The experiment is the one intended: the item was read through the loader, so the
         // failure is AVFoundation's verdict on these bytes, not a refusal before it saw them.
-        #expect(!resource.requests.isEmpty)
+        #expect(requestCount() > 0)
         #expect(failures() == [.undecodable], "reported \(failures())")
         #expect(!events.containsProgressBegan)
-        print("DULCET UNDECODABLE ENGINE OBSERVED failures=\(failures()) requests=\(resource.requests.count)")
+        print("DULCET UNDECODABLE ENGINE OBSERVED failures=\(failures()) \(describeState())")
         _ = await execute(engine, .release(commandID: .init("undecodable-release")))
+    }
+
+    @Test
+    func decodeDiagnosticsCaptureFailureSignalsWithoutCredentialStrings() {
+        let item = AVPlayerItem(url: URL(string: "dulcet-test://diagnostics")!)
+        let diagnostics = DecodeVerdictDiagnostics(player: AVQueuePlayer(), item: item)
+        defer { diagnostics.invalidate() }
+        let canary = "diagnostic-credential-canary"
+        let error = NSError(
+            domain: AVFoundationErrorDomain,
+            code: AVError.Code.decodeFailed.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: canary,
+                       NSUnderlyingErrorKey: NSError(domain: canary, code: -7)]
+        )
+        NotificationCenter.default.post(
+            name: .AVPlayerItemFailedToPlayToEndTime,
+            object: item,
+            userInfo: [AVPlayerItemFailedToPlayToEndTimeErrorKey: error]
+        )
+        let description = diagnostics.describe()
+        #expect(description.contains("AVPlayerItemFailedToPlayToEndTimeNotification error=AVFoundation:-11821/other:-7"))
+        #expect(!description.contains(canary))
+        // Transport noise may fill the bounded history before the wait expires. Keep the
+        // failure evidence independently, or a missing engine event could look like a missing
+        // AVFoundation notification once the history rolls over.
+        for _ in 0..<40 {
+            NotificationCenter.default.post(name: .AVPlayerItemPlaybackStalled, object: item)
+        }
+        let filled = diagnostics.describe()
+        #expect(filled.contains("AVPlayerItemFailedToPlayToEndTimeNotification=1"))
+        #expect(filled.contains("AVPlayerItemPlaybackStalledNotification=40"))
+        #expect(filled.contains("latest_failure=AVFoundation:-11821/other:-7"))
+        #expect(!filled.contains(canary))
+        diagnostics.invalidate()
+        NotificationCenter.default.post(name: .AVPlayerItemPlaybackStalled, object: item)
+        #expect(diagnostics.describe() == filled, "invalidated diagnostics kept receiving notifications")
+    }
+}
+
+enum DecodePlayTiming: String, CaseIterable, Sendable {
+    case immediatelyAfterPrepare, afterReady, beforeBytes
+}
+
+/// Records AVFoundation's signals independently of the engine's observers. Only closed domain
+/// names and numeric codes leave the errors: URLs, error comments and user-info strings may
+/// contain stream credentials. Keep a bounded transition history, not a poll on every wait turn.
+/// The observation window starts after prepare, before the test requests play.
+private final class DecodeVerdictDiagnostics: @unchecked Sendable {
+    private let player: AVQueuePlayer
+    private let item: AVPlayerItem
+    private let lock = NSLock()
+    private let started = ContinuousClock().now
+    private var signals: [String] = []
+    private var signalCount = 0
+    private var notificationCounts: [String: Int] = [:]
+    private var latestFailure: String?
+    private var observers: [NSKeyValueObservation] = []
+    private var notifications: [NSObjectProtocol] = []
+
+    init(player: AVQueuePlayer, item: AVPlayerItem) {
+        self.player = player
+        self.item = item
+        observers.append(player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            self?.append("transport=\(player.timeControlStatus.rawValue) rate=\(player.rate)")
+        })
+        observers.append(item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            self?.append("item_status=\(item.status.rawValue) error=\(Self.errorCodes(item.error))")
+        })
+        for name in [Notification.Name.AVPlayerItemFailedToPlayToEndTime,
+                     .AVPlayerItemNewErrorLogEntry, .AVPlayerItemPlaybackStalled,
+                     .AVPlayerItemDidPlayToEndTime] {
+            notifications.append(NotificationCenter.default.addObserver(forName: name, object: item, queue: nil) {
+                [weak self] notification in
+                let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+                let codes = Self.errorCodes(error)
+                self?.append(
+                    "\(notification.name.rawValue) error=\(codes)",
+                    notificationName: notification.name.rawValue,
+                    failureCodes: notification.name == .AVPlayerItemFailedToPlayToEndTime ? codes : nil
+                )
+            })
+        }
+    }
+
+    func invalidate() {
+        observers.forEach { $0.invalidate() }
+        notifications.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
+        notifications.removeAll()
+    }
+
+    func describe() -> String {
+        lock.lock()
+        let history = signals
+        let dropped = signalCount - history.count
+        let counts = notificationCounts.keys.sorted().map { "\($0)=\(notificationCounts[$0]!)" }
+        let failure = latestFailure ?? "none"
+        lock.unlock()
+        let log = item.errorLog()?.events.map {
+            "\(Self.domainName($0.errorDomain)):\($0.errorStatusCode)"
+        } ?? []
+        return "player_status=\(player.status.rawValue) player_error=\(Self.errorCodes(player.error)) " +
+            "signals=\(history) dropped_signals=\(dropped) notifications=\(counts) " +
+            "latest_failure=\(failure) error_log=\(log)"
+    }
+
+    private func append(_ signal: String, notificationName: String? = nil, failureCodes: String? = nil) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let notificationName { notificationCounts[notificationName, default: 0] += 1 }
+        if let failureCodes { latestFailure = failureCodes }
+        signalCount += 1
+        signals.append("t=\(formatSeconds(durationSeconds(started.duration(to: ContinuousClock().now)))) \(signal)")
+        if signals.count > 32 { signals.removeFirst() }
+    }
+
+    private static func domainName(_ domain: String) -> String {
+        switch domain {
+        case AVFoundationErrorDomain: "AVFoundation"
+        case NSURLErrorDomain: "URL"
+        case NSOSStatusErrorDomain: "OSStatus"
+        case "CoreMediaErrorDomain": "CoreMedia"
+        default: "other"
+        }
+    }
+
+    private static func errorCodes(_ error: Error?) -> String {
+        var error = error as NSError?
+        var codes: [String] = []
+        while let current = error, codes.count < DulcetApplePlaybackErrorSanitizer.underlyingErrorDepth {
+            codes.append("\(domainName(current.domain)):\(current.code)")
+            error = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return codes.isEmpty ? "none" : codes.joined(separator: "/")
     }
 }
 
@@ -1717,14 +1886,22 @@ private final class SuspendedPlaybackResource: DulcetPlaybackResourceLoading, @u
         @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
     )] = []
     private var data: Data?
+    private var requests = 0
 
     var description: String { "SuspendedPlaybackResource(<redacted>)" }
+
+    var requestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
 
     func load(
         _ request: DulcetPlaybackResourceLoadRequest,
         completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
     ) -> any DulcetPlaybackResourceLoadOperation {
         lock.lock()
+        requests += 1
         if let data {
             lock.unlock()
             complete(request, from: data, completion: completion)
