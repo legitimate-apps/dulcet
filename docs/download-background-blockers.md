@@ -62,7 +62,7 @@ one read in their tested ordering, rather than excluding this race.
 
 ### Hosted proof failure diagnostics (2026-10-09)
 
-**Not diagnosed:** two hosted failures stopped at different steps. In
+**Mac not diagnosed:** the hosted failures stopped at different steps. In
 [run 37857703010, attempt 2](https://github.com/legitimate-apps/dulcet/actions/runs/37857703010/attempts/2),
 the Mac child's markers reported `download-request-failed` with zero search rows.
 Its xcresult system log reported a reader setup `SQLiteExceptionErrorCode`, followed
@@ -79,6 +79,28 @@ rather than showing a failed promotion in that namespace. The resolver's rejecti
 reason was not recorded; missing defaults, bundle-path mismatch and expiration
 remain unproven alternatives. A longer promotion wait cannot restore the session
 identifier selected once at launch.
+
+**iPhone cause diagnosed:** in
+[run 37927554714](https://github.com/legitimate-apps/dulcet/actions/runs/37927554714),
+the original process selected the probe namespace, started its download, and exited
+with exactly one stream read held. The system replacement logged
+`harness=false cleared=false stored=true bundle-match=false result=bundle-mismatch`
+and then opened the ordinary background session (**OBSERVED**, xcresult app/system
+log). The still-present record was rejected solely because its literal bundle path
+differed from the replacement's. Which path spelling or container transition caused
+that difference is **not observed**; the diagnostic deliberately prints no paths.
+The same rejection could explain the older iPad failure, but that remains
+**ASSUMED** without its resolution line.
+
+The DEBUG probe now uses iOS app-container preferences isolation to restore the
+namespace across launches. It retains the literal bundle-path guard on macOS,
+where separately launched app copies share preferences. Namespace validity,
+expiration and explicit cleanup still apply on both platforms. A baseline runtime
+control reproduces loss of a valid record when the same defaults are resolved with
+two different bundle paths; the new container-relaunch control retains it. The
+proof's durable row, original bytes, SHA-256, replacement process, OS relaunch and
+exactly-one-stream-read assertions are unchanged. This fixes the observed iPhone
+harness rejection; it does not diagnose the Mac's earlier SQLite startup failure.
 
 The DEBUG resolver now logs `DULCET HANDOFF resolution` even when it rejects the
 probe, with a closed result (`missing`, `invalid-record`, `bundle-mismatch`,

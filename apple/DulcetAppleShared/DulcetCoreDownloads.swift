@@ -926,12 +926,24 @@ enum DulcetDownloadHandoffProbe {
         arguments: ProcessInfo.processInfo.arguments,
         defaults: .standard,
         now: Date(),
-        bundlePath: Bundle.main.bundlePath
+        bundlePath: bundleCopyPath
     )
 
-    /// The stored namespace names the app bundle that stored it. On a Mac every copy of an app
-    /// shares its defaults, and only the copy the proof launched may take the namespace up.
-    static func resolve(arguments: [String], defaults: UserDefaults, now: Date, bundlePath: String) -> String? {
+    /// macOS copies share preferences, so bind the probe to the launched copy. On iOS the
+    /// preferences are already isolated by the app's data container. A literal bundle path
+    /// there rejected an OS relaunch after an Xcode launch (hosted run 37927554714), making
+    /// the replacement select the ordinary session instead of the outstanding probe session.
+    private static var bundleCopyPath: String? {
+        #if os(macOS)
+        Bundle.main.bundlePath
+        #else
+        nil
+        #endif
+    }
+
+    /// `nil` means the app's data container supplies the preferences isolation (iOS).
+    /// A path keeps separately launched macOS copies from taking one another's namespace.
+    static func resolve(arguments: [String], defaults: UserDefaults, now: Date, bundlePath: String?) -> String? {
         var dumpedNamespace: String?
         if let index = arguments.firstIndex(of: dumpArgument),
            arguments.indices.contains(index + 1), isValid(arguments[index + 1]) {
@@ -954,7 +966,7 @@ enum DulcetDownloadHandoffProbe {
                 [
                     "namespace": arguments[index + 1],
                     "expires": now.addingTimeInterval(lifetime).timeIntervalSince1970,
-                    "bundle": bundlePath,
+                    "bundle": bundlePath ?? "app-container",
                 ],
                 forKey: defaultsKey
             )
@@ -965,7 +977,7 @@ enum DulcetDownloadHandoffProbe {
         // Booleans only; bundle paths, defaults values and launch arguments are never logged.
         let harness = arguments.contains(launchArgument)
         let cleared = arguments.contains(clearArgument)
-        let bundleMatches = stored?["bundle"] as? String == bundlePath
+        let bundleMatches = bundlePath.map { stored?["bundle"] as? String == $0 } ?? true
         func diagnostic(_ result: String) {
             NSLog("%@", "DULCET HANDOFF resolution harness=\(harness) cleared=\(cleared)"
                   + " stored=\(stored != nil) bundle-match=\(bundleMatches) result=\(result)")
