@@ -7714,6 +7714,28 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-08 — Signed iPad account connection and Keychain relaunch proof prepared.** The isolated
+Dulcet signed iPad host uses the production iOS Kotlin adapter and data-protection Keychain.
+`DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect`
+observes an unfiltered attribute read after a deliberately wrong-accessibility control, the
+active pointer and connected UI, then ends the app process and relaunches without an account hook.
+The saved library must offer Reconnect and Connection must name the server; touch navigation and
+Connection Reconnect must reach connected again. A subsequent relaunch deletes only the owned
+item while retaining its pointer, requiring the real production read to render the persistence
+error. Nonce-scoped cleanup checks both saved and control items before removal of the two test apps.
+Initial disposable credentials use the existing DEBUG account hook. Library Reconnect is observed;
+touch credential entry, hardware-keyboard interaction and broader rotation/multitasking coverage
+remain unproved. The generic iOS build, dedicated development signing and disposable LAN fixture
+pass locally. On the authorized iPad the full test passed in three separate local runs, each
+ending with Keychain cleanup and both test apps removed (OBSERVED, local only); a first fixture
+request raises the system Local Network prompt, which the test accepts for this host alone before
+any state is written. Skipping the production launch-time Keychain read makes the test fail at the
+saved-account phase (OBSERVED, one mutant run). `account.connect/ipados` stays partial, awaiting
+the dispatch-only main run of `signed-ipad-account-connect` under the existing
+§21.3.1 device-attached class. Raw output stays local; the exact passing JUnit alone is eligible
+for publication after runtime device-identifier and private-token checks. Its audit tool emits
+receipt fields for the owning evidence lane; this entry adds no evidence-policy change.
+
 **2026-10-08 — `account.connect/macos` ships: the signed relaunch proof ran on main.**
 
 Main run 37852059883 at 908b4530 passed the extended signed control, and its full public log and

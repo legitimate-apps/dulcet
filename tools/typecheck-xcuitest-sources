@@ -134,6 +134,11 @@ def platforms() -> dict[str, Platform]:
             "iPhoneSimulator",
             f"arm64-apple-ios{floors['ios']}-simulator",
         ),
+        "DulcetSignedIPadUITests": Platform(
+            "iphonesimulator",
+            "iPhoneSimulator",
+            f"arm64-apple-ios{floors['ios']}-simulator",
+        ),
         "DulcetTVUITests": Platform(
             "appletvsimulator",
             "AppleTVSimulator",
@@ -299,8 +304,10 @@ def self_test(covered, language: str) -> int:
             for source in sources:
                 copy = Path(scratch) / source.name
                 text = source.read_text()
-                if not injected and "\n    @MainActor\n" in text:
-                    text = text.replace("\n    @MainActor\n", "\n    @MainActor\n    @MainActor\n", 1)
+                actor = re.search(r"(?m)^([ \t]*)@MainActor[ \t]*$", text)
+                if not injected and actor:
+                    duplicate = actor.group(0) + "\n" + actor.group(1) + "@MainActor"
+                    text = text[:actor.start()] + duplicate + text[actor.end():]
                     injected = True
                 copy.write_text(text)
                 mutated.append(copy)
