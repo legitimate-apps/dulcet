@@ -9,6 +9,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeField
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeOutcome
 import com.legitimateapps.dulcet.core.AndroidLibraryConnection
@@ -250,7 +251,7 @@ public class LibrarySession internal constructor(
             // says what the server holds: the next favourites list opened reads it again.
             if (outcome.field == AndroidLibraryChangeField.Favourite &&
                 (outcome is AndroidLibraryChangeOutcome.Saved || outcome is AndroidLibraryChangeOutcome.Superseded)) {
-                favouritesStale = true
+                favouritesGeneration += 1
             }
             latestOutcomes.update { it + (LibraryOutcomeKey(outcome.target, outcome.field) to outcome) }
             observationState.update { it.copy(changeOutcomes = (it.changeOutcomes + outcome).takeLast(MAX_FRAMES)) }
@@ -757,13 +758,14 @@ public class LibrarySession internal constructor(
     // ---- Surfaces ---------------------------------------------------------------------------------------
 
     /**
-     * A favourite change the server took since the favourites list was last read in this session.
-     * A list surface opened while this holds is re-read once, if its first publication is a live
-     * one from earlier in the session; one that reads anyway (nothing cached, a revalidation) needs no
-     * second read. A list already on screen is not re-read, so a heart taken off there leaves its row
-     * in place, hollow, where it can be put back.
+     * Saved changes are covered only by a completed favourites read, never by scheduling one: a
+     * home row can close and cancel its refresh on the way to the favourites screen. A read covers
+     * the generation it started under, so a change saved during it still needs a later read.
+     * A list already on screen is not re-read, so a heart taken off there leaves its row in place,
+     * hollow, where it can be put back.
      */
-    private var favouritesStale = false
+    private var favouritesGeneration = 0L
+    private var favouritesReadGeneration = 0L
 
     private fun openSurface(
         key: String,
@@ -772,13 +774,28 @@ public class LibrarySession internal constructor(
     ): LibrarySurface {
         lateinit var surface: LibrarySurface
         var first = favourites
+        var readingFavouritesGeneration: Long? = null
         val window = open { publication ->
             surface.deliver(publication)
-            if (first) {
-                first = false
-                if (favouritesStale) {
-                    favouritesStale = false
-                    if (publication.freshness == AndroidLibraryFreshness.Live) surface.refresh()
+            if (favourites) {
+                val freshness = publication.freshness
+                val reading = freshness == AndroidLibraryFreshness.Loading ||
+                    (freshness is AndroidLibraryFreshness.Cached && freshness.reason == AndroidLibraryCachedReason.Revalidating)
+                if (reading) {
+                    if (readingFavouritesGeneration == null) readingFavouritesGeneration = favouritesGeneration
+                } else {
+                    if (freshness == AndroidLibraryFreshness.Live) {
+                        readingFavouritesGeneration?.let { generation ->
+                            favouritesReadGeneration = maxOf(favouritesReadGeneration, generation)
+                        }
+                    }
+                    readingFavouritesGeneration = null
+                }
+                if (first) {
+                    first = false
+                    if (favouritesReadGeneration < favouritesGeneration && freshness == AndroidLibraryFreshness.Live) {
+                        surface.refresh()
+                    }
                 }
             }
             // Live content means the reader is reading again while this session still says it
