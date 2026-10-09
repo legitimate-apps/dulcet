@@ -184,6 +184,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     func configure(account presentationAccount: DulcetPlaybackAccount) {
+        configure(account: presentationAccount, allowsServerAccess: true)
+    }
+
+    func configureOffline(account presentationAccount: DulcetPlaybackAccount) {
+        configure(account: presentationAccount, allowsServerAccess: false)
+    }
+
+    private func configure(account presentationAccount: DulcetPlaybackAccount, allowsServerAccess: Bool) {
         resolveOperation?.cancel()
         resolveOperation = nil
         if let preload { discardPreload(preload, reason: "configure", startsHeldEnd: false) }
@@ -209,8 +217,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         )
         account = coreAccount
         self.presentationAccount = presentationAccount
-        wireClient = ApplePlaybackWireClient(account: coreAccount)
-        _ = queueClient.configureDelivery(account: coreAccount)
+        if allowsServerAccess {
+            wireClient = ApplePlaybackWireClient(account: coreAccount)
+            _ = queueClient.configureDelivery(account: coreAccount)
+        } else {
+            wireClient = nil
+            _ = queueClient.configureOfflineDelivery()
+        }
         publish(queueClient.snapshot())
     }
 
@@ -931,7 +944,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// Loads artwork through the core's validated artwork path and hands the engine bytes, never
     /// a URL. Keyed by session so a late image for an earlier track cannot land on a later one.
     private func fetchArtwork(for track: DulcetTrack, sessionID: String) {
-        guard !artworkRequestedSessions.contains(sessionID),
+        guard wireClient != nil,
+              !artworkRequestedSessions.contains(sessionID),
               let artworkFetcher,
               let presentationAccount,
               let reference = track.artwork.remoteReference,

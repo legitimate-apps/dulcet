@@ -840,7 +840,8 @@ struct DulcetTrackRow: View {
         guard !offline, onDownload != nil else { return "" }
         switch track.downloadState {
         case .notDownloaded: return ""
-        case .queued, .downloading: return DulcetStrings.downloading
+        case .queued: return DulcetStrings.downloadQueued
+        case .downloading: return DulcetStrings.downloading
         case .downloaded: return DulcetStrings.downloaded
         case .interrupted, .failed: return DulcetStrings.downloadFailed
         case .stale: return DulcetStrings.downloadUpdateAvailable

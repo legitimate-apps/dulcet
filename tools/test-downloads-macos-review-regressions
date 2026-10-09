@@ -85,7 +85,12 @@ assert "killed-process-" + "relaunch-harness" not in (ROOT / "FEATURES.yml").rea
 
 # A launch into a saved account configures downloads, so the launch reconciles what the system
 # finished while the app was gone (the defect the handoff proofs found).
-restored_start = presentation.index("if let providerInstanceID, let restored = restoredForReader {")
+# Playback has its own saved-account setup branch. Downloads reconcile only after their
+# observers are installed, so find that branch after the refresh-handler registration.
+restored_start = presentation.index(
+    "if let providerInstanceID, let restored = restoredForReader {",
+    presentation.index("downloadController?.setStateRefreshHandler"),
+)
 restored_branch = presentation[restored_start:presentation.index("\n        }\n", restored_start)]
 assert "downloadController?.configure(account:" in restored_branch
 

@@ -2803,6 +2803,11 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-account-states-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-handoff-junit" \
             "$RUNNER_TEMP/dulcet-mac-download-row-junit" \
+            "$RUNNER_TEMP/dulcet-mac-offline-reader-row-junit" \
+            "$RUNNER_TEMP/dulcet-mac-saved-download-tap-junit" \
+            "$RUNNER_TEMP/dulcet-mac-saved-download-missing-junit" \
+            "$RUNNER_TEMP/dulcet-mac-saved-download-generation-junit" \
+            "$RUNNER_TEMP/dulcet-mac-saved-download-intact-junit" \
             "$RUNNER_TEMP/dulcet-ios-download-handoff-junit" \
             "$RUNNER_TEMP/dulcet-ios-search-download-junit" \
             "$RUNNER_TEMP/dulcet-ipados-download-handoff-junit"

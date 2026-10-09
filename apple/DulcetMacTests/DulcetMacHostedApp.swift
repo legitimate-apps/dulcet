@@ -40,9 +40,10 @@ final class HostedApp {
         defaultsSuite = "dulcet-mac-hosted-\(run)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
         streamingQuality = DulcetCoreStreamingQuality(defaults: defaults)
-        controller = DulcetCorePlaybackController(databaseName: "dulcet-mac-hosted-playback-\(run).db")
+        controller = DulcetCorePlaybackController(databaseName: "dulcet-mac-hosted-playback-\(run).db", downloadController: downloadController,
+                                                 artworkFetcher: DulcetCoreArtworkFetcher())
         controller.streamingQuality = streamingQuality
-        session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: "dulcet-mac-hosted-reader-\(run).db"))
+        session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: "dulcet-mac-hosted-reader-\(run).db", readsDownloads: downloadController != nil))
         let providerInstanceID = "macos-hosted-\(run)"
         store = DulcetPresentationStore(source: DulcetAccountDataSource(
             connector: DulcetCoreAccountConnector(),
@@ -78,6 +79,17 @@ final class HostedApp {
                             "connect: state=\(store.snapshot.state) mode=\(session.mode)") {
             store.snapshot.accountConnected && session.mode == .connected && session.reader != nil
         }
+    }
+
+    /// Keeps the open reader page while putting both library and playback into device-only
+    /// operation, as a saved launch does before Reconnect.
+    func enterDeviceOnlyMode() {
+        session.disconnect()
+        guard let saved = session.account else { return XCTFail("The hosted reader must have its account") }
+        controller.configureOffline(account: DulcetPlaybackAccount(
+            providerInstanceID: saved.providerInstanceID, normalizedServerURL: saved.normalizedServerURL,
+            username: saved.username, password: saved.password, allowLocalHTTP: saved.allowLocalHTTP
+        ))
     }
 
     func close() {

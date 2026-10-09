@@ -1018,6 +1018,10 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
         return DulcetCoreReaderCancellable(listener: nil) { operation.cancel() }
     }
 
+    func downloadsChanged() {
+        client.downloadsChanged()
+    }
+
     func setOnline(_ reachable: Bool) {
         client.setOnline(reachable: reachable)
     }

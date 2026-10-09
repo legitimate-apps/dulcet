@@ -161,7 +161,7 @@ public class ApplePlaybackQueueClient private constructor(
     private val initializationErrorKind: String?
     private val pendingEffects = ArrayDeque<PlaybackCoreEffect>()
     private val deliveryScope = CoroutineScope(SupervisorJob() + deliveryDispatcher)
-    private val deliveryEvents = Channel<RecordedPlaybackEvent>(Channel.UNLIMITED)
+    private val deliveryEvents = Channel<ApplePlaybackDeliveryEvent>(Channel.UNLIMITED)
     private var delivery: ApplePlaybackDeliveryComposition? = null
     private var deliveryCounts = ApplePlaybackDeliveryCounts()
     private var lastKnownPending = 0L
@@ -223,6 +223,22 @@ public class ApplePlaybackQueueClient private constructor(
             ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
         } catch (_: IllegalArgumentException) {
             ApplePlaybackDeliveryConfigurationOutcomeDto(false, "input")
+        } catch (_: Throwable) {
+            ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
+        }
+    }
+
+    /**
+     * Opens local submitted-play persistence without a network sender or retry worker. A saved
+     * session can play downloaded tracks before Reconnect; those plays remain in the durable
+     * outbox until [configureDelivery] installs network delivery. Ephemeral now-playing is dropped.
+     */
+    public fun configureOfflineDelivery(): ApplePlaybackDeliveryConfigurationOutcomeDto {
+        val database = database
+            ?: return ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
+        return try {
+            configurePersistenceOnlyDelivery(PersistentScrobbleOutbox(database, ApplePlaybackWallClock))
+            ApplePlaybackDeliveryConfigurationOutcomeDto(true, null)
         } catch (_: Throwable) {
             ApplePlaybackDeliveryConfigurationOutcomeDto(false, "persistence")
         }
@@ -813,6 +829,8 @@ public class ApplePlaybackQueueClient private constructor(
     internal fun pendingSubmittedPlayCount(): Long = delivery?.outbox?.count() ?: 0
 
     internal fun configurePersistenceOnlyDelivery(outbox: PersistentScrobbleOutbox) {
+        delivery?.retry?.cancel()
+        delivery?.sender?.close()
         delivery = ApplePlaybackDeliveryComposition(null, outbox, null, null)
         val waiting = pendingEffects.toList()
         pendingEffects.clear()
@@ -833,7 +851,11 @@ public class ApplePlaybackQueueClient private constructor(
                                 copy(submittedPlaysPersisted = submittedPlaysPersisted + 1)
                             }
                         }
-                        check(deliveryEvents.trySend(effect.event).isSuccess)
+                        // Offline now-playing must never be deferred until Reconnect. Submitted
+                        // plays are already durable; installing network delivery drains them.
+                        if (activeDelivery.sender != null) {
+                            check(deliveryEvents.trySend(ApplePlaybackDeliveryEvent(activeDelivery, effect.event)).isSuccess)
+                        }
                     }
                 }
                 is PlaybackCoreEffect.PersistResumePosition -> {
@@ -851,12 +873,13 @@ public class ApplePlaybackQueueClient private constructor(
         }
     }
 
-    private suspend fun deliverNetworkEvent(event: RecordedPlaybackEvent) {
-        val activeDelivery = delivery ?: run {
-            pendingEffects += PlaybackCoreEffect.RecordPlaybackEvent(event)
-            return
-        }
-        when (event) {
+    private suspend fun deliverNetworkEvent(queued: ApplePlaybackDeliveryEvent) {
+        // A queued connected event belongs to the composition that captured it. Reconfiguration
+        // must not send an old now-playing through a later account or reconnect; submitted plays
+        // remain durable and the new worker drains them independently.
+        val activeDelivery = delivery ?: return
+        if (activeDelivery !== queued.delivery) return
+        when (val event = queued.event) {
             is RecordedPlaybackEvent.NowPlaying -> {
                 when (activeDelivery.sender?.send(ScrobbleEndpointRequest(event))) {
                     is ScrobbleSendResult.Sent -> updateDeliveryReport {
@@ -910,6 +933,11 @@ private data class ApplePlaybackQueueComposition(
     val database: com.legitimateapps.dulcet.database.DulcetDatabase?,
     val controller: PlaybackQueueController,
     val resumePositions: ResumePositionStore?,
+)
+
+private data class ApplePlaybackDeliveryEvent(
+    val delivery: ApplePlaybackDeliveryComposition,
+    val event: RecordedPlaybackEvent,
 )
 
 private data class ApplePlaybackDeliveryComposition(

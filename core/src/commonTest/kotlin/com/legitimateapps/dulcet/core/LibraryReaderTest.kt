@@ -97,6 +97,29 @@ class LibraryReaderTest {
         assertEquals(100, pubs.last.items.size)
     }
 
+    @Test
+    fun promotedAndRemovedDownloadsRepublishAnOpenOfflineAlbumWithoutServerReads() = readerTest { env ->
+        val downloaded = mutableSetOf<String>()
+        val reader = env.reader(downloads = { downloaded })
+        reader.connect()
+        val pubs = Publications(env.server)
+        reader.open(LibraryQuery.Album(albumId(7)), pubs)
+        advanceUntilIdle()
+        reader.setOnline(false)
+        val rawId = "${albumId(7)}-track-0"
+        val before = env.server.log.size
+        assertEquals(LibraryPlayability.UnavailableOffline, (pubs.last.items.first() as LibraryItem.Track).playability)
+        downloaded += rawId
+        reader.downloadsChanged()
+        assertEquals(LibraryPlayability.Downloaded, (pubs.last.items.first() as LibraryItem.Track).playability)
+        assertEquals(LibraryPlayability.UnavailableOffline, (pubs.last.items.last() as LibraryItem.Track).playability)
+        downloaded.clear()
+        reader.downloadsChanged()
+        assertEquals(LibraryPlayability.UnavailableOffline, (pubs.last.items.first() as LibraryItem.Track).playability)
+        advanceUntilIdle()
+        assertEquals(before, env.server.log.size, "local promotion/removal sends nothing")
+    }
+
     // ---- CONF-77: the reconnect budget --------------------------------------------------------------
 
     @Test

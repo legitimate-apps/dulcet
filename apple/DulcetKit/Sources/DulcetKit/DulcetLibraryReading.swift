@@ -93,6 +93,8 @@ public protocol DulcetLibraryReading: AnyObject {
     func connect(completion: @escaping @MainActor (DulcetReaderConnection) -> Void) -> any DulcetLibraryReaderCancellable
     @discardableResult
     func reconnect(completion: @escaping @MainActor (DulcetReaderConnection) -> Void) -> any DulcetLibraryReaderCancellable
+    /// Republishes local download playability without contacting the server.
+    func downloadsChanged()
     func setOnline(_ reachable: Bool)
     func setForeground(_ foreground: Bool)
     func setNetworkConstrained(_ constrained: Bool)
@@ -104,6 +106,10 @@ public protocol DulcetLibraryReading: AnyObject {
     func setupFailed(completion: @escaping @MainActor (Bool) -> Void) -> any DulcetLibraryReaderCancellable
     /// The completion runs once the reader's own thread has stopped (§14.7 step 6).
     func close(completion: @escaping @MainActor () -> Void)
+}
+
+public extension DulcetLibraryReading {
+    func downloadsChanged() {}
 }
 
 @MainActor

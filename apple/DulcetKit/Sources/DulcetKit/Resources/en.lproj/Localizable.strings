@@ -28,6 +28,7 @@
 "action.more" = "More";
 "action.play" = "Play";
 "action.download" = "Download";
+"download.state.queued" = "Queued";
 "download.state.downloading" = "Downloading";
 "download.state.downloaded" = "Downloaded";
 "action.download.retry" = "Retry Download";
