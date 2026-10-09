@@ -255,8 +255,10 @@ class AndroidEmulatorAccountConnectProofTest {
      */
     private fun relaunchIntoTheSavedAccountAndReconnect(relay: ServerRelay, observed: MutableList<String>) {
         endProcessConnection()
-        val triedBefore = relay.forwardedConnections.get() + relay.refusedConnections.get()
-        val tried = { relay.forwardedConnections.get() + relay.refusedConnections.get() - triedBefore }
+        // Every accept counts, even with no HTTP bytes or a stalled upstream dial.
+        val triedBefore = relay.acceptedConnections.get()
+        val tried = { relay.acceptedConnections.get() - triedBefore }
+        val relaunchNanos = System.nanoTime()
         launch().use { scenario ->
             awaitNode("the library for the saved account at relaunch") { exists("library.open") }
             check(!exists("account.submit")) { "A saved account must not be asked for again" }
@@ -269,7 +271,10 @@ class AndroidEmulatorAccountConnectProofTest {
             awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
             SystemClock.sleep(SAVED_SETTLE_MILLIS)
             val triedBeforeReconnect = tried()
-            check(triedBeforeReconnect == 0) { "The app contacted the server $triedBeforeReconnect times before Reconnect" }
+            check(triedBeforeReconnect == 0) {
+                "The app contacted the server $triedBeforeReconnect times before Reconnect " +
+                    "(accepted baseline=$triedBefore; times relative to relaunch):\n" + relay.connectionDiagnostics(relaunchNanos)
+            }
             observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
 
             touch("library.reconnect", scenario)
