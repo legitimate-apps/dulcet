@@ -105,6 +105,73 @@ macos)
         "$RUNNER_TEMP/dulcet-mac-download-row.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-download-row-junit/TEST-DulcetMacDownloadRowAppTest.xml" \
         DulcetMacDownloadRowAppTest
+    # Count the entire wire through the disposable proxy for the local reader and saved-launch
+    # controls. Keep each selector and execution guard explicit, like the handoff above.
+    xcodebuild test-without-building "${mac[@]}" \
+        DULCET_TEST_CONFORMANCE_BASE_URL="$proxy_url" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-offline-reader-row.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacDownloadRowAppTest/aPromotedDownloadPlaysOfflineFromTheAlreadyOpenReaderRow 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-offline-reader-row.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-offline-reader-row.xcresult" \
+        DulcetMacTests.DulcetMacDownloadRowAppTest \
+        aPromotedDownloadPlaysOfflineFromTheAlreadyOpenReaderRow
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-offline-reader-row.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-offline-reader-row-junit/TEST-DulcetMacDownloadRowAppTest.xml" \
+        DulcetMacDownloadRowAppTest
+    xcodebuild test-without-building "${mac[@]}" \
+        DULCET_TEST_CONFORMANCE_BASE_URL="$proxy_url" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-saved-download-tap.xcresult" \
+        -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/savedLaunchDownloadTapSendsNoRequestsBeforeReconnect 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-saved-download-tap.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-tap.xcresult" \
+        DulcetPlaybackIntegrationTests.DulcetAppleDownloadIntegrationTest \
+        savedLaunchDownloadTapSendsNoRequestsBeforeReconnect
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-tap.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-tap-junit/TEST-DulcetAppleDownloadIntegrationTest.xml" \
+        DulcetAppleDownloadIntegrationTest
+    xcodebuild test-without-building "${mac[@]}" \
+        DULCET_TEST_CONFORMANCE_BASE_URL="$proxy_url" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-saved-download-missing.xcresult" \
+        -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/savedLaunchRecoversAMissingPreviouslyDownloadedFileBeforeReconnect 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-saved-download-missing.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-missing.xcresult" \
+        DulcetPlaybackIntegrationTests.DulcetAppleDownloadIntegrationTest \
+        savedLaunchRecoversAMissingPreviouslyDownloadedFileBeforeReconnect
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-missing.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-missing-junit/TEST-DulcetAppleDownloadIntegrationTest.xml" \
+        DulcetAppleDownloadIntegrationTest
+    xcodebuild test-without-building "${mac[@]}" \
+        DULCET_TEST_CONFORMANCE_BASE_URL="$proxy_url" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-saved-download-generation.xcresult" \
+        -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/savedLaunchRecoversAPreviouslyDownloadedFileAfterCredentialGenerationChanges 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-saved-download-generation.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-generation.xcresult" \
+        DulcetPlaybackIntegrationTests.DulcetAppleDownloadIntegrationTest \
+        savedLaunchRecoversAPreviouslyDownloadedFileAfterCredentialGenerationChanges
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-generation.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-generation-junit/TEST-DulcetAppleDownloadIntegrationTest.xml" \
+        DulcetAppleDownloadIntegrationTest
+    xcodebuild test-without-building "${mac[@]}" \
+        DULCET_TEST_CONFORMANCE_BASE_URL="$proxy_url" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-saved-download-intact.xcresult" \
+        -only-testing:DulcetPlaybackIntegrationTests/DulcetAppleDownloadIntegrationTest/savedLaunchWithAnIntactDownloadSendsNoRequestsBeforeReconnect 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-saved-download-intact.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-intact.xcresult" \
+        DulcetPlaybackIntegrationTests.DulcetAppleDownloadIntegrationTest \
+        savedLaunchWithAnIntactDownloadSendsNoRequestsBeforeReconnect
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-intact.xcresult" \
+        "$RUNNER_TEMP/dulcet-mac-saved-download-intact-junit/TEST-DulcetAppleDownloadIntegrationTest.xml" \
+        DulcetAppleDownloadIntegrationTest
     ;;
 iphone)
     python3 tools/ci/isolate-simulator --phase download-handoff-iphone --keep-name "iPhone 17 Pro"

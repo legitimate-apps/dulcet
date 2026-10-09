@@ -163,6 +163,182 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
     }
     #endif
 
+    /// §13.1's exception covers recovery of an earlier Download; it does not require Reconnect.
+    func savedLaunchRecoversAMissingPreviouslyDownloadedFileBeforeReconnect() async throws {
+        try await proveSavedLaunchRecovery(.missingFile)
+    }
+
+    func savedLaunchRecoversAPreviouslyDownloadedFileAfterCredentialGenerationChanges() async throws {
+        try await proveSavedLaunchRecovery(.changedCredentialGeneration)
+    }
+
+    /// An intact completed download is the control: saved launch must remain entirely local.
+    func savedLaunchWithAnIntactDownloadSendsNoRequestsBeforeReconnect() async throws {
+        try await proveSavedLaunchRecovery(.intact)
+    }
+
+    /// A new Download is outside §13.1's recovery exception, even after the saved controller
+    /// has reconciled and could issue a stream immediately if presentation allowed the action.
+    func savedLaunchDownloadTapSendsNoRequestsBeforeReconnect() async throws {
+        let context = try makeContext()
+        defer { context.tearDown() }
+        let browseBaseline = try await downloadProxyRequests(baseURL: context.baseURL, since: 0).total
+        let track = try await loadLiveTrack(baseURL: context.baseURL)
+        XCTAssertEqual(track.availability, .playable)
+        let browseRequests = try await downloadProxyRequests(baseURL: context.baseURL, since: browseBaseline)
+        XCTAssertGreaterThan(browseRequests.entries.count, 0, "the request counter must observe the live seed read")
+        XCTAssertTrue(browseRequests.entries.contains { $0.answered && $0.status == 200 })
+        context.controller.disconnect()
+
+        let replacement = DulcetCoreDownloadController(
+            databaseName: context.databaseName,
+            downloadRootURL: context.downloadRoot,
+            sessionConfiguration: .ephemeral
+        )
+        defer { replacement.disconnect() }
+        let connector = DownloadRecoveryConnector()
+        let source = DulcetAccountDataSource(
+            connector: connector,
+            credentialStore: DownloadRecoveryCredentialStore(
+                request: DulcetAccountConnectRequest(
+                    serverURL: context.baseURL,
+                    username: fixtureUsername,
+                    password: fixturePassword,
+                    allowLocalHTTP: true
+                ),
+                providerInstanceID: providerInstanceID,
+                credentialGeneration: 7
+            ),
+            downloadController: replacement
+        )
+        defer { _ = source.currentSnapshot }
+        var reconciled = false
+        // configure's getAllTasks answer is delivered asynchronously to this main actor. Install
+        // the witness before yielding, so the action is driven after actual local reconciliation.
+        replacement.setStateRefreshHandler { reconciled = true }
+        try await waitUntil(timeout: .seconds(10), failureMessage: "saved downloads did not reconcile") {
+            reconciled
+        }
+        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        XCTAssertTrue(source.downloadsEnabled)
+        XCTAssertEqual(replacement.status(for: track.id), .notDownloaded)
+
+        source.send(.requestDownload(track))
+
+        try await Task.sleep(for: .seconds(3))
+        let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: browseRequests.total)
+        XCTAssertEqual(observed.entries.count, 0, "a new Download must wait for Reconnect")
+        XCTAssertEqual(replacement.status(for: track.id), .notDownloaded, "the tap must not enqueue a transfer")
+        XCTAssertEqual(connector.requestCount, 0)
+        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        XCTAssertTrue(try regularFiles(in: context.downloadRoot).isEmpty)
+    }
+
+    private enum SavedDownloadRecovery: Equatable {
+        case missingFile, changedCredentialGeneration, intact
+    }
+
+    private func proveSavedLaunchRecovery(_ recovery: SavedDownloadRecovery) async throws {
+        let context = try makeContext()
+        defer { context.tearDown() }
+        let track = try await loadLiveTrack(baseURL: context.baseURL)
+        let seedBaseline = try await downloadProxyRequests(baseURL: context.baseURL, since: 0).total
+        context.controller.requestDownload(track)
+        try await waitUntil(timeout: .seconds(60), failureMessage: "the earlier Download did not finish") {
+            context.controller.status(for: track.id) == .downloaded
+        }
+        let originalFile = try XCTUnwrap(try regularFiles(in: context.downloadRoot).first)
+        let originalBytes = try Data(contentsOf: originalFile)
+        XCTAssertFalse(originalBytes.isEmpty)
+        context.controller.disconnect()
+        if recovery == .missingFile {
+            try FileManager.default.removeItem(at: originalFile)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: originalFile.path))
+        } else {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: originalFile.path))
+        }
+
+        // Nothing after this baseline browses, connects, or asks for another Download. The real
+        // saved-account presentation configures the replacement controller as production does.
+        let seedRequests = try await downloadProxyRequests(baseURL: context.baseURL, since: seedBaseline)
+        XCTAssertEqual(seedRequests.entries.count, 1, "the request counter must observe the earlier Download")
+        let seedStream = try XCTUnwrap(seedRequests.entries.first)
+        XCTAssertEqual(seedStream.endpoint, "stream")
+        XCTAssertEqual(seedStream.rawID, track.id.rawID)
+        XCTAssertTrue(seedStream.answered)
+        XCTAssertEqual(seedStream.status, 200)
+        let baseline = seedRequests.total
+        let replacement = DulcetCoreDownloadController(
+            databaseName: context.databaseName,
+            downloadRootURL: context.downloadRoot,
+            sessionConfiguration: .ephemeral
+        )
+        defer { replacement.disconnect() }
+        let connector = DownloadRecoveryConnector()
+        let source = DulcetAccountDataSource(
+            connector: connector,
+            credentialStore: DownloadRecoveryCredentialStore(
+                request: DulcetAccountConnectRequest(
+                    serverURL: context.baseURL,
+                    username: fixtureUsername,
+                    password: fixturePassword,
+                    allowLocalHTTP: true
+                ),
+                providerInstanceID: providerInstanceID,
+                credentialGeneration: recovery == .changedCredentialGeneration ? 8 : 7
+            ),
+            downloadController: replacement
+        )
+        defer { _ = source.currentSnapshot }
+        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        try await waitUntil(timeout: .seconds(60), failureMessage: "saved launch did not recover the download") {
+            replacement.status(for: track.id) == .downloaded
+        }
+        let asset = try XCTUnwrap(replacement.offlinePlaybackAsset(for: track))
+        XCTAssertEqual(asset.exactByteLength, Int64(originalBytes.count))
+        XCTAssertEqual(try Data(contentsOf: originalFile), originalBytes)
+
+        // A duplicate recovery can arrive after promotion; count only after that work settles.
+        try await Task.sleep(for: .seconds(3))
+        let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: baseline)
+        XCTAssertEqual(connector.requestCount, 0, "saved launch must never invoke Connect")
+        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        if recovery == .intact {
+            XCTAssertEqual(observed.entries.count, 0, "an intact download has no recovery read to make")
+        } else {
+            XCTAssertEqual(observed.entries.count, 1, "only the permitted recovery stream may be sent")
+            let stream = try XCTUnwrap(observed.entries.first)
+            XCTAssertEqual(stream.endpoint, "stream")
+            XCTAssertEqual(stream.rawID, track.id.rawID)
+            XCTAssertTrue(stream.answered, "the replacement must promote the actual server response")
+            XCTAssertEqual(stream.status, 200)
+        }
+    }
+
+    private func downloadProxyRequests(
+        baseURL: String, since: Int
+    ) async throws -> (total: Int, entries: [DownloadRecoveryWireEntry]) {
+        // makeContext already restricts this URL to the disposable loopback server. The proof
+        // routes that server through its counting proxy; this control path never forwards to /rest.
+        var components = try XCTUnwrap(URLComponents(string: baseURL))
+        components.path = "/__dulcet/requests"
+        components.queryItems = [URLQueryItem(name: "since", value: String(since))]
+        let url = try XCTUnwrap(components.url)
+        let (bytes, response) = try await URLSession.shared.data(from: url)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        let total = try XCTUnwrap(object["total"] as? Int)
+        let entries = try XCTUnwrap(object["requests"] as? [[String: Any]])
+        return (total, try entries.map { entry in
+            DownloadRecoveryWireEntry(
+                endpoint: try XCTUnwrap(entry["endpoint"] as? String),
+                rawID: entry["id"] as? String,
+                answered: try XCTUnwrap(entry["answered"] as? Bool),
+                status: try XCTUnwrap(entry["status"] as? Int)
+            )
+        })
+    }
+
     private func proveDownloadTriggerPromotesValidatedResponseAtomically() async throws {
         let context = try makeContext()
         defer { context.tearDown() }
@@ -302,8 +478,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("dulcet-apple-download-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseName = "dulcet-apple-download-\(UUID().uuidString).db"
         let controller = DulcetCoreDownloadController(
-            databaseName: "dulcet-apple-download-\(UUID().uuidString).db",
+            databaseName: databaseName,
             downloadRootURL: root,
             sessionConfiguration: .ephemeral
         )
@@ -318,7 +495,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         return DownloadIntegrationContext(
             controller: controller,
             downloadRoot: root,
-            baseURL: baseURL
+            baseURL: baseURL,
+            databaseName: databaseName
         )
     }
 
@@ -553,9 +731,56 @@ private struct DownloadIntegrationContext {
     let controller: DulcetCoreDownloadController
     let downloadRoot: URL
     let baseURL: String
+    let databaseName: String
 
     func tearDown() {
         controller.disconnect()
         try? FileManager.default.removeItem(at: downloadRoot)
     }
+}
+
+private struct DownloadRecoveryWireEntry {
+    let endpoint: String
+    let rawID: String?
+    let answered: Bool
+    let status: Int
+}
+
+@MainActor
+private final class DownloadRecoveryCredentialStore: DulcetProviderInstanceCredentialStoring {
+    let request: DulcetAccountConnectRequest
+    let providerInstanceID: String?
+    let credentialGeneration: Int64
+
+    init(request: DulcetAccountConnectRequest, providerInstanceID: String, credentialGeneration: Int64) {
+        self.request = request
+        self.providerInstanceID = providerInstanceID
+        self.credentialGeneration = credentialGeneration
+    }
+
+    func load() throws -> DulcetAccountConnectRequest? { request }
+    func save(_ request: DulcetAccountConnectRequest) throws { XCTFail("saved launch unexpectedly saved credentials") }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        XCTFail("saved launch unexpectedly saved an account")
+    }
+    func delete() throws { XCTFail("saved launch unexpectedly deleted credentials") }
+}
+
+@MainActor
+private final class DownloadRecoveryConnector: DulcetAccountConnecting {
+    private(set) var requestCount = 0
+
+    func connect(
+        _ request: DulcetAccountConnectRequest,
+        completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void
+    ) -> any DulcetAccountConnectOperation {
+        requestCount += 1
+        XCTFail("saved launch unexpectedly invoked Connect")
+        return DownloadRecoveryConnectOperation()
+    }
+}
+
+@MainActor
+private final class DownloadRecoveryConnectOperation: DulcetAccountConnectOperation {
+    func cancel() {}
 }

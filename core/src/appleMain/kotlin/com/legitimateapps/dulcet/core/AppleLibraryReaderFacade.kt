@@ -264,6 +264,11 @@ public class AppleLibraryReaderClient internal constructor(
             session.connection(session.reader.reconnect())
         }
 
+    /** Local download promotion/removal: republishes playability without any server read. */
+    public fun downloadsChanged() {
+        onReader { composition?.session?.reader?.downloadsChanged() }
+    }
+
     /**
      * Reachability as the platform reports it; call it on every change. Unreachable takes the reader
      * offline at once: from then on nothing is read or sent — no window, search, look-ahead,

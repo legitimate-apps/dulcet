@@ -185,6 +185,131 @@ class ApplePlaybackQueueFacadeTest {
     }
 
     @Test
+    fun offlineConfigurationPersistsWaitingAndNewPlaysUntilNetworkDeliveryIsInstalled() {
+        val scheduler = TestCoroutineScheduler()
+        val driver = createTestDriver()
+        val database = DulcetDatabaseStore.open(driver).database
+        val resumePositions = PersistentResumePositionStore(database)
+        var identity = 0
+        val client = ApplePlaybackQueueClient(
+            database = database,
+            controller = PlaybackQueueController(
+                queues = PersistentQueueStore(database),
+                resumePositions = resumePositions,
+                identities = PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+            ),
+            resumePositions = resumePositions,
+            deliveryDispatcher = StandardTestDispatcher(scheduler),
+        )
+        val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), okEnvelope())))
+        val wallClock = OutboxWallClock { kotlin.time.Clock.System.now().toEpochMilliseconds() }
+        try {
+            // Effects captured before configuration must be replayed into local persistence.
+            submitThirtySecondPlay(client, "waiting-track", 1_788_000_000_000)
+            assertEquals(0, client.deliveryReport().submittedPlaysPersisted)
+            val configured = client.configureOfflineDelivery()
+            assertEquals(true, configured.configured)
+            assertNull(configured.errorKind)
+            assertEquals(1, client.deliveryReport().submittedPlaysPersisted)
+            assertEquals(1, client.pendingSubmittedPlayCount())
+
+            // A later offline listen persists synchronously without waiting for the dispatcher.
+            submitThirtySecondPlay(client, "offline-track", 1_788_000_030_000)
+            assertEquals(2, client.deliveryReport().submittedPlaysPersisted)
+            assertEquals(2, client.deliveryReport().submittedPlaysPending)
+            val persisted = PersistentScrobbleOutbox(database, wallClock).pending(ServerId("server"))
+            assertEquals(listOf("waiting-track", "offline-track"), persisted.map { it.rawId })
+            assertEquals(listOf(1_788_000_000_000, 1_788_000_030_000), persisted.map {
+                it.sessionStartWallClock.epochMilliseconds
+            })
+            assertEquals(0, client.deliveryReport().submittedPlaysDelivered)
+            assertEquals(0, client.deliveryReport().nowPlayingSent)
+            assertEquals(emptyList(), transport.parameters)
+
+            // Install before running the queued dispatcher: offline now-playing must not be
+            // replayed under the new network composition. Only the two durable plays may send.
+            client.installDelivery(
+                serverId = ServerId("server"),
+                sender = ScrobbleEndpointSender(transport),
+                outbox = PersistentScrobbleOutbox(database, wallClock),
+                wallClock = wallClock,
+            )
+            scheduler.runCurrent()
+            assertEquals(listOf("true", "true"), transport.parameters.map { it["submission"] })
+            assertEquals(listOf("waiting-track", "offline-track"), transport.parameters.map { it["id"] })
+            assertEquals(2, client.deliveryReport().submittedPlaysDelivered)
+            assertEquals(0, client.deliveryReport().submittedPlaysPending)
+            assertEquals(0, client.deliveryReport().nowPlayingSent)
+
+            // Connected events can also be awaiting the dispatcher when the account becomes
+            // offline. A later composition must drain the durable play without sending its
+            // predecessor's queued ephemeral now-playing.
+            submitThirtySecondPlay(client, "superseded-track", 1_788_000_060_000)
+            assertEquals(1, client.deliveryReport().submittedPlaysPending)
+            assertEquals(true, client.configureOfflineDelivery().configured)
+            val reconnected = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope())))
+            client.installDelivery(
+                serverId = ServerId("server"),
+                sender = ScrobbleEndpointSender(reconnected),
+                outbox = PersistentScrobbleOutbox(database, wallClock),
+                wallClock = wallClock,
+            )
+            scheduler.runCurrent()
+            assertEquals(listOf("true"), reconnected.parameters.map { it["submission"] })
+            assertEquals(listOf("superseded-track"), reconnected.parameters.map { it["id"] })
+            assertEquals(2, transport.parameters.size, "the previous sender must not receive queued events")
+            assertEquals(3, client.deliveryReport().submittedPlaysDelivered)
+            assertEquals(0, client.deliveryReport().submittedPlaysPending)
+            assertEquals(0, client.deliveryReport().nowPlayingSent)
+        } finally {
+            client.close()
+            driver.close()
+        }
+    }
+
+    @Test
+    fun offlineConfigurationCancelsAnExistingSubmittedPlayRetry() {
+        val scheduler = TestCoroutineScheduler()
+        val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), failedEnvelope(), okEnvelope())))
+        val delivery = deliveryFixture(
+            transport,
+            StandardTestDispatcher(scheduler),
+            monotonicClock = OutboxMonotonicClock { scheduler.currentTime.milliseconds },
+        )
+        try {
+            scheduler.runCurrent()
+            submitThirtySecondPlay(delivery.client, "connected-track", 1_788_000_000_000)
+            scheduler.runCurrent()
+            assertEquals(listOf("false", "true"), transport.parameters.map { it["submission"] })
+            assertEquals(1, delivery.client.deliveryReport().submittedPlayFailedAttempts)
+            assertEquals(1, delivery.client.deliveryReport().submittedPlaysPending)
+
+            val configured = delivery.client.configureOfflineDelivery()
+            assertEquals(true, configured.configured)
+            assertNull(configured.errorKind)
+            scheduler.advanceTimeBy(3_600_000)
+            scheduler.runCurrent()
+            assertEquals(2, transport.parameters.size, "the old retry must stop after offline configuration")
+            assertEquals(1, delivery.client.deliveryReport().submittedPlaysPending)
+            assertEquals(0, delivery.client.deliveryReport().submittedPlaysDelivered)
+        } finally {
+            delivery.close()
+        }
+    }
+
+    private fun submitThirtySecondPlay(client: ApplePlaybackQueueClient, rawId: String, wallClock: Long) {
+        val start = client.replaceAndStart(queueRequest(rawIds = listOf(rawId)))
+        assertNull(start.errorKind)
+        val attempt = assertNotNull(start.startDirective).attemptId
+        assertNull(client.recordReady(attempt, 30_000, "seekable").errorKind)
+        assertNull(client.recordPlaybackProgressBegan(attempt, wallClock, 0).errorKind)
+        listOf(4_000L, 8_000L, 12_000L, 16_000L).forEach { position ->
+            assertNull(client.recordPositionChanged(attempt, position, position * 1_000_000).errorKind)
+        }
+        assertNull(client.recordEndedNaturally(attempt, 30_000).errorKind)
+    }
+
+    @Test
     fun deliveryReportCountsASubmittedPlayOnlyAfterTheServerAcknowledgesIt() {
         val transport = QueuedScrobbleTransport(ArrayDeque(listOf(okEnvelope(), okEnvelope())))
         val delivery = deliveryFixture(transport)

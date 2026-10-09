@@ -596,6 +596,15 @@ internal class LibraryReader(
         if (constrained) lookAhead.cancelAll()
     }
 
+    /** Recomputes local download playability without reading the server. */
+    fun downloadsChanged() {
+        checkConfined()
+        visibleHandles().forEach { it.republish() }
+        // Offline searches re-run entirely on the device. Online searches will recompute
+        // playability when going offline; revalidating them here would read the server.
+        if (!online) revalidateSurfaces()
+    }
+
     /**
      * R1d's hook: a pending local change to these entities must be in the next publication. Called
      * on the reader's thread (enforced), it republishes synchronously, before any request.

@@ -33,6 +33,7 @@ enum DulcetStrings {
     static let more = text("action.more", "More")
     static let play = text("action.play", "Play")
     static let download = text("action.download", "Download")
+    static let downloadQueued = text("download.state.queued", "Queued")
     static let downloading = text("download.state.downloading", "Downloading")
     static let downloaded = text("download.state.downloaded", "Downloaded")
     static let retryDownload = text("action.download.retry", "Retry Download")

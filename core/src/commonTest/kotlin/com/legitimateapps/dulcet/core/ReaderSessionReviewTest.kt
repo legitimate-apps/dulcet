@@ -279,6 +279,29 @@ class ReaderSessionReviewTest {
         assertTrue(pubs.last.rows.filter { it.item.type != SearchResultType.Track }.all { it.playability == null }, "only tracks carry playability")
     }
 
+    @Test
+    fun promotedDownloadsRepublishAnOpenOfflineSearchWithoutServerReads() = sessionTest { env ->
+        val downloaded = mutableSetOf<String>()
+        val session = primed(env, LibraryReaderSession(
+            env.database.database, env.cache(), env.server, env.scope,
+            LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+            downloads = DownloadedTrackSource { downloaded }, formPost = false, foreground = false,
+        ))
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(LibrarySearchConfig(debounceMillis = 0), pubs)
+        search.updateQuery("Song album-0001")
+        advanceUntilIdle()
+        session.setOnline(false)
+        val before = env.server.log.size
+        assertTrue(pubs.last.rows.all { it.playability == LibraryPlayability.UnavailableOffline })
+        downloaded += "album-0001-track-0"
+        session.reader.downloadsChanged()
+        advanceUntilIdle()
+        assertEquals(listOf(LibraryPlayability.Downloaded, LibraryPlayability.UnavailableOffline),
+            pubs.last.rows.map { it.playability })
+        assertEquals(before, env.server.log.size, "a search promotion sends nothing")
+    }
+
     // ---- The sign-out count counts what cannot be decoded ------------------------------------------------
 
     /**

@@ -1775,6 +1775,24 @@ func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     #expect(connector.requests.isEmpty, "reconciling downloads is not a connection")
 }
 
+/// Saved playback knows the local account while network playback remains unconfigured.
+@Test @MainActor
+func aSavedLaunchConfiguresPlaybackOnlyForOfflineUse() {
+    let playback = ControlledPlaybackController()
+    let source = DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        credentialStore: InstanceCredentialStore(
+            persisted: DulcetAccountConnectRequest(serverURL: "http://127.0.0.1:4891",
+                username: "listener", password: "fixture-password", allowLocalHTTP: true),
+            providerInstanceID: "provider-instance-saved"
+        ),
+        playbackController: playback
+    )
+    #expect(source.currentSnapshot.accountConnection.isConnected == false)
+    #expect(playback.offlineConfiguredProviderInstanceID == "provider-instance-saved")
+    #expect(playback.configuredProviderInstanceID == nil)
+}
+
 /// The control: with no saved account there is nothing to reconcile, and nothing is configured.
 @Test @MainActor
 func aLaunchWithoutASavedAccountConfiguresNoDownloads() {
@@ -1792,11 +1810,19 @@ func aLaunchWithoutASavedAccountConfiguresNoDownloads() {
 @Test @MainActor
 func aTrackFromAReaderScreenIsDownloadedAsItself() {
     let downloads = ControlledDownloadController()
+    let connector = ControlledAccountConnector()
     let store = DulcetPresentationStore(source: DulcetAccountDataSource(
-        connector: ControlledAccountConnector(),
+        connector: connector,
         credentialStore: MemoryCredentialStore(persisted: nil),
         downloadController: downloads
     ))
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music", normalizedServerURL: "https://music.example.invalid"
+    )))
     let track = fixtureLibraryAlbum().tracks[0]
 
     store.requestDownload(track)
@@ -1805,6 +1831,24 @@ func aTrackFromAReaderScreenIsDownloadedAsItself() {
     // The control: the same track by identifier alone reaches nothing, since no album list holds it.
     store.downloadTrack(track.id)
     #expect(downloads.requestedTracks.map(\.id) == [track.id])
+}
+
+/// A stale or programmatic Download tap cannot bypass a saved account's Reconnect boundary.
+@Test @MainActor
+func aSavedLaunchDownloadTapDoesNotRequestADownload() {
+    let downloads = ControlledDownloadController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        credentialStore: InstanceCredentialStore(
+            persisted: DulcetAccountConnectRequest(serverURL: "http://127.0.0.1:4891",
+                username: "listener", password: "fixture-password", allowLocalHTTP: true),
+            providerInstanceID: "provider-instance-saved"
+        ),
+        downloadController: downloads
+    ))
+    #expect(downloads.configuredAccount != nil, "control: downloads are configured at saved launch")
+    store.requestDownload(fixtureLibraryAlbum().tracks[0])
+    #expect(downloads.requestedTracks.isEmpty, "Download needs an explicit connection")
 }
 
 /// Where a track's download stands is the controller's answer, and a row reading it is drawn
@@ -2042,6 +2086,7 @@ private final class ControlledArtworkOperation: DulcetArtworkFetchOperation {
 @MainActor
 private final class ControlledPlaybackController: DulcetPlaybackControlling {
     private var handler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
+    private(set) var offlineConfiguredProviderInstanceID: String?
     private(set) var configuredProviderInstanceID: String?
     private(set) var queueIntents: [DulcetPlaybackQueueIntent] = []
     private(set) var controlIntents: [DulcetPlaybackControlIntent] = []
@@ -2054,6 +2099,10 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     ) {
         self.handler = handler
+    }
+
+    func configureOffline(account: DulcetPlaybackAccount) {
+        offlineConfiguredProviderInstanceID = account.providerInstanceID
     }
 
     func configure(account: DulcetPlaybackAccount) {

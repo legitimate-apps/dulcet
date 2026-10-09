@@ -687,6 +687,16 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         playbackController?.setPresentationHandler { [weak self] presentation in
             self?.receivePlaybackPresentation(presentation)
         }
+        if let providerInstanceID, let restored = restoredForReader {
+            playbackController?.configureOffline(account: DulcetPlaybackAccount(
+                providerInstanceID: providerInstanceID,
+                normalizedServerURL: restored.serverURL,
+                username: restored.username,
+                password: restored.password,
+                allowLocalHTTP: restored.allowLocalHTTP,
+                credentialGeneration: credentialStore?.credentialGeneration ?? 0
+            ))
+        }
         if let librarySession, let providerInstanceID, let restored = restoredForReader {
             // The saved account's library paints at once from what this device has seen, and
             // the library sends nothing until the person chooses Reconnect (CONF-10b).
@@ -707,6 +717,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         }
         downloadController?.setStateRefreshHandler { [weak self] in
             self?.downloadStateCache = [:]
+            self?.librarySession?.reader?.downloadsChanged()
             self?.downloadStateChangeHandler?()
         }
         if let providerInstanceID, let restored = restoredForReader {
@@ -821,11 +832,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 shuffle: false
             ))
         case let .downloadTrack(id):
-            guard let track = libraryAlbums.lazy.flatMap(\.tracks).first(where: { $0.id == id }),
+            guard currentSnapshot.accountConnection.isConnected,
+                  let track = libraryAlbums.lazy.flatMap(\.tracks).first(where: { $0.id == id }),
                   downloadController?.downloadsEnabled == true else { return }
             downloadController?.requestDownload(track)
         case let .requestDownload(track):
-            guard track.availability == .playable,
+            guard currentSnapshot.accountConnection.isConnected,
+                  track.availability == .playable,
                   downloadController?.downloadsEnabled == true else { return }
             downloadController?.requestDownload(track)
         case let .playbackControl(intent):
@@ -2264,6 +2277,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         for id: DulcetProviderItemID
     ) {
         downloadStateCache[id] = state
+        librarySession?.reader?.downloadsChanged()
         downloadStateChangeHandler?()
         libraryAlbums = libraryAlbums.map { album in
             album.replacingTracks(album.tracks.map { track in

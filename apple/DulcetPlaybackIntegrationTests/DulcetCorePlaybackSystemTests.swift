@@ -1013,6 +1013,83 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         )
     }
 
+    /// A healthy queue and a local asset cannot bypass failed submitted-play persistence.
+    /// The injected result comes from the real facade with an unavailable database; only the
+    /// delivery configuration fails, so a queue failure cannot mask unsafe engine preparation.
+    func testOfflinePersistenceFailureBlocksLocalPlaybackUntilReconnect() async throws {
+        let track = DulcetTrack(
+            id: DulcetProviderItemID(providerInstanceID: provider, rawID: "offline-persistence"),
+            title: "Offline persistence fixture", credits: [], albumTitle: "Local album",
+            duration: .seconds(120), sourceContainer: .mp3, mediaSourceID: nil,
+            artwork: DulcetArtwork(seed: "offline-persistence", palette: .indigoCoral)
+        )
+        let queue = ApplePlaybackQueueClient(databaseName: ":memory:")
+        let unavailableDatabase = ApplePlaybackQueueClient(databaseName: "")
+        defer { queue.close(); unavailableDatabase.close() }
+        XCTAssertNil(queue.snapshot().errorKind, "control: queue storage remains usable")
+        let failure = unavailableDatabase.configureOfflineDelivery()
+        XCTAssertFalse(failure.configured)
+        XCTAssertEqual(failure.errorKind, "persistence")
+        let engine = RecordingCommandEngine()
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-local-\(UUID().uuidString)")
+        try Data([0xff, 0xfb, 0x90, 0x00]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let downloads = PersistenceFailureDownloads(file: file)
+        var configurationAttempts = 0
+        let controller = DulcetCorePlaybackController(
+            queueClient: queue, engine: engine, catalog: [], downloadController: downloads,
+            configureOfflineDelivery: {
+                configurationAttempts += 1
+                return failure
+            }
+        )
+        let savedAccount = account(provider)
+        let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+            connector: SystemTestsUnusedConnector(), playbackController: controller
+        ))
+        store.selectDestination(.nowPlaying)
+        let play = DulcetPlaybackQueueIntent(
+            tracks: [track], sourceKind: .album,
+            sourceID: DulcetProviderItemID(providerInstanceID: provider, rawID: "local-album"),
+            sourceDisplayName: "Local album", startIndex: 0, shuffle: false
+        )
+
+        controller.configureOffline(account: savedAccount)
+        XCTAssertEqual(configurationAttempts, 1, "the failure must actually be injected")
+        controller.replaceQueueAndPlay(play)
+        await Task.yield()
+        XCTAssertEqual(engine.count("prepare"), 0, "offline audio must not start without durable plays")
+        XCTAssertEqual(controller.currentPresentation.status, .failed)
+        XCTAssertEqual(store.snapshot.state, .nowPlayingFailed, "Play must expose the failure to the person")
+
+        // The same healthy queue/asset can prepare after explicit connected configuration.
+        // No Ready/progress events are emitted, so this control sends no scrobble or stream.
+        let preparesBeforeReconnect = engine.count("prepare")
+        let assetsBeforeReconnect = downloads.assetRequests
+        controller.configure(account: savedAccount)
+        XCTAssertEqual(configurationAttempts, 1, "Reconnect uses the unchanged online configuration")
+        controller.replaceQueueAndPlay(play)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while engine.count("prepare") == preparesBeforeReconnect, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(engine.count("prepare"), preparesBeforeReconnect + 1, "control: local playback is otherwise usable")
+        XCTAssertEqual(downloads.assetRequests, assetsBeforeReconnect + 1)
+
+        // Failure while replacing a configured session must stop its existing engine item too.
+        let stops = engine.count("stop")
+        controller.configureOffline(account: savedAccount)
+        XCTAssertEqual(configurationAttempts, 2)
+        XCTAssertEqual(engine.count("stop"), stops + 1)
+        let commandsAfterStop = engine.commands.count
+        controller.send(.play)
+        controller.replaceQueueAndPlay(play)
+        await Task.yield()
+        XCTAssertEqual(engine.commands.count, commandsAfterStop, "neither resume nor a new Play can bypass the failure")
+        XCTAssertEqual(controller.currentPresentation.status, .failed)
+        XCTAssertEqual(store.snapshot.state, .nowPlayingFailed)
+    }
+
     private func makeFixture(
         tracks rawIDs: [String],
         artwork: Data? = nil,
@@ -1070,6 +1147,28 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         }
         return fixture
     }
+}
+
+@MainActor
+private final class PersistenceFailureDownloads: DulcetDownloadControlling {
+    let downloadsEnabled = true
+    private let file: URL
+    private(set) var assetRequests = 0
+
+    init(file: URL) { self.file = file }
+    func setStatusHandler(_ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void) {}
+    func configure(account: DulcetPlaybackAccount) {}
+    func requestDownload(_ track: DulcetTrack) { XCTFail("This proof uses a previously downloaded file") }
+    func status(for id: DulcetProviderItemID) -> DulcetDownloadState { .downloaded }
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? {
+        assetRequests += 1
+        return DulcetOfflinePlaybackAsset(
+            expectedContainer: .mp3, exactByteLength: 4,
+            resource: DulcetLocalFilePlaybackResource(fileURL: file, exactByteLength: 4)
+        )
+    }
+    func removeAccountData() async -> Bool { false }
+    func disconnect() {}
 }
 
 @MainActor
