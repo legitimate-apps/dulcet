@@ -5527,7 +5527,8 @@ final class DulcetiOSUITests: XCTestCase {
         let namespace = "ios-search-" + UUID().uuidString.prefix(8).lowercased()
         afterTest.append {
             let cleaner = XCUIApplication()
-            cleaner.launchArguments = ["-dulcet-debug-download-handoff-clear"]
+            cleaner.launchArguments = ["-dulcet-debug-download-handoff-dump", namespace,
+                                       "-dulcet-debug-download-handoff-clear"]
             cleaner.launch()
             cleaner.terminate()
         }
@@ -5606,7 +5607,11 @@ final class DulcetiOSUITests: XCTestCase {
             // The namespace lives in the app's defaults for a quarter hour; a later test must not
             // inherit it.
             let cleaner = XCUIApplication()
-            cleaner.launchArguments = ["-dulcet-debug-download-handoff-clear"]
+            // Supply the namespace independently of defaults: the failing replacement may
+            // have lost that record. The cleanup app copies its marker trail to the system
+            // log in the xcresult, including steps the overlay could never show.
+            cleaner.launchArguments = ["-dulcet-debug-download-handoff-dump", namespace,
+                                       "-dulcet-debug-download-handoff-clear"]
             cleaner.launch()
             cleaner.terminate()
         }

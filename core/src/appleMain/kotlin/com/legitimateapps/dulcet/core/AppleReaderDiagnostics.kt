@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import co.touchlab.sqliter.interop.SQLiteExceptionErrorCode
 import platform.Foundation.NSLog
 
 /**
@@ -11,7 +12,12 @@ import platform.Foundation.NSLog
 internal object AppleReaderDiagnostics {
     fun failed(step: String, failure: Throwable? = null) {
         val kind = failure?.let { it::class.qualifiedName ?: it::class.simpleName } ?: "no session"
+        // A class alone cannot distinguish a lock race from a failed file open or schema
+        // statement. The driver's closed error type/code carries no SQL, path or query.
+        val sqlite = (failure as? SQLiteExceptionErrorCode)?.let {
+            runCatching { " sqlite=${it.errorType.name}:${it.errorType.code}" }.getOrDefault(" sqlite=unknown")
+        }.orEmpty()
         // The whole line is the format, with `%` escaped: NSLog's C varargs take no Kotlin string.
-        NSLog("Dulcet reader: $step failed ($kind)".replace("%", "%%"))
+        NSLog("Dulcet reader: $step failed ($kind)$sqlite".replace("%", "%%"))
     }
 }

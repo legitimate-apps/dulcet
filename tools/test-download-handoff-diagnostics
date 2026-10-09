@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Exercise the real Swift probe resolver and its public-safe failure diagnostics.
+
+No app build or server needed. --source permits a red-before run against an earlier controller.
+The extracted enum is compiled and executed, rather than checked for source strings.
+"""
+from pathlib import Path
+import argparse
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--source', type=Path, default=ROOT / 'apple/DulcetAppleShared/DulcetCoreDownloads.swift')
+args = parser.parse_args()
+source = args.source.read_text()
+start = source.index('enum DulcetDownloadHandoffProbe {')
+end = source.index('\n#endif', start)
+probe = source[start:end]
+driver = r'''
+let caseName = CommandLine.arguments[1]
+let suite = "com.legitimateapps.dulcet.test.handoff-diagnostics." + UUID().uuidString
+let defaults = UserDefaults(suiteName: suite)!
+defer { defaults.removePersistentDomain(forName: suite) }
+let key = "com.legitimateapps.dulcet.debug.download-handoff"
+let now = Date(timeIntervalSince1970: 1_000)
+let bundle = "/diagnostic-path-canary/Dulcet.app"
+let namespace = "diagnostic-" + UUID().uuidString
+var arguments: [String] = []
+var expected: String? = nil
+var bundlePath: String? = bundle
+switch caseName {
+case "missing": break
+case "invalid":
+    defaults.set(["namespace": "INVALID NAMESPACE CANARY", "bundle": bundle, "expires": 2_000], forKey: key)
+case "mismatch":
+    defaults.set(["namespace": namespace, "bundle": "/other-path-canary/Dulcet.app", "expires": 2_000], forKey: key)
+case "expired":
+    defaults.set(["namespace": namespace, "bundle": bundle, "expires": 999], forKey: key)
+case "restored":
+    defaults.set(["namespace": namespace, "bundle": bundle, "expires": 2_000], forKey: key)
+    expected = namespace
+case "container-relaunch":
+    // iOS preferences already belong to this app's data container. The OS launch may
+    // resolve the app bundle differently from Xcode's launch; keep the original namespace.
+    defaults.set(["namespace": namespace, "bundle": bundle, "expires": 2_000], forKey: key)
+    bundlePath = nil
+    expected = namespace
+case "launch":
+    arguments = [DulcetDownloadHandoffProbe.launchArgument, namespace]
+    expected = namespace
+case "clear":
+    defaults.set(["namespace": namespace, "bundle": bundle, "expires": 2_000], forKey: key)
+    arguments = [DulcetDownloadHandoffProbe.clearArgument]
+case "dump-missing":
+    // A replacement lost its defaults; cleanup still knows the namespace from the proof.
+    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    let directory = support.appendingPathComponent("Dulcet/DebugDownloadHandoff/\(namespace)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try "123 pid=42 task-failed download=opaque error=NSURLErrorDomain:-3000\n".write(
+        to: directory.appendingPathComponent("markers.log"), atomically: true, encoding: .utf8)
+    // Keep the file alive through resolve, not just through the switch's scope.
+    let result = DulcetDownloadHandoffProbe.resolve(
+        arguments: ["-dulcet-debug-download-handoff-dump", namespace, DulcetDownloadHandoffProbe.clearArgument],
+        defaults: defaults, now: now, bundlePath: bundle)
+    precondition(result == nil)
+    print("PASS \(caseName)")
+    exit(0)
+default: fatalError("unknown diagnostic control")
+}
+let result = DulcetDownloadHandoffProbe.resolve(arguments: arguments, defaults: defaults, now: now, bundlePath: bundlePath)
+precondition(result == expected)
+if caseName == "expired" || caseName == "clear" { precondition(defaults.dictionary(forKey: key) == nil) }
+print("PASS \(caseName)")
+'''
+cases = {
+    'missing': 'result=missing',
+    'invalid': 'result=invalid-record',
+    'mismatch': 'bundle-match=false result=bundle-mismatch',
+    'expired': 'result=expired',
+    'restored': 'harness=false cleared=false stored=true bundle-match=true result=active',
+    'container-relaunch': 'harness=false cleared=false stored=true bundle-match=true result=active',
+    'launch': 'harness=true cleared=false stored=true bundle-match=true result=active',
+    'clear': 'cleared=true stored=false',
+    'dump-missing': 'DULCET HANDOFF marker 123 pid=42 task-failed download=opaque error=NSURLErrorDomain:-3000',
+}
+with tempfile.TemporaryDirectory(prefix='dulcet-handoff-diagnostics-') as directory:
+    directory = Path(directory)
+    swift = directory / 'main.swift'
+    swift.write_text('import Foundation\nimport CryptoKit\n' + probe + '\n' + driver)
+    binary = directory / 'probe'
+    subprocess.run(['xcrun', 'swiftc', '-swift-version', '6', str(swift), '-o', str(binary)], check=True)
+    for name, expected in cases.items():
+        result = subprocess.run([str(binary), name], text=True, capture_output=True, check=True)
+        assert f'PASS {name}' in result.stdout, name
+        assert expected in result.stderr, f'{name}: missing diagnostic {expected!r}'
+        for canary in ['diagnostic-path-canary', 'other-path-canary', 'INVALID NAMESPACE CANARY']:
+            assert canary not in result.stderr, f'{name}: diagnostic exposed {canary}'
+        print(f'PASS {name}: resolution/result evidence present; path and invalid-value canaries absent')
+print(f'DOWNLOAD HANDOFF DIAGNOSTICS passed={len(cases)} failed=0')

@@ -59,6 +59,14 @@ final class DulcetMacDownloadHandoffAppTest: XCTestCase {
         let copyDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-\(namespace)", isDirectory: true)
         defer {
             for child in children where !child.isTerminated { kill(child.processIdentifier, SIGKILL) }
+            // Failure messages passed to waitUntil capture the trail BEFORE the wait. Keep
+            // its final contents as an attachment on every exit, including a startup failure.
+            let trail = probe.markers().joined(separator: "\n")
+            let attachment = XCTAttachment(string: trail)
+            attachment.name = "download-handoff-markers"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            for line in probe.markers() { print("DULCET MAC HANDOFF final-marker \(line)") }
             probe.remove()
             UserDefaults.standard.removePersistentDomain(forName: Self.copyBundleIdentifier)
             try? FileManager.default.removeItem(at: copyDirectory)
