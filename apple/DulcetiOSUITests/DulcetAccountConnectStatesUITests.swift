@@ -65,6 +65,31 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         proveEveryAccountConnectState(compact: false)
     }
 
+    /// The event options belong to a process. A scope entered before launch must also reach
+    /// the new process, including a replacement created by a relaunch within that scope.
+    @MainActor
+    func testAnimationWaitOptionsReachEachLaunchedProcessOnIPadOS() {
+        guard requireSimulator(.pad, "The interaction-scope lifecycle proof on iPad") else { return }
+        let app = XCUIApplication()
+        app.launchArguments = ["-dulcet-account-connect-layout-fixture"]
+        withoutIdleWaits(app) {
+            for launch in 1...2 {
+                self.launchInInteractionScope(app)
+                let process = app.value(forKey: "currentProcess") as? NSObject
+                let applicationOptions = app.value(forKey: "currentInteractionOptions") as? NSNumber
+                let processOptions = process?.value(forKey: "interactionOptions") as? NSNumber
+                print("DULCET INTERACTION SCOPE launch=\(launch) application=\(String(describing: applicationOptions))"
+                    + " process=\(String(describing: processOptions))")
+                XCTAssertEqual(applicationOptions?.uint32Value, 3)
+                XCTAssertEqual(processOptions?.uint32Value, 3,
+                               "The running process must receive both event-wait options")
+                app.terminate()
+            }
+        }
+        XCTAssertEqual((app.value(forKey: "currentInteractionOptions") as? NSNumber)?.uint32Value, 0,
+                       "The scope must restore ordinary event waits")
+    }
+
     @MainActor
     private func proveEveryAccountConnectState(compact expectedCompact: Bool) {
         let app = XCUIApplication()
@@ -88,7 +113,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
         installSystemAlertInterruptionMonitors()
         app.launchArguments = []
-        app.launch()
+        launchInInteractionScope(app)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15), "The app window must exist")
         let compact = window.frame.width < 700
@@ -106,7 +131,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             reconnectInLibrary.tap()
             guard awaitSignOut(in: app, compact: compact), signOut(in: app) else { return }
             app.terminate()
-            app.launch()
+            launchInInteractionScope(app)
         }
 
         // 1. Idle.
@@ -231,7 +256,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             "-dulcet-debug-account-username", server.username,
             "-dulcet-debug-account-password", server.password,
         ]
-        app.launch()
+        launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
         let connected = element(labelPrefix: "Connected to", in: app)
         XCTAssertTrue(connected.waitForExistence(timeout: 5), "Connection must say it is connected: " + app.debugDescription)
@@ -241,7 +266,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         //    until Reconnect, and Connection names the saved server.
         app.terminate()
         app.launchArguments = []
-        app.launch()
+        launchInInteractionScope(app)
         guard reconnectInLibrary.waitForExistence(timeout: 20) else {
             XCTFail("A relaunch with a saved account must open its library with Reconnect: " + app.debugDescription)
             return
@@ -260,7 +285,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         let missingAccount = UUID().uuidString
         app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", missingAccount]
-        app.launch()
+        launchInInteractionScope(app)
         guard openConnection(in: app, compact: compact) else { return }
         let unreadable = app.staticTexts["Your saved account could not be opened"].firstMatch
         guard unreadable.waitForExistence(timeout: 15), tryAgain.waitForExistence(timeout: 5) else {
@@ -278,7 +303,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // arguments only, so the next launch opens it again.
         app.terminate()
         app.launchArguments = []
-        app.launch()
+        launchInInteractionScope(app)
         XCTAssertTrue(reconnectInLibrary.waitForExistence(timeout: 20),
                       "The saved account must still open after the planted launch: " + app.debugDescription)
         print("DULCET ACCOUNT STATES PASS destination=\(compact ? "compact" : "regular")")
@@ -288,7 +313,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     // in the app as well is not a state predicate: iPad CI received main-run-loop idle replies
     // and drew the protocol error, but never replied to animation-idle requests after Try Again.
     // Use the same synchronous interaction scope as the row-menu proofs (TRAPS 48), retaining
-    // every field/state/server assertion. The scope includes relaunches; no option escapes it.
+    // every field/state/server assertion. Each launch reapplies it to the replacement process;
+    // no option escapes the outer scope.
     // If Xcode changes the private call's ABI, fall back to its ordinary waits.
     @MainActor
     private func withoutIdleWaits(_ app: XCUIApplication, _ body: @escaping () -> Void) {
@@ -303,6 +329,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         typealias Perform = @convention(c) (AnyObject, Selector, UInt32, @convention(block) () -> Void) -> Void
         let perform = unsafeBitCast(method_getImplementation(method), to: Perform.self)
         perform(app, selector, 3, body)
+    }
+
+    /// XCTest stores these options on both XCUIApplication and its current process. A relaunch
+    /// keeps the application's value but creates a process with ordinary waits. Re-entering the
+    /// active scope after launch applies its options to that new process too; the nested scope
+    /// restores the outer value, and the outer scope restores ordinary waits when the proof ends.
+    @MainActor
+    private func launchInInteractionScope(_ app: XCUIApplication) {
+        app.launch()
+        withoutIdleWaits(app) {}
     }
 
     // MARK: - Driving the form
@@ -333,8 +369,18 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 XCTFail("The local-HTTP consent control must be reachable")
                 return false
             }
-            allowLocalHTTP.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-            guard waitForValue(wanted, of: allowLocalHTTP, timeout: 5) else {
+            // The scope suppresses animation-idle waits, so a tap can arrive while the keyboard
+            // is still leaving and be dropped (hosted iPhone, run 37868446237). Tap again only
+            // while the control still exists, is hittable and provably holds its old value.
+            var turned = false
+            for attempt in 1...3 {
+                allowLocalHTTP.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+                if waitForValue(wanted, of: allowLocalHTTP, timeout: 5) { turned = true; break }
+                guard attempt < 3, allowLocalHTTP.exists, allowLocalHTTP.isHittable,
+                      (allowLocalHTTP.value as? String) != wanted else { break }
+                print("DULCET ACCOUNT STATES consent re-tap attempt=\(attempt + 1)")
+            }
+            guard turned else {
                 XCTFail("The local-HTTP consent control must turn \(allow ? "on" : "off")")
                 return false
             }

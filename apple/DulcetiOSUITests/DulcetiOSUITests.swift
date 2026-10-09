@@ -3872,9 +3872,20 @@ final class DulcetiOSUITests: XCTestCase {
             XCTFail("The album page must link its artist \(artist): " + app.debugDescription)
             return
         }
-        link.tap()
         let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
-        guard artistTitle.waitForExistence(timeout: 15), artistTitle.label == artist else {
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        // A synthesized tap can leave the album unchanged. Re-interact only while that exact
+        // source page and its hittable link remain, never after reaching any artist page.
+        var reachedArtist = false
+        for attempt in 1...2 {
+            guard !artistTitle.exists, albumTitle.exists, albumTitle.label == album,
+                  link.exists, link.isHittable else { break }
+            link.tap()
+            reachedArtist = artistTitle.waitForExistence(timeout: 15)
+            if reachedArtist { break }
+            print("DULCET ARTIST LINK destination-absent-after-tap attempt=\(attempt)")
+        }
+        guard reachedArtist, artistTitle.label == artist else {
             XCTFail("The artist link must open \(artist)'s page: " + app.debugDescription)
             return
         }
@@ -5168,23 +5179,26 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func dismissKeyboardBeforeActivation(in app: XCUIApplication) -> Bool {
         let keyboard = app.keyboards.firstMatch
-        guard keyboard.exists else { return true }
         // The search field carries the platform's search submit key, which resigns the field on
         // both iPhone and iPad. The iPad-only hide key and a results drag remain fallbacks.
-        let submit = keyboard.buttons["Search"].firstMatch
-        let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
-        if submit.waitForExistence(timeout: 2) {
-            submit.tap()
-        } else if hideKeyboard.waitForExistence(timeout: 2) {
-            hideKeyboard.tap()
-        } else {
-            app.swipeDown()
+        // CI has synthesized Search while the keyboard stayed up. A remaining keyboard is the
+        // precondition for another dismissal gesture; result activation still requires it gone.
+        for attempt in 1...3 {
+            guard keyboard.exists else { return true }
+            let submit = keyboard.buttons["Search"].firstMatch
+            let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
+            if submit.waitForExistence(timeout: 2) {
+                submit.tap()
+            } else if hideKeyboard.waitForExistence(timeout: 2) {
+                hideKeyboard.tap()
+            } else {
+                app.swipeDown()
+            }
+            if keyboard.waitForNonExistence(timeout: 5) { return true }
+            print("DULCET SEARCH keyboard-still-shown attempt=\(attempt)")
         }
-        guard keyboard.waitForNonExistence(timeout: 5) else {
-            XCTFail("The software keyboard must dismiss before a result is activated")
-            return false
-        }
-        return true
+        XCTFail("The software keyboard must dismiss before a result is activated: " + app.debugDescription)
+        return false
     }
 
     /// A row is reachable when the hit point XCUITest would use for a tap -- its midpoint -- is
