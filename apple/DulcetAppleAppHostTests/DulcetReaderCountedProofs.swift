@@ -278,10 +278,13 @@ final class DulcetReaderCountedProofs {
             }
         }
         let summary = { DulcetHomeRow.allCases.map { "\($0.rawValue)=\(rows[$0]?.summary ?? "-")" }.joined(separator: " ") }
-        try await waitUntil("rows: \(summary())") {
+        // The rows read in parallel, so the held row's request can reach the proxy after the
+        // others are answered. Wait for it too; the assertions below still require it unanswered.
+        var whileHeld: [Seen] = []
+        try await waitUntil("rows: \(summary()) requests: \(whileHeld)", condition: {
             freshness(.recentlyAdded) == .live && freshness(.recentlyPlayed) == .live && failed(.favourites)
-        }
-        let whileHeld = try await fixture.proxy.requests(since: mark)
+                && whileHeld.contains { $0.endpoint == "getAlbumList2" && $0.type == "frequent" }
+        }, poll: { whileHeld = (try? await fixture.proxy.requests(since: mark)) ?? [] })
         let frequent = whileHeld.filter { $0.endpoint == "getAlbumList2" && $0.type == "frequent" }
         XCTAssertFalse(frequent.isEmpty, "Control: the most-played row did ask: \(whileHeld)")
         XCTAssertEqual(frequent.filter(\.answered).count, 0, "The most-played row's answer had not arrived: \(frequent)")
