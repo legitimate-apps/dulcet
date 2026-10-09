@@ -849,7 +849,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
      * and the Favourites screen reads it back from the server (`getStarred2`) with its heart filled;
      * taken off there, the server lets it go and the row stays, hollow, until the list is read again.
      */
-    fun aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack() {
+    fun aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack(completeHomeRead: Boolean = false) {
         ui.openLibrary()
         awaitHomeLive()
         val album = server.albumId(OPENED_ALBUM)
@@ -879,11 +879,33 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // The list's membership comes only from the server's `getStarred2`: the song can appear in it
         // only from a read made after the star. The home's own favourites row, re-opened on the way
         // back, may be the read that brings it, which the screen then shows as it is (same list).
+        // Force the navigation race: the home row starts its post-star read, then closes before
+        // that read can answer. The completed-read control instead proves the shared list needs
+        // no second read when the home row has already fetched the changed membership.
+        if (!completeHomeRead) proxy.hold { it.endpoint == "getStarred2" }
         ui.backFromAlbum()
+        if (completeHomeRead) {
+            await("the home favourites read completed before navigation") {
+                last("home.3").let { it.freshness == AndroidLibraryFreshness.Live && songId in it.itemRawIds }
+            }
+            awaitQuiet()
+        } else {
+            await("the home favourites read held before navigation") {
+                readerRequests(mark).any { it.endpoint == "getStarred2" && !it.answered } &&
+                    frames("home.3").lastOrNull()?.freshness.let {
+                        it is AndroidLibraryFreshness.Cached && it.reason == AndroidLibraryCachedReason.Revalidating
+                    }
+            }
+        }
         ui.activate(compose.onNodeWithTag("library.view.favourites"))
+        await("the favourites surface opened") { frames("favourites").isNotEmpty() }
+        proxy.release()
         await("the favourites live") { frames("favourites").lastOrNull()?.freshness == AndroidLibraryFreshness.Live }
         await("the song on the favourites screen") { exists("library.favourites.track.0") }
+        awaitQuiet()
         val starredReads = readerRequests(mark).filter { it.endpoint == "getStarred2" }
+        assertEquals(if (completeHomeRead) 1 else 2, starredReads.size,
+            "a completed home read is shared; a cancelled home read must be replaced")
         assertTrue(starredReads.isNotEmpty(), "the list was read from the server after the star: ${readerRequests(mark).map { it.endpoint }}")
         compose.onNodeWithTag("library.favourites.track.0").assertTextContains(title, substring = true)
         assertEquals(true, selected("library.favourites.track.0.favourite"))

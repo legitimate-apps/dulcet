@@ -93,6 +93,9 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     @Test fun aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack() =
         scenarios.aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack()
 
+    @Test fun aCompletedHomeFavouritesReadIsSharedWithTheFavouritesScreen() =
+        scenarios.aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack(completeHomeRead = true)
+
     /** The rating from the song's row menu: Rate…, then a tap on a star, as a finger does. */
     @Test fun conf84RatingShowsWithTheTapReachesTheServerAndZeroClearsIt() =
         scenarios.conf84RatingShowsWithTheTapReachesTheServerAndZeroClearsIt { row, star ->
