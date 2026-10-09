@@ -62,13 +62,42 @@ one read in their tested ordering, rather than excluding this race.
 
 ### Hosted proof failure diagnostics (2026-10-09)
 
-**Mac not diagnosed:** the hosted failures stopped at different steps. In
+The earlier hosted failures stopped at different steps. In
 [run 37857703010, attempt 2](https://github.com/legitimate-apps/dulcet/actions/runs/37857703010/attempts/2),
 the Mac child's markers reported `download-request-failed` with zero search rows.
 Its xcresult system log reported a reader setup `SQLiteExceptionErrorCode`, followed
 by search failures with no session (**OBSERVED**). No download was started and no
 replacement was tested. The old diagnostic omitted the SQLite error code; a
 database lock/schema race is **ASSUMED**, not established.
+
+**Mac contention diagnosed:** the diagnostics-enabled
+[run 37980371329](https://github.com/legitimate-apps/dulcet/actions/runs/37980371329)
+records reader setup `sqlite=SQLITE_BUSY:5`, followed by search open/call failures
+with no session (**OBSERVED**, child xcresult system log). The child resolved its
+probe namespace and reported a satisfied network path and `reachable`. Its final
+marker says `reader-setup-failed=true reader-generation=1 online=false` and zero
+search rows. `online=false` can follow this setup failure: the reader has no
+composition, its connect callback reports failure, and the shell's session stores
+that connection failure even while the network is reachable. No download started.
+
+The Apple factory previously created independent native driver pools for each
+component opening the same file. Native controls reproduce simultaneous fresh
+startup failing with `SQLITE_BUSY:5`, and a second pool committing between a
+transaction's read and write causing a database-locked error (**OBSERVED locally**).
+The driver's existing busy timeout does not make separate writer pools serialize
+those transactions. The exact hosted SQL statement and contending component were
+not recorded; attributing that incident specifically to migration or cache binding
+remains **ASSUMED**. SQLite documents the distinction between lock contention and
+snapshot upgrade failures in its [result-code reference](https://www.sqlite.org/rescode.html).
+
+Production Apple components now share one native driver pool per database filename
+in the process, using its single writer pool to serialize their transactions.
+Reference-counted handles keep one component's close from closing another's
+database; failed store setup releases its handle too. The deliberately independent
+committed-state control observer still uses a separate connection so it cannot see
+the primary's uncommitted generation. In-memory factory behavior, the busy timeout
+and all handoff assertions remain unchanged. Another process's file locks still
+belong to SQLite's busy handling; this change does not claim to remove them.
 
 In [run 37875773587](https://github.com/legitimate-apps/dulcet/actions/runs/37875773587),
 the iPad process died with one stream read held, and the system launched its

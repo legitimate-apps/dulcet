@@ -7725,6 +7725,19 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-09 — Apple components share the database file's native writer pool.**
+The reader, playback and downloads acquire reference-counted handles to one native
+driver per database filename in the process. The driver's single writer pool
+serializes their transactions; the last handle closes it, and a failed store open
+releases its handle. The committed-state control observer retains an independent
+connection so its same-thread read during a commit probe remains committed-only.
+OBSERVED: hosted run 37980371329 reports reader setup `SQLITE_BUSY:5` while the
+network is reachable, then no-session search and zero rows. Local native controls
+reproduce contention during simultaneous fresh startup and a read-then-write
+snapshot with independent pools. The exact hosted SQL and other writer were not
+recorded. In-memory behavior, the existing busy timeout and the download handoff
+assertions do not change. Other processes' locks remain SQLite's responsibility.
+
 **2026-10-09 — Attached-device main runs can supply committed receipt evidence.**
 §21.3.1 now registers `signed-ipad-account-connect` / `signed-ipad-account-connect` as the
 `device-attached` receipt class alongside the signed entitled Mac host. Receipts use the shared
