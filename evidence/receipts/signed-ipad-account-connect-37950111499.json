@@ -1,0 +1,29 @@
+{
+  "workflow": "signed-ipad-account-connect",
+  "job": "signed-ipad-account-connect",
+  "run_id": "37950111499",
+  "run_url": "https://github.com/legitimate-apps/dulcet/actions/runs/37950111499",
+  "head_sha": "88086792909bbb4343b7167c13544bc144437fc3",
+  "conclusion": "success",
+  "tests": [
+    {
+      "name": "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect",
+      "result": "passed"
+    }
+  ],
+  "junit_sha256": "5d7625aa45e614c7c2ae7aa8a7593907075bd75a1945942638bc30a7d6f15839",
+  "test_sources": {
+    "apple/DulcetSignedIPadUITests/DulcetSignedIPadAccountConnectUITests.swift": "20d536e3c7b7890660e043210643a10995dc37ef",
+    "apple/DulcetAppleShared/DulcetSignedIPadAccountProbe.swift": "bee213d354a96caa0de7ae320a814d2c42788c22",
+    "apple/DulcetiOS/DulcetiOSApp.swift": "7402ed0ea5859fda32e4de9f3cedde2d5d7bc9c6",
+    "apple/project.yml": "566c9b2a9a9e0e39ce12db6f866f063f95ecd462",
+    "tools/ci/run-signed-ipad-proof": "437869be327ef74e3bd19f6710b2a951c638b7cd",
+    "tools/verify_signed_ipad_privacy.py": "66bc62fd434660cec3a617766859cd265fc57da3"
+  },
+  "audit": {
+    "tool": "tools/audit_signed_ipad_receipt.py",
+    "result": "pass",
+    "files_scanned": 14,
+    "tokens_checked": 54
+  }
+}

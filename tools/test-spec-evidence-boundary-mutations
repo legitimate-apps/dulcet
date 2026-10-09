@@ -2,6 +2,7 @@
 """Mutation tests proving the spec evidence-boundary checker rejects regressions."""
 
 from pathlib import Path
+import json
 import re
 import shutil
 import subprocess
@@ -295,5 +296,28 @@ with tempfile.TemporaryDirectory(prefix="dulcet-proxy-evidence-") as directory:
             "removed bounded proxy wire evidence was accepted: "
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
+
+for label, expected in (
+    ("receipt-removed", "must cite the signed main receipt as a bounded observation"),
+    ("promoted", "must stay partial while its interaction gaps remain"),
+    ("stale-device-claim", "must reflect the observed signed run"),
+):
+    with tempfile.TemporaryDirectory(prefix="dulcet-ipad-boundary-") as directory:
+        root = Path(directory)
+        materialize(root)
+        path = root / "FEATURES.yml"
+        document = json.loads(path.read_text())
+        cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["ipados"]
+        if label == "receipt-removed":
+            cell["evidence"] = [row for row in cell["evidence"] if "receipt" not in row]
+        elif label == "promoted":
+            cell["status"] = "shipped"
+            cell.pop("promotion_condition")
+        else:
+            cell["promotion_condition"]["reason"] += " There are zero device passes."
+        path.write_text(json.dumps(document))
+        result = invoke(root)
+        if result.returncode == 0 or expected not in result.stdout:
+            raise AssertionError(f"{label}: expected rejection {expected!r}, output={result.stdout!r}")
 
 print("spec evidence-boundary mutations are rejected")

@@ -30,6 +30,10 @@ def restore_signed_mac_gap(root: Path) -> None:
 
 
 def restore_signed_mac_gap_cell(document: dict[str, object]) -> None:
+    # Real main receipts refer to commits outside this synthetic repository. Receipt cases
+    # construct their own record against its tree; retain every hosted iPad row.
+    ipad = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["ipados"]
+    ipad["evidence"] = [row for row in ipad["evidence"] if "receipt" not in row]
     cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["macos"]
     evidence = [row for row in cell["evidence"] if "receipt" not in row]
     for row in evidence:
@@ -82,6 +86,7 @@ def materialize(root: Path) -> None:
         # that do not exist -- a false negative that reads exactly like a bad promotion.
         "apple/DulcetMacTests",
         "apple/DulcetSignedMacTests",
+        "apple/DulcetSignedIPadUITests",
         "apple/DulcetTVUITests",
         # The Android app carries the account-connect controls CONF-09a..CONF-10b, and the gate
         # verifies that every cited evidence test NAME exists in the tree. Without this the fixture
@@ -1528,6 +1533,45 @@ def receipt_case(
 
 receipt_case("an observation row citing a fresh receipt", cite_receipt(receipt_row()), None)
 receipt_case("a conformance row citing a receipt closes a named gap", cite_receipt_for_gap, None)
+
+IPAD_RECEIPT_PATH = "evidence/receipts/signed-ipad-account-connect-111.json"
+IPAD_RECEIPT_SOURCE = "apple/DulcetSignedIPadUITests/DulcetSignedIPadAccountConnectUITests.swift"
+IPAD_RECEIPT_TEST = (
+    "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect"
+)
+
+
+def write_ipad_receipt(root: Path) -> None:
+    blob = subprocess.check_output(["git", "hash-object", IPAD_RECEIPT_SOURCE], cwd=root, text=True).strip()
+    write_receipt(root, fixture_receipt(
+        root, workflow="signed-ipad-account-connect", job="signed-ipad-account-connect",
+        tests=[{"name": IPAD_RECEIPT_TEST, "result": "passed"}],
+        test_sources={IPAD_RECEIPT_SOURCE: blob},
+        audit={"tool": "tools/audit_signed_ipad_receipt.py", "result": "pass",
+               "files_scanned": 14, "tokens_checked": 54},
+    ), IPAD_RECEIPT_PATH)
+
+
+def cite_ipad_receipt(document: dict[str, object]) -> None:
+    feature_cell(document, "account.connect", "ipados")["evidence"].append(
+        receipt_row(test=IPAD_RECEIPT_TEST, receipt=IPAD_RECEIPT_PATH,
+                    observes="the signed physical-iPad proof saved and reloaded a real Keychain item")
+    )
+
+
+receipt_case("a partial iPad cell citing an attached-device receipt", cite_ipad_receipt, None,
+             arrange=write_ipad_receipt)
+
+
+def stale_ipad_receipt(root: Path) -> None:
+    write_ipad_receipt(root)
+    source = root / IPAD_RECEIPT_SOURCE
+    source.write_text(source.read_text() + "\n// Changed since receipt.\n")
+
+
+receipt_case("an attached-device receipt goes stale when its source changes", cite_ipad_receipt,
+             "re-run signed-ipad-account-connect on main and commit a new receipt",
+             arrange=stale_ipad_receipt)
 
 receipt_case(
     "the cited receipt file is missing",
