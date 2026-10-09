@@ -306,7 +306,12 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     reply (apple-ci 37740342688). A persistent iPad simulator on the same runtime reproduced the
     wait after a password-field tap following the drag/search proofs. Read-only debugger inspection found the main thread
     asleep in its run loop and one animation still counted by XCTest; the window layers had no
-    download spinner. The exact animation was not identified. This scope changes only
+    download spinner. The exact animation was not identified. A relaunch also replaces XCTest's
+    current process: the application keeps its interaction options, but the replacement process
+    starts with ordinary event waits. OBSERVED 2026-10-08 with Xcode 26.6 / iOS 26.5 on the iPad
+    simulator: application=3 across two launches, process=3 on the first and 0 on the second. The account-state proof
+    reapplies its active scope after each launch; `testAnimationWaitOptionsReachEachLaunchedProcessOnIPadOS`
+    checks both actual processes and restoration of the outer scope. This scope changes only
     synthetic event waits: the proof still requires all eleven states, the server's answers, the
     silent port's accepted connection and Cancel, and the real Keychain read. Its regression tool
     models a UI that changes state while animation-idle never arrives, checks both event-wait bits
