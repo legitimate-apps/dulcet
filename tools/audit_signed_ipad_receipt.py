@@ -157,12 +157,12 @@ def audit(repo, run_id, tokens, output, github, literal=literal_scan):
             raise ValueError('unresolved test source')
         source_hashes[path] = source['sha']
     receipt = {
-        'workflow': WORKFLOW, 'job': JOB, 'run_id': int(run_id), 'run_url': run['html_url'],
+        'workflow': WORKFLOW, 'job': JOB, 'run_id': str(run_id), 'run_url': run['html_url'],
         'head_sha': run['head_sha'], 'conclusion': 'success',
         'tests': [{'name': TEST, 'result': 'passed'}],
         'junit_sha256': hashlib.sha256(xml.read_bytes()).hexdigest(),
         'test_sources': source_hashes,
-        'audit': {'tool': 'tools/audit_signed_ipad_receipt.py', 'result': 'PASS',
+        'audit': {'tool': 'tools/audit_signed_ipad_receipt.py', 'result': 'pass',
                   'files_scanned': len(files), 'tokens_checked': len(tokens)},
     }
     receipt_path = output/'receipt.json'
@@ -220,6 +220,8 @@ def self_test():
         root = Path(directory)
         fixture = Fixture()
         result = audit(REPO, 123, ['private-fixture-value'], root/'positive', fixture)
+        assert result['run_id'] == '123'
+        assert result['audit']['result'] == 'pass'
         assert result['tests'] == [{'name': TEST, 'result': 'passed'}]
         assert set(result) == {'workflow', 'job', 'run_id', 'run_url', 'head_sha', 'conclusion',
                                'tests', 'junit_sha256', 'test_sources', 'audit'}

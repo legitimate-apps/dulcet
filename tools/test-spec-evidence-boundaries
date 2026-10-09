@@ -41,6 +41,25 @@ errors.extend(validate_promotion_conditions(Path.cwd()))
 account_connect = next(
     feature for feature in features["features"] if feature["id"] == "account.connect"
 )
+ipad_account_connect = account_connect["platforms"]["ipados"]
+if ipad_account_connect.get("status") != "partial":
+    errors.append("account.connect/ipados must stay partial while its interaction gaps remain")
+if not any(
+    row.get("receipt", "").startswith("evidence/receipts/signed-ipad-account-connect-")
+    and "observes" in row
+    and row.get("test")
+    == "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect"
+    for row in ipad_account_connect.get("evidence", [])
+):
+    errors.append("account.connect/ipados must cite the signed main receipt as a bounded observation")
+ipad_reason = ipad_account_connect.get("promotion_condition", {}).get("reason", "")
+for marker in ("Hardware-keyboard interaction", "touch credential entry", "rotation/multitasking widths",
+               "DEBUG account hook", "Library Reconnect is observed, not tapped", "saved=PASS"):
+    if marker not in ipad_reason:
+        errors.append(f"account.connect/ipados promotion reason is missing {marker!r}")
+for stale in ("zero device passes", "has not run", "Physical execution is still unobserved"):
+    if stale in ipad_reason:
+        errors.append("account.connect/ipados promotion reason must reflect the observed signed run")
 macos_account_connect = account_connect["platforms"]["macos"]
 if macos_account_connect.get("status") != "shipped":
     errors.append(

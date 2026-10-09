@@ -86,11 +86,12 @@ def run(record: dict, api: dict, junit: bytes, *flags: str) -> subprocess.Comple
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("proof.xml", junit)
         (root / "artifact.zip").write_bytes(buffer.getvalue())
-        path = root / "evidence/receipts" / f"signed-mac-account-connect-{RUN_ID}.json"
+        path_text = f"evidence/receipts/{record['workflow']}-{RUN_ID}.json"
+        path = root / path_text
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(record))
         return subprocess.run(
-            [sys.executable, str(VERIFIER), *flags, f"evidence/receipts/signed-mac-account-connect-{RUN_ID}.json"],
+            [sys.executable, str(VERIFIER), *flags, path_text],
             cwd=root, env={**os.environ, "DULCET_GH": str(fake)}, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
         )
@@ -103,6 +104,27 @@ def expect(label: str, result: subprocess.CompletedProcess[str], code: int, text
 
 good = receipt(PASSING_JUNIT)
 expect("matching run", run(good, served(), PASSING_JUNIT), 0, "VERIFIED")
+
+ipad_junit = PASSING_JUNIT.replace(b'DulcetSignedMacAccountConnectTests', b'DulcetSignedIPadAccountConnectUITests').replace(
+    b'testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI',
+    b'testSignedIPadConnectKeychainRelaunchAndTouchReconnect',
+)
+ipad = receipt(ipad_junit)
+ipad.update(workflow="signed-ipad-account-connect", job="signed-ipad-account-connect",
+            tests=[{"name": "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect",
+                    "result": "passed"}],
+            test_sources={"apple/DulcetSignedIPadUITests/DulcetSignedIPadAccountConnectUITests.swift": "b" * 40})
+ipad["audit"]["tool"] = "tools/audit_signed_ipad_receipt.py"
+ipad_api = served()
+ipad_api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}"]["name"] = ipad["workflow"]
+ipad_api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}/jobs"]["jobs"][1]["name"] = ipad["job"]
+expect("matching attached-device run", run(ipad, ipad_api, ipad_junit), 0, "VERIFIED")
+expect("integer run id fails the shared schema", run(dict(ipad, run_id=int(RUN_ID)), ipad_api, ipad_junit),
+       1, "run_id must be a non-empty string")
+uppercase = copy.deepcopy(ipad)
+uppercase["audit"]["result"] = "PASS"
+expect("uppercase audit result fails the shared schema", run(uppercase, ipad_api, ipad_junit),
+       1, "audit result must be pass")
 
 api = served()
 api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}"]["head_sha"] = "c" * 40
@@ -133,4 +155,4 @@ expect("expired artifact, metadata only on request", run(good, api, PASSING_JUNI
 extra = dict(good, note="extra")
 expect("schema is exact", run(extra, served(), PASSING_JUNIT), 1, "schema: requires exactly")
 
-print("verify-evidence-receipt tests pass: 10 cases")
+print("verify-evidence-receipt tests pass: 13 cases")

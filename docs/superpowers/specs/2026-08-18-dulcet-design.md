@@ -6623,6 +6623,17 @@ persistence-failure state, but cannot prove a production Keychain save or its co
 `signed-mac-account-connect` supplies that bounded signed-host class with locally held signing
 material. This changes neither the ordinary hosted CI matrix nor the §22 distribution flow.
 
+**OBSERVED attached-device showing (2026-10-09):** `signed-ipad-account-connect` /
+`signed-ipad-account-connect` succeeded on main run
+[37950111499](https://github.com/legitimate-apps/dulcet/actions/runs/37950111499) at `88086792`.
+Its full downloaded logs, metadata and exact passing JUnit passed the private-token audit
+(14 files, 54 tokens, one test). `tools/evidence_receipts.py` admits this workflow/job as
+`device-attached`; `evidence/receipts/signed-ipad-account-connect-37950111499.json` records it.
+The signed iPad runner uses the same on-demand, ephemeral, neutral-identity and local-output
+boundary below. `account.connect/ipados` cites the receipt as an `observes` row and stays partial:
+initial credentials use the DEBUG hook; Library Reconnect is observed, not tapped; hardware-keyboard
+interaction, touch credential entry and broader rotation/multitasking widths remain gaps.
+
 **What is admitted:**
 
 - A self-hosted macOS runner, scoped to this repository, carrying a label used by no other job,
@@ -6636,7 +6647,7 @@ material. This changes neither the ordinary hosted CI matrix nor the §22 distri
 - Its jobs read **no repository secrets**. The signed-host class signs locally in a dedicated
   keychain with a certificate whose CN contains only the API-created identity. Release signing
   stays in the manual-approval environment described in §22.
-- The signed-host runner starts on demand for one job, exits, and has no service or scheduler.
+- Each evidence runner starts on demand for one job, exits, and has no service or scheduler.
   The runner name and process-visible hostname are neutral. Raw build/test output stays outside
   its workspace and is never uploaded; only the exact passing JUnit case may be published after
   a fail-closed check against locally derived private tokens. App bundles and xcresult are local.
@@ -6647,7 +6658,7 @@ pull-request status, so `verify-parity-evidence` never runs for it inside a requ
 row cites one audited green main run of it through a committed receipt instead:
 `{observes|conformance, receipt, test}`, where `receipt` is
 `evidence/receipts/<workflow>-<run_id>.json`. The receipt holds exactly `workflow`, `job`, `run_id`,
-`run_url`, the 40-hex `head_sha`, `conclusion` (`success`), `tests` (each `{name, result: passed}`),
+`run_url` (`run_id` is a string), the 40-hex `head_sha`, `conclusion` (`success`), `tests` (each `{name, result: passed}`),
 `junit_sha256` (the uploaded JUnit file's digest), `test_sources` (each test source path's git blob
 SHA at `head_sha`) and `audit` (`{tool, result: pass, files_scanned, tokens_checked}`), with neutral
 values only. On every pull request `tools/parity_gate.py` requires the schema to be exact; the job to
@@ -7714,6 +7725,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-09 — Attached-device main runs can supply committed receipt evidence.**
+§21.3.1 now registers `signed-ipad-account-connect` / `signed-ipad-account-connect` as the
+`device-attached` receipt class alongside the signed entitled Mac host. Receipts use the shared
+exact schema, including string `run_id` and audit `result: pass`; the iPad auditor and its
+self-test enforce that format. OBSERVED: main run 37950111499 at `88086792` succeeded and its
+logs, metadata and exact JUnit passed the private-token audit (14 files, 54 tokens, one test).
+`tools/verify-evidence-receipt` verified the committed receipt against the live run.
+The owning device session observed genuine passes and a launch-time production Keychain-read
+mutation killed at saved=PASS (one test, zero passed, one failed). `account.connect/ipados`
+cites the receipt as a bounded observation and stays partial: initial credentials use the DEBUG
+hook, Library Reconnect is observed but not tapped, and hardware-keyboard interaction, touch
+credential entry and broader rotation/multitasking widths remain gaps. Ordinary CI and the
+receipt's unchanged-source, reachable-commit and coverage rules stay in force.
+
 **2026-10-08 — Signed iPad account connection and Keychain relaunch proof prepared.** The isolated
 Dulcet signed iPad host uses the production iOS Kotlin adapter and data-protection Keychain.
 `DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect`
@@ -7730,9 +7755,9 @@ pass locally. On the authorized iPad the full test passed in three separate loca
 ending with Keychain cleanup and both test apps removed (OBSERVED, local only); a first fixture
 request raises the system Local Network prompt, which the test accepts for this host alone before
 any state is written. Skipping the production launch-time Keychain read makes the test fail at the
-saved-account phase (OBSERVED, one mutant run). `account.connect/ipados` stays partial, awaiting
-the dispatch-only main run of `signed-ipad-account-connect` under the existing
-§21.3.1 device-attached class. Raw output stays local; the exact passing JUnit alone is eligible
+saved-account phase (OBSERVED, one mutant run). `account.connect/ipados` stays partial. OBSERVED 2026-10-09: the dispatch-only main run
+37950111499 succeeded and its audited receipt is committed under the §21.3.1 device-attached
+class; the named interaction gaps remain. Raw output stays local; the exact passing JUnit alone is eligible
 for publication after runtime device-identifier and private-token checks. Its audit tool emits
 receipt fields for the owning evidence lane; this entry adds no evidence-policy change.
 

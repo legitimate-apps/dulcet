@@ -137,6 +137,19 @@ library, Reconnect through the rendered action, and the load-time persistence er
 is deleted. That run is cited through its committed receipt; the hosted proof carries the CONF-09b
 row and the signed proof an `observes` row.
 
+**How signed iPad evidence is bounded.** OBSERVED 2026-10-09: main run 37950111499 of
+`signed-ipad-account-connect` passed on an attached physical iPad. Its audited receipt,
+`evidence/receipts/signed-ipad-account-connect-37950111499.json`, is an `observes` row on the
+partial `account.connect/ipados` cell. The production iOS Kotlin connection saves to the real
+Keychain; an unfiltered attribute read follows a wrong-accessibility control; a fresh process
+loads the saved account without the account hook; touch navigation and Connection Reconnect
+reach connected; deleting the owned item reaches the load-time persistence error; cleanup passes.
+The owning device session observed the launch-time production Keychain-read mutation fail at
+saved=PASS (one test, zero passed, one failed). Initial credentials use the DEBUG account hook;
+Library Reconnect is observed, not tapped. Hardware-keyboard interaction, touch credential entry
+and broader rotation/multitasking widths remain gaps. The simulator CONF-09b and CONF-10e rows
+retain their original scope; this bounded device receipt does not promote the cell.
+
 **The earlier presentation test.** `accountPresentationTransitionsGivenConnectorOutcomes` submits
 through the production `DulcetPresentationStore` into `DulcetAccountDataSource` but injects the
 connector's completed outcomes and controls the credential store. It checks each step against the

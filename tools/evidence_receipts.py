@@ -20,9 +20,9 @@ import subprocess
 REPOSITORY_SLUG = "legitimate-apps/dulcet"
 
 # (workflow name, job id) -> §21.3.1 class. Only a job listed here may stand behind a receipt.
-# The attached-device class joins when its workflow exists; it has none yet.
 DISPATCH_ONLY_EVIDENCE_JOBS: dict[tuple[str, str], str] = {
     ("signed-mac-account-connect", "signed-account-connect"): "signed-entitled-host",
+    ("signed-ipad-account-connect", "signed-ipad-account-connect"): "device-attached",
 }
 
 RECEIPT_KEYS = {
