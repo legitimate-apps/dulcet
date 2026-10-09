@@ -61,6 +61,7 @@ private struct DulcetPreloadInFlight {
 final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueueEditing {
     private let queueClient: ApplePlaybackQueueClient
     private let engine: any DulcetCorePlaybackEngine
+    private let configureOfflineDelivery: () -> ApplePlaybackDeliveryConfigurationOutcomeDto
     private let downloadController: (any DulcetDownloadControlling)?
     private let artworkFetcher: (any DulcetArtworkFetching)?
     private var artworkOperations: [String: any DulcetArtworkFetchOperation] = [:]
@@ -114,10 +115,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         engine: any DulcetCorePlaybackEngine,
         catalog tracks: [DulcetTrack],
         downloadController: (any DulcetDownloadControlling)? = nil,
-        artworkFetcher: (any DulcetArtworkFetching)? = nil
+        artworkFetcher: (any DulcetArtworkFetching)? = nil,
+        configureOfflineDelivery: (() -> ApplePlaybackDeliveryConfigurationOutcomeDto)? = nil
     ) {
         self.queueClient = queueClient
         self.engine = engine
+        self.configureOfflineDelivery = configureOfflineDelivery ?? { queueClient.configureOfflineDelivery() }
         catalog = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         self.downloadController = downloadController
         self.artworkFetcher = artworkFetcher
@@ -222,7 +225,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             _ = queueClient.configureDelivery(account: coreAccount)
         } else {
             wireClient = nil
-            _ = queueClient.configureOfflineDelivery()
+            // Local audio is safe only once submitted plays have a durable destination.
+            // Disconnect also stops an existing item and clears the configured account.
+            guard configureOfflineDelivery().configured else {
+                disconnect()
+                return
+            }
         }
         publish(queueClient.snapshot())
     }
@@ -307,6 +315,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     func send(_ intent: DulcetPlaybackControlIntent) {
+        // A failed offline setup leaves no account, even if the core retains an old session.
+        guard account != nil else { return publishFailure() }
         guard let snapshot = queueClient.snapshot().snapshot else { return }
         guard let session = snapshot.currentSession else {
             // A finished queue keeps its last entry selected with no session (spec §14.3), and so
