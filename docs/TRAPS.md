@@ -373,3 +373,22 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     when another account field holds keyboard focus, so a keyboard that is merely slow to close
     never sends Menu to the app. In the same proofs the system keyboard also kept 10 of 31 typed
     characters under host load: verify each typed field and retype a short one, never accept it.
+
+53. **An AVPlayer item being ready with no `item.error` does not rule out a decode failure.**
+    OBSERVED on 2026-10-09 in `AVPlayerDecodeFailureTests` on native macOS and tvOS 26.5 Simulator:
+    the corrupt MP3 emitted `AVPlayerItemFailedToPlayToEndTime` with `AVFoundationErrorDomain`
+    `decodeFailed` (-11821), wrapping OSStatus 1650549857, while the item remained `readyToPlay`
+    with no item error; its error log was empty. The engine already reads that notification.
+    OBSERVED in hosted [run 37944337563](https://github.com/legitimate-apps/dulcet/actions/runs/37944337563),
+    on tvOS Simulator: the same test requested play but ended its 270 s wait paused at time zero
+    without a failure event. This is **undiagnosed**, not evidence that increasing the wait helps.
+    Local immediate-play, play-after-ready and play-before-delivery controls did not reproduce
+    it; only the suspended-delivery case guarantees play before readiness. The test now records
+    independent, timed transport/item transitions, failure/stall/end notifications, numeric error
+    chains and error-log codes so a recurrence can distinguish a
+    notification the engine missed from none sent during observation, which starts after prepare
+    and before play. FigFilePlayer's -12864 is a console signal with no public Apple documentation
+    found; do not treat it as an AVError code
+    or infer a media failure from paused transport alone. Diagnostic strings exclude error
+    descriptions, unknown domain names, URLs and server addresses. Notification counts and the
+    latest failure codes survive eviction from the bounded transition history.
