@@ -369,8 +369,18 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 XCTFail("The local-HTTP consent control must be reachable")
                 return false
             }
-            allowLocalHTTP.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-            guard waitForValue(wanted, of: allowLocalHTTP, timeout: 5) else {
+            // The scope suppresses animation-idle waits, so a tap can arrive while the keyboard
+            // is still leaving and be dropped (hosted iPhone, run 37868446237). Tap again only
+            // while the control still exists, is hittable and provably holds its old value.
+            var turned = false
+            for attempt in 1...3 {
+                allowLocalHTTP.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+                if waitForValue(wanted, of: allowLocalHTTP, timeout: 5) { turned = true; break }
+                guard attempt < 3, allowLocalHTTP.exists, allowLocalHTTP.isHittable,
+                      (allowLocalHTTP.value as? String) != wanted else { break }
+                print("DULCET ACCOUNT STATES consent re-tap attempt=\(attempt + 1)")
+            }
+            guard turned else {
                 XCTFail("The local-HTTP consent control must turn \(allow ? "on" : "off")")
                 return false
             }

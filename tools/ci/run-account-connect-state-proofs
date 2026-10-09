@@ -119,18 +119,22 @@ ipados)
     python3 tools/ci/isolate-simulator --phase account-states-ipad --keep "${ipad_destination##*id=}"
     xcodebuild test-without-building "${ios[@]}" \
         -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-interaction-scope.xcresult" \
+        -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testAnimationWaitOptionsReachEachLaunchedProcessOnIPadOS 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-ipados-interaction-scope.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipados-interaction-scope.xcresult" \
+        DulcetiOSUITests.DulcetAccountConnectStatesUITests \
+        testAnimationWaitOptionsReachEachLaunchedProcessOnIPadOS
+    xcodebuild test-without-building "${ios[@]}" \
+        -destination "$ipad_destination" -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
-        -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testAnimationWaitOptionsReachEachLaunchedProcessOnIPadOS \
         -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPadOS 2>&1 |
         tee "$RUNNER_TEMP/dulcet-ipados-account-states.log"
     python3 tools/verify-xcode-test-execution \
         "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
         DulcetiOSUITests.DulcetAccountConnectStatesUITests \
         testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPadOS
-    python3 tools/verify-xcode-test-execution \
-        "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
-        DulcetiOSUITests.DulcetAccountConnectStatesUITests \
-        testAnimationWaitOptionsReachEachLaunchedProcessOnIPadOS
     python3 tools/swift-testing-junit \
         "$RUNNER_TEMP/dulcet-ipados-account-states.xcresult" \
         "$RUNNER_TEMP/dulcet-ipados-account-states-junit/TEST-DulcetAccountConnectStatesUITests.xml" \
