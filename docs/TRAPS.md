@@ -320,8 +320,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     expose its button before accepting a tap. A control whose first confirmation tap is ignored
     must still reach the empty form. Before tapping a scrolled control, the proof also requires
     its visible, hittable frame to stop moving for 0.4 s; accessibility can expose the control
-    during deceleration, when a tap would only stop the scroll. The moving-target control rejects
-    accepting the first visible frame as ready.
+    during deceleration, when a tap would only stop the scroll. OBSERVED 2026-10-09: in run
+    37980371329, repeated live frame/existence/hittability queries took seconds apiece; the silent
+    request reached its 30-second limit before Cancel was tapped, and the failure hierarchy showed
+    the timeout error and Try Again instead of the primary action. Run 37974224276 timed out
+    evaluating the consent's descendant/value query. Geometry polls now take one window snapshot,
+    match immutable attributes locally, and retain a live hittability check after the target settles.
+    The consent uses a typed switch query. The control rejects live geometry polling, accepting a
+    moving frame, and accepting an occluded target; temporary snapshot absence must be re-observed.
+    Host pressure contributing to the query slowdown is ASSUMED, not established by these failures.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the
