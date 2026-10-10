@@ -24,6 +24,9 @@ WORKFLOW = 'signed-iphone-account-connect'
 JOB = 'signed-iphone-account-connect'
 NEUTRAL = 'dulcet-signed-iphone-host'
 SOURCES = (
+    'tools/ci/run-signed-device-proof',
+    'apple/DulcetAppleShared/DulcetSignedDeviceAccountProbe.swift',
+    'apple/DulcetSignedDeviceUITestSupport/SignedAccountConnectProof.swift',
     'apple/DulcetSignedIPhoneUITests/DulcetSignedIPhoneAccountConnectUITests.swift',
     'apple/DulcetSignedIPhoneHost/DulcetSignedIPhoneAccountProbe.swift',
     'apple/DulcetSignedIPhoneHost/DulcetSignedIPhoneApp.swift',

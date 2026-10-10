@@ -335,6 +335,7 @@ targets:
       - path: DulcetSignedIPadUITests
         excludes:
           - Host-Info.plist
+      - DulcetSignedDeviceUITestSupport
     dependencies:
       - target: DulcetSignedIPadHost
     settings:

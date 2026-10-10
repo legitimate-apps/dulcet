@@ -280,6 +280,8 @@ def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
         fail(f"no *UITests directory under {APPLE}")
     for directory in directories:
         sources = sorted(directory.glob("*.swift"))
+        if directory.name in {"DulcetSignedIPadUITests", "DulcetSignedIPhoneUITests"}:
+            sources += sorted((APPLE / "DulcetSignedDeviceUITestSupport").glob("*.swift"))
         if not sources:
             uncovered.append(f"{directory.name}: no Swift sources")
             continue

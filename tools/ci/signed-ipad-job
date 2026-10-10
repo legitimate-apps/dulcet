@@ -89,6 +89,15 @@ def checkout_archive(raw, workspace):
                 archive.extract(member, path=workspace, filter='data')
 
 
+def require_physical_result(local):
+    if json.loads((local/'preparation.json').read_text()) != {
+            'build': 'PASS', 'sign': 'PASS', 'fixture': 'PASS', 'runtime': 'physical'}:
+        raise ValueError('signed device preparation required')
+    if json.loads((local/'cleanup-status.json').read_text()) != {
+            'keychain': 'PASS', 'uninstall': 'PASS'}:
+        raise ValueError('owned device cleanup required')
+
+
 def job():
     raw = None
     try:
@@ -122,6 +131,8 @@ def job():
             ('Evidence scrub', ['python3', f'tools/verify_signed_{KIND}_privacy.py', '--tokens',
                                 str(paths['private_tokens']), '--junit', str(local/'proof.xml')]),
         ):
+            if label == 'Evidence scrub':
+                require_physical_result(local)
             print(label+' started', flush=True)
             result = subprocess.run(command, cwd=workspace, env=environment,
                                     stdout=raw, stderr=subprocess.STDOUT)
@@ -148,6 +159,31 @@ def job():
 def self_test():
     import contextlib
     from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as directory:
+        local = Path(directory)
+        preparation = {'build': 'PASS', 'sign': 'PASS', 'fixture': 'PASS', 'runtime': 'physical'}
+        cleanup = {'keychain': 'PASS', 'uninstall': 'PASS'}
+        (local/'preparation.json').write_text(json.dumps(preparation))
+        (local/'cleanup-status.json').write_text(json.dumps(cleanup))
+        require_physical_result(local)
+        for rejected in (dict(preparation, runtime='simulator'), dict(preparation, sign='SKIPPED'), {}):
+            (local/'preparation.json').write_text(json.dumps(rejected))
+            try:
+                require_physical_result(local)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('non-device preparation admitted')
+        (local/'preparation.json').write_text(json.dumps(preparation))
+        for rejected in (dict(cleanup, keychain='FAIL'), dict(cleanup, uninstall='FAIL'), {}):
+            (local/'cleanup-status.json').write_text(json.dumps(rejected))
+            try:
+                require_physical_result(local)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('incomplete cleanup admitted')
 
     def archive(member_name, kind=tarfile.REGTYPE):
         stream = io.BytesIO()
@@ -227,7 +263,8 @@ def self_test():
     sources = Path(__file__).resolve().parents[2]
     xml = ('<testsuite tests="1"><testcase classname="'+CLASS+'" '
            'name="'+CASE+'"/></testsuite>')
-    for label, produced in (('pass', xml), ('bad-xml', xml.replace('tests="1"', 'tests="2"')),
+    for label, produced in (('pass', xml), ('simulator', xml), ('cleanup-fail', xml),
+                             ('sign-skipped', xml), ('bad-xml', xml.replace('tests="1"', 'tests="2"')),
                              ('token-xml', xml.replace('/>', ' time="private-fixture-value"/>'))):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -256,7 +293,13 @@ def self_test():
                     member = tarfile.TarInfo('checkout/'+name)
                     member.size = len(data)
                     tar.addfile(member, io.BytesIO(data))
+                preparation = {'build': 'PASS', 'sign': 'SKIPPED' if label == 'sign-skipped' else 'PASS',
+                               'fixture': 'PASS', 'runtime': 'simulator' if label == 'simulator' else 'physical'}
+                cleanup = {'keychain': 'FAIL' if label == 'cleanup-fail' else 'PASS', 'uninstall': 'PASS'}
                 data = ('import os,pathlib\nprint("private-fixture-value")\n'
+                        f'local=pathlib.Path(os.environ["DULCET_SIGNED_{KIND.upper()}_LOCAL_RESULTS"])\n'
+                        'local.joinpath("preparation.json").write_text('+repr(json.dumps(preparation))+')\n'
+                        'local.joinpath("cleanup-status.json").write_text('+repr(json.dumps(cleanup))+')\n'
                         f'pathlib.Path(os.environ["DULCET_SIGNED_{KIND.upper()}_LOCAL_RESULTS"],"proof.xml").write_text('
                         +repr(produced)+')\n').encode()
                 member = tarfile.TarInfo(f'checkout/tools/ci/run-signed-{KIND}-proof')

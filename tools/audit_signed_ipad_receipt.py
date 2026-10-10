@@ -24,12 +24,21 @@ WORKFLOW = 'signed-ipad-account-connect'
 JOB = 'signed-ipad-account-connect'
 NEUTRAL = 'dulcet-signed-ipad-host'
 SOURCES = (
+    'tools/ci/run-signed-device-proof',
+    'apple/DulcetAppleShared/DulcetSignedDeviceAccountProbe.swift',
+    'apple/DulcetSignedDeviceUITestSupport/SignedAccountConnectProof.swift',
     'apple/DulcetSignedIPadUITests/DulcetSignedIPadAccountConnectUITests.swift',
     'apple/DulcetAppleShared/DulcetSignedIPadAccountProbe.swift',
     'apple/DulcetiOS/DulcetiOSApp.swift',
     'apple/project.yml',
     'tools/ci/run-signed-ipad-proof',
     'tools/verify_signed_ipad_privacy.py',
+    'tools/audit_signed_ipad_receipt.py',
+    'tools/ci/signed-ipad-job',
+    '.github/workflows/signed-ipad-account-connect.yml',
+    'apple/DulcetAppleShared/DulcetAppleProduction.swift',
+    'apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift',
+    'apple/DulcetKit/Sources/DulcetKit/DulcetCredentialStore.swift',
 )
 
 

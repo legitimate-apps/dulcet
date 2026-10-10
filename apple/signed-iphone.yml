@@ -70,6 +70,7 @@ targets:
       - path: DulcetSignedIPhoneUITests
         excludes:
           - Host-Info.plist
+      - DulcetSignedDeviceUITestSupport
     dependencies:
       - target: DulcetSignedIPhoneHost
     settings:
