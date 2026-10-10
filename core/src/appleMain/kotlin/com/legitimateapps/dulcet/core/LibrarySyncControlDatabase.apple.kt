@@ -11,7 +11,11 @@ internal actual fun createLibrarySyncControlDatabase(): LibrarySyncControlDataba
     val databaseName = "dulcet-library-sync-control-${NSUUID().UUIDString}.db"
     val primary = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
     val databasePath = primary.driver.databaseFilePath()
-    val observer = DulcetDriverFactory(databaseName = databaseName).openDulcetDatabase()
+    // The commit probe reads on the primary's thread before it commits. A shared pool would
+    // join that thread's transaction and expose its uncommitted generation to the observer.
+    val observer = DulcetDatabaseStore.open(
+        DulcetDriverFactory(databaseName = databaseName).createIndependentDriver(),
+    )
     return LibrarySyncControlDatabase(primary, observer) {
         NSFileManager.defaultManager.removeItemAtPath(databasePath, null)
     }
