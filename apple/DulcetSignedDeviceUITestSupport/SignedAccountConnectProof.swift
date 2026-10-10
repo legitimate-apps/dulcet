@@ -99,8 +99,20 @@ enum SignedAccountConnectProof {
         enter(app.textFields["dulcet.account-connect.server-address"].firstMatch, url)
         enter(app.textFields["dulcet.account-connect.username"].firstMatch, "dulcet-admin")
         enter(app.secureTextFields["dulcet.account-connect.password"].firstMatch, "dulcet-ci-canary-password")
+        // On iPhone the switch sits at the keyboard's top edge, so its hit point can be valid while
+        // taps land on the keyboard (signed iPhone simulator, 2026-10-10). Drag the form up until
+        // the control clears the keyboard; the keyboard itself stays up.
+        func clearOfKeyboard(_ element: XCUIElement) {
+            for _ in 1...3 {
+                let keyboard = app.keyboards.firstMatch
+                guard keyboard.exists, element.exists, element.frame.maxY > keyboard.frame.minY - 12 else { break }
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+                start.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)))
+            }
+        }
         let http = app.switches["Allow HTTP on this local network"].firstMatch
         if !http.isHittable { app.swipeUp() }
+        clearOfKeyboard(http)
         expectHittable(http)
         // A centre tap lands on the row's label, and a tap while the software keyboard is still
         // leaving can be dropped (signed iPad, 2026-10-10: "Local HTTP is not allowed" after the
@@ -114,6 +126,7 @@ enum SignedAccountConnectProof {
         XCTAssertEqual(http.value as? String, "1", "Local HTTP consent must turn on before Connect")
         let connect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         if !connect.isHittable { app.swipeUp() }
+        clearOfKeyboard(connect)
         expectHittable(connect); XCTAssertTrue(connect.isEnabled)
         connect.tap()
         expectMarker("connected=PASS")
