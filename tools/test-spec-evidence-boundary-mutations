@@ -310,6 +310,9 @@ for label, expected in (
         cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["ipados"]
         if label == "receipt-removed":
             cell["evidence"] = [row for row in cell["evidence"] if "receipt" not in row]
+            reason = cell["promotion_condition"]["reason"]
+            cell["promotion_condition"]["reason"] = reason.replace(
+                "receipt is historical and no longer cited as active evidence", "receipt is withdrawn")
         elif label == "promoted":
             cell["status"] = "shipped"
             cell.pop("promotion_condition")

@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Lane identity for the shared finite signed-device proof runner."""
+from pathlib import Path
+import runpy
+runpy.run_path(str(Path(__file__).with_name('run-signed-device-proof')),run_name='__main__',
+              init_globals={'DEVICE_KIND': 'iphone'})

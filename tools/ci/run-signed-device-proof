@@ -1,0 +1,429 @@
+#!/usr/bin/env python3
+"""Finite signed-device proof (physical hardware by default; explicit simulator rehearsal). All output belongs in private local storage.
+
+The device identifier, provisioning profiles and literal LAN address are supplied
+by a private configuration file. This helper never changes device settings.
+"""
+import fcntl
+import ipaddress
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import uuid
+
+KIND = globals().get('DEVICE_KIND')
+if KIND not in ('ipad','iphone'):
+    raise SystemExit('Use a signed-device lane entry point')
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--simulator',action='store_true')
+parser.add_argument('--lease-wait',type=int,default=1800)
+args = parser.parse_args()
+if not 0 <= args.lease_wait <= 1800:
+    parser.error('lease wait must be between 0 and 1800 seconds')
+simulator = args.simulator
+TITLE = 'iPad' if KIND == 'ipad' else 'iPhone'
+TYPE = 'IPad' if KIND == 'ipad' else 'IPhone'
+PREFIX = 'DULCET_SIGNED_'+KIND.upper()
+PROJECT = 'Dulcet' if KIND == 'ipad' else 'DulcetSignedIPhone'
+SPEC = 'project.yml' if KIND == 'ipad' else 'signed-iphone.yml'
+TARGET = 'DulcetSigned'+TYPE+'UITests'
+CLASS = 'DulcetSigned'+TYPE+'AccountConnectUITests'
+SCHEME = 'DulcetSigned'+TYPE+'Proof'
+MODEL = 'iPad Air (4th generation)' if KIND == 'ipad' else 'iPhone 11 Pro Max'
+PRODUCT = 'iPad13,1' if KIND == 'ipad' else 'iPhone12,5'
+sim_id = sim_slot = None
+
+repo = Path(__file__).resolve().parents[2]
+config = json.loads(Path(os.environ[PREFIX+'_CONFIG']).read_text())
+root = Path(os.environ[PREFIX+'_LOCAL_RESULTS']).resolve()
+workspace = Path(os.environ.get('GITHUB_WORKSPACE', repo)).resolve()
+if root == workspace or workspace in root.parents:
+    raise SystemExit('Private results must be outside the workspace')
+root.mkdir(mode=0o700, parents=True, exist_ok=True)
+dd = root/'DerivedData'
+case = 'testSigned'+TYPE+'ConnectKeychainRelaunchAndTouchReconnect'
+host_id = 'com.legitimateapps.dulcet.signed-'+KIND
+runner_id = host_id + '.ui-tests.xctrunner'
+nonce = str(uuid.uuid4())
+lease = server = server_log = proof_lock = None
+owns_dd = may_have_installed = False
+
+def device_unlocked(state):
+    # devicectl's lockState result (jsonVersion 3, OBSERVED on the authorized device) is
+    # {passcodeRequired, unlockedSinceBoot}; unlocked now means no passcode is required.
+    # Any other shape is unknown and fails closed.
+    return state.get('passcodeRequired') is False and state.get('unlockedSinceBoot') is True
+
+def run(args, **kwargs):
+    return subprocess.run([str(a) for a in args], cwd=repo, check=True, **kwargs)
+
+def stop_device_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait()
+        return
+    deadline = time.monotonic() + 5
+    try:
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        # The launcher can exit before a setup descendant. Give the entire
+        # owned group its grace period, then remove any remaining descendants.
+        time.sleep(max(0, deadline - time.monotonic()))
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+def device_tool(*args, check=True):
+    if simulator:
+        raise RuntimeError('Hardware devicectl is forbidden in simulator mode')
+    command = ['xcrun', 'devicectl', '--timeout', '30', *map(str,args)]
+    # Bound the outer launcher too: the shim can block in Xcode setup before
+    # the native tool honors --timeout. Its process group belongs only to this call.
+    process = subprocess.Popen(command, cwd=repo, start_new_session=True)
+    try:
+        code = process.wait(timeout=45)
+    finally:
+        # Also handles interruption, and descendants outliving a completed launcher.
+        stop_device_group(process)
+    if check and code:
+        raise subprocess.CalledProcessError(code, command)
+    return subprocess.CompletedProcess(command, code)
+
+def device(*args, output, check=True):
+    return device_tool('--json-output', root/output, 'device', *args[:2],
+        '--device', config['device_udid'], *args[2:], check=check)
+
+def interrupted(signum, frame):
+    raise InterruptedError('Signed device proof interrupted')
+signal.signal(signal.SIGTERM, interrupted)
+signal.signal(signal.SIGINT, interrupted)
+
+def simctl(*args, check=True, capture_output=False):
+    return subprocess.run(['xcrun','simctl',*map(str,args)], cwd=repo,
+        check=check, capture_output=capture_output, text=True)
+
+def owned_apps(output):
+    if simulator:
+        result = simctl('listapps',sim_id,capture_output=True)
+        (root/output).write_text(result.stdout)
+        # simctl emits an OpenStep plist; plistlib accepts only XML or binary.
+        inventory = json.loads(subprocess.check_output(
+            ['plutil','-convert','json','-o','-','--','-'],input=result.stdout.encode()))
+        if not isinstance(inventory,dict):
+            raise RuntimeError('Unrecognized simulator application inventory')
+        return set(inventory) & {host_id,runner_id}
+    device('info', 'apps', output=output)
+    result = json.loads((root/output).read_text())['result']
+    apps = result.get('apps', [])
+    if not isinstance(apps, list):
+        raise RuntimeError('Unrecognized application inventory')
+    return {a.get('bundleIdentifier') for a in apps} & {host_id, runner_id}
+
+def own_container_absent(bundle, output):
+    if simulator:
+        # An exact inventory check and a live simulator prevent generic backend errors
+        # from being mistaken for an absent owned container.
+        result = simctl('get_app_container',sim_id,bundle,'data',check=False,capture_output=True)
+        (root/output).write_text(result.stdout + result.stderr)
+        live = simctl('spawn',sim_id,'launchctl','print','system',check=False,capture_output=True)
+        return result.returncode != 0 and 'No such file or directory' in result.stderr and live.returncode == 0 and not owned_apps('container-inventory-'+output)
+    result = device('info','files','--domain-type','appDataContainer',
+        '--domain-identifier',bundle, output=output,check=False)
+    if result.returncode == 0:
+        return False
+    # Fail closed on connection, permission, lock, or unknown backend errors.
+    # Only an error explicitly naming this application as absent is admitted.
+    document = json.loads((root/output).read_text())
+    def messages(value):
+        if isinstance(value,str):
+            yield value
+        elif isinstance(value,dict):
+            for child in value.values():
+                yield from messages(child)
+        elif isinstance(value,list):
+            for child in value:
+                yield from messages(child)
+    pattern = (r"(?:application|app)\s+(?:with\s+(?:the\s+)?bundle\s+identifier\s+)?['\"`]?"
+        + re.escape(bundle) + r"['\"`]?\s*(?::\s*)?(?:is not installed|could not be found|was not found)(?:[.!]|$)")
+    if any(re.search(pattern,message,re.IGNORECASE) for message in messages(document.get('error',{}))):
+        return True
+    # OBSERVED on the authorized device: an absent app's container answers a generic
+    # CoreDevice.ActionError 3 ("failed to get a list of files") that names no app, while a
+    # dropped connection answers CoreDeviceError 4000. The generic shape is admitted only when
+    # a bundle id that cannot exist answers the identical error and the device then answers
+    # its lock state, unlocked; anything else still fails closed.
+    def signature(doc):
+        error = doc.get('error') or {}
+        info = error.get('userInfo') or {}
+        debug = (info.get('NSDebugDescription') or {}).get('string', '')
+        return (error.get('domain'), error.get('code'), debug)
+    observed = signature(document)
+    if observed[:2] != ('CoreDevice.ActionError', 3) or 'failed to get a list of files' not in observed[2]:
+        return False
+    control_bundle = 'com.legitimateapps.dulcet.absent-control.' + uuid.uuid4().hex
+    control = device('info','files','--domain-type','appDataContainer',
+        '--domain-identifier',control_bundle, output='control-'+output,check=False)
+    if control.returncode == 0:
+        return False
+    if signature(json.loads((root/('control-'+output)).read_text())) != observed:
+        return False
+    live = device('info','lockState',output='lock-'+output,check=False)
+    if live.returncode != 0:
+        return False
+    return device_unlocked(json.loads((root/('lock-'+output)).read_text())['result'])
+
+def copy_cleanup(output):
+    if simulator:
+        result = simctl('get_app_container',sim_id,host_id,'data',check=False,capture_output=True)
+        if result.returncode != 0:
+            return False
+        source = Path(result.stdout.strip())/('Library/Application Support/signed-'+KIND+'-cleanup.json')
+        if not source.is_file():
+            return False
+        shutil.copyfile(source,root/'cleanup.json')
+        return True
+    return device('copy', 'from', '--domain-type', 'appDataContainer', '--domain-identifier',
+        host_id, '--source', 'Library/Application Support/signed-'+KIND+'-cleanup.json',
+        '--destination', root/'cleanup.json', output=output, check=False).returncode == 0
+
+def cleanup_and_remove():
+    clean = False
+    removal_errors = []
+    remaining = {host_id, runner_id}
+    try:
+        clean = copy_cleanup('copy-cleanup.json')
+        if clean:
+            clean = json.loads((root/'cleanup.json').read_text()) == {'nonce': nonce, 'cleanup': 'PASS'}
+        if not clean:
+            # '--' keeps devicectl from parsing the app's dash-prefixed arguments as its own.
+            if simulator:
+                simctl('launch','--terminate-running-process',sim_id,host_id,
+                    '-dulcet-signed-'+KIND+'-phase','cleanup','-dulcet-signed-'+KIND+'-nonce',nonce,
+                    '-dulcet-signed-'+KIND+'-runtime','simulator')
+            else:
+                device('process', 'launch', '--terminate-existing', host_id, '--',
+                    '-dulcet-signed-'+KIND+'-phase', 'cleanup', '-dulcet-signed-'+KIND+'-nonce', nonce,
+                    output='launch-cleanup.json')
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if copy_cleanup('copy-cleanup.json'):
+                    clean = json.loads((root/'cleanup.json').read_text()) == {'nonce': nonce, 'cleanup': 'PASS'}
+                    if clean:
+                        break
+                time.sleep(0.2)
+    except Exception:
+        clean = False
+    finally:
+        # Always attempt both removals, including a failure before host installation,
+        # an unreadable receipt or a launch failure. Do not remove any other bundle.
+        for bundle in (runner_id, host_id):
+            try:
+                if simulator:
+                    simctl('uninstall',sim_id,bundle)
+                else:
+                    device('uninstall', 'app', bundle, output='uninstall-'+bundle.rsplit('.',1)[-1]+'.json')
+            except Exception:
+                removal_errors.append(bundle)
+        try:
+            remaining = owned_apps('apps-after.json')
+            # Inventory alone can falsely report empty. The same own-container copy
+            # that retrieved the receipt must now fail while the device stays live.
+            container_absent = all([own_container_absent(bundle,'container-after-'+label+'.json')
+                for bundle,label in ((host_id,'host'),(runner_id,'runner'))])
+            if not simulator:
+                device('info','lockState',output='lock-after-uninstall.json')
+                lock = json.loads((root/'lock-after-uninstall.json').read_text())['result']
+                container_absent = container_absent and device_unlocked(lock)
+        except Exception:
+            container_absent = False
+        removed = not remaining and not removal_errors and container_absent
+        (root/'cleanup-status.json').write_text(json.dumps({'keychain': 'PASS' if clean else 'FAIL',
+            'uninstall': 'PASS' if removed else 'FAIL'}))
+    if not clean or not removed:
+        raise RuntimeError('Owned device cleanup or uninstall requires attention')
+
+try:
+    address = ipaddress.ip_address(config['lan_address'])
+    if not any(address in ipaddress.ip_network(n) for n in ('10.0.0.0/8','172.16.0.0/12','192.168.0.0/16')):
+        raise RuntimeError('Fixture requires a literal private IPv4 address')
+    port = config['port']
+    if not isinstance(port, int) or port not in range(15781,15790):
+        raise RuntimeError('Fixture port is outside the reserved range')
+    proof_lock = open('/private/tmp/dulcet-signed-'+KIND+'-proof.lock','a')
+    fcntl.flock(proof_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if simulator:
+        sim_slot = subprocess.check_output(['leg-lease','create','--kind','sim','--session',
+            'dulcet-'+KIND+'-simulator','--pid',str(os.getpid()),'--wait',str(args.lease_wait)],text=True).strip()
+    lease = subprocess.check_output(['leg-lease','create','--kind','build','--session',
+        'dulcet-signed-'+KIND,'--pid',str(os.getpid()),'--wait',str(args.lease_wait)],text=True).strip()
+    if dd.exists():
+        raise RuntimeError('DerivedData already exists; ownership is unknown')
+    owns_dd = True
+    with socket.socket() as reservation:
+        reservation.bind((str(address),port))
+    fixture = root/'fixture'; fixture.mkdir()
+    run(['tools/conformance-env/render-config','--output',fixture/'navidrome.toml',
+        '--music-folder',config['music'],'--data-folder',fixture/'data','--cache-folder',fixture/'cache',
+        '--address',str(address),'--port',str(port),'--ffmpeg-path',config['ffmpeg']])
+    server_log = (root/'navidrome.log').open('wb')
+    server = subprocess.Popen([config['navidrome'],'--configfile',str(fixture/'navidrome.toml')],
+        stdout=server_log,stderr=subprocess.STDOUT)
+    deadline=time.monotonic()+60
+    while True:
+        if server.poll() is not None:
+            raise RuntimeError('Owned fixture exited before listening')
+        listener=subprocess.run(['/usr/sbin/lsof','-nP','-a','-p',str(server.pid),
+            '-iTCP:'+str(port),'-sTCP:LISTEN','-Fp'],capture_output=True,text=True)
+        if listener.returncode==0 and 'p'+str(server.pid) in listener.stdout.splitlines():
+            break
+        if time.monotonic()>=deadline:
+            raise RuntimeError('Owned fixture did not acquire its listener')
+        try: server.wait(timeout=0.1)
+        except subprocess.TimeoutExpired: pass
+    env=dict(os.environ,TZ='UTC',DULCET_CONFORMANCE_BASE_URL=f'http://{address}:{port}',
+        DULCET_CONFORMANCE_DISPOSABLE='true')
+    env[PREFIX+'_NONCE']=nonce
+    for key in ('GITHUB_STEP_SUMMARY','GITHUB_ENV','GITHUB_OUTPUT','GITHUB_PATH','GITHUB_STATE'):
+        env.pop(key,None)
+    run(['tools/conformance-env/health-check','--base-url',env['DULCET_CONFORMANCE_BASE_URL'],
+        '--runtime','darwin/arm64','--expected-server-version',
+        subprocess.check_output(['tools/conformance-env/read-pin','navidrome.version'],text=True).strip(),
+        '--expected-ffmpeg-version',subprocess.check_output(['tools/conformance-env/read-pin',
+        'ffmpeg.darwin.version'],text=True).strip(),'--ffmpeg-command-json',json.dumps([config['ffmpeg']]),
+        '--corpus-manifest',Path(config['music'])/'corpus-manifest.json'],env=env)
+    run(['xcodegen','generate','--spec','apple/'+SPEC])
+    if simulator:
+        sim_id = subprocess.check_output(['sim-lease','create','--ephemeral','--purpose',
+            'dulcet-'+KIND+'-proof','--device',MODEL,'--owner-pid',str(os.getpid())],text=True).strip()
+        if not re.fullmatch(r'[0-9A-Fa-f-]{36}',sim_id):
+            raise RuntimeError('Simulator lease did not return an identifier')
+        inventory = json.loads(simctl('list','devices','--json',capture_output=True).stdout)
+        selected = [(runtime,entry) for runtime,entries in inventory['devices'].items()
+                    for entry in entries if entry['udid'] == sim_id]
+        if len(selected) != 1:
+            raise RuntimeError('Owned simulator is absent from the inventory')
+        runtime,entry = selected[0]
+        (root/'simulator-device.json').write_text(json.dumps({'runtime':runtime,'device':entry}))
+        token_path = Path(config['private_tokens'])
+        tokens = set(json.loads(token_path.read_text())) | {sim_id,sim_id.replace('-',''),entry['name']}
+        token_path.write_text(json.dumps(sorted(tokens))); token_path.chmod(0o600)
+        simctl('boot',sim_id); simctl('bootstatus',sim_id,'-b')
+        run(['xcodebuild','build-for-testing','-project','apple/'+PROJECT+'.xcodeproj',
+            '-scheme',SCHEME,'-configuration','Debug','-destination',
+            'platform=iOS Simulator,id='+sim_id,'-derivedDataPath',dd,
+            '-parallel-testing-enabled','NO','CODE_SIGN_IDENTITY=-','CODE_SIGN_STYLE=Automatic',
+            'DEVELOPMENT_TEAM='],env=env)
+        products=dd/'Build/Products'
+        env[PREFIX+'_RUNTIME']='simulator'
+    else:
+        run(['xcodebuild','build-for-testing','-project','apple/'+PROJECT+'.xcodeproj','-scheme',
+            SCHEME,'-configuration','Debug','-destination','generic/platform=iOS',
+            '-derivedDataPath',dd,'-parallel-testing-enabled','NO','CODE_SIGNING_ALLOWED=NO'],env=env)
+        products=dd/'Build/Products'
+        host=products/('Debug-iphoneos/Dulcet Signed '+TITLE+' Host.app')
+        runner=products/('Debug-iphoneos/'+TARGET+'-Runner.app')
+        sign=['codesign','--force','--sign',config['identity'],'--keychain',config['keychain']]
+        for app,key,bundle in ((host,'host',host_id),(runner,'runner',runner_id)):
+            profile=plistlib.loads(subprocess.check_output(['security','cms','-D','-i',config[key+'_profile']]))
+            assert profile['ProvisionedDevices']==[config['device_udid']]
+            entitlements=profile['Entitlements']
+            assert entitlements['application-identifier']=='3LTL47SJ8C.'+bundle
+            assert entitlements['get-task-allow'] is True
+            entitlements['keychain-access-groups']=['3LTL47SJ8C.'+bundle]
+            path=root/(key+'.entitlements');path.write_bytes(plistlib.dumps(entitlements))
+            shutil.copyfile(config[key+'_profile'],app/'embedded.mobileprovision')
+            nested=list(app.rglob('*.framework'))+list(app.rglob('*.xctest'))+list(app.rglob('*.dylib'))
+            for child in sorted(nested,key=lambda p:len(p.parts),reverse=True):
+                run([*sign,child])
+            run([*sign,'--entitlements',path,app]);run(['codesign','--verify','--deep','--strict',app])
+            actual=plistlib.loads(subprocess.check_output(['codesign','-d','--entitlements',':-',app],stderr=subprocess.DEVNULL))
+            assert actual['keychain-access-groups']==['3LTL47SJ8C.'+bundle]
+    manifests=list(products.glob('*.xctestrun'));assert len(manifests)==1
+    manifest=manifests[0];doc=plistlib.loads(manifest.read_bytes())
+    targets=(doc['TestConfigurations'][0]['TestTargets'] if 'TestConfigurations' in doc
+        else [doc[TARGET]])
+    assert len(targets)==1 and targets[0].get('BlueprintName',TARGET)==TARGET
+    targets[0].setdefault('EnvironmentVariables',{}).update({k:env[k] for k in
+        ('DULCET_CONFORMANCE_BASE_URL','DULCET_CONFORMANCE_DISPOSABLE',PREFIX+'_NONCE')})
+    if simulator:
+        targets[0]['EnvironmentVariables'][PREFIX+'_RUNTIME']='simulator'
+    manifest.write_bytes(plistlib.dumps(doc))
+    if simulator:
+        (root/'preparation.json').write_text(json.dumps({'build':'PASS','fixture':'PASS',
+            'runtime':'simulator','device_only_checks':{
+                'hardware_udid_and_product_type':'SKIPPED',
+                'provisioning_profiles_and_development_signing':'SKIPPED',
+                'devicectl_install_and_uninstall':'SKIPPED'},
+            'install_and_uninstall':'simctl/XCTest'}))
+    else:
+        (root/'preparation.json').write_text(json.dumps({'build':'PASS','sign':'PASS','fixture':'PASS','runtime':'physical'}))
+        # Refresh cached paired metadata once; this reads the inventory, never drives
+        # another device. Runtime names and identifiers extend the private registry
+        # before any evidence can leave the trusted job.
+        device_tool('--json-output', root/'devices.json', 'list', 'devices')
+        inventory = json.loads((root/'devices.json').read_text())['result']['devices']
+        selected = [d for d in inventory
+                    if d.get('hardwareProperties', {}).get('udid') == config['device_udid']]
+        if len(selected) != 1 or selected[0].get('hardwareProperties', {}).get('productType') != PRODUCT:
+            raise RuntimeError('Authorized proof device is unavailable; device run pending')
+        token_path = Path(config['private_tokens'])
+        tokens = set(json.loads(token_path.read_text()))
+        for entry in inventory:
+            tokens.add(entry.get('identifier', ''))
+            tokens.add(entry.get('deviceProperties', {}).get('name', ''))
+            for key in ('udid', 'serialNumber', 'ecid'):
+                value = entry.get('hardwareProperties', {}).get(key)
+                if value is not None:
+                    tokens.update((str(value), str(value).replace('-', '')))
+        token_path.write_text(json.dumps(sorted(t for t in tokens if t and len(t) >= 2)))
+        token_path.chmod(0o600)
+        # First live-device requirement, after all independent preparation. One bounded
+        # attempt; an unavailable/locked device is handed back to the owner without polling.
+        available=device('info','lockState',output='lock-state.json',check=False)
+        if available.returncode!=0:
+            raise RuntimeError('Device unavailable; operator wake or unlock required')
+        state=json.loads((root/'lock-state.json').read_text())['result']
+        if not device_unlocked(state):
+            raise RuntimeError('Device locked or lock state unknown; operator unlock required')
+    if owned_apps('apps-before.json'):
+        raise RuntimeError('Refusing inherited Dulcet proof installation')
+    if not all([own_container_absent(bundle,'container-before-'+label+'.json')
+        for bundle,label in ((host_id,'host'),(runner_id,'runner'))]):
+        raise RuntimeError('Own-container preflight cannot prove both test apps absent')
+    may_have_installed=True
+    result=root/'proof.xcresult'
+    run(['xcodebuild','test-without-building','-xctestrun',manifest,'-destination',
+        ('platform=iOS Simulator,id='+sim_id if simulator else 'platform=iOS,id='+config['device_udid']),'-parallel-testing-enabled','NO',
+        '-collect-test-diagnostics','never','-resultBundlePath',result,
+        '-only-testing:'+TARGET+'/'+CLASS+'/'+case],env=env)
+    run(['python3','tools/verify-xcode-test-execution',result,
+        TARGET+'.'+CLASS,case])
+    run(['python3','tools/swift-testing-junit',result,root/'proof.xml',CLASS])
+finally:
+    try:
+        if may_have_installed:
+            cleanup_and_remove()
+    finally:
+        if server is not None and server.poll() is None:
+            server.terminate();server.wait(timeout=30)
+        if server_log is not None: server_log.close()
+        if sim_id: subprocess.run(['sim-lease','release',sim_id],check=False)
+        if sim_slot: subprocess.run(['leg-lease','release',sim_slot],check=False)
+        if lease: subprocess.run(['leg-lease','release',lease],check=False)
+        # Completed DerivedData stays in the private X8 results directory.
+        if proof_lock: proof_lock.close()

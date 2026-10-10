@@ -437,7 +437,14 @@ def main() -> None:
             },
         )
         probe = find_probe(search, probe_title)
-        if not scan_status.get("scanning", True) and scan_status.get("lastScan") and probe:
+        # A scan can read not-scanning with the probe imported before its count settles
+        # (local signed-device fixture, 2026-10-10: count 0 of 314); wait for the full count.
+        if (
+            not scan_status.get("scanning", True)
+            and scan_status.get("lastScan")
+            and probe
+            and int(scan_status.get("count", 0)) == manifest["generated_media_files"]
+        ):
             break
         time.sleep(0.25)
     if not scan_status or scan_status.get("scanning", True):
