@@ -356,16 +356,14 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
               dismissKeyboardIfPresent(in: app) else { return false }
         // Cleartext to a loopback server needs the local-HTTP consent, which keeps its value
         // across edits; set it only when it differs.
-        let allowLocalHTTP = app.descendants(matching: .any).matching(NSPredicate(
-            format: "label == %@ AND (value == %@ OR value == %@)", "Allow HTTP on this local network", "0", "1"
-        )).firstMatch
+        let allowLocalHTTP = app.switches["Allow HTTP on this local network"].firstMatch
         guard allowLocalHTTP.waitForExistence(timeout: 5) else {
             XCTFail("The local-HTTP consent control must exist: " + app.debugDescription)
             return false
         }
         let wanted = allow ? "1" : "0"
         if (allowLocalHTTP.value as? String) != wanted {
-            guard scrollIntoView(allowLocalHTTP, in: app) else {
+            guard scrollIntoView(allowLocalHTTP, matching: .localHTTPConsent, in: app) else {
                 XCTFail("The local-HTTP consent control must be reachable")
                 return false
             }
@@ -390,7 +388,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func tap(_ control: XCUIElement, in app: XCUIApplication, name: String) -> Bool {
-        guard control.waitForExistence(timeout: 5), scrollIntoView(control, in: app) else {
+        let target: HitTarget = (name == "Connect" || name == "Cancel")
+            ? .identifier("dulcet.account-connect.primary-action") : .button(name)
+        guard control.waitForExistence(timeout: 5), scrollIntoView(control, matching: target, in: app) else {
             XCTFail("\(name) must be reachable: " + app.debugDescription)
             return false
         }
@@ -658,19 +658,33 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return false
     }
 
+    /// Match immutable snapshot attributes locally. In particular, consent's value is not a
+    /// predicate evaluated remotely over every descendant on each poll.
+    private enum HitTarget {
+        case identifier(String)
+        case button(String)
+        case localHTTPConsent
+
+        @MainActor
+        func matches(_ snapshot: XCUIElementSnapshot) -> Bool {
+            switch self {
+            case .identifier(let identifier):
+                return snapshot.elementType == .button && snapshot.identifier == identifier
+            case .button(let label):
+                return snapshot.elementType == .button && snapshot.label == label
+            case .localHTTPConsent:
+                return snapshot.elementType == .switch && snapshot.label == "Allow HTTP on this local network"
+            }
+        }
+    }
+
     /// Scrolls until the element's midpoint is inside the window and hittable, at most six swipes.
     @MainActor
-    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+    private func scrollIntoView(_ element: XCUIElement, matching target: HitTarget, in app: XCUIApplication) -> Bool {
         let window = app.windows.firstMatch
         for swipe in 0...6 {
             dismissPasswordSavePromptIfPresent()
-            if element.exists {
-                let frame = element.frame
-                if !frame.isEmpty, window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), element.isHittable,
-                   waitForStableHitTarget(element, in: window, timeout: 5) {
-                    return true
-                }
-            }
+            if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
             if swipe < 6 {
                 app.swipeUp()
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
@@ -679,25 +693,61 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return false
     }
 
-    /// Accessibility may expose a button while a swipe is still moving it. Observe its actual
-    /// hit target, rather than waiting for every animation in the process to end.
     @MainActor
-    private func waitForStableHitTarget(_ element: XCUIElement, in window: XCUIElement, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
+    private func hitTarget(_ target: HitTarget, in snapshot: XCUIElementSnapshot) -> XCUIElementSnapshot? {
+        if target.matches(snapshot) { return snapshot }
+        for child in snapshot.children {
+            if let found = hitTarget(target, in: child) { return found }
+        }
+        return nil
+    }
+
+    /// One window snapshot supplies both frames and target presence for a poll. Live element
+    /// properties each re-resolve the query; reading frame before exists can fail if Cancel has
+    /// meanwhile become a timeout error. Snapshot attributes do not issue additional queries.
+    /// Hittability is not a public snapshot attribute: check it only after geometry settles,
+    /// still inside the event-wait scope, so unrelated animation-idle cannot block the tap.
+    @MainActor
+    private func waitForStableHitTarget(
+        _ element: XCUIElement, matching target: HitTarget, in window: XCUIElement, timeout: TimeInterval
+    ) -> Bool {
+        let started = ProcessInfo.processInfo.systemUptime
+        let deadline = started + timeout
         var previous = CGRect.null
-        var stableSince = Date()
+        var previousWindow = CGRect.null
+        var stableSince = started
+        var polls = 0
+        var slowestSnapshot: TimeInterval = 0
         repeat {
-            let frame = element.frame
-            let visible = element.exists && element.isHittable && !frame.isEmpty
-                && window.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
-            if !visible || frame != previous {
-                previous = frame
-                stableSince = Date()
-            } else if Date().timeIntervalSince(stableSince) >= 0.4 {
-                return true
+            let beforeSnapshot = ProcessInfo.processInfo.systemUptime
+            let snapshot: XCUIElementSnapshot
+            do { snapshot = try window.snapshot() } catch {
+                XCTFail("The account window snapshot must succeed: \(error)")
+                return false
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        } while Date() < deadline
+            let now = ProcessInfo.processInfo.systemUptime
+            polls += 1
+            slowestSnapshot = max(slowestSnapshot, now - beforeSnapshot)
+            guard now < deadline else { break }
+            let frame = hitTarget(target, in: snapshot)?.frame ?? .null
+            let visible = !frame.isNull && !frame.isEmpty
+                && snapshot.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+            // An offscreen frame needs a swipe, not five seconds of identical snapshots.
+            if !frame.isNull && !visible { return false }
+            if !visible || frame != previous || snapshot.frame != previousWindow {
+                previous = frame
+                previousWindow = snapshot.frame
+                stableSince = now
+            } else if now - stableSince >= 0.4 {
+                if element.isHittable && ProcessInfo.processInfo.systemUptime < deadline {
+                    print("DULCET ACCOUNT HIT TARGET settled polls=\(polls) snapshot-max=\(slowestSnapshot)")
+                    return true
+                }
+                stableSince = ProcessInfo.processInfo.systemUptime
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        print("DULCET ACCOUNT HIT TARGET timeout polls=\(polls) snapshot-max=\(slowestSnapshot)")
         return false
     }
 

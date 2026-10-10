@@ -3,10 +3,13 @@
 
 The supported runtime models an event whose animation-idle notification never arrives, although
 its screen state changes normally. Both event waits must be bypassed and the state still checked.
-A visible button moves during a scroll and must settle before a tap.
+A visible button moves during a scroll and must settle before a tap. Geometry polling gets one
+immutable window snapshot; live geometry reads fail the control. Temporary target absence and
+an occluded settled target must be re-observed, with hittability still required.
 An opening confirmation ignores its first tap; the observed empty form must follow a retry.
 Missing/changed Objective-C methods fall back safely. This checks the test's wait boundary, not
-which UIKit animation prevented CI's reply. --mutant demonstrates the rejected wait boundaries and the confirmation race.
+which UIKit animation prevented CI's reply. --source can run the original implementation against
+the snapshot control; --mutant demonstrates rejected wait boundaries and the confirmation race.
 """
 import argparse
 from pathlib import Path
@@ -15,27 +18,33 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
+parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
 parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target'])
 args = parser.parse_args()
-source = (ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
+source = (args.source or ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
 
-def method(name):
-    start = source.index('    private func ' + name + '(')
+def declaration(marker):
+    start = source.index(marker)
     opening = source.index('{', start)
     depth = 1
     end = opening + 1
     while depth:
         depth += (source[end] == '{') - (source[end] == '}')
         end += 1
-    return source[start:end].replace('private func', 'func', 1)
+    return source[start:end].replace('private func', 'func', 1).replace('private enum', 'enum', 1)
+
+def method(name):
+    return declaration('    private func ' + name + '(')
 
 scope = method('withoutIdleWaits')
 proof = method('proveEveryAccountConnectState')
 sign_out = method('signOut')
 scroll = method('scrollIntoView')
 stable = method('waitForStableHitTarget')
+snapshot_polling = 'matching target: HitTarget' in stable
+helpers = (declaration('    private enum HitTarget {') + '\n' + method('hitTarget')) if snapshot_polling else ''
 if args.mutant == 'moving-target':
-    scroll = scroll.replace('waitForStableHitTarget(element, in: window, timeout: 5)', 'element.isHittable')
+    scroll = scroll.replace('waitForStableHitTarget(element, matching: target, in: window, timeout: 5)' if snapshot_polling else 'waitForStableHitTarget(element, in: window, timeout: 5)', 'element.isHittable')
 if args.mutant == 'confirmation-once':
     start = sign_out.index('        let confirmationDeadline')
     end = sign_out.index('        guard primary.waitForExistence', start)
@@ -51,6 +60,21 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
+enum XCUIElementType { case button, `switch`, window }
+protocol XCUIElementSnapshot {
+    var children: [XCUIElementSnapshot] { get }
+    var elementType: XCUIElementType { get }
+    var identifier: String { get }
+    var label: String { get }
+    var frame: CGRect { get }
+}
+struct Snapshot: XCUIElementSnapshot {
+    var children: [XCUIElementSnapshot] = []
+    var elementType = XCUIElementType.button
+    var identifier = "moving-button"
+    var label = "moving-button"
+    var frame: CGRect
+}
 enum RuntimeCase { case supported, missing, changed }
 var runtimeCase = RuntimeCase.supported
 func class_getInstanceMethod(_ cls: AnyClass, _ selector: Selector) -> Method? {
@@ -80,6 +104,12 @@ final class XCUIApplication: NSObject {
         defer { self.options = previous }
         block()
     }
+    var forbidLiveGeometry = false
+    var missingSnapshots = 0
+    var blockedHitTests = 0
+    var hitTests = 0
+    var snapshotDelay: TimeInterval = 0
+    var snapshotReads = 0
     var frameReads = 0
     var lastTargetY = 1_000.0
     var swipes = 0
@@ -112,12 +142,37 @@ struct Element {
     let key: String
     var firstMatch: Self { self }
     var exists: Bool {
+        precondition(!app.forbidLiveGeometry || (key != "moving-button" && key != "window"),
+                     "presence polling must come from the same snapshot as geometry")
         if key == "moving-button" || key == "window" { return true }
         if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
         return key == "Sign Out" && (scope == "root" ? app.state != "signed-out" : scope == "sheet" && app.confirmationExists)
     }
-    var isHittable: Bool { key == "moving-button" ? app.swipes > 0 : exists }
+    var isHittable: Bool {
+        if key != "moving-button" { return exists }
+        app.hitTests += 1
+        if app.blockedHitTests > 0 { app.blockedHitTests -= 1; return false }
+        return app.swipes > 0
+    }
+    func snapshot() throws -> XCUIElementSnapshot {
+        precondition(key == "window", "one window snapshot per geometry poll")
+        app.snapshotReads += 1
+        if app.snapshotDelay > 0 { Thread.sleep(forTimeInterval: app.snapshotDelay) }
+        let window = CGRect(x: 0, y: 0, width: 400, height: 800)
+        if app.missingSnapshots > 0 {
+            app.missingSnapshots -= 1
+            return Snapshot(children: [], elementType: .window, identifier: "", label: "", frame: window)
+        }
+        if app.swipes > 0 {
+            let positions = [300.0, 200.0, 100.0]
+            app.lastTargetY = positions[min(app.frameReads, positions.count - 1)]
+            app.frameReads += 1
+        }
+        let target = Snapshot(frame: CGRect(x: 20, y: app.lastTargetY, width: 100, height: 30))
+        return Snapshot(children: [target], elementType: .window, identifier: "", label: "", frame: window)
+    }
     var frame: CGRect {
+        precondition(!app.forbidLiveGeometry, "geometry polling must not re-resolve live queries")
         if key == "window" { return CGRect(x: 0, y: 0, width: 400, height: 800) }
         if app.swipes > 0 {
             let positions = [300.0, 200.0, 100.0]
@@ -166,9 +221,24 @@ struct Check {
         precondition(app.options == 0, "interaction options must be restored")
         print("non-idle-animation / observed-state / restored-options: PASS")
         let moving = Element(app: app, scope: "root", key: "moving-button")
-        precondition(proof.scrollIntoView(moving, in: app))
+        app.forbidLiveGeometry = true
+        precondition(proof.scrollIntoView(moving, MATCHING in: app))
         moving.tap()
         print("moving visible target / settled tap: PASS")
+        app.missingSnapshots = 2
+        app.blockedHitTests = 1
+        let earlierHitTests = app.hitTests
+        precondition(proof.waitForStableHitTarget(moving, MATCHING in: app.windows, timeout: 5))
+        precondition(app.missingSnapshots == 0 && app.hitTests == earlierHitTests + 2,
+                     "a temporarily missing target and an occluded stable target must be re-observed")
+        print("snapshot-only geometry / transient absence / hittability retained: PASS")
+        app.snapshotDelay = 0.2
+        let beforeExpiry = app.hitTests
+        precondition(!proof.waitForStableHitTarget(moving, MATCHING in: app.windows, timeout: 0.1))
+        precondition(app.hitTests == beforeExpiry, "an expired snapshot cannot authorize a tap")
+        app.snapshotDelay = 0
+        print("slow snapshot / unchanged deadline: PASS")
+        app.forbidLiveGeometry = false
         app.state = "connected"
         precondition(proof.signOut(in: app) && app.confirmTapCount == 2 && !app.confirmationExists)
         print("opening confirmation / observed empty form: PASS")
@@ -185,9 +255,10 @@ struct Check {
     }
 }
 '''
+checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' if snapshot_polling else '')
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
     swift = path / 'control.swift'
-    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + scroll + '\n' + stable + checks)
+    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
     subprocess.run([str(path / 'control')], check=True)
