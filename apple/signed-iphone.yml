@@ -1,0 +1,90 @@
+name: DulcetSignedIPhone
+options:
+  bundleIdPrefix: com.legitimateapps.dulcet
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+    tvOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ARCHS: arm64
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 3LTL47SJ8C
+    FRAMEWORK_SEARCH_PATHS: "$(inherited) $(BUILT_PRODUCTS_DIR)"
+    OTHER_LDFLAGS: "$(inherited) -framework DulcetCore"
+    # One marketing version for every channel and platform (spec §22.1: DEV carries the
+    # in-progress version). CFBundleShortVersionString cannot carry a "-dev" suffix, so DEV is
+    # told apart by its bundle identifier, name and icon, never by this value.
+    MARKETING_VERSION: "0.1.0"
+packages:
+  DulcetKit:
+    path: DulcetKit
+targets:
+  DulcetSignedIPhoneHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: DulcetSignedIPhoneHost
+      - path: DulcetiOS/Assets.xcassets
+      - DulcetAppleShared
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.signed-iphone
+        PRODUCT_MODULE_NAME: DulcetiOS
+        PRODUCT_NAME: Dulcet Signed iPhone Host
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Manual
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DULCET_SIGNED_IPHONE_PROOF"
+    info:
+      path: DulcetSignedIPhoneUITests/Host-Info.plist
+      properties:
+        CFBundleDisplayName: Dulcet Signed iPhone Host
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: "Dulcet connects to the disposable music server for this test."
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+  DulcetSignedIPhoneUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: DulcetSignedIPhoneUITests
+        excludes:
+          - Host-Info.plist
+      - DulcetSignedDeviceUITestSupport
+    dependencies:
+      - target: DulcetSignedIPhoneHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.signed-iphone.ui-tests
+        TARGETED_DEVICE_FAMILY: "1"
+        TEST_TARGET_NAME: DulcetSignedIPhoneHost
+        CODE_SIGN_STYLE: Manual
+schemes:
+  DulcetSignedIPhoneProof:
+    build:
+      targets:
+        DulcetSignedIPhoneHost: all
+        DulcetSignedIPhoneUITests: [test]
+    test:
+      targets:
+        - DulcetSignedIPhoneUITests

@@ -1,0 +1,16 @@
+#!/opt/homebrew/bin/python3
+"""iPhone identity for the shared trusted signed-device job/control checks."""
+from pathlib import Path
+import os
+import runpy
+import stat
+
+try:
+    shared = Path(__file__).with_name("signed-ipad-job")
+    info = shared.lstat()
+    if shared.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o022 or not info.st_mode & stat.S_IXUSR:
+        raise ValueError("Shared trusted job refused")
+    runpy.run_path(str(shared), run_name='__main__', init_globals={'DEVICE_KIND': 'iphone'})
+except Exception:
+    print('Signed iPhone proof FAIL; trusted launcher unavailable; evidence withheld')
+    raise SystemExit(1)

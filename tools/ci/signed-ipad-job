@@ -18,7 +18,12 @@ import tarfile
 import tempfile
 import urllib.request
 
-REPOS = ('legitimate-apps/dulcet', 'legitimate-apps/dulcet-signed-ipad-privacy-check')
+KIND = globals().get('DEVICE_KIND', 'ipad')
+assert KIND in ('ipad', 'iphone')
+TITLE = 'iPad' if KIND == 'ipad' else 'iPhone'
+CLASS = 'DulcetSigned'+('IPad' if KIND == 'ipad' else 'IPhone')+'AccountConnectUITests'
+CASE = 'testSigned'+('IPad' if KIND == 'ipad' else 'IPhone')+'ConnectKeychainRelaunchAndTouchReconnect'
+REPOS = ('legitimate-apps/dulcet', 'legitimate-apps/dulcet-signed-'+KIND+'-privacy-check')
 
 
 def private(path, mode):
@@ -84,6 +89,15 @@ def checkout_archive(raw, workspace):
                 archive.extract(member, path=workspace, filter='data')
 
 
+def require_physical_result(local):
+    if json.loads((local/'preparation.json').read_text()) != {
+            'build': 'PASS', 'sign': 'PASS', 'fixture': 'PASS', 'runtime': 'physical'}:
+        raise ValueError('signed device preparation required')
+    if json.loads((local/'cleanup-status.json').read_text()) != {
+            'keychain': 'PASS', 'uninstall': 'PASS'}:
+        raise ValueError('owned device cleanup required')
+
+
 def job():
     raw = None
     try:
@@ -97,8 +111,8 @@ def job():
         raw = (local/'job.log').open('xb')
         (local/'job.log').chmod(0o600)
         token = os.environ.pop('DULCET_CHECKOUT_TOKEN')
-        environment = dict(os.environ, DULCET_SIGNED_IPAD_CONFIG=str(paths['proof_config']),
-                           DULCET_SIGNED_IPAD_LOCAL_RESULTS=str(local))
+        environment = dict(os.environ, **{'DULCET_SIGNED_'+KIND.upper()+'_CONFIG': str(paths['proof_config']),
+                           'DULCET_SIGNED_'+KIND.upper()+'_LOCAL_RESULTS': str(local)})
         for key in ('GITHUB_STEP_SUMMARY','GITHUB_ENV','GITHUB_OUTPUT','GITHUB_PATH','GITHUB_STATE'):
             environment.pop(key,None)
         print('Checkout main started', flush=True)
@@ -111,12 +125,14 @@ def job():
         checkout_archive(archive, workspace)
         print('Checkout main PASS', flush=True)
         for label, command in (
-            ('Privacy controls', ['python3', 'tools/verify_signed_ipad_privacy.py', '--self-test']),
-            ('Receipt controls', ['python3', 'tools/audit_signed_ipad_receipt.py', '--self-test']),
-            ('Signed iPad proof', ['python3', 'tools/ci/run-signed-ipad-proof']),
-            ('Evidence scrub', ['python3', 'tools/verify_signed_ipad_privacy.py', '--tokens',
+            ('Privacy controls', ['python3', f'tools/verify_signed_{KIND}_privacy.py', '--self-test']),
+            ('Receipt controls', ['python3', f'tools/audit_signed_{KIND}_receipt.py', '--self-test']),
+            ('Signed '+TITLE+' proof', ['python3', f'tools/ci/run-signed-{KIND}-proof']),
+            ('Evidence scrub', ['python3', f'tools/verify_signed_{KIND}_privacy.py', '--tokens',
                                 str(paths['private_tokens']), '--junit', str(local/'proof.xml')]),
         ):
+            if label == 'Evidence scrub':
+                require_physical_result(local)
             print(label+' started', flush=True)
             result = subprocess.run(command, cwd=workspace, env=environment,
                                     stdout=raw, stderr=subprocess.STDOUT)
@@ -127,13 +143,13 @@ def job():
         evidence = workspace/'evidence'
         evidence.mkdir(exist_ok=True)
         (evidence/'proof.xml').write_bytes((local/'proof.xml').read_bytes())
-        print('Signed iPad proof PASS tests=1 failures=0 skipped=0', flush=True)
+        print('Signed '+TITLE+' proof PASS tests=1 failures=0 skipped=0', flush=True)
         return 0
     except Exception:
         if raw:
             import traceback
             raw.write(traceback.format_exc().encode())
-        print('Signed iPad proof FAIL; evidence withheld; output retained locally', flush=True)
+        print('Signed '+TITLE+' proof FAIL; evidence withheld; output retained locally', flush=True)
         return 1
     finally:
         if raw:
@@ -143,6 +159,31 @@ def job():
 def self_test():
     import contextlib
     from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as directory:
+        local = Path(directory)
+        preparation = {'build': 'PASS', 'sign': 'PASS', 'fixture': 'PASS', 'runtime': 'physical'}
+        cleanup = {'keychain': 'PASS', 'uninstall': 'PASS'}
+        (local/'preparation.json').write_text(json.dumps(preparation))
+        (local/'cleanup-status.json').write_text(json.dumps(cleanup))
+        require_physical_result(local)
+        for rejected in (dict(preparation, runtime='simulator'), dict(preparation, sign='SKIPPED'), {}):
+            (local/'preparation.json').write_text(json.dumps(rejected))
+            try:
+                require_physical_result(local)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('non-device preparation admitted')
+        (local/'preparation.json').write_text(json.dumps(preparation))
+        for rejected in (dict(cleanup, keychain='FAIL'), dict(cleanup, uninstall='FAIL'), {}):
+            (local/'cleanup-status.json').write_text(json.dumps(rejected))
+            try:
+                require_physical_result(local)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('incomplete cleanup admitted')
 
     def archive(member_name, kind=tarfile.REGTYPE):
         stream = io.BytesIO()
@@ -220,9 +261,10 @@ def self_test():
     # or network. The fake proof deliberately prints a registry token; it belongs
     # in the private raw log and must never enter the public summaries.
     sources = Path(__file__).resolve().parents[2]
-    xml = ('<testsuite tests="1"><testcase classname="DulcetSignedIPadAccountConnectUITests" '
-           'name="testSignedIPadConnectKeychainRelaunchAndTouchReconnect"/></testsuite>')
-    for label, produced in (('pass', xml), ('bad-xml', xml.replace('tests="1"', 'tests="2"')),
+    xml = ('<testsuite tests="1"><testcase classname="'+CLASS+'" '
+           'name="'+CASE+'"/></testsuite>')
+    for label, produced in (('pass', xml), ('simulator', xml), ('cleanup-fail', xml),
+                             ('sign-skipped', xml), ('bad-xml', xml.replace('tests="1"', 'tests="2"')),
                              ('token-xml', xml.replace('/>', ' time="private-fixture-value"/>'))):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -246,15 +288,21 @@ def self_test():
                 base = tarfile.TarInfo('checkout')
                 base.type = tarfile.DIRTYPE
                 tar.addfile(base)
-                for name in ('tools/verify_signed_ipad_privacy.py', 'tools/audit_signed_ipad_receipt.py'):
+                for name in dict.fromkeys((f'tools/verify_signed_{KIND}_privacy.py', f'tools/audit_signed_{KIND}_receipt.py', 'tools/verify_signed_ipad_privacy.py', 'tools/audit_signed_ipad_receipt.py')):
                     data = (sources/name).read_bytes()
                     member = tarfile.TarInfo('checkout/'+name)
                     member.size = len(data)
                     tar.addfile(member, io.BytesIO(data))
+                preparation = {'build': 'PASS', 'sign': 'SKIPPED' if label == 'sign-skipped' else 'PASS',
+                               'fixture': 'PASS', 'runtime': 'simulator' if label == 'simulator' else 'physical'}
+                cleanup = {'keychain': 'FAIL' if label == 'cleanup-fail' else 'PASS', 'uninstall': 'PASS'}
                 data = ('import os,pathlib\nprint("private-fixture-value")\n'
-                        'pathlib.Path(os.environ["DULCET_SIGNED_IPAD_LOCAL_RESULTS"],"proof.xml").write_text('
+                        f'local=pathlib.Path(os.environ["DULCET_SIGNED_{KIND.upper()}_LOCAL_RESULTS"])\n'
+                        'local.joinpath("preparation.json").write_text('+repr(json.dumps(preparation))+')\n'
+                        'local.joinpath("cleanup-status.json").write_text('+repr(json.dumps(cleanup))+')\n'
+                        f'pathlib.Path(os.environ["DULCET_SIGNED_{KIND.upper()}_LOCAL_RESULTS"],"proof.xml").write_text('
                         +repr(produced)+')\n').encode()
-                member = tarfile.TarInfo('checkout/tools/ci/run-signed-ipad-proof')
+                member = tarfile.TarInfo(f'checkout/tools/ci/run-signed-{KIND}-proof')
                 member.size = len(data)
                 tar.addfile(member, io.BytesIO(data))
             environment = dict(good, GITHUB_WORKSPACE=str(workspace),
@@ -272,14 +320,14 @@ def self_test():
             assert result == (0 if label == 'pass' else 1)
             assert (workspace/'evidence/proof.xml').exists() == (label == 'pass')
             count += 1
-    print('iPad trusted job controls PASS count='+str(count))
+    print(TITLE+' trusted job controls PASS count='+str(count))
 
 
 if __name__ == '__main__':
     if sys.argv[1:] == ['--self-test']:
         self_test()
     elif sys.argv[1:]:
-        print('Signed iPad proof FAIL; invalid launcher arguments')
+        print('Signed '+TITLE+' proof FAIL; invalid launcher arguments')
         raise SystemExit(1)
     else:
         raise SystemExit(job())

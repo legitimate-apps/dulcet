@@ -622,16 +622,17 @@ private extension DulcetDeterministicFixture {
     )
 
     static let doubleLines: DulcetAlbum = {
-        let tracks = (1...2).flatMap { disc in
-            (1...2).map { track in
-                DulcetTrack(
+        let tracks: [DulcetTrack] = (1...2).flatMap { (disc: Int) -> [DulcetTrack] in
+            (1...2).map { (track: Int) -> DulcetTrack in
+                let durationSeconds = 196 + (disc * 13) + (track * 7)
+                return DulcetTrack(
                     id: "double-lines-d\(disc)-t\(track)",
                     title: "Disc \(disc) Track \(track)",
                     artistNames: ["Dulcet Fixtures"],
                     albumTitle: "Double Lines",
                     discNumber: disc,
                     trackNumber: track,
-                    duration: .seconds(196 + (disc * 13) + (track * 7)),
+                    duration: .seconds(durationSeconds),
                     artwork: doubleLinesArtwork,
                     isFavorite: disc == 1 && track == 2
                 )
