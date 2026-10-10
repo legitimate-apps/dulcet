@@ -44,15 +44,17 @@ account_connect = next(
 ipad_account_connect = account_connect["platforms"]["ipados"]
 if ipad_account_connect.get("status") != "partial":
     errors.append("account.connect/ipados must stay partial while its interaction gaps remain")
+ipad_reason = ipad_account_connect.get("promotion_condition", {}).get("reason", "")
+# A receipt whose pinned sources changed is stale to parity_gate; the cell then names it historical
+# until a new signed main run replaces it.
 if not any(
     row.get("receipt", "").startswith("evidence/receipts/signed-ipad-account-connect-")
     and "observes" in row
     and row.get("test")
     == "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect"
     for row in ipad_account_connect.get("evidence", [])
-):
+) and "receipt is historical and no longer cited as active evidence" not in ipad_reason:
     errors.append("account.connect/ipados must cite the signed main receipt as a bounded observation")
-ipad_reason = ipad_account_connect.get("promotion_condition", {}).get("reason", "")
 for marker in ("Hardware-keyboard interaction", "touch credential entry", "rotation/multitasking widths",
                "DEBUG account hook", "Library Reconnect is observed, not tapped", "saved=PASS"):
     if marker not in ipad_reason:
