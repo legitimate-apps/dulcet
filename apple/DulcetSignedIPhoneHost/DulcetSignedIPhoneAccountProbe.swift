@@ -33,7 +33,13 @@ final class DulcetSignedIPhoneAccountProbe {
             fatalError("Signed iPhone proof requires its isolated host and phase")
         }
 #if targetEnvironment(simulator)
-        fatalError("Signed iPhone proof requires physical hardware")
+        guard value("-dulcet-signed-iphone-runtime") == "simulator" else {
+            fatalError("Simulator rehearsal requires explicit runtime authorization")
+        }
+#else
+        guard !args.contains("-dulcet-signed-iphone-runtime") else {
+            fatalError("Hardware proof refuses simulator runtime authorization")
+        }
 #endif
         self.phase = phase
         self.nonce = nonce

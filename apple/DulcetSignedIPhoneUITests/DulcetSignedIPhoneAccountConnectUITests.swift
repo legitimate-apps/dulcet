@@ -12,10 +12,18 @@ final class DulcetSignedIPhoneAccountConnectUITests: XCTestCase {
         XCTAssertEqual(env["DULCET_CONFORMANCE_DISPOSABLE"], "true")
         let nonce = try XCTUnwrap(env["DULCET_SIGNED_IPHONE_NONCE"])
         XCTAssertNotNil(UUID(uuidString: nonce))
+#if targetEnvironment(simulator)
+        XCTAssertEqual(env["DULCET_SIGNED_IPHONE_RUNTIME"], "simulator", "Simulator rehearsal must be explicit")
+#else
+        XCTAssertNil(env["DULCET_SIGNED_IPHONE_RUNTIME"], "Hardware proof must not request simulator mode")
+#endif
         let app = XCUIApplication(bundleIdentifier: "com.legitimateapps.dulcet.signed-iphone")
         let marker = app.staticTexts["dulcet.signed-iphone.proof"].firstMatch
         func launch(_ phase: String) {
             app.launchArguments = ["-dulcet-signed-iphone-phase", phase, "-dulcet-signed-iphone-nonce", nonce]
+#if targetEnvironment(simulator)
+            app.launchArguments += ["-dulcet-signed-iphone-runtime", "simulator"]
+#endif
             if phase == "prime" { app.launchArguments += ["-dulcet-signed-iphone-prime-url", url] }
             if phase == "connect" { app.launchArguments += ["-dulcet-signed-iphone-fixture-url", url] }
             app.launch()
