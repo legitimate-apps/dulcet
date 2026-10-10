@@ -117,6 +117,22 @@ enum SignedAccountConnectProof {
         expectHittable(connect); XCTAssertTrue(connect.isEnabled)
         connect.tap()
         expectMarker("connected=PASS")
+        // A device with password AutoFill offers to save the typed password after sign-in and the
+        // sheet covers the sidebar (signed iPad, 2026-10-10). Press only a known decline label so
+        // nothing reaches the device's own password store.
+        let saveTitle = app.staticTexts["Save Password?"].firstMatch
+        if saveTitle.waitForExistence(timeout: 5) {
+            let declines = ["Not Now", "Never", "No Thanks", "Don't Save", "Don\u{2019}t Save"]
+            let inApp = app.buttons.matching(NSPredicate(format: "label IN %@", declines)).firstMatch
+            let inSystem = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons
+                .matching(NSPredicate(format: "label IN %@", declines)).firstMatch
+            let decline = inApp.waitForExistence(timeout: 3) ? inApp : inSystem
+            XCTAssertTrue(decline.waitForExistence(timeout: 3), "The save-password sheet must offer a decline")
+            print("DULCET SIGNED \(lane.uppercased()) save-password declined=\(decline.label)")
+            decline.tap()
+            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: saveTitle)
+            XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: 5), .completed, "The save-password sheet must close")
+        }
         connection()
         XCTAssertTrue(connected.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Sign Out"].exists)
