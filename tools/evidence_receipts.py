@@ -23,6 +23,7 @@ REPOSITORY_SLUG = "legitimate-apps/dulcet"
 DISPATCH_ONLY_EVIDENCE_JOBS: dict[tuple[str, str], str] = {
     ("signed-mac-account-connect", "signed-account-connect"): "signed-entitled-host",
     ("signed-ipad-account-connect", "signed-ipad-account-connect"): "device-attached",
+    ("signed-iphone-account-connect", "signed-iphone-account-connect"): "device-attached",
 }
 
 RECEIPT_KEYS = {
