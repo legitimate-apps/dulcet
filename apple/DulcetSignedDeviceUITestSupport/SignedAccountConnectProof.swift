@@ -56,15 +56,19 @@ enum SignedAccountConnectProof {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let primeDeadline = Date().addingTimeInterval(65)
         while Date() < primeDeadline, !(marker.exists && marker.label.contains("primed=PASS")) {
-            let alert = springboard.alerts.firstMatch
-            if alert.exists, alert.label.contains("Dulcet Signed \(lane == "ipad" ? "iPad" : "iPhone") Host"),
-               alert.label.localizedCaseInsensitiveContains("local network") {
-                let allow = alert.buttons["Allow"].firstMatch
-                XCTAssertTrue(allow.exists, "The Local Network prompt must offer Allow"); allow.tap()
+            for alert in [app.alerts.firstMatch, springboard.alerts.firstMatch] {
+                if alert.exists, alert.label.contains("Dulcet Signed \(lane == "ipad" ? "iPad" : "iPhone") Host"),
+                   alert.label.localizedCaseInsensitiveContains("local network") {
+                    let allow = alert.buttons["Allow"].firstMatch
+                    XCTAssertTrue(allow.exists, "The Local Network prompt must offer Allow"); allow.tap()
+                    break
+                }
             }
             if marker.exists, marker.label.contains("FAIL") { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         }
+        XCTAssertFalse(marker.exists && marker.label.contains("FAIL"),
+                       "Fixture prime failed: \(marker.exists ? marker.label : "marker absent")")
         expectMarker("primed=PASS")
         quit()
         launch("connect")

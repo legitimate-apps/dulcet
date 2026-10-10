@@ -70,7 +70,13 @@ final class DulcetSignedDeviceAccountProbe {
             defaults.set(ProcessInfo.processInfo.processIdentifier, forKey: Self.pidKey)
             do { try wrongValueControl() } catch { fatalError("Keychain wrong-value control failed") }
         } else {
-            guard defaults.string(forKey: Self.ownerKey) == nonce,
+            // Prime writes no owner or credential. A failed prime still needs an
+            // empty readback and isolated-namespace cleanup before uninstall.
+            let emptyPrimeCleanup = phase == "cleanup"
+                && defaults.string(forKey: Self.ownerKey) == nil
+                && defaults.string(forKey: Self.itemKey) == nil
+                && keychain.activeAccountID == nil
+            guard (defaults.string(forKey: Self.ownerKey) == nonce || emptyPrimeCleanup),
                   !args.contains("-dulcet-debug-connect-account"),
                   defaults.integer(forKey: Self.pidKey) != Int(ProcessInfo.processInfo.processIdentifier) else {
                 fatalError("Signed device relaunch requires a fresh process without an account hook")
@@ -123,15 +129,20 @@ final class DulcetSignedDeviceAccountProbe {
                 config.timeoutIntervalForRequest = 3
                 let session = URLSession(configuration: config)
                 let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+                var lastErrorCode: Int?
                 while ContinuousClock.now < deadline {
                     // Any HTTP response from the fixture proves local-network reach.
-                    if let reply = try? await session.data(from: primeURL), reply.1 is HTTPURLResponse {
-                        self?.text = "signed-\(Self.lane)=PASS primed=PASS"
-                        return
-                    }
+                    do {
+                        let reply = try await session.data(from: primeURL)
+                        if reply.1 is HTTPURLResponse {
+                            self?.text = "signed-\(Self.lane)=PASS primed=PASS"
+                            return
+                        }
+                    } catch { lastErrorCode = (error as NSError).code }
                     try? await Task.sleep(for: .milliseconds(500))
                 }
-                self?.text = "signed-\(Self.lane)=FAIL"
+                // Numeric diagnostics avoid exposing URLs, device names or paths.
+                self?.text = "signed-\(Self.lane)=FAIL primed=FAIL url-error=\(lastErrorCode ?? 0)"
             }
             return
         }

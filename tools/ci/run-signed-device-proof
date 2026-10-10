@@ -66,13 +66,47 @@ def device_unlocked(state):
 def run(args, **kwargs):
     return subprocess.run([str(a) for a in args], cwd=repo, check=True, **kwargs)
 
-def device(*args, output, check=True):
+def stop_device_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait()
+        return
+    deadline = time.monotonic() + 5
+    try:
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        # The launcher can exit before a setup descendant. Give the entire
+        # owned group its grace period, then remove any remaining descendants.
+        time.sleep(max(0, deadline - time.monotonic()))
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+def device_tool(*args, check=True):
     if simulator:
         raise RuntimeError('Hardware devicectl is forbidden in simulator mode')
-    return subprocess.run(['xcrun', 'devicectl', '--timeout', '30', '--json-output',
-        str(root/output), 'device', *map(str,args[:2]), '--device', config['device_udid'],
-        *map(str,args[2:])],
-        cwd=repo, check=check)
+    command = ['xcrun', 'devicectl', '--timeout', '30', *map(str,args)]
+    # Bound the outer launcher too: the shim can block in Xcode setup before
+    # the native tool honors --timeout. Its process group belongs only to this call.
+    process = subprocess.Popen(command, cwd=repo, start_new_session=True)
+    try:
+        code = process.wait(timeout=45)
+    finally:
+        # Also handles interruption, and descendants outliving a completed launcher.
+        stop_device_group(process)
+    if check and code:
+        raise subprocess.CalledProcessError(code, command)
+    return subprocess.CompletedProcess(command, code)
+
+def device(*args, output, check=True):
+    return device_tool('--json-output', root/output, 'device', *args[:2],
+        '--device', config['device_udid'], *args[2:], check=check)
 
 def interrupted(signum, frame):
     raise InterruptedError('Signed device proof interrupted')
@@ -341,8 +375,7 @@ try:
         # Refresh cached paired metadata once; this reads the inventory, never drives
         # another device. Runtime names and identifiers extend the private registry
         # before any evidence can leave the trusted job.
-        run(['xcrun', 'devicectl', '--timeout', '30', '--json-output', root/'devices.json',
-             'list', 'devices'])
+        device_tool('--json-output', root/'devices.json', 'list', 'devices')
         inventory = json.loads((root/'devices.json').read_text())['result']['devices']
         selected = [d for d in inventory
                     if d.get('hardwareProperties', {}).get('udid') == config['device_udid']]
@@ -375,7 +408,8 @@ try:
     may_have_installed=True
     result=root/'proof.xcresult'
     run(['xcodebuild','test-without-building','-xctestrun',manifest,'-destination',
-        ('platform=iOS Simulator,id='+sim_id if simulator else 'platform=iOS,id='+config['device_udid']),'-parallel-testing-enabled','NO','-resultBundlePath',result,
+        ('platform=iOS Simulator,id='+sim_id if simulator else 'platform=iOS,id='+config['device_udid']),'-parallel-testing-enabled','NO',
+        '-collect-test-diagnostics','never','-resultBundlePath',result,
         '-only-testing:'+TARGET+'/'+CLASS+'/'+case],env=env)
     run(['python3','tools/verify-xcode-test-execution',result,
         TARGET+'.'+CLASS,case])
