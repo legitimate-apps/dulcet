@@ -80,7 +80,14 @@ def literal_scan(paths, tokens):
     return True
 
 
-def audit(repo, run_id, tokens, output, github, literal=literal_scan):
+def audit(repo, run_id, tokens, output, github, literal=literal_scan, *, lane=None):
+    # The iPhone lane supplies its exact identity while sharing the full archive,
+    # metadata, privacy and source-hash audit with the receipt-pinned iPad lane.
+    context = lane or globals()
+    REPO, SCRATCH, WORKFLOW, JOB, NEUTRAL, SOURCES, TEST, junit = (
+        context[key] for key in ('REPO', 'SCRATCH', 'WORKFLOW', 'JOB', 'NEUTRAL', 'SOURCES', 'TEST', 'junit'))
+    audit_tool = context.get('AUDIT_TOOL', 'tools/audit_signed_ipad_receipt.py')
+    artifact_prefix = context.get('ARTIFACT_PREFIX', 'dulcet-signed-ipad-junit')
     if repo not in (REPO, SCRATCH) or not re.fullmatch(r'[1-9]\d*', str(run_id)):
         raise ValueError('invalid run')
     # An output directory inside any checkout would make a local-only receipt
@@ -137,7 +144,7 @@ def audit(repo, run_id, tokens, output, github, literal=literal_scan):
     if (len(passed_jobs) != 1 or passed_jobs[0]['conclusion'] != 'success'
             or passed_jobs[0]['runner_name'] != NEUTRAL
             or len(artifacts) != 1 or artifacts[0]['expired']
-            or artifacts[0]['name'] != 'dulcet-signed-ipad-junit-'+str(run_id)+'-'+str(run['run_attempt'])):
+            or artifacts[0]['name'] != artifact_prefix+'-'+str(run_id)+'-'+str(run['run_attempt'])):
         raise ValueError('invalid evidence job')
     setup = '\n'.join(path.read_text() for path in files if 'Set up job' in path.name)
     if ("Machine name: '"+NEUTRAL+"'" not in setup
@@ -162,7 +169,7 @@ def audit(repo, run_id, tokens, output, github, literal=literal_scan):
         'tests': [{'name': TEST, 'result': 'passed'}],
         'junit_sha256': hashlib.sha256(xml.read_bytes()).hexdigest(),
         'test_sources': source_hashes,
-        'audit': {'tool': 'tools/audit_signed_ipad_receipt.py', 'result': 'pass',
+        'audit': {'tool': audit_tool, 'result': 'pass',
                   'files_scanned': len(files), 'tokens_checked': len(tokens)},
     }
     receipt_path = output/'receipt.json'
@@ -174,8 +181,13 @@ def audit(repo, run_id, tokens, output, github, literal=literal_scan):
     return receipt
 
 
-def self_test():
-    import verify_signed_ipad_privacy as privacy
+def self_test(lane=None):
+    import verify_signed_ipad_privacy as default_privacy
+    context = lane or globals()
+    REPO, WORKFLOW, JOB, NEUTRAL, SOURCES, TEST = (
+        context[key] for key in ('REPO', 'WORKFLOW', 'JOB', 'NEUTRAL', 'SOURCES', 'TEST'))
+    privacy = context.get('privacy', default_privacy)
+    artifact_prefix = context.get('ARTIFACT_PREFIX', 'dulcet-signed-ipad-junit')
 
     def zipped(entries):
         stream = io.BytesIO()
@@ -195,6 +207,7 @@ def self_test():
             self.logs = {'signed-ipad/1_Set up job.txt': "Runner name: '"+NEUTRAL+"'\nMachine name: '"+NEUTRAL+"'"}
             self.artifact = {'proof.xml': self.xml}
             self.blob = 'b'*40
+            self.artifact_name = artifact_prefix+'-123-1'
 
         def api(self, path):
             if '/contents/' in path:
@@ -206,7 +219,7 @@ def self_test():
                 return zipped(self.logs)
             if path.endswith('/artifacts'):
                 return json.dumps({'artifacts': [{'id': 456, 'expired': False,
-                                  'name': 'dulcet-signed-ipad-junit-123-1'}]}).encode()
+                                  'name': self.artifact_name}]}).encode()
             if '/jobs?' in path:
                 return json.dumps({'jobs': [{'name': JOB, 'conclusion': 'success',
                                             'runner_name': NEUTRAL}]}).encode()
@@ -219,7 +232,7 @@ def self_test():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         fixture = Fixture()
-        result = audit(REPO, 123, ['private-fixture-value'], root/'positive', fixture)
+        result = audit(REPO, 123, ['private-fixture-value'], root/'positive', fixture, lane=lane)
         assert result['run_id'] == '123'
         assert result['audit']['result'] == 'pass'
         assert result['tests'] == [{'name': TEST, 'result': 'passed'}]
@@ -228,7 +241,7 @@ def self_test():
         assert result['test_sources'] == {path: 'b'*40 for path in SOURCES}
         assert result['junit_sha256'] == hashlib.sha256(fixture.xml.encode()).hexdigest()
         for label in ('log-token', 'member-token', 'xml-token', 'failed', 'branch', 'trigger',
-                      'neutral', 'extra-artifact', 'wrong-test', 'missing-source', 'unsafe-archive'):
+                      'neutral', 'wrong-lane-artifact', 'extra-artifact', 'wrong-test', 'missing-source', 'unsafe-archive'):
             fixture = Fixture()
             if label == 'log-token': fixture.logs['signed-ipad/2_Proof.txt'] = 'PRIVATE-FIXTURE-VALUE'
             if label == 'member-token': fixture.logs['private-fixture-value.txt'] = 'neutral'
@@ -237,13 +250,14 @@ def self_test():
             if label == 'branch': fixture.run['head_branch'] = 'topic'
             if label == 'trigger': fixture.run['event'] = 'push'
             if label == 'neutral': fixture.logs = {'1_Set up job.txt': 'neutral'}
+            if label == 'wrong-lane-artifact': fixture.artifact_name = 'dulcet-other-device-junit-123-1'
             if label == 'extra-artifact': fixture.artifact['unexpected.txt'] = 'neutral'
             if label == 'wrong-test': fixture.artifact['proof.xml'] = fixture.xml.replace(privacy.CASE, 'wrongTest')
             if label == 'missing-source': fixture.blob = ''
             if label == 'unsafe-archive': fixture.artifact['../outside.txt'] = 'neutral'
             output = root/label
             try:
-                audit(REPO, 123, ['private-fixture-value'], output, fixture)
+                audit(REPO, 123, ['private-fixture-value'], output, fixture, lane=lane)
             except PrivacyIncident as incident:
                 assert label in ('log-token', 'member-token', 'xml-token')
                 assert fixture.deleted and incident.deleted
@@ -254,7 +268,7 @@ def self_test():
             else:
                 raise AssertionError('invalid run accepted')
             assert not (output/'receipt.json').exists()
-    print('iPad receipt controls PASS count='+str(count))
+    print(context.get('TITLE', 'iPad')+' receipt controls PASS count='+str(count))
 
 
 def main():

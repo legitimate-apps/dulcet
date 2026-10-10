@@ -1,0 +1,560 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1B3AC32A6A87F2155D8B2216 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 874D4AA4C58850524DDF341C /* libsqlite3.tbd */; };
+		2C2678497B398905ABA6E2C7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0FCACA16D106FDF67BACAB24 /* Assets.xcassets */; };
+		39E01D602D359C9F0D5CA818 /* DulcetAppleProduction.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B81E1AF31D13ABE186AA8E /* DulcetAppleProduction.swift */; };
+		3C7BD1034F21DE0E075E9320 /* SQLiteLoadExtensionUnsupported.c in Sources */ = {isa = PBXBuildFile; fileRef = 6DA459D509D46CF6178128A0 /* SQLiteLoadExtensionUnsupported.c */; };
+		4ECFAF6D33DBD6FAA2B94AE0 /* DulcetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 60B6B2CEF64E3FDB2715E198 /* DulcetKit */; };
+		67598E7DD80B54C0CBD1FF67 /* DulcetSignedIPhoneAccountConnectUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173D95449359EA40B2A4D829 /* DulcetSignedIPhoneAccountConnectUITests.swift */; };
+		985C0CB5ECE0C98C97BD6C43 /* DulcetDebugDownloadHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADEBFF8680DEB253D72FA01 /* DulcetDebugDownloadHandoff.swift */; };
+		9EAAE48C49EF2F2346A2A3D9 /* DulcetSignedIPhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 486D58221BD22E616588C737 /* DulcetSignedIPhoneApp.swift */; };
+		9EC32DEB7356614F89F9CD09 /* DulcetSignedIPadAccountProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 805315EC7460EE2289EEE5E6 /* DulcetSignedIPadAccountProbe.swift */; };
+		A07BFD02120C3979AD207346 /* DulcetCorePlaylistsLyrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10FD132CAFF4716F2282B2B2 /* DulcetCorePlaylistsLyrics.swift */; };
+		B53EF40477C83CB3855DAD98 /* DulcetCorePlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4987AECF600F70CFF609D7F8 /* DulcetCorePlaybackController.swift */; };
+		BB301DA606A30D22174FCA4E /* DulcetCorePlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDF77D4EF93E27D4979221F /* DulcetCorePlayback.swift */; };
+		CA500E69FEAAF18F997E1793 /* DulcetSignedIPhoneAccountProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87BB1AC3D71C79510022034B /* DulcetSignedIPhoneAccountProbe.swift */; };
+		D772D88FBDDEA31EE27858F9 /* DulcetCoreDownloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A60BDC8BA81285A249BB92E /* DulcetCoreDownloads.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		26495FF0BDAF2C4194061F41 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 701DBD5A19BDB5EE6B525814 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A3DEB68753F03CA0D1C7F089;
+			remoteInfo = DulcetSignedIPhoneHost;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0FCACA16D106FDF67BACAB24 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		10FD132CAFF4716F2282B2B2 /* DulcetCorePlaylistsLyrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlaylistsLyrics.swift; sourceTree = "<group>"; };
+		173D95449359EA40B2A4D829 /* DulcetSignedIPhoneAccountConnectUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetSignedIPhoneAccountConnectUITests.swift; sourceTree = "<group>"; };
+		1743252606C8D6F9477BEA60 /* DulcetSignedIPhoneHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DulcetSignedIPhoneHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3DF4ACB0BDD468C57BC23867 /* DulcetSignedIPhoneUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DulcetSignedIPhoneUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		486D58221BD22E616588C737 /* DulcetSignedIPhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetSignedIPhoneApp.swift; sourceTree = "<group>"; };
+		4987AECF600F70CFF609D7F8 /* DulcetCorePlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlaybackController.swift; sourceTree = "<group>"; };
+		5ADEBFF8680DEB253D72FA01 /* DulcetDebugDownloadHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetDebugDownloadHandoff.swift; sourceTree = "<group>"; };
+		6DA459D509D46CF6178128A0 /* SQLiteLoadExtensionUnsupported.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = SQLiteLoadExtensionUnsupported.c; sourceTree = "<group>"; };
+		7338407CB715E3E0146EF386 /* DulcetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DulcetKit; path = DulcetKit; sourceTree = SOURCE_ROOT; };
+		7A60BDC8BA81285A249BB92E /* DulcetCoreDownloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCoreDownloads.swift; sourceTree = "<group>"; };
+		805315EC7460EE2289EEE5E6 /* DulcetSignedIPadAccountProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetSignedIPadAccountProbe.swift; sourceTree = "<group>"; };
+		874D4AA4C58850524DDF341C /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
+		87BB1AC3D71C79510022034B /* DulcetSignedIPhoneAccountProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetSignedIPhoneAccountProbe.swift; sourceTree = "<group>"; };
+		BEDF77D4EF93E27D4979221F /* DulcetCorePlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetCorePlayback.swift; sourceTree = "<group>"; };
+		C7B81E1AF31D13ABE186AA8E /* DulcetAppleProduction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DulcetAppleProduction.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		42B7F756B9F97D6D5E5A6A35 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4ECFAF6D33DBD6FAA2B94AE0 /* DulcetKit in Frameworks */,
+				1B3AC32A6A87F2155D8B2216 /* libsqlite3.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1DED80B8391D27052542E250 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				7338407CB715E3E0146EF386 /* DulcetKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		335F494ACFCA7AD3B550D4C6 /* DulcetSignedIPhoneHost */ = {
+			isa = PBXGroup;
+			children = (
+				87BB1AC3D71C79510022034B /* DulcetSignedIPhoneAccountProbe.swift */,
+				486D58221BD22E616588C737 /* DulcetSignedIPhoneApp.swift */,
+			);
+			path = DulcetSignedIPhoneHost;
+			sourceTree = "<group>";
+		};
+		5098CC1D8F5E43E338B651FD /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				874D4AA4C58850524DDF341C /* libsqlite3.tbd */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		63E102D81AD775DC220255BA /* DulcetSignedIPhoneUITests */ = {
+			isa = PBXGroup;
+			children = (
+				173D95449359EA40B2A4D829 /* DulcetSignedIPhoneAccountConnectUITests.swift */,
+			);
+			path = DulcetSignedIPhoneUITests;
+			sourceTree = "<group>";
+		};
+		7204737C89929ECB6A36B7B3 /* DulcetiOS */ = {
+			isa = PBXGroup;
+			children = (
+				0FCACA16D106FDF67BACAB24 /* Assets.xcassets */,
+			);
+			path = DulcetiOS;
+			sourceTree = "<group>";
+		};
+		A1D7E322A7575E9AB9CAF6A1 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1743252606C8D6F9477BEA60 /* DulcetSignedIPhoneHost.app */,
+				3DF4ACB0BDD468C57BC23867 /* DulcetSignedIPhoneUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AF99D704103595DB12BFCFF7 = {
+			isa = PBXGroup;
+			children = (
+				E3AA95F294E3F186C09063F0 /* DulcetAppleShared */,
+				7204737C89929ECB6A36B7B3 /* DulcetiOS */,
+				335F494ACFCA7AD3B550D4C6 /* DulcetSignedIPhoneHost */,
+				63E102D81AD775DC220255BA /* DulcetSignedIPhoneUITests */,
+				1DED80B8391D27052542E250 /* Packages */,
+				5098CC1D8F5E43E338B651FD /* Frameworks */,
+				A1D7E322A7575E9AB9CAF6A1 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E3AA95F294E3F186C09063F0 /* DulcetAppleShared */ = {
+			isa = PBXGroup;
+			children = (
+				C7B81E1AF31D13ABE186AA8E /* DulcetAppleProduction.swift */,
+				7A60BDC8BA81285A249BB92E /* DulcetCoreDownloads.swift */,
+				BEDF77D4EF93E27D4979221F /* DulcetCorePlayback.swift */,
+				4987AECF600F70CFF609D7F8 /* DulcetCorePlaybackController.swift */,
+				10FD132CAFF4716F2282B2B2 /* DulcetCorePlaylistsLyrics.swift */,
+				5ADEBFF8680DEB253D72FA01 /* DulcetDebugDownloadHandoff.swift */,
+				805315EC7460EE2289EEE5E6 /* DulcetSignedIPadAccountProbe.swift */,
+				6DA459D509D46CF6178128A0 /* SQLiteLoadExtensionUnsupported.c */,
+			);
+			path = DulcetAppleShared;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		949C30B96CBCDB616E3FEC08 /* DulcetSignedIPhoneUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A61B72C86F39D9D77DF7936F /* Build configuration list for PBXNativeTarget "DulcetSignedIPhoneUITests" */;
+			buildPhases = (
+				06CD5BFAE950BF34A850AFB4 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5616F528B9B639BAC74963F1 /* PBXTargetDependency */,
+			);
+			name = DulcetSignedIPhoneUITests;
+			packageProductDependencies = (
+			);
+			productName = DulcetSignedIPhoneUITests;
+			productReference = 3DF4ACB0BDD468C57BC23867 /* DulcetSignedIPhoneUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		A3DEB68753F03CA0D1C7F089 /* DulcetSignedIPhoneHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D955E78900D6F1F559A69805 /* Build configuration list for PBXNativeTarget "DulcetSignedIPhoneHost" */;
+			buildPhases = (
+				8CCEAE5D2540D1732921AF62 /* Compile Kotlin Framework */,
+				8FAF3983D0822D7DEF7D689A /* Sources */,
+				C9DB62AC314E467AF71FCCD2 /* Resources */,
+				42B7F756B9F97D6D5E5A6A35 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DulcetSignedIPhoneHost;
+			packageProductDependencies = (
+				60B6B2CEF64E3FDB2715E198 /* DulcetKit */,
+			);
+			productName = DulcetSignedIPhoneHost;
+			productReference = 1743252606C8D6F9477BEA60 /* DulcetSignedIPhoneHost.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		701DBD5A19BDB5EE6B525814 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					949C30B96CBCDB616E3FEC08 = {
+						DevelopmentTeam = 3LTL47SJ8C;
+						ProvisioningStyle = Manual;
+						TestTargetID = A3DEB68753F03CA0D1C7F089;
+					};
+					A3DEB68753F03CA0D1C7F089 = {
+						DevelopmentTeam = 3LTL47SJ8C;
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 09100797B35E52B73BBE9BAC /* Build configuration list for PBXProject "DulcetSignedIPhone" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = AF99D704103595DB12BFCFF7;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8BCE4CB474E81F11AC1D66AE /* XCLocalSwiftPackageReference "DulcetKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A1D7E322A7575E9AB9CAF6A1 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A3DEB68753F03CA0D1C7F089 /* DulcetSignedIPhoneHost */,
+				949C30B96CBCDB616E3FEC08 /* DulcetSignedIPhoneUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C9DB62AC314E467AF71FCCD2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2C2678497B398905ABA6E2C7 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		8CCEAE5D2540D1732921AF62 /* Compile Kotlin Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Compile Kotlin Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"YES\" = \"$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED\" ]; then\n  exit 0\nfi\ncd \"$SRCROOT/..\"\ntools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		06CD5BFAE950BF34A850AFB4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				67598E7DD80B54C0CBD1FF67 /* DulcetSignedIPhoneAccountConnectUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8FAF3983D0822D7DEF7D689A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				39E01D602D359C9F0D5CA818 /* DulcetAppleProduction.swift in Sources */,
+				D772D88FBDDEA31EE27858F9 /* DulcetCoreDownloads.swift in Sources */,
+				BB301DA606A30D22174FCA4E /* DulcetCorePlayback.swift in Sources */,
+				B53EF40477C83CB3855DAD98 /* DulcetCorePlaybackController.swift in Sources */,
+				A07BFD02120C3979AD207346 /* DulcetCorePlaylistsLyrics.swift in Sources */,
+				985C0CB5ECE0C98C97BD6C43 /* DulcetDebugDownloadHandoff.swift in Sources */,
+				9EC32DEB7356614F89F9CD09 /* DulcetSignedIPadAccountProbe.swift in Sources */,
+				CA500E69FEAAF18F997E1793 /* DulcetSignedIPhoneAccountProbe.swift in Sources */,
+				9EAAE48C49EF2F2346A2A3D9 /* DulcetSignedIPhoneApp.swift in Sources */,
+				3C7BD1034F21DE0E075E9320 /* SQLiteLoadExtensionUnsupported.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5616F528B9B639BAC74963F1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A3DEB68753F03CA0D1C7F089 /* DulcetSignedIPhoneHost */;
+			targetProxy = 26495FF0BDAF2C4194061F41 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0440A53F3119B24F53AD4C35 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_FILE = "DulcetSignedIPhoneUITests/Host-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.legitimateapps.dulcet.signed-iphone";
+				PRODUCT_MODULE_NAME = DulcetiOS;
+				PRODUCT_NAME = "Dulcet Signed iPhone Host";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		08CC606DF6F2D3A45C57F6A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Manual;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.legitimateapps.dulcet.signed-iphone.ui-tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = DulcetSignedIPhoneHost;
+			};
+			name = Release;
+		};
+		4DBF0B1D7EBDE19C8765C1C1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 3LTL47SJ8C;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)";
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+		906DFB48906D2016936A3CD9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Manual;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.legitimateapps.dulcet.signed-iphone.ui-tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = DulcetSignedIPhoneHost;
+			};
+			name = Debug;
+		};
+		DEB77515F7FC7F97AB9D6510 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_FILE = "DulcetSignedIPhoneUITests/Host-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.legitimateapps.dulcet.signed-iphone";
+				PRODUCT_MODULE_NAME = DulcetiOS;
+				PRODUCT_NAME = "Dulcet Signed iPhone Host";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DULCET_SIGNED_IPHONE_PROOF";
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F11CC0AF97E38E2747B0ECE9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 3LTL47SJ8C;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)";
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				OTHER_LDFLAGS = "$(inherited) -framework DulcetCore";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		09100797B35E52B73BBE9BAC /* Build configuration list for PBXProject "DulcetSignedIPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4DBF0B1D7EBDE19C8765C1C1 /* Debug */,
+				F11CC0AF97E38E2747B0ECE9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A61B72C86F39D9D77DF7936F /* Build configuration list for PBXNativeTarget "DulcetSignedIPhoneUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				906DFB48906D2016936A3CD9 /* Debug */,
+				08CC606DF6F2D3A45C57F6A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D955E78900D6F1F559A69805 /* Build configuration list for PBXNativeTarget "DulcetSignedIPhoneHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DEB77515F7FC7F97AB9D6510 /* Debug */,
+				0440A53F3119B24F53AD4C35 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		8BCE4CB474E81F11AC1D66AE /* XCLocalSwiftPackageReference "DulcetKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = DulcetKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		60B6B2CEF64E3FDB2715E198 /* DulcetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DulcetKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 701DBD5A19BDB5EE6B525814 /* Project object */;
+}

@@ -139,6 +139,11 @@ def platforms() -> dict[str, Platform]:
             "iPhoneSimulator",
             f"arm64-apple-ios{floors['ios']}-simulator",
         ),
+        "DulcetSignedIPhoneUITests": Platform(
+            "iphonesimulator",
+            "iPhoneSimulator",
+            f"arm64-apple-ios{floors['ios']}-simulator",
+        ),
         "DulcetTVUITests": Platform(
             "appletvsimulator",
             "AppleTVSimulator",
