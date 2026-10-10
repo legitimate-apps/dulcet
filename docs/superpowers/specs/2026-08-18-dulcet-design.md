@@ -1098,10 +1098,12 @@ The tvOS cell is likewise `partial`, but has its own evidence identity rather th
 macOS or iOS runs. `DulcetKitTVOSTests` compiles the shared presentation and credential-store controls
 as a tvOS test bundle and adds TV-only controls for the 1920×1080 root, native credential text fields,
 and initial remote focus. `apple-ci` is required to execute that bundle on an Apple TV simulator and
-to execute the common account conformance suite again as `tvosSimulatorArm64`. A successful
-production connection, signed Keychain persistence, and connected rendering inside the real
-`DulcetTVApp` process remain unproved; the promotion condition is blocked until an executable signed,
-entitled live-app validation workflow exists.
+to execute the common account conformance suite again as `tvosSimulatorArm64`. Since then
+`DulcetTVAccountConnectStatesUITests` drives every reachable account-connect state, connected
+included, through the production connector, Keychain store and view in the real `DulcetTVApp`
+process on a simulator, by the remote alone, and CONF-10e reads the saved item's attributes there.
+The cell ships on that simulator evidence (§28, 2026-10-10); a signed physical Apple TV run is not
+claimed.
 
 ### 10.3 The failure modes must be distinguishable
 
@@ -7728,6 +7730,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-10 — `account.connect/tvos` ships on simulator evidence.**
+By the maintainer's decision, the tvOS cell no longer waits for a signed physical Apple TV run. It
+ships on the simulator CONF-09b proof, `DulcetTVAccountConnectStatesUITests`. Driven by the Siri
+Remote alone against the disposable server, that proof reaches every reachable account-connect
+state in the real `DulcetTVApp` process through the production connector, Keychain store and view.
+It ships too on CONF-10e, which reads the saved simulator item as AfterFirstUnlockThisDeviceOnly
+and not synchronizable after a wrong-value control. The same Keychain store code runs signed on the
+Mac, iPhone and iPad receipts. The cell's blocked promotion condition is removed and
+`accepted_promotions` declares the promotion, since no evidence row is added. Still ASSUMED and not
+claimed: a signed Apple TV device run, OS enforcement of the stored attributes, and reboot,
+first-unlock, migration and background behavior on tvOS.
 
 **2026-10-10 — `account.connect/ipados` ships; hardware keyboard and multitasking widths are deferred.**
 The signed physical-iPad proof now types the server address, username and password by touch on
