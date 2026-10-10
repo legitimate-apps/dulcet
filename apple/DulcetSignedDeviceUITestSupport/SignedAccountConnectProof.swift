@@ -76,8 +76,14 @@ enum SignedAccountConnectProof {
         func enter(_ field: XCUIElement, _ text: String) {
             XCTAssertTrue(field.waitForExistence(timeout: 10))
             XCTAssertTrue(field.isHittable)
-            field.tap()
-            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Credential entry requires the on-screen keyboard")
+            // A tap during the navigation transition can be dropped (signed iPad, 2026-10-10:
+            // no keyboard after the first field tap). Re-tap only while no keyboard is up.
+            for attempt in 1...3 {
+                field.tap()
+                if app.keyboards.firstMatch.waitForExistence(timeout: 5) { break }
+                print("DULCET SIGNED \(lane.uppercased()) field re-tap attempt=\(attempt + 1)")
+            }
+            XCTAssertTrue(app.keyboards.firstMatch.exists, "Credential entry requires the on-screen keyboard")
             field.typeText(text)
         }
         enter(app.textFields["dulcet.account-connect.server-address"].firstMatch, url)
