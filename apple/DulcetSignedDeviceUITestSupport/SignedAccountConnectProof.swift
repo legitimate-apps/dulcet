@@ -88,17 +88,34 @@ enum SignedAccountConnectProof {
             expectHittable(field)
             // A tap during the navigation transition can be dropped (signed iPad, 2026-10-10:
             // no keyboard after the first field tap). Re-tap only while no keyboard is up.
+            // A third-party keyboard extension is not listed in app.keyboards (signed iPhone,
+            // 2026-10-10: field focused, input view up, no Keyboard element), so focus is the gate.
+            func focused() -> Bool {
+                app.keyboards.firstMatch.exists || (field.value(forKey: "hasKeyboardFocus") as? Bool) == true
+            }
             for attempt in 1...3 {
                 field.tap()
-                if app.keyboards.firstMatch.waitForExistence(timeout: 5) { break }
+                if app.keyboards.firstMatch.waitForExistence(timeout: 5) || focused() { break }
                 print("DULCET SIGNED \(lane.uppercased()) field re-tap attempt=\(attempt + 1)")
             }
-            XCTAssertTrue(app.keyboards.firstMatch.exists, "Credential entry requires the on-screen keyboard")
+            XCTAssertTrue(focused(), "Credential entry requires keyboard focus with the on-screen keyboard")
+            print("DULCET SIGNED \(lane.uppercased()) keyboard system=\(app.keyboards.firstMatch.exists)")
             field.typeText(text)
+            if let typed = field.value as? String, !(field.elementType == .secureTextField) {
+                XCTAssertEqual(typed, text, "Typed credential must arrive intact")
+            }
         }
         enter(app.textFields["dulcet.account-connect.server-address"].firstMatch, url)
         enter(app.textFields["dulcet.account-connect.username"].firstMatch, "dulcet-admin")
-        enter(app.secureTextFields["dulcet.account-connect.password"].firstMatch, "dulcet-ci-canary-password")
+        let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+        enter(password, "dulcet-ci-canary-password")
+        // Return on the password field moves focus to the consent toggle (the form's Next order) and
+        // lowers the keyboard, so no tap lands near it or its AutoFill bar (signed iPhone, 2026-10-10:
+        // a tap at the keyboard edge opened Passwords and a Face ID prompt over the form).
+        password.typeText("\n")
+        let lowered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                object: app.keyboards.firstMatch)
+        _ = XCTWaiter().wait(for: [lowered], timeout: 5)
         // On iPhone the switch sits at the keyboard's top edge, so its hit point can be valid while
         // taps land on the keyboard (signed iPhone simulator, 2026-10-10). Drag the form up until
         // the control clears the keyboard; the keyboard itself stays up.
