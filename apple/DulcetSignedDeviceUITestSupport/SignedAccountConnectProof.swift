@@ -36,13 +36,23 @@ enum SignedAccountConnectProof {
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: marker)],
                                          timeout: 65), .completed, "The signed host must verify \(token) through the real persistence path")
         }
+        func expectHittable(_ element: XCUIElement, _ message: String = "Control must become hittable") {
+            // Transitions on hardware leave controls briefly unhittable; one sample is not evidence.
+            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: element)
+            XCTAssertEqual(XCTWaiter().wait(for: [hittable], timeout: 5), .completed, message)
+        }
         func quit() {
             app.terminate()
             XCTAssertEqual(app.state, .notRunning, "Relaunch must end the prior app process")
         }
         func connection() {
             let row = app.staticTexts["dulcet.sidebar.settings"].firstMatch
-            if row.waitForExistence(timeout: 3) { XCTAssertTrue(row.isHittable); row.tap() }
+            if row.waitForExistence(timeout: 3) {
+                // Right after Connect the sidebar is still settling and the row is briefly not
+                // hittable (signed iPad, 2026-10-10); wait for it rather than sample once.
+                expectHittable(row, "Connection row must become hittable")
+                row.tap()
+            }
             else {
                 let tab = app.tabBars.buttons["Connection"].firstMatch
                 XCTAssertTrue(tab.waitForExistence(timeout: 10)); tab.tap()
@@ -75,7 +85,7 @@ enum SignedAccountConnectProof {
         connection()
         func enter(_ field: XCUIElement, _ text: String) {
             XCTAssertTrue(field.waitForExistence(timeout: 10))
-            XCTAssertTrue(field.isHittable)
+            expectHittable(field)
             // A tap during the navigation transition can be dropped (signed iPad, 2026-10-10:
             // no keyboard after the first field tap). Re-tap only while no keyboard is up.
             for attempt in 1...3 {
@@ -91,7 +101,7 @@ enum SignedAccountConnectProof {
         enter(app.secureTextFields["dulcet.account-connect.password"].firstMatch, "dulcet-ci-canary-password")
         let http = app.switches["Allow HTTP on this local network"].firstMatch
         if !http.isHittable { app.swipeUp() }
-        XCTAssertTrue(http.isHittable)
+        expectHittable(http)
         // A centre tap lands on the row's label, and a tap while the software keyboard is still
         // leaving can be dropped (signed iPad, 2026-10-10: "Local HTTP is not allowed" after the
         // tap). Tap the switch end and re-tap only while it provably still reads off.
@@ -104,7 +114,7 @@ enum SignedAccountConnectProof {
         XCTAssertEqual(http.value as? String, "1", "Local HTTP consent must turn on before Connect")
         let connect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         if !connect.isHittable { app.swipeUp() }
-        XCTAssertTrue(connect.isHittable); XCTAssertTrue(connect.isEnabled)
+        expectHittable(connect); XCTAssertTrue(connect.isEnabled)
         connect.tap()
         expectMarker("connected=PASS")
         connection()
@@ -119,15 +129,15 @@ enum SignedAccountConnectProof {
         XCTAssertTrue(saved.waitForExistence(timeout: 10), "Connection must name the saved server")
         XCTAssertFalse(app.buttons["Sign Out"].exists)
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
-        XCTAssertTrue(primary.label.contains("Reconnect")); XCTAssertTrue(primary.isHittable)
+        XCTAssertTrue(primary.label.contains("Reconnect")); expectHittable(primary)
         let libraryRow = app.staticTexts["dulcet.sidebar.library"].firstMatch
         if libraryRow.exists {
-            XCTAssertTrue(libraryRow.isHittable); libraryRow.tap()
+            expectHittable(libraryRow); libraryRow.tap()
         } else {
             let library = app.tabBars.buttons["Library"].firstMatch
-            XCTAssertTrue(library.isHittable); library.tap()
+            expectHittable(library); library.tap()
         }
-        XCTAssertTrue(reconnect.isHittable); reconnect.tap()
+        expectHittable(reconnect); reconnect.tap()
         expectMarker("connected=PASS")
         connection()
         XCTAssertTrue(connected.waitForExistence(timeout: 10))
@@ -141,9 +151,9 @@ enum SignedAccountConnectProof {
                                          timeout: 15), .completed, "Connected UI must rotate to landscape")
             expectMarker("connected=PASS")
             XCTAssertTrue(connected.waitForExistence(timeout: 10))
-            XCTAssertTrue(app.buttons["Sign Out"].isHittable)
+            expectHittable(app.buttons["Sign Out"])
             let libraryRow = app.staticTexts["dulcet.sidebar.library"].firstMatch
-            XCTAssertTrue(libraryRow.isHittable, "Landscape keeps Library navigation reachable")
+            expectHittable(libraryRow, "Landscape keeps Library navigation reachable")
         }
         quit()
         launch("missing") // deletes only the nonce-owned item; retains its production pointer
