@@ -42,26 +42,32 @@ account_connect = next(
     feature for feature in features["features"] if feature["id"] == "account.connect"
 )
 ipad_account_connect = account_connect["platforms"]["ipados"]
-if ipad_account_connect.get("status") != "partial":
-    errors.append("account.connect/ipados must stay partial while its interaction gaps remain")
-ipad_reason = ipad_account_connect.get("promotion_condition", {}).get("reason", "")
-# A receipt whose pinned sources changed is stale to parity_gate; the cell then names it historical
-# until a new signed main run replaces it.
+if ipad_account_connect.get("status") != "shipped":
+    errors.append(
+        "account.connect/ipados ships on the simulator state proof plus the audited signed main run; "
+        "a lower status is an undeclared regression"
+    )
+ipad_reason = ipad_account_connect.get("reason", "")
 if not any(
     row.get("receipt", "").startswith("evidence/receipts/signed-ipad-account-connect-")
     and "observes" in row
     and row.get("test")
     == "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect"
     for row in ipad_account_connect.get("evidence", [])
-) and "receipt is historical and no longer cited as active evidence" not in ipad_reason:
+):
     errors.append("account.connect/ipados must cite the signed main receipt as a bounded observation")
-for marker in ("Hardware-keyboard interaction", "touch credential entry", "rotation/multitasking widths",
-               "DEBUG account hook", "Library Reconnect is observed, not tapped", "saved=PASS"):
+# The device proof types by touch, taps Library Reconnect and rotates once; a hardware keyboard and
+# Split View or Slide Over are deferred by §28, and the reason must keep saying so.
+for marker in ("by touch on the iPad's software keyboard", "Library's own Reconnect button is tapped",
+               "rotates from portrait to landscape", "no account hook", "saved=PASS",
+               "private-token audit", "tools/verify-evidence-receipt",
+               "Hardware-keyboard entry and Split View or Slide Over widths are deferred"):
     if marker not in ipad_reason:
-        errors.append(f"account.connect/ipados promotion reason is missing {marker!r}")
-for stale in ("zero device passes", "has not run", "Physical execution is still unobserved"):
+        errors.append(f"account.connect/ipados shipped reason is missing {marker!r}")
+for stale in ("zero device passes", "has not run", "Physical execution is still unobserved",
+              "receipt is historical", "Library Reconnect is observed, not tapped"):
     if stale in ipad_reason:
-        errors.append("account.connect/ipados promotion reason must reflect the observed signed run")
+        errors.append("account.connect/ipados reason must reflect the observed signed run")
 macos_account_connect = account_connect["platforms"]["macos"]
 if macos_account_connect.get("status") != "shipped":
     errors.append(

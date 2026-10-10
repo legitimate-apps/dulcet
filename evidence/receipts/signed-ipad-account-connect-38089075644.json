@@ -1,0 +1,38 @@
+{
+  "workflow": "signed-ipad-account-connect",
+  "job": "signed-ipad-account-connect",
+  "run_id": "38089075644",
+  "run_url": "https://github.com/legitimate-apps/dulcet/actions/runs/38089075644",
+  "head_sha": "b07dd7afad3f5050739b423125be6deb26e853b1",
+  "conclusion": "success",
+  "tests": [
+    {
+      "name": "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect",
+      "result": "passed"
+    }
+  ],
+  "junit_sha256": "a335288f301ea9fe06ebe982e7d5861487a83afe1812c967af3692a3ff8a590b",
+  "test_sources": {
+    "tools/ci/run-signed-device-proof": "b1379cedc2d2ef6d9e6006afd544da51674ec187",
+    "apple/DulcetAppleShared/DulcetSignedDeviceAccountProbe.swift": "99215ddd46c976588c6f3ce8c8d20ce2b4d687ab",
+    "apple/DulcetSignedDeviceUITestSupport/SignedAccountConnectProof.swift": "cc98e0aad6b2a605cdadd907b68c4eb5fd32fca2",
+    "apple/DulcetSignedIPadUITests/DulcetSignedIPadAccountConnectUITests.swift": "6af9e43d502fa2f01a044710679a6f5d1ca064e6",
+    "apple/DulcetAppleShared/DulcetSignedIPadAccountProbe.swift": "e2de63dca0350e3c28cac2bbb69f6f15b4acd072",
+    "apple/DulcetiOS/DulcetiOSApp.swift": "7402ed0ea5859fda32e4de9f3cedde2d5d7bc9c6",
+    "apple/project.yml": "a134df736e4b5c43ccd7809e954a696e60056633",
+    "tools/ci/run-signed-ipad-proof": "9346be9a8f1fcfd3d612d6128a0ca718c1d24ade",
+    "tools/verify_signed_ipad_privacy.py": "66bc62fd434660cec3a617766859cd265fc57da3",
+    "tools/audit_signed_ipad_receipt.py": "5ca8dbaad7fe80699351118c3e741472339f28ba",
+    "tools/ci/signed-ipad-job": "02f801fb89d097e809b19564d301ca6202c4a94c",
+    ".github/workflows/signed-ipad-account-connect.yml": "5d3be6c33758cb456e73eb2f6d73dc7f5588e4d5",
+    "apple/DulcetAppleShared/DulcetAppleProduction.swift": "533d6b38c3a17a08c1a645c3b425a4d8e2b36be5",
+    "apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift": "859c6a66c320f067ae94f102848234e91ec7f264",
+    "apple/DulcetKit/Sources/DulcetKit/DulcetCredentialStore.swift": "0cbf99a2ad58e269b1c1407c0acffdd6ac812d1c"
+  },
+  "audit": {
+    "tool": "tools/audit_signed_ipad_receipt.py",
+    "result": "pass",
+    "files_scanned": 14,
+    "tokens_checked": 173
+  }
+}

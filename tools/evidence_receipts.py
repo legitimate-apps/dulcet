@@ -35,7 +35,8 @@ AUDIT_KEYS = {"tool", "result", "files_scanned", "tokens_checked"}
 RECEIPT_PATH = re.compile(r"evidence/receipts/(?P<workflow>[a-z0-9][a-z0-9-]*)-(?P<run_id>[0-9]+)\.json")
 HEX40 = re.compile(r"[0-9a-f]{40}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
-RELATIVE_PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*")
+# A segment may begin with one dot (.github) but is never "." or "..".
+RELATIVE_PATH = re.compile(r"\.?[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/\.?[A-Za-z0-9_][A-Za-z0-9_.-]*)*")
 TEST_IDENTITY = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*/[A-Za-z_][A-Za-z0-9_]*")
 
 

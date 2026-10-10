@@ -6630,9 +6630,13 @@ Its full downloaded logs, metadata and exact passing JUnit passed the private-to
 (14 files, 54 tokens, one test). `tools/evidence_receipts.py` admits this workflow/job as
 `device-attached`; `evidence/receipts/signed-ipad-account-connect-37950111499.json` records it.
 The signed iPad runner uses the same on-demand, ephemeral, neutral-identity and local-output
-boundary below. `account.connect/ipados` cites the receipt as an `observes` row and stays partial:
-initial credentials use the DEBUG hook; Library Reconnect is observed, not tapped; hardware-keyboard
-interaction, touch credential entry and broader rotation/multitasking widths remain gaps.
+boundary below. That receipt is historical. The extended proof (touch credential entry, the
+Library Reconnect tap, one landscape rotation) passed on main run
+[38089075644](https://github.com/legitimate-apps/dulcet/actions/runs/38089075644) at `b07dd7af`
+(audit: 14 files, 173 tokens, one test), and
+`evidence/receipts/signed-ipad-account-connect-38089075644.json` is the receipt
+`account.connect/ipados` cites now that it ships. Hardware-keyboard entry and Split View or Slide
+Over widths are deferred (§28, 2026-10-10).
 
 **What is admitted:**
 
@@ -7724,6 +7728,24 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-10 — `account.connect/ipados` ships; hardware keyboard and multitasking widths are deferred.**
+The signed physical-iPad proof now types the server address, username and password by touch on
+the software keyboard (the DEBUG account hook is gone from the device proof), declines the system
+save-password sheet, taps the Library's own Reconnect button after a hook-free relaunch, and
+rotates the connected window from portrait to landscape. OBSERVED: main run 38089075644 at
+`b07dd7af` succeeded; its logs, metadata and exact JUnit passed the private-token audit
+(14 files, 173 tokens, one test), and `tools/verify-evidence-receipt` verified the committed
+receipt against the live run. The owning device session observed two genuine passes, the
+launch-time production Keychain-read mutation killed at saved=PASS (one test, zero passed, one
+failed), and a genuine clean pass. With the simulator CONF-09b proof for every render state and
+this receipt for the device Keychain, touch entry and Reconnect, the cell is promoted to shipped.
+Hardware-keyboard entry and Split View or Slide Over widths are deferred by the maintainer's
+decision: the device proof does not exercise them and the cell does not claim them. Reboot,
+first-unlock, migration and background enforcement of the saved item remain ASSUMED. The receipt
+for run 37950111499 is historical. `tools/verify-evidence-receipt` now accepts a pinned source
+path whose segments begin with one dot, such as the workflow under `.github/`, and still refuses
+`.`, `..`, absolute and `./`-led paths.
 
 **2026-10-09 — Apple components share the database file's native writer pool.**
 The reader, playback and downloads acquire reference-counted handles to one native
