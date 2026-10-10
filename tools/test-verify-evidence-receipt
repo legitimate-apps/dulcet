@@ -121,6 +121,13 @@ ipad_api[f"repos/legitimate-apps/dulcet/actions/runs/{RUN_ID}/jobs"]["jobs"][1][
 expect("matching attached-device run", run(ipad, ipad_api, ipad_junit), 0, "VERIFIED")
 expect("integer run id fails the shared schema", run(dict(ipad, run_id=int(RUN_ID)), ipad_api, ipad_junit),
        1, "run_id must be a non-empty string")
+workflow_pinned = copy.deepcopy(ipad)
+workflow_pinned["test_sources"][".github/workflows/signed-ipad-account-connect.yml"] = "c" * 40
+expect("a pinned workflow file is repository-relative", run(workflow_pinned, ipad_api, ipad_junit), 0, "VERIFIED")
+for escape in ("../outside.swift", "apple/../../outside.swift", "./apple/file.swift", "/abs/file.swift"):
+    escaping = copy.deepcopy(ipad)
+    escaping["test_sources"][escape] = "c" * 40
+    expect(f"source path {escape} is refused", run(escaping, ipad_api, ipad_junit), 1, "must be repository-relative")
 uppercase = copy.deepcopy(ipad)
 uppercase["audit"]["result"] = "PASS"
 expect("uppercase audit result fails the shared schema", run(uppercase, ipad_api, ipad_junit),
@@ -155,4 +162,4 @@ expect("expired artifact, metadata only on request", run(good, api, PASSING_JUNI
 extra = dict(good, note="extra")
 expect("schema is exact", run(extra, served(), PASSING_JUNIT), 1, "schema: requires exactly")
 
-print("verify-evidence-receipt tests pass: 13 cases")
+print("verify-evidence-receipt tests pass: 18 cases")

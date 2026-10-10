@@ -299,7 +299,8 @@ with tempfile.TemporaryDirectory(prefix="dulcet-proxy-evidence-") as directory:
 
 for label, expected in (
     ("receipt-removed", "must cite the signed main receipt as a bounded observation"),
-    ("promoted", "must stay partial while its interaction gaps remain"),
+    ("demoted", "a lower status is an undeclared regression"),
+    ("deferral-dropped", "shipped reason is missing 'Hardware-keyboard entry"),
     ("stale-device-claim", "must reflect the observed signed run"),
 ):
     with tempfile.TemporaryDirectory(prefix="dulcet-ipad-boundary-") as directory:
@@ -310,14 +311,13 @@ for label, expected in (
         cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["ipados"]
         if label == "receipt-removed":
             cell["evidence"] = [row for row in cell["evidence"] if "receipt" not in row]
-            reason = cell["promotion_condition"]["reason"]
-            cell["promotion_condition"]["reason"] = reason.replace(
-                "receipt is historical and no longer cited as active evidence", "receipt is withdrawn")
-        elif label == "promoted":
-            cell["status"] = "shipped"
-            cell.pop("promotion_condition")
+        elif label == "demoted":
+            cell["status"] = "partial"
+        elif label == "deferral-dropped":
+            cell["reason"] = cell["reason"].replace(
+                "Hardware-keyboard entry and Split View or Slide Over widths are deferred", "")
         else:
-            cell["promotion_condition"]["reason"] += " There are zero device passes."
+            cell["reason"] += " Library Reconnect is observed, not tapped."
         path.write_text(json.dumps(document))
         result = invoke(root)
         if result.returncode == 0 or expected not in result.stdout:
