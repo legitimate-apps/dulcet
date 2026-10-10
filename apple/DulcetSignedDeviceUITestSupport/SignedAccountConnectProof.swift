@@ -86,7 +86,16 @@ enum SignedAccountConnectProof {
         let http = app.switches["Allow HTTP on this local network"].firstMatch
         if !http.isHittable { app.swipeUp() }
         XCTAssertTrue(http.isHittable)
-        if (http.value as? String) != "1" { http.tap() }
+        // A centre tap lands on the row's label, and a tap while the software keyboard is still
+        // leaving can be dropped (signed iPad, 2026-10-10: "Local HTTP is not allowed" after the
+        // tap). Tap the switch end and re-tap only while it provably still reads off.
+        for attempt in 1...3 where (http.value as? String) != "1" {
+            http.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            let on = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: http)
+            if XCTWaiter().wait(for: [on], timeout: 5) == .completed { break }
+            print("DULCET SIGNED \(lane.uppercased()) consent re-tap attempt=\(attempt + 1)")
+        }
+        XCTAssertEqual(http.value as? String, "1", "Local HTTP consent must turn on before Connect")
         let connect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         if !connect.isHittable { app.swipeUp() }
         XCTAssertTrue(connect.isHittable); XCTAssertTrue(connect.isEnabled)
