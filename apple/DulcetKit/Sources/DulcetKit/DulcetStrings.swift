@@ -25,7 +25,6 @@ enum DulcetStrings {
     static let shuffle = text("action.shuffle", "Shuffle")
     static let connectServer = text("action.connectServer", "Connect a Server")
     static let reconnect = text("action.reconnect", "Reconnect")
-    static let browseHelp = text("action.browseHelp", "Learn About Servers")
     static let tryAgain = text("action.tryAgain", "Try Again")
     static let connectionSettings = text("action.connectionSettings", "Review Connection Settings")
     static let openCertificateHelp = text("action.certificateHelp", "Open CA Installation Guide")

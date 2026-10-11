@@ -5,7 +5,22 @@ struct DulcetEmptyLibraryView: View {
     var connected = false
     var onConnect: () -> Void = {}
 
+    /// The copy wraps instead of truncating, and the page scrolls when it is taller than the
+    /// screen: at large text sizes on iPhone, a fixed-height stack squeezed the title and body to
+    /// one truncated line each ("Your music, where…").
     var body: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(Color.dulcetWindow)
+        .dulcetForeground(.primaryTextOnWindow)
+    }
+
+    private var content: some View {
         VStack(spacing: DulcetSpacing.xl) {
             Spacer(minLength: DulcetSpacing.xl)
 
@@ -25,28 +40,24 @@ struct DulcetEmptyLibraryView: View {
                     .font(.largeTitle.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.firstRunBody)
                     .font(.title3)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .multilineTextAlignment(.center)
                     .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 560)
             }
 
             if !connected {
-                VStack(spacing: DulcetSpacing.sm) {
-                    DulcetProminentAction(
-                        DulcetStrings.connectServer,
-                        systemImage: "plus",
-                        isDefaultAction: true,
-                        action: onConnect
-                    )
-                    .accessibilityLabel(DulcetStrings.connectServer)
-
-                    Button(DulcetStrings.browseHelp) {}
-                        .dulcetLinkButtonStyle()
-                        .accessibilityLabel(DulcetStrings.browseHelp)
-                }
+                DulcetProminentAction(
+                    DulcetStrings.connectServer,
+                    systemImage: "plus",
+                    isDefaultAction: true,
+                    action: onConnect
+                )
+                .accessibilityLabel(DulcetStrings.connectServer)
             }
 
             Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
@@ -54,14 +65,12 @@ struct DulcetEmptyLibraryView: View {
                 .dulcetForeground(.secondaryTextOnWindow)
                 .multilineTextAlignment(.center)
                 .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 520)
 
             Spacer(minLength: DulcetSpacing.xl)
         }
         .padding(DulcetSpacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
     }
 }
 

@@ -319,15 +319,6 @@ extension View {
 #endif
 
     @ViewBuilder
-    func dulcetLinkButtonStyle() -> some View {
-#if os(macOS)
-        buttonStyle(.link)
-#else
-        buttonStyle(.plain)
-#endif
-    }
-
-    @ViewBuilder
     func dulcetAlternatingRowsDisabled() -> some View {
 #if os(macOS)
         alternatingRowBackgrounds(.disabled)
