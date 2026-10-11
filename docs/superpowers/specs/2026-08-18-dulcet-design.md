@@ -6614,8 +6614,8 @@ place real money can still appear.
 insufficient."* Amended 2026-10-07: that burden is met for the two evidence classes below.
 
 **The showing.** A GitHub-hosted runner is an ephemeral virtual machine with no physical device
-attached. Several `FEATURES.yml` rows claim behaviour on a real iPad, and no hosted runner can
-observe a physical device at all. This is a **capability** gap, not a cost preference — which is
+attached. Several `FEATURES.yml` rows claim behaviour on a real iPad or iPhone, and no hosted
+runner can observe a physical device at all. This is a **capability** gap, not a cost preference — which is
 precisely the distinction §21.3 was drawing when it withdrew the original question as malformed.
 
 **OBSERVED signed-host showing:** [hosted run 32598531311](https://github.com/legitimate-apps/dulcet/actions/runs/32598531311),
@@ -6639,6 +6639,18 @@ Library Reconnect tap, one landscape rotation) passed on main run
 `evidence/receipts/signed-ipad-account-connect-38089075644.json` is the receipt
 `account.connect/ipados` cites now that it ships. Hardware-keyboard entry and Split View or Slide
 Over widths are deferred (§28, 2026-10-10).
+
+**OBSERVED attached-device showing, iPhone (2026-10-11):** `signed-iphone-account-connect` /
+`signed-iphone-account-connect`, which `tools/evidence_receipts.py` admits as `device-attached`,
+succeeded on main run
+[38154870416](https://github.com/legitimate-apps/dulcet/actions/runs/38154870416) at `df8ad133`,
+after a private rehearsal of the same commit passed. Its full downloaded logs, metadata and exact
+passing JUnit passed the private-token audit (14 files, 229 tokens, one test), and
+`tools/verify-evidence-receipt` verified
+`evidence/receipts/signed-iphone-account-connect-38154870416.json` against the run. The signed
+iPhone runner uses the same boundary below. The iPhone lane runs the shared proof without rotation;
+`account.connect/ios` cites the receipt now that it ships. Hardware-keyboard entry and rotation on
+iPhone are deferred (§28, 2026-10-11).
 
 **What is admitted:**
 
@@ -7730,6 +7742,28 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-11 — `account.connect/ios` ships on the signed iPhone device receipt.**
+The signed iPhone lane runs the shared signed account-connect proof, without rotation, on a fresh
+install of the isolated signed iPhone host, which composes the production iOS composition and root
+view. A first phase that writes no state accepts the system Local Network prompt for that host
+only; the proof then types the server address, username and password by touch into the rendered
+fields, each once the field holds keyboard focus, turns on the local-HTTP consent, taps Connect and
+declines the system save-password sheet. The production iOS Kotlin connection saves to the real
+Keychain, read back without filtering as AfterFirstUnlockThisDeviceOnly and not synchronizable
+after a wrong-accessibility control, with the connected UI. A fresh process with no account hook
+loads the saved account into the saved-but-disconnected library, the Library's own Reconnect button
+is tapped and returns to connected, a relaunch whose owned item was deleted shows the load-time
+persistence error, and owned cleanup passes. OBSERVED: main run 38154870416 at `df8ad133`
+succeeded after a private rehearsal of the same commit passed; its logs, metadata and exact JUnit
+passed the private-token audit (14 files, 229 tokens, one test), `tools/verify-evidence-receipt`
+verified the committed receipt against the live run, and the job's device Keychain and uninstall
+checks passed. With the simulator CONF-09b proof for every render state and this receipt for the
+device Keychain, touch entry and Reconnect, the cell is promoted to shipped and its blocked
+promotion condition is removed. Deferred and not claimed: hardware-keyboard entry on iPhone
+(XCTest's synthetic typing with the on-screen system keyboard is not a hardware keyboard), and
+rotation, which the iPhone lane does not exercise (`rotating: false`). Reboot, first-unlock,
+migration and background enforcement of the saved item remain ASSUMED.
 
 **2026-10-10 — `account.connect/tvos` ships on simulator evidence.**
 By the maintainer's decision, the tvOS cell no longer waits for a signed physical Apple TV run. It

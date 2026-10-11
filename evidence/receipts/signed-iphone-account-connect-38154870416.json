@@ -1,0 +1,40 @@
+{
+  "workflow": "signed-iphone-account-connect",
+  "job": "signed-iphone-account-connect",
+  "run_id": "38154870416",
+  "run_url": "https://github.com/legitimate-apps/dulcet/actions/runs/38154870416",
+  "head_sha": "df8ad133641e7317242d701d027cd2748ab8ca6a",
+  "conclusion": "success",
+  "tests": [
+    {
+      "name": "DulcetSignedIPhoneAccountConnectUITests/testSignedIPhoneConnectKeychainRelaunchAndTouchReconnect",
+      "result": "passed"
+    }
+  ],
+  "junit_sha256": "c0eb96a95f2f8eb1f32e85e74c258cee25b4a3c8c6b508f22600b3f111f6055d",
+  "test_sources": {
+    "tools/ci/run-signed-device-proof": "b1379cedc2d2ef6d9e6006afd544da51674ec187",
+    "apple/DulcetAppleShared/DulcetSignedDeviceAccountProbe.swift": "99215ddd46c976588c6f3ce8c8d20ce2b4d687ab",
+    "apple/DulcetSignedDeviceUITestSupport/SignedAccountConnectProof.swift": "cc98e0aad6b2a605cdadd907b68c4eb5fd32fca2",
+    "apple/DulcetSignedIPhoneUITests/DulcetSignedIPhoneAccountConnectUITests.swift": "5fe0db876b2cf2c15568f852b3b2546b9f9c9e04",
+    "apple/DulcetSignedIPhoneHost/DulcetSignedIPhoneAccountProbe.swift": "0cf4abfede98afb6afdf0f85b2726932fe6450f0",
+    "apple/DulcetSignedIPhoneHost/DulcetSignedIPhoneApp.swift": "52295fb9f746eae4673755c7b39340b202ed1a10",
+    "apple/signed-iphone.yml": "47b0473c7d31ae0846bfa9b434c201803673fcbf",
+    "tools/ci/run-signed-iphone-proof": "b25bf5cbac23bd0cc1f0a22af64c9474107b83ae",
+    "tools/verify_signed_iphone_privacy.py": "260bb2b139368ee88a6e9e41d9f86913054932f5",
+    "tools/audit_signed_ipad_receipt.py": "5ca8dbaad7fe80699351118c3e741472339f28ba",
+    "tools/verify_signed_ipad_privacy.py": "66bc62fd434660cec3a617766859cd265fc57da3",
+    "tools/ci/signed-iphone-job": "6d357fa5db46ff1bd977d6479cd033a42d6c635b",
+    "tools/ci/signed-ipad-job": "02f801fb89d097e809b19564d301ca6202c4a94c",
+    ".github/workflows/signed-iphone-account-connect.yml": "eaae6eec0370c2a49874ea3436111355289e7d74",
+    "apple/DulcetAppleShared/DulcetAppleProduction.swift": "533d6b38c3a17a08c1a645c3b425a4d8e2b36be5",
+    "apple/DulcetKit/Sources/DulcetKit/AccountConnectionPresentation.swift": "859c6a66c320f067ae94f102848234e91ec7f264",
+    "apple/DulcetKit/Sources/DulcetKit/DulcetCredentialStore.swift": "0cbf99a2ad58e269b1c1407c0acffdd6ac812d1c"
+  },
+  "audit": {
+    "tool": "tools/audit_signed_iphone_receipt.py",
+    "result": "pass",
+    "files_scanned": 14,
+    "tokens_checked": 229
+  }
+}

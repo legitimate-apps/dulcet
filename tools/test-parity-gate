@@ -31,9 +31,10 @@ def restore_signed_mac_gap(root: Path) -> None:
 
 def restore_signed_mac_gap_cell(document: dict[str, object]) -> None:
     # Real main receipts refer to commits outside this synthetic repository. Receipt cases
-    # construct their own record against its tree; retain every hosted iPad row.
-    ipad = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["ipados"]
-    ipad["evidence"] = [row for row in ipad["evidence"] if "receipt" not in row]
+    # construct their own record against its tree; retain every hosted iPad and iPhone row.
+    platforms = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]
+    for device in ("ipados", "ios"):
+        platforms[device]["evidence"] = [row for row in platforms[device]["evidence"] if "receipt" not in row]
     cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"]["macos"]
     evidence = [row for row in cell["evidence"] if "receipt" not in row]
     for row in evidence:

@@ -68,6 +68,34 @@ for stale in ("zero device passes", "has not run", "Physical execution is still 
               "receipt is historical", "Library Reconnect is observed, not tapped"):
     if stale in ipad_reason:
         errors.append("account.connect/ipados reason must reflect the observed signed run")
+ios_account_connect = account_connect["platforms"]["ios"]
+if ios_account_connect.get("status") != "shipped":
+    errors.append(
+        "account.connect/ios ships on the simulator state proof plus the audited signed iPhone main run; "
+        "a lower status is an undeclared regression"
+    )
+ios_reason = ios_account_connect.get("reason", "")
+if not any(
+    row.get("receipt", "").startswith("evidence/receipts/signed-iphone-account-connect-")
+    and "observes" in row
+    and row.get("test")
+    == "DulcetSignedIPhoneAccountConnectUITests/testSignedIPhoneConnectKeychainRelaunchAndTouchReconnect"
+    for row in ios_account_connect.get("evidence", [])
+):
+    errors.append("account.connect/ios must cite the signed iPhone main receipt as a bounded observation")
+# The iPhone lane types by touch and taps Library Reconnect but never rotates; a hardware keyboard and
+# rotation are deferred by §28, and the reason must keep saying so.
+for marker in ("by touch into the rendered fields", "Library's own Reconnect button is tapped",
+               "no account hook", "Local Network prompt for that host only", "private-token audit",
+               "tools/verify-evidence-receipt",
+               "Hardware-keyboard entry and rotation on iPhone are deferred",
+               "migration and background enforcement of the saved item remain ASSUMED"):
+    if marker not in ios_reason:
+        errors.append(f"account.connect/ios shipped reason is missing {marker!r}")
+for stale in ("remains unproved, so shipped would be unearned", "the cell remains partial",
+              "rotates from portrait to landscape", "Library Reconnect is observed, not tapped"):
+    if stale in ios_reason:
+        errors.append("account.connect/ios reason must reflect the observed signed iPhone run")
 macos_account_connect = account_connect["platforms"]["macos"]
 if macos_account_connect.get("status") != "shipped":
     errors.append(

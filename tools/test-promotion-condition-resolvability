@@ -16,9 +16,19 @@ import verify_promotion_conditions as verifier  # noqa: E402
 
 
 def account_partial(features: dict) -> dict:
-    # Any partial cell carrying a promotion condition serves; account.connect/ios is one.
+    # The controls need a partial cell carrying a promotion condition. account.connect/ios shipped
+    # on 2026-10-11, so each control demotes it in its own copy to a partial cell with an explicit
+    # blocked condition; the real document is never rewritten.
     account = next(feature for feature in features["features"] if feature["id"] == "account.connect")
-    return account["platforms"]["ios"]
+    cell = account["platforms"]["ios"]
+    if cell["status"] != "partial":
+        cell["status"] = "partial"
+        cell["promotion_condition"] = {
+            "status": "blocked",
+            "blocked_on": "promotion-control-prerequisite",
+            "reason": "The negative-control prerequisite has not been supplied.",
+        }
+    return cell
 
 
 features = json.loads((REPOSITORY / "FEATURES.yml").read_text())
@@ -130,6 +140,11 @@ with tempfile.TemporaryDirectory(prefix="dulcet-nonpartial-promotion-") as direc
     if not any("only while status is partial" in error for error in errors):
         raise AssertionError(f"non-partial cell retained a promotion condition: {errors}")
 
+# Duplicate-key controls run on the text of a document holding a partial cell, so the keys they
+# duplicate exist even when every real cell has shipped.
+partial_document = copy.deepcopy(features)
+account_partial(partial_document)
+partial_text = json.dumps(partial_document)
 for original, replacement, key in (
     ('"schema_version": 2', '"schema_version": 2, "schema_version": 2', 'schema_version'),
     ('"promotion_condition": {', '"promotion_condition": {}, "promotion_condition": {', 'promotion_condition'),
@@ -137,7 +152,7 @@ for original, replacement, key in (
 ):
     with tempfile.TemporaryDirectory(prefix="dulcet-duplicate-promotion-") as directory:
         path = Path(directory) / "FEATURES.yml"
-        text = (REPOSITORY / "FEATURES.yml").read_text()
+        text = partial_text
         assert original in text
         path.write_text(text.replace(original, replacement, 1))
         errors = verifier.validate(REPOSITORY, path)
