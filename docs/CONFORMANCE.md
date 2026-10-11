@@ -152,6 +152,21 @@ entry and Split View or Slide Over widths are deferred (spec §28, 2026-10-10) a
 The earlier receipt, run 37950111499, is historical: the extended proof changed the sources it
 pins.
 
+**How signed iPhone evidence is bounded.** OBSERVED 2026-10-11: main run 38154870416 of
+`signed-iphone-account-connect` passed on an attached physical iPhone at `df8ad133`, after a
+private rehearsal of the same commit. Its audited receipt,
+`evidence/receipts/signed-iphone-account-connect-38154870416.json`, is an `observes` row on the
+shipped `account.connect/ios` cell, beside the simulator CONF-09b row. The iPhone lane runs the
+same shared proof as the iPad, without rotation, on a fresh install of the isolated signed iPhone
+host. A first phase that writes no state accepts the system Local Network prompt for that host
+only. The proof types the server address, username and password by touch into the rendered fields,
+each once the field holds keyboard focus, and declines the system save-password sheet. The
+production iOS Kotlin connection saves to the real Keychain; an unfiltered attribute read follows
+a wrong-accessibility control; a fresh process with no account hook loads the saved account; the
+Library's Reconnect tap reaches connected; deleting the owned item reaches the load-time
+persistence error; cleanup passes. Hardware-keyboard entry and rotation on iPhone are deferred
+(spec §28, 2026-10-11) and not claimed: XCTest's synthetic typing is not a hardware keyboard.
+
 **The earlier presentation test.** `accountPresentationTransitionsGivenConnectorOutcomes` submits
 through the production `DulcetPresentationStore` into `DulcetAccountDataSource` but injects the
 connector's completed outcomes and controls the credential store. It checks each step against the
