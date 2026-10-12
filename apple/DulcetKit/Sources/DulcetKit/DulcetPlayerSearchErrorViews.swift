@@ -122,12 +122,17 @@ struct DulcetPlaybackFailedView: View {
     }
 }
 
-/// Where the player's footer -- its last row of controls -- is laid out, for layout tests that
-/// check it is on screen.
-struct DulcetPlayerFooterBoundsKey: PreferenceKey {
-    static let defaultValue: Anchor<CGRect>? = nil
-    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
-        value = value ?? nextValue()
+/// Where the player's cover, its title column and its footer -- the last row of controls -- are
+/// laid out, for layout tests that check the cover spans the column and the footer is on screen.
+enum DulcetPlayerLayoutPart: Hashable { case cover, column, footer }
+
+struct DulcetPlayerLayoutKey: PreferenceKey {
+    static let defaultValue: [DulcetPlayerLayoutPart: Anchor<CGRect>] = [:]
+    static func reduce(
+        value: inout [DulcetPlayerLayoutPart: Anchor<CGRect>],
+        nextValue: () -> [DulcetPlayerLayoutPart: Anchor<CGRect>]
+    ) {
+        value.merge(nextValue()) { first, _ in first }
     }
 }
 
@@ -297,18 +302,20 @@ struct DulcetNowPlayingView: View {
                 .scrollBounceBehavior(.basedOnSize)
 #else
                 let verticalPadding = presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl
+                let bottomPadding = presentation == .sheet ? Self.sheetBottomPadding : DulcetSpacing.xl
                 ScrollView {
                     playerPanel(
                         artworkSize: stackedArtworkSize(
                             innerWidth: max(0, min(560, width - 2 * padding)),
-                            availableHeight: geometry.size.height - 2 * verticalPadding
+                            availableHeight: geometry.size.height - verticalPadding - bottomPadding
                         ),
                         alignment: presentation == .sheet ? .leading : .center,
                         showsQueueToggle: true
                     )
                     .frame(maxWidth: 560)
                     .padding(.horizontal, padding)
-                    .padding(.vertical, verticalPadding)
+                    .padding(.top, verticalPadding)
+                    .padding(.bottom, bottomPadding)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
@@ -342,6 +349,22 @@ struct DulcetNowPlayingView: View {
     /// ever sits on cover colour: every text colour here is a registered contrast pair measured
     /// against the window colour (spec §3.1).
     static let coverToTitleSpacing = DulcetSpacing.lg
+    /// The fixed gaps under the cover: title to scrubber, scrubber to transport, transport to
+    /// footer. Tight, as the system player sets them, so on a phone the cover keeps the column's
+    /// full width and the controls still fit beneath it; each shrinks where the rows themselves
+    /// carry air (the transport's and the footer's 44-point targets around smaller glyphs). Not
+    /// the cover's own gap, which the glow sets. Apple TV's player keeps its wider gaps.
+#if os(tvOS)
+    static let titleToScrubberSpacing = coverToTitleSpacing
+    static let scrubberToTransportSpacing = coverToTitleSpacing
+    static let transportToFooterSpacing = coverToTitleSpacing
+#else
+    static let titleToScrubberSpacing = DulcetSpacing.sm
+    static let scrubberToTransportSpacing = DulcetSpacing.xs
+    static let transportToFooterSpacing = DulcetSpacing.xxs
+#endif
+    /// Under a phone sheet's player: the home indicator's own inset already clears the footer.
+    static let sheetBottomPadding = DulcetSpacing.xxs
     static let playerToQueueSpacing = DulcetSpacing.xl
     static let sheetVerticalPadding = DulcetSpacing.md
     /// One target size for the player footer's marks -- heart, each star, lyrics, Up Next: a
@@ -360,7 +383,9 @@ struct DulcetNowPlayingView: View {
 #if os(tvOS)
         DulcetSpacing.md
 #else
-        DulcetSpacing.sm
+        // Each mark is a 44-point target around a smaller glyph, so the targets' own margins
+        // already set the rows apart; a wider gap only pushed the cover smaller.
+        DulcetSpacing.xxs
 #endif
     }
     static let minimumHorizontalPadding = DulcetSpacing.lg
@@ -429,8 +454,8 @@ struct DulcetNowPlayingView: View {
         min(520, max(280, height - 380))
     }
 
-    static let sideBySideMinimumArtwork: CGFloat = 200
-    static let stackedMinimumArtwork: CGFloat = 120
+    static let sideBySideMinimumArtwork: CGFloat = 160
+    static let stackedMinimumArtwork: CGFloat = 80
 
     /// The cover as large as the width allows while the title, scrubber, transport and footer
     /// -- `chromeHeight`, as laid out -- still fit beneath it without scrolling. The system player
@@ -655,16 +680,21 @@ struct DulcetNowPlayingView: View {
     ) -> some View {
         VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
             playerCover(size: artworkSize)
+                .anchorPreference(key: DulcetPlayerLayoutKey.self, value: .bounds) { [.cover: $0] }
                 .frame(maxWidth: .infinity)
 
-            VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
+            VStack(alignment: alignment, spacing: 0) {
                 trackIdentity(alignment: alignment)
+                    .anchorPreference(key: DulcetPlayerLayoutKey.self, value: .bounds) { [.column: $0] }
 
                 playbackProgress
+                    .padding(.top, Self.titleToScrubberSpacing)
 
                 transportControls
+                    .padding(.top, Self.scrubberToTransportSpacing)
 
                 footer(alignment: alignment, showsQueueToggle: showsQueueToggle)
+                    .padding(.top, Self.transportToFooterSpacing)
             }
             // Measured, not estimated: the cover's size is the height this leaves. Its width is
             // the column's, never the cover's, so the measurement does not feed back into itself.
@@ -901,7 +931,7 @@ struct DulcetNowPlayingView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
-        .anchorPreference(key: DulcetPlayerFooterBoundsKey.self, value: .bounds) { $0 }
+        .anchorPreference(key: DulcetPlayerLayoutKey.self, value: .bounds) { [.footer: $0] }
     }
 
     /// Whether the editable Up Next list, whose header names the queue's source, is on screen
