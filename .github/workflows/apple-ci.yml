@@ -416,6 +416,25 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testIPhoneWindowUsesFullDisplay
+      - name: Verify the first-run Library title wraps on iPhone
+        # Same launch-and-test shape and cap as the full-display step above.
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheFirstRunLibraryTitleWrapsOnIPhone 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-first-run-title.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testTheFirstRunLibraryTitleWrapsOnIPhone
       - name: Boot iPadOS simulator before the layout launch
         timeout-minutes: 6
         id: ipados_layout_destination

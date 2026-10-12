@@ -75,6 +75,44 @@ final class DulcetiOSUITests: XCTestCase {
     ///    another tab.
     /// 3. The bar opens the full player as a sheet showing the track that was played, and the
     ///    sheet closes back to the tab with the bar still there.
+    /// The first-run Library's title wraps rather than truncating on an iPhone, at the default
+    /// text size and at a large one. A truncated title keeps one line's height; the full title
+    /// cannot fit one line on a phone at the large-title size, so it must be taller than the
+    /// one-line "Library" navigation title above it.
+    @MainActor
+    func testTheFirstRunLibraryTitleWrapsOnIPhone() {
+        for size in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryXXL"] {
+            XCUIDevice.shared.orientation = .portrait
+            let app = XCUIApplication()
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
+            app.launch()
+
+            let libraryTab = app.tabBars.buttons["Library"].firstMatch
+            guard libraryTab.waitForExistence(timeout: 10) else {
+                XCTFail("A compact window must present a tab bar with Library: " + app.debugDescription)
+                return
+            }
+            libraryTab.tap()
+            let title = app.staticTexts["Your music, wherever you listen"].firstMatch
+            let navigationTitle = app.navigationBars.staticTexts["Library"].firstMatch
+            guard title.waitForExistence(timeout: 10), navigationTitle.waitForExistence(timeout: 10) else {
+                XCTFail("The first-run Library must show its title under a Library navigation title at \(size): "
+                    + app.debugDescription)
+                return
+            }
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "first-run-library-\(size)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            print("DULCET FIRST RUN TITLE size=\(size) title=\(title.frame) navigationTitle=\(navigationTitle.frame)")
+            XCTAssertGreaterThan(
+                title.frame.height, navigationTitle.frame.height * 1.5,
+                "At \(size) the first-run title must wrap onto a second line, not truncate to one"
+            )
+            app.terminate()
+        }
+    }
+
     @MainActor
     func testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar() {
         XCUIDevice.shared.orientation = .portrait

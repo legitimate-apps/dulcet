@@ -21,7 +21,6 @@
 "action.connectServer" = "Connect a Server";
 "action.localNetworkSettings" = "Open Settings";
 "action.reconnect" = "Reconnect";
-"action.browseHelp" = "Learn About Servers";
 "action.tryAgain" = "Try Again";
 "action.connectionSettings" = "Review Connection Settings";
 "action.certificateHelp" = "Open CA Installation Guide";
