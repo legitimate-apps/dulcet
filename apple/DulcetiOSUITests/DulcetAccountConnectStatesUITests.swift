@@ -486,11 +486,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func fill(
         _ app: XCUIApplication, serverURL: String, username: String, password: String, allowLocalHTTP allow: Bool = true
     ) -> Bool {
-        guard replaceText(in: app.textFields["dulcet.account-connect.server-address"].firstMatch,
+        guard enterCredential(in: app.textFields["dulcet.account-connect.server-address"].firstMatch,
                           with: serverURL, name: "server address", app: app),
-              replaceText(in: app.textFields["dulcet.account-connect.username"].firstMatch,
+              enterCredential(in: app.textFields["dulcet.account-connect.username"].firstMatch,
                           with: username, name: "username", app: app),
-              replaceText(in: app.secureTextFields["dulcet.account-connect.password"].firstMatch,
+              enterCredential(in: app.secureTextFields["dulcet.account-connect.password"].firstMatch,
                           with: password, name: "password", secure: true, app: app),
               dismissKeyboardIfPresent(in: app) else { return false }
         // Cleartext to a loopback server needs the local-HTTP consent, which keeps its value
@@ -739,8 +739,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return (element.value as? String) == expected
     }
 
+    /// Reveals a credential row and replaces its text. Tour-only scrolling and photography stay
+    /// here so `replaceText` keeps the self-contained input protocol that
+    /// `tools/test-account-connect-text-entry` compiles and replays on its own.
     @MainActor
-    private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false, app: XCUIApplication) -> Bool {
+    private func enterCredential(in field: XCUIElement, with value: String, name: String, secure: Bool = false, app: XCUIApplication) -> Bool {
         // Form virtualizes rows outside its viewport. Reveal the requested credential row
         // before the existing lookup, just as a person scrolls back from an error to edit it.
         for _ in 0..<6 {
@@ -748,16 +751,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             if name == "server address" { app.swipeDown() }
             else { app.swipeUp() }
         }
-        guard field.waitForExistence(timeout: 5) else {
-            XCTFail("The \(name) field must exist")
-            return false
-        }
         let photographing = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1"
-        if photographing, tourFilledValues[name] == value {
-            let observed = field.value as? String ?? ""
-            if secure ? observed.count == value.count : observed == value { return true }
-        }
         if photographing {
+            guard field.waitForExistence(timeout: 5) else {
+                XCTFail("The \(name) field must exist")
+                return false
+            }
+            if tourFilledValues[name] == value {
+                let observed = field.value as? String ?? ""
+                if secure ? observed.count == value.count : observed == value { return true }
+            }
             // Large text can put the next field behind the software keyboard. Scroll the form
             // within its visible area before tapping, without changing the behavioural proofs.
             for _ in 0..<8 {
@@ -777,6 +780,22 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? lower : upper))
                 start.press(forDuration: 0.01, thenDragTo: end)
             }
+        }
+        let entered = replaceText(in: field, with: value, name: name, secure: secure, photographing: photographing) {
+            guard photographing else { return }
+            print("DULCET DESIGN TOUR focus-failure field=\(name) frame=\(field.frame) keyboard=\(app.keyboards.firstMatch.frame) " + app.debugDescription)
+            tourPhotograph("connection-focus-UNREACHED")
+        }
+        if entered, photographing { tourFilledValues[name] = value }
+        return entered
+    }
+
+    @MainActor
+    private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false,
+                             photographing: Bool = false, onFocusFailure: () -> Void = {}) -> Bool {
+        guard field.waitForExistence(timeout: 5) else {
+            XCTFail("The \(name) field must exist")
+            return false
         }
         // Synthesized typing on a loaded host can drop keystrokes or land before the field takes
         // focus, so each attempt is verified and a short field is retyped, never accepted.
@@ -799,10 +818,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 focused = field.value(forKey: "hasKeyboardFocus") as? Bool ?? false
             }
             guard focused else {
-                if photographing {
-                    print("DULCET DESIGN TOUR focus-failure field=\(name) frame=\(field.frame) keyboard=\(app.keyboards.firstMatch.frame) " + app.debugDescription)
-                    tourPhotograph("connection-focus-UNREACHED")
-                }
+                onFocusFailure()
                 XCTFail("The \(name) field must take keyboard focus on a tap")
                 return false
             }
@@ -823,7 +839,6 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             field.typeText(value)
             observed = field.value as? String ?? ""
             if secure ? observed.count == value.count : observed == value {
-                if photographing { tourFilledValues[name] = value }
                 return true
             }
             print("DULCET ACCOUNT STATES retype field=\(name) attempt=\(attempt) observed-length=\(observed.count) wanted-length=\(value.count)")
