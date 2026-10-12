@@ -538,7 +538,9 @@ struct DulcetNowPlayingView: View {
                 Text(player.current.title)
                     .font(.headline)
                     .lineLimit(2)
-                    .accessibilityIdentifier("dulcet.now-playing.title")
+                    // Not the player's title: tests read `dulcet.now-playing.title` as "the player
+                    // column is on screen", and in one column the lyrics take its place.
+                    .accessibilityIdentifier("dulcet.lyrics.header.title")
                 DulcetArtistLink(
                     credits: player.current.credits.filter { $0.role == .artist },
                     font: .subheadline,
