@@ -124,7 +124,7 @@ struct DulcetLyricsPanel: View {
 #if os(tvOS)
         .title2.weight(.semibold)
 #else
-        .title3.weight(.semibold)
+        .title2.weight(.semibold)
 #endif
     }
 }
@@ -156,7 +156,8 @@ private struct DulcetSyncedLyrics: View {
 #if os(tvOS)
         .title.weight(.bold)
 #else
-        .title2.weight(.bold)
+        // Large, as the system player sets its lyrics: the lines are the screen.
+        .title.weight(.bold)
 #endif
     }
 

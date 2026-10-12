@@ -454,8 +454,10 @@ extension PlayerTintRendering {
         let reach = DulcetArtworkGlow.reach
         let layouts: [(name: String, size: CGSize, cover: CGFloat)] = [
             ("one-column", CGSize(width: 430, height: 900), 360),
-            ("side-by-side", CGSize(width: 1_180, height: 820),
-             DulcetNowPlayingView.sideBySideArtworkSize(height: 820)),
+            // Tall enough that the fitted cover is the column's full width: the controls
+            // under it are measured, so a shorter window's cover is not known in advance.
+            ("side-by-side", CGSize(width: 1_180, height: 1_000),
+             DulcetNowPlayingView.sideBySideArtworkSize(height: 1_000)),
         ]
         var observedPairs: Set<DulcetRegisteredContrastPair> = []
         for layout in layouts {

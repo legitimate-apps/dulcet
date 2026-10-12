@@ -122,6 +122,15 @@ struct DulcetPlaybackFailedView: View {
     }
 }
 
+/// Where the player's footer -- its last row of controls -- is laid out, for layout tests that
+/// check it is on screen.
+struct DulcetPlayerFooterBoundsKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
 struct DulcetNowPlayingView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -153,6 +162,9 @@ struct DulcetNowPlayingView: View {
 #endif
     /// The side-by-side player's own height, cover to footer, once laid out.
     @State private var sideBySidePlayerHeight: CGFloat?
+    /// Everything under the cover -- title, scrubber, transport, footer -- as laid out. The cover
+    /// takes what the height leaves after it, so no control is ever below the screen's edge.
+    @State private var playerChromeHeight: CGFloat?
     let player: DulcetNowPlaying
     var presentation: Presentation = .destination
     var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
@@ -170,7 +182,13 @@ struct DulcetNowPlayingView: View {
             let width = geometry.size.width
             let padding = horizontalPadding(for: width)
             if sideBySide(width: width) {
-                let artworkSize = Self.sideBySideArtworkSize(height: geometry.size.height)
+                let artworkSize = Self.fittedArtworkSize(
+                    widthLimit: 520,
+                    availableHeight: geometry.size.height - 2 * DulcetSpacing.xl,
+                    chromeHeight: playerChromeHeight,
+                    minimum: Self.sideBySideMinimumArtwork,
+                    unmeasured: Self.sideBySideArtworkSize(height: geometry.size.height)
+                )
                 // Centred together: the queue sits beside the cover and controls it belongs to,
                 // not pinned to the window's top with the space under it empty.
                 HStack(alignment: .center, spacing: Self.playerToQueueSpacing) {
@@ -225,13 +243,19 @@ struct DulcetNowPlayingView: View {
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: geometry.size.height, alignment: .center)
 #else
+                // As the system player's lyrics: the track named small at the top, the lines
+                // taking the screen, and the scrubber and transport kept at the bottom, so
+                // pausing or skipping never means leaving the lyrics.
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                    lyricsHeader
                     lyricsPanel
-                        .padding(.horizontal, padding)
+                    playbackProgress
+                    transportControls
                     footer(alignment: .leading, showsQueueToggle: true)
-                        .padding(.horizontal, padding)
-                        .padding(.bottom, DulcetSpacing.md)
                 }
+                .padding(.horizontal, padding)
+                .padding(.top, DulcetSpacing.xs)
+                .padding(.bottom, DulcetSpacing.md)
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
 #endif
@@ -272,15 +296,19 @@ struct DulcetNowPlayingView: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
 #else
+                let verticalPadding = presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl
                 ScrollView {
                     playerPanel(
-                        artworkSize: stackedArtworkSize(innerWidth: max(0, width - 2 * padding)),
+                        artworkSize: stackedArtworkSize(
+                            innerWidth: max(0, min(560, width - 2 * padding)),
+                            availableHeight: geometry.size.height - 2 * verticalPadding
+                        ),
                         alignment: presentation == .sheet ? .leading : .center,
                         showsQueueToggle: true
                     )
                     .frame(maxWidth: 560)
                     .padding(.horizontal, padding)
-                    .padding(.vertical, presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl)
+                    .padding(.vertical, verticalPadding)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
@@ -394,11 +422,31 @@ struct DulcetNowPlayingView: View {
         !accessibilitySize && width >= 820
     }
 
-    /// Artwork as large as the player column allows while the title, scrubber, transport and
-    /// footer still fit beneath it without scrolling: an iPad 13-inch window gets the full
-    /// column, an iPad mini in landscape a smaller cover rather than controls pushed off screen.
+    /// The side-by-side cover before the controls under it have been measured: an estimate
+    /// from the height alone. Once measured, ``fittedArtworkSize(widthLimit:availableHeight:chromeHeight:minimum:unmeasured:)``
+    /// decides.
     static func sideBySideArtworkSize(height: CGFloat) -> CGFloat {
         min(520, max(280, height - 380))
+    }
+
+    static let sideBySideMinimumArtwork: CGFloat = 200
+    static let stackedMinimumArtwork: CGFloat = 120
+
+    /// The cover as large as the width allows while the title, scrubber, transport and footer
+    /// -- `chromeHeight`, as laid out -- still fit beneath it without scrolling. The system player
+    /// shrinks its artwork the same way at large text sizes, so no control is ever pushed below
+    /// the screen's edge. A height too short even for the `minimum` cover keeps the minimum and
+    /// scrolls. Until the controls have been measured, `unmeasured`.
+    static func fittedArtworkSize(
+        widthLimit: CGFloat,
+        availableHeight: CGFloat,
+        chromeHeight: CGFloat?,
+        minimum: CGFloat,
+        unmeasured: CGFloat
+    ) -> CGFloat {
+        guard let chromeHeight else { return unmeasured }
+        let left = availableHeight - chromeHeight - coverToTitleSpacing
+        return max(minimum, min(widthLimit, left)).rounded(.down)
     }
 
     /// Apple TV's cover, beside the controls: as large as the height allows after the vertical
@@ -455,6 +503,33 @@ struct DulcetNowPlayingView: View {
     private var sideColumn: some View {
         if showingLyrics { lyricsPanel } else { queueColumn }
     }
+
+#if !os(tvOS)
+    /// The one-column lyrics screen's header: a small cover beside the track's name and artist.
+    private var lyricsHeader: some View {
+        HStack(spacing: DulcetSpacing.sm) {
+            DulcetArtworkView(artwork: player.current.artwork, size: Self.lyricsHeaderArtworkSize)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.current.title)
+                    .font(.headline)
+                    .lineLimit(2)
+                    .accessibilityIdentifier("dulcet.now-playing.title")
+                DulcetArtistLink(
+                    credits: player.current.credits.filter { $0.role == .artist },
+                    font: .subheadline,
+                    onNavigate: onNavigate
+                )
+                .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // The header is the track's name, not a reading surface: it stops growing at the
+        // largest standard size and leaves the screen to the lines.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    static let lyricsHeaderArtworkSize: CGFloat = 56
+#endif
 
     private var lyricsPanel: some View {
         DulcetLyricsPanel(track: player.current, elapsed: player.elapsed, isPlaying: player.isPlaying)
@@ -561,9 +636,16 @@ struct DulcetNowPlayingView: View {
 #endif
     }
 
-    private func stackedArtworkSize(innerWidth: CGFloat) -> CGFloat {
+    private func stackedArtworkSize(innerWidth: CGFloat, availableHeight: CGFloat) -> CGFloat {
         let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 360
-        return max(120, min(innerWidth, cap))
+        let widthLimit = max(Self.stackedMinimumArtwork, min(innerWidth, cap))
+        return Self.fittedArtworkSize(
+            widthLimit: widthLimit,
+            availableHeight: availableHeight,
+            chromeHeight: playerChromeHeight,
+            minimum: Self.stackedMinimumArtwork,
+            unmeasured: widthLimit
+        )
     }
 
     private func playerPanel(
@@ -575,13 +657,20 @@ struct DulcetNowPlayingView: View {
             playerCover(size: artworkSize)
                 .frame(maxWidth: .infinity)
 
-            trackIdentity(alignment: alignment)
+            VStack(alignment: alignment, spacing: Self.coverToTitleSpacing) {
+                trackIdentity(alignment: alignment)
 
-            playbackProgress
+                playbackProgress
 
-            transportControls
+                transportControls
 
-            footer(alignment: alignment, showsQueueToggle: showsQueueToggle)
+                footer(alignment: alignment, showsQueueToggle: showsQueueToggle)
+            }
+            // Measured, not estimated: the cover's size is the height this leaves. Its width is
+            // the column's, never the cover's, so the measurement does not feed back into itself.
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                playerChromeHeight = $0
+            }
         }
     }
 
@@ -812,6 +901,7 @@ struct DulcetNowPlayingView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+        .anchorPreference(key: DulcetPlayerFooterBoundsKey.self, value: .bounds) { $0 }
     }
 
     /// Whether the editable Up Next list, whose header names the queue's source, is on screen
