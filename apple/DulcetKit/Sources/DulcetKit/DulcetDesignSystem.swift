@@ -414,42 +414,7 @@ struct DulcetArtworkView: View {
     static let transientRetryDelays: [Duration] = [.seconds(2), .seconds(8)]
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: artwork.palette.colors,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            Circle()
-                .fill(.white.opacity(0.18))
-                .frame(width: size * 0.72, height: size * 0.72)
-                .offset(x: size * 0.22, y: -size * 0.20)
-
-            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
-                .fill(.black.opacity(0.16))
-                .frame(width: size * 0.68, height: size * 0.22)
-                .rotationEffect(.degrees(artwork.rotation))
-                .offset(x: -size * 0.16, y: size * 0.20)
-
-            Image(systemName: artwork.symbolName)
-                .font(.system(size: max(18, size * 0.23), weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.white.opacity(0.94)) // dulcet-contrast-waiver: decorative-artwork
-                .accessibilityHidden(true)
-
-            if let loadedImage {
-                loadedImage
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFill()
-                    .frame(width: size, height: size)
-            }
-        }
-        .frame(width: size, height: size)
+        DulcetArtworkSurface(artwork: artwork, size: size, image: loadedImage)
         .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
@@ -459,6 +424,14 @@ struct DulcetArtworkView: View {
         .accessibilityHidden(true)
         .onAppear(perform: startLoading)
         .onChange(of: loadIdentity) { _, _ in startLoading() }
+        // A cover asked for while the account was not yet connected -- the player restored at
+        // launch, a page drawn while the connection was still being made -- was answered
+        // unavailable and stayed a placeholder for as long as the view lived, while views drawn
+        // a moment later loaded the same cover. Once the account connects, a view still showing
+        // its placeholder asks again.
+        .onChange(of: store.snapshot.accountConnected) { _, connected in
+            if connected, loadedData == nil { startLoading() }
+        }
         .onDisappear(perform: cancelLoading)
     }
 
@@ -519,6 +492,62 @@ struct DulcetArtworkView: View {
         retryTask = nil
         operation?.cancel()
         operation = nil
+    }
+}
+
+/// What an artwork view draws: the server's cover once it has loaded, the generated placeholder
+/// until then. A loaded cover is drawn on a plain neutral backing, never over the placeholder: a
+/// cover with transparent parts -- a record with no sleeve, a PNG with clear corners -- otherwise
+/// showed the placeholder's coloured gradient and shapes through them, and read as a broken
+/// load (observed on the queue's rows).
+struct DulcetArtworkSurface: View {
+    let artwork: DulcetArtwork
+    let size: CGFloat
+    let image: Image?
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Rectangle().fill(Color.dulcetControl)
+                image
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    @ViewBuilder
+    private var placeholder: some View {
+        RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: artwork.palette.colors,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
+        Circle()
+            .fill(.white.opacity(0.18))
+            .frame(width: size * 0.72, height: size * 0.72)
+            .offset(x: size * 0.22, y: -size * 0.20)
+
+        RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
+            .fill(.black.opacity(0.16))
+            .frame(width: size * 0.68, height: size * 0.22)
+            .rotationEffect(.degrees(artwork.rotation))
+            .offset(x: -size * 0.16, y: size * 0.20)
+
+        Image(systemName: artwork.symbolName)
+            .font(.system(size: max(18, size * 0.23), weight: .medium))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(.white.opacity(0.94)) // dulcet-contrast-waiver: decorative-artwork
+            .accessibilityHidden(true)
     }
 }
 
