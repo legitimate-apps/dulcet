@@ -81,12 +81,70 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func tourPhotograph(_ screen: String) {
         guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
               let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] else { return }
+        // Photograph the reached state above the floating tab bar, including at large text.
+        let app = XCUIApplication()
+        if screen == "connection-empty" {
+            for _ in 0..<6 {
+                if app.staticTexts["dulcet.account-connect.title"].firstMatch.exists { break }
+                app.swipeDown()
+            }
+        } else if screen == "connection-filled" || screen == "connection-saved-disconnected" {
+            let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+            for _ in 0..<6 {
+                if primary.exists { break }
+                app.swipeUp()
+            }
+            guard scrollIntoView(primary, matching: .identifier("dulcet.account-connect.primary-action"), in: app) else { return }
+        } else if screen == "connection-connected" || screen == "connection-error-persistence" || screen == "connection-error-input" {
+            let label = screen == "connection-connected" ? "Sign Out" : "Try Again"
+            let action = app.buttons[label].firstMatch
+            for _ in 0..<6 {
+                if action.exists { break }
+                app.swipeUp()
+            }
+            guard scrollIntoView(action, matching: .button(label), in: app) else { return }
+            if screen == "connection-error-persistence" {
+                let heading = app.staticTexts["Your saved account could not be opened"].firstMatch
+                for _ in 0..<6 {
+                    if heading.exists, heading.frame.minY >= app.windows.firstMatch.frame.minY + 116 { break }
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                        .press(forDuration: 0.05, thenDragTo:
+                            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55)))
+                }
+                Thread.sleep(forTimeInterval: 0.6)
+            }
+        }
         tourShot += 1
         let name = String(format: "%02d-%@", tourShot, screen)
         let shot = XCUIScreen.main.screenshot()
         do { try shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png")) }
         catch { XCTFail("Could not save tour photograph: \(error)") }
         print("DULCET DESIGN TOUR screen=\(screen) reached=true")
+        let accessibilityText = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?
+            .contains("Accessibility") == true
+        if screen == "connection-error-tls" && accessibilityText {
+            // The longest recovery includes a second action below the initial viewport.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.05, thenDragTo:
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+            Thread.sleep(forTimeInterval: 0.6)
+            let companionName = String(format: "%02d-connection-certificate-help-scrolled", tourShot)
+            do {
+                try XCUIScreen.main.screenshot().pngRepresentation.write(
+                    to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
+            } catch { XCTFail("Could not save certificate-help photograph: \(error)") }
+        }
+        if screen == "connection-empty" || (screen == "first-run-library" && accessibilityText) {
+            // Companion evidence shows the bottom of a legitimately scrolling intro page.
+            for _ in 0..<(accessibilityText ? 6 : 3) { app.swipeUp() }
+            Thread.sleep(forTimeInterval: 0.6)
+            let companion = screen == "connection-empty" ? "connection-quality-scrolled" : "first-run-library-scrolled"
+            let companionName = String(format: "%02d-%@", tourShot, companion)
+            do {
+                try XCUIScreen.main.screenshot().pngRepresentation.write(
+                    to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
+            } catch { XCTFail("Could not save scrolled intro photograph: \(error)") }
+        }
     }
 
     /// The event options belong to a process. A scope entered before launch must also reach
@@ -166,6 +224,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             } else { XCTFail("First-run Library must have no saved account") }
             if compact { app.tabBars.buttons["Search"].firstMatch.tap() }
             else { app.staticTexts["dulcet.sidebar.search"].firstMatch.tap() }
+            // The interaction scope skips animation-idle waits. Wait for Search's own content,
+            // then let the tab transition finish before photographing its resting surface.
+            XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
+            Thread.sleep(forTimeInterval: 0.6)
             tourPhotograph("first-run-search")
         }
 
@@ -173,7 +235,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let title = app.staticTexts["dulcet.account-connect.title"].firstMatch
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         guard openConnection(in: app, compact: compact),
-              title.waitForExistence(timeout: 15), primary.waitForExistence(timeout: 5) else {
+              title.waitForExistence(timeout: 15), reveal(primary, in: app), primary.waitForExistence(timeout: 5) else {
             XCTFail("A launch with no saved account must show the account form: " + app.debugDescription)
             return
         }
@@ -330,7 +392,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         guard openConnection(in: app, compact: compact) else { return }
         let savedServer = element(labelPrefix: "Reconnect to", in: app)
-        guard savedServer.waitForExistence(timeout: 10),
+        guard reveal(savedServer, in: app), savedServer.waitForExistence(timeout: 10),
+              reveal(primary, in: app),
               waitForLabel(containing: "Reconnect", of: primary, timeout: 5) else {
             XCTFail("Connection must name the saved server and offer Reconnect: " + app.debugDescription)
             return
@@ -346,7 +409,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         launchInInteractionScope(app)
         guard openConnection(in: app, compact: compact) else { return }
         let unreadable = app.staticTexts["Your saved account could not be opened"].firstMatch
-        guard unreadable.waitForExistence(timeout: 15), tryAgain.waitForExistence(timeout: 5) else {
+        guard reveal(unreadable, in: app), unreadable.waitForExistence(timeout: 15),
+              reveal(tryAgain, in: app), tryAgain.waitForExistence(timeout: 5) else {
             XCTFail("An unreadable saved account must show the persistence error: " + app.debugDescription)
             return
         }
@@ -408,6 +472,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     // MARK: - Driving the form
 
     @MainActor
+    private func reveal(_ control: XCUIElement, in app: XCUIApplication) -> Bool {
+        for direction in [true, false] {
+            for _ in 0..<6 {
+                if control.waitForExistence(timeout: 1) { return true }
+                if direction { app.swipeUp() } else { app.swipeDown() }
+            }
+        }
+        return control.waitForExistence(timeout: 1)
+    }
+
+    @MainActor
     private func fill(
         _ app: XCUIApplication, serverURL: String, username: String, password: String, allowLocalHTTP allow: Bool = true
     ) -> Bool {
@@ -421,6 +496,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // Cleartext to a loopback server needs the local-HTTP consent, which keeps its value
         // across edits; set it only when it differs.
         let allowLocalHTTP = app.switches["Allow HTTP on this local network"].firstMatch
+        for _ in 0..<6 {
+            if allowLocalHTTP.exists { break }
+            app.swipeUp()
+        }
         guard allowLocalHTTP.waitForExistence(timeout: 5) else {
             XCTFail("The local-HTTP consent control must exist: " + app.debugDescription)
             return false
@@ -454,7 +533,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func tap(_ control: XCUIElement, in app: XCUIApplication, name: String) -> Bool {
         let target: HitTarget = (name == "Connect" || name == "Cancel")
             ? .identifier("dulcet.account-connect.primary-action") : .button(name)
-        guard control.waitForExistence(timeout: 5), scrollIntoView(control, matching: target, in: app) else {
+        guard reveal(control, in: app), control.waitForExistence(timeout: 5),
+              scrollIntoView(control, matching: target, in: app) else {
             XCTFail("\(name) must be reachable: " + app.debugDescription)
             return false
         }
@@ -474,7 +554,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 XCTFail("A compact window must present the Connection tab: " + app.debugDescription)
                 return false
             }
-            tab.tap()
+            // Reselecting the active native tab scrolls its Form to the top. A restored
+            // status already opened Connection; keep that arrival position when locating it.
+            if !tab.isSelected { tab.tap() }
             return true
         }
         let row = app.staticTexts["dulcet.sidebar.settings"].firstMatch
@@ -495,6 +577,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         repeat {
             if signOut.waitForExistence(timeout: 5) { return true }
             guard openConnection(in: app, compact: compact) else { return false }
+            if !signOut.exists { app.swipeUp() }
         } while Date() < deadline
         XCTFail("The connection must succeed and Connection must offer Sign Out: " + app.debugDescription)
         return false
@@ -521,6 +604,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let confirmationDeadline = Date().addingTimeInterval(10)
         repeat {
             if confirm.exists && confirm.isHittable { confirm.tap() }
+            if !confirm.exists {
+                for _ in 0..<6 {
+                    if primary.exists { break }
+                    app.swipeUp()
+                }
+            }
             if primary.waitForExistence(timeout: 1) { break }
         } while confirm.exists && Date() < confirmationDeadline
         guard primary.waitForExistence(timeout: 45), waitForLabel(containing: "Connect", of: primary, timeout: 10),
@@ -652,6 +741,13 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false, app: XCUIApplication) -> Bool {
+        // Form virtualizes rows outside its viewport. Reveal the requested credential row
+        // before the existing lookup, just as a person scrolls back from an error to edit it.
+        for _ in 0..<6 {
+            if field.exists { break }
+            if name == "server address" { app.swipeDown() }
+            else { app.swipeUp() }
+        }
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The \(name) field must exist")
             return false
@@ -784,8 +880,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             dismissPasswordSavePromptIfPresent()
             if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
             if swipe < 6 {
-                if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
-                   element.exists, element.frame.midY < window.frame.minY + 100 {
+                if element.exists, element.frame.midY < window.frame.minY + 100 {
                     app.swipeDown()
                 } else {
                     app.swipeUp()

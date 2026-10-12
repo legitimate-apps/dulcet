@@ -45,42 +45,60 @@ public protocol DulcetStreamingQualitySetting: AnyObject {
 /// The Streaming Quality section of the settings screen: a choice for Wi-Fi and one for cellular.
 struct DulcetStreamingQualitySection: View {
     @Bindable var store: DulcetPresentationStore
+    var inForm = false
 
     var body: some View {
         if let preference = store.streamingQuality {
-            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                Text(DulcetStrings.streamingQualityTitle)
-                    .font(.title3.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                choice(
-                    DulcetStrings.streamingQualityUnmetered,
-                    identifier: "dulcet.streaming-quality.unmetered",
-                    selection: preference.unmetered
-                ) { chosen in
-                    var next = preference
-                    next.unmetered = chosen
-                    store.setStreamingQuality(next)
+            if inForm {
+                Section {
+                    choices(preference)
+                } header: {
+                    Text(DulcetStrings.streamingQualityTitle)
+                } footer: {
+                    Text(DulcetStrings.streamingQualityFootnote)
                 }
-                choice(
-                    DulcetStrings.streamingQualityMetered,
-                    identifier: "dulcet.streaming-quality.metered",
-                    selection: preference.metered
-                ) { chosen in
-                    var next = preference
-                    next.metered = chosen
-                    store.setStreamingQuality(next)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dulcet.streaming-quality")
+            } else {
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    Text(DulcetStrings.streamingQualityTitle)
+                        .font(.title3.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    choices(preference)
+                    Text(DulcetStrings.streamingQualityFootnote)
+                        .font(.callout)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(nil)
                 }
-                Text(DulcetStrings.streamingQualityFootnote)
-                    .font(.callout)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .lineLimit(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A container of its own: without it the section's identifier is applied to every
+                // element inside it, and each choice loses its own (OBSERVED on iOS and tvOS 26.5:
+                // both pickers, and every tvOS choice, reported `dulcet.streaming-quality`).
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dulcet.streaming-quality")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // A container of its own: without it the section's identifier is applied to every
-            // element inside it, and each choice loses its own (OBSERVED on iOS and tvOS 26.5:
-            // both pickers, and every tvOS choice, reported `dulcet.streaming-quality`).
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("dulcet.streaming-quality")
+        }
+    }
+
+    @ViewBuilder
+    private func choices(_ preference: DulcetStreamingQualityPreference) -> some View {
+        choice(
+            DulcetStrings.streamingQualityUnmetered,
+            identifier: "dulcet.streaming-quality.unmetered",
+            selection: preference.unmetered
+        ) { chosen in
+            var next = preference
+            next.unmetered = chosen
+            store.setStreamingQuality(next)
+        }
+        choice(
+            DulcetStrings.streamingQualityMetered,
+            identifier: "dulcet.streaming-quality.metered",
+            selection: preference.metered
+        ) { chosen in
+            var next = preference
+            next.metered = chosen
+            store.setStreamingQuality(next)
         }
     }
 
@@ -118,13 +136,16 @@ struct DulcetStreamingQualitySection: View {
             }
         }
 #else
-        Picker(title, selection: Binding(get: { selection }, set: choose)) {
-            ForEach(DulcetStreamingQuality.allCases) { quality in
-                Text(quality.label).tag(quality)
+        LabeledContent(title) {
+            Picker(title, selection: Binding(get: { selection }, set: choose)) {
+                ForEach(DulcetStreamingQuality.allCases) { quality in
+                    Text(quality.label).tag(quality)
+                }
             }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .accessibilityIdentifier(identifier)
         }
-        .pickerStyle(.menu)
-        .accessibilityIdentifier(identifier)
 #endif
     }
 }

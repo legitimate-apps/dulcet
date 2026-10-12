@@ -46,6 +46,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let remote = XCUIRemote.shared
         let app = XCUIApplication()
         tourAccountStates(app, server: (url, username, password))
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
         app.launchArguments = [
             "-dulcet-debug-connect-account",
@@ -676,9 +677,16 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("connection-empty", app) {
             primary.waitForExistence(timeout: 20) && !primary.isEnabled && !app.buttons["Sign Out"].exists
         }
+        step("connection-quality-focused", app) {
+            self.focusByRemote(app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch, in: app)
+                && self.settle(1)
+        }
         step("first-run-library", app) {
             self.selectSection(app, "library")
                 && app.staticTexts["Your music, wherever you listen"].firstMatch.waitForExistence(timeout: 15)
+        }
+        step("first-run-library-focused", app) {
+            self.focusByRemote(app.buttons["Connect a Server"].firstMatch, in: app)
         }
         step("first-run-search", app) {
             self.selectSection(app, "search")

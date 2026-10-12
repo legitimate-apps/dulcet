@@ -3513,6 +3513,11 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func chooseStreamingQuality(_ option: String, row identifier: String, in app: XCUIApplication) -> Bool {
         let picker = app.buttons[identifier].firstMatch
+        // Native Form realizes each quality row when it enters the viewport.
+        for _ in 0..<6 {
+            if picker.exists { break }
+            app.swipeUp()
+        }
         guard picker.waitForExistence(timeout: 10), scrollIntoView(picker, in: app) else {
             XCTFail("Connection must offer the \(identifier) picker: " + app.debugDescription)
             return false

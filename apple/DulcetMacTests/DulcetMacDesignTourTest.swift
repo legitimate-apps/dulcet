@@ -159,200 +159,202 @@ final class DulcetMacDesignTourTest: XCTestCase {
             store.selectDestination(.settings)
             return await self.find("dulcet.account-connect.title") != nil
         }
-        let settingsHosting = NSHostingView(rootView: DulcetSettingsView(store: store))
-        settingsHosting.appearance = appearance
-        settingsHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
-        let settingsWindow = NSWindow(contentRect: settingsHosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        settingsWindow.isReleasedWhenClosed = false
-        settingsWindow.appearance = appearance
-        settingsWindow.contentView = settingsHosting
-        settingsWindow.makeKeyAndOrderFront(nil)
-        self.window = settingsWindow
-        hostingView = settingsHosting
-        await step("streaming-quality") { await self.find("dulcet.streaming-quality.unmetered") != nil }
-        if !(await chooseMenuItem("Original", photographMenu: true, photographScreen: "quality-options", opening: {
-            await self.press("dulcet.streaming-quality.unmetered")
-        })) {
-            print("DULCET DESIGN TOUR screen=quality-options reached=false reason=quality-picker-menu-not-opened")
-            XCTFail("The production streaming quality picker must open its native choices")
-        }
-        settingsWindow.close()
-        self.window = window
-        hostingView = hosting
-        window.makeKeyAndOrderFront(nil)
+        if environment["DULCET_DESIGN_TOUR_PHASE"] != "account" {
+            let settingsHosting = NSHostingView(rootView: DulcetSettingsView(store: store))
+            settingsHosting.appearance = appearance
+            settingsHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
+            let settingsWindow = NSWindow(contentRect: settingsHosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            settingsWindow.isReleasedWhenClosed = false
+            settingsWindow.appearance = appearance
+            settingsWindow.contentView = settingsHosting
+            settingsWindow.makeKeyAndOrderFront(nil)
+            self.window = settingsWindow
+            hostingView = settingsHosting
+            await step("streaming-quality") { await self.find("dulcet.streaming-quality.unmetered") != nil }
+            if !(await chooseMenuItem("Original", photographMenu: true, photographScreen: "quality-options", opening: {
+                await self.press("dulcet.streaming-quality.unmetered")
+            })) {
+                print("DULCET DESIGN TOUR screen=quality-options reached=false reason=quality-picker-menu-not-opened")
+                XCTFail("The production streaming quality picker must open its native choices")
+            }
+            settingsWindow.close()
+            self.window = window
+            hostingView = hosting
+            window.makeKeyAndOrderFront(nil)
 
-        await step("library-sidebar") {
-            store.selectDestination(.library)
-            store.selectLibrarySection(.home)
-            return await self.find("dulcet.reader.home.recentlyAdded") != nil
-        }
-        for (screen, row, type) in [
-            ("recently-added-all", "recentlyAdded", DulcetAlbumListType.newest),
-            ("recently-played-all", "recentlyPlayed", DulcetAlbumListType.recent),
-            ("most-played-all", "mostPlayed", DulcetAlbumListType.frequent),
-        ] {
-            await step(screen) {
+            await step("library-sidebar") {
+                store.selectDestination(.library)
                 store.selectLibrarySection(.home)
-                let identifier = "dulcet.reader.home.\(row).all"
-                if await self.find(identifier, seconds: 2) != nil {
-                    guard await self.press(identifier) else { return false }
-                    print("DULCET DESIGN TOUR navigation=home-see-all screen=\(screen)")
-                } else {
-                    // A home shelf omits See All while it has no albums. The same full list is
-                    // reachable through Albums > Sort; open the production navigation route.
-                    store.pushReaderPage(.albumList(type))
-                    print("DULCET DESIGN TOUR navigation=album-list-route screen=\(screen)")
-                }
-                return await self.waitFor(seconds: 20) {
-                    store.readerPath.last == .albumList(type) && self.interactionElements().contains {
-                        self.objectValue("accessibilityIdentifier", of: $0) as? String == "dulcet.library.album"
-                            || self.label(of: $0) == "Nothing here yet."
+                return await self.find("dulcet.reader.home.recentlyAdded") != nil
+            }
+            for (screen, row, type) in [
+                ("recently-added-all", "recentlyAdded", DulcetAlbumListType.newest),
+                ("recently-played-all", "recentlyPlayed", DulcetAlbumListType.recent),
+                ("most-played-all", "mostPlayed", DulcetAlbumListType.frequent),
+            ] {
+                await step(screen) {
+                    store.selectLibrarySection(.home)
+                    let identifier = "dulcet.reader.home.\(row).all"
+                    if await self.find(identifier, seconds: 2) != nil {
+                        guard await self.press(identifier) else { return false }
+                        print("DULCET DESIGN TOUR navigation=home-see-all screen=\(screen)")
+                    } else {
+                        // A home shelf omits See All while it has no albums. The same full list is
+                        // reachable through Albums > Sort; open the production navigation route.
+                        store.pushReaderPage(.albumList(type))
+                        print("DULCET DESIGN TOUR navigation=album-list-route screen=\(screen)")
+                    }
+                    return await self.waitFor(seconds: 20) {
+                        store.readerPath.last == .albumList(type) && self.interactionElements().contains {
+                            self.objectValue("accessibilityIdentifier", of: $0) as? String == "dulcet.library.album"
+                                || self.label(of: $0) == "Nothing here yet."
+                        }
                     }
                 }
             }
-        }
-        await step("albums") {
-            store.selectLibrarySection(.albums)
-            return await self.find("dulcet.library.album", label: "Threshold Boundary") != nil
-        }
-        await photographMenu("album-sort-options", expectedItem: "Title") {
-            await self.press("dulcet.reader.albums.sort")
-        }
-        await photographMenu("album-menu", expectedItem: "Play") {
-            await self.rightClick("dulcet.library.album", label: "Threshold Boundary")
-        }
-        await step("album") { await self.openAlbum(store) }
-        await step("add-to-playlist") {
-            guard await self.chooseMenuItem("Add to Playlist…", photographMenu: true, opening: {
-                await self.rightClick("dulcet.reader.track", label: "Twenty Nine Seconds")
-            }) else { return false }
-            return await self.find("dulcet.addToPlaylist.playlist", label: self.playlistName) != nil
-        }
-        if window.attachedSheet != nil {
-            guard await pressLabel("Cancel"), await waitFor(seconds: 5, { window.attachedSheet == nil }) else {
-                XCTFail("The real playlist chooser Cancel button must dismiss its sheet")
+            await step("albums") {
+                store.selectLibrarySection(.albums)
+                return await self.find("dulcet.library.album", label: "Threshold Boundary") != nil
+            }
+            await photographMenu("album-sort-options", expectedItem: "Title") {
+                await self.press("dulcet.reader.albums.sort")
+            }
+            await photographMenu("album-menu", expectedItem: "Play") {
+                await self.rightClick("dulcet.library.album", label: "Threshold Boundary")
+            }
+            await step("album") { await self.openAlbum(store) }
+            await step("add-to-playlist") {
+                guard await self.chooseMenuItem("Add to Playlist…", photographMenu: true, opening: {
+                    await self.rightClick("dulcet.reader.track", label: "Twenty Nine Seconds")
+                }) else { return false }
+                return await self.find("dulcet.addToPlaylist.playlist", label: self.playlistName) != nil
+            }
+            if window.attachedSheet != nil {
+                guard await pressLabel("Cancel"), await waitFor(seconds: 5, { window.attachedSheet == nil }) else {
+                    XCTFail("The real playlist chooser Cancel button must dismiss its sheet")
+                    return
+                }
+                print("DULCET DESIGN TOUR navigation=playlist-chooser-cancel-button")
+            }
+            await step("artists") {
+                store.selectDestination(.library)
+                store.selectLibrarySection(.artists)
+                return await self.find("dulcet.library.artist", label: "Dulcet Fixtures") != nil
+            }
+            await photographMenu("artist-menu", expectedItem: "Favorite") {
+                await self.rightClick("dulcet.library.artist", label: "Dulcet Fixtures")
+            }
+            await step("genres") {
+                store.selectLibrarySection(.genres)
+                return await self.find("dulcet.library.genre") != nil
+            }
+            await step("genre") {
+                guard await self.press("dulcet.library.genre") else { return false }
+                return await self.find("dulcet.reader.track") != nil
+            }
+            await step("artist") {
+                store.selectLibrarySection(.artists)
+                guard await self.press("dulcet.library.artist", label: "Dulcet Fixtures") else { return false }
+                return await self.find("dulcet.library.album", label: "Double Lines") != nil
+            }
+            await step("now-playing") {
+                guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
+                guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                store.selectDestination(.nowPlaying)
+                return await self.find("dulcet.now-playing.title") != nil
+            }
+            await step("lyrics") {
+                guard await self.press("dulcet.now-playing.lyrics") else { return false }
+                return await self.find("dulcet.lyrics.line.current", seconds: 25) != nil
+            }
+            await step("up-next") {
+                _ = await self.press("dulcet.now-playing.lyrics")
+                if await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
+                    _ = await self.press("dulcet.now-playing.up-next")
+                }
+                return await self.find("dulcet.upNext") != nil
+            }
+            store.sendPlaybackControl(.pause)
+            await step("favourites") {
+                if store.playingTrackFavourite?.isFavourite == false { _ = store.togglePlayingTrackFavourite() }
+                store.selectDestination(.library)
+                store.selectLibrarySection(.favourites)
+                return await self.find("dulcet.reader.track") != nil
+            }
+            await step("playlists") {
+                store.selectDestination(.library)
+                store.selectLibrarySection(.playlists)
+                return await self.find("dulcet.library.playlist", label: self.playlistName) != nil
+            }
+            await photographMenu("playlist-menu", expectedItem: "Play") {
+                await self.rightClick("dulcet.library.playlist", label: self.playlistName)
+            }
+            await step("playlist") {
+                guard await self.press("dulcet.library.playlist", label: self.playlistName) else { return false }
+                return await self.find("dulcet.reader.track", seconds: 20) != nil
+            }
+            await step("playlist-edit") {
+                guard await self.press("dulcet.playlist.edit") else { return false }
+                return await self.find("dulcet.playlist.done") != nil
+            }
+            _ = await press("dulcet.playlist.done")
+            await step("playlist-rename") {
+                guard await self.chooseMenuItem("Rename…", photographMenu: true, photographScreen: "playlist-more", opening: {
+                    await self.press("dulcet.playlist.more")
+                }) else { return false }
+                return await self.waitFor(seconds: 5) { self.sheetHasText("Rename") }
+            }
+            await dismissAlert()
+            await step("playlist-delete-confirmation") {
+                guard await self.chooseMenuItem("Delete Playlist", opening: "dulcet.playlist.more") else { return false }
+                return await self.find("dulcet.playlist.delete.confirm") != nil
+            }
+            await dismissAlert()
+            guard window.attachedSheet == nil else {
+                XCTFail("The actual Delete confirmation Cancel button must dismiss its alert")
                 return
             }
-            print("DULCET DESIGN TOUR navigation=playlist-chooser-cancel-button")
-        }
-        await step("artists") {
-            store.selectDestination(.library)
-            store.selectLibrarySection(.artists)
-            return await self.find("dulcet.library.artist", label: "Dulcet Fixtures") != nil
-        }
-        await photographMenu("artist-menu", expectedItem: "Favorite") {
-            await self.rightClick("dulcet.library.artist", label: "Dulcet Fixtures")
-        }
-        await step("genres") {
-            store.selectLibrarySection(.genres)
-            return await self.find("dulcet.library.genre") != nil
-        }
-        await step("genre") {
-            guard await self.press("dulcet.library.genre") else { return false }
-            return await self.find("dulcet.reader.track") != nil
-        }
-        await step("artist") {
-            store.selectLibrarySection(.artists)
-            guard await self.press("dulcet.library.artist", label: "Dulcet Fixtures") else { return false }
-            return await self.find("dulcet.library.album", label: "Double Lines") != nil
-        }
-        await step("now-playing") {
-            guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
-            guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
-            store.selectDestination(.nowPlaying)
-            return await self.find("dulcet.now-playing.title") != nil
-        }
-        await step("lyrics") {
-            guard await self.press("dulcet.now-playing.lyrics") else { return false }
-            return await self.find("dulcet.lyrics.line.current", seconds: 25) != nil
-        }
-        await step("up-next") {
-            _ = await self.press("dulcet.now-playing.lyrics")
-            if await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
-                _ = await self.press("dulcet.now-playing.up-next")
+            await step("playlist-create") {
+                store.selectLibrarySection(.playlists)
+                guard await self.press("dulcet.playlists.new") else { return false }
+                return await self.waitFor(seconds: 5) { self.sheetHasText("New Playlist") }
             }
-            return await self.find("dulcet.upNext") != nil
-        }
-        store.sendPlaybackControl(.pause)
-        await step("favourites") {
-            if store.playingTrackFavourite?.isFavourite == false { _ = store.togglePlayingTrackFavourite() }
-            store.selectDestination(.library)
-            store.selectLibrarySection(.favourites)
-            return await self.find("dulcet.reader.track") != nil
-        }
-        await step("playlists") {
-            store.selectDestination(.library)
-            store.selectLibrarySection(.playlists)
-            return await self.find("dulcet.library.playlist", label: self.playlistName) != nil
-        }
-        await photographMenu("playlist-menu", expectedItem: "Play") {
-            await self.rightClick("dulcet.library.playlist", label: self.playlistName)
-        }
-        await step("playlist") {
-            guard await self.press("dulcet.library.playlist", label: self.playlistName) else { return false }
-            return await self.find("dulcet.reader.track", seconds: 20) != nil
-        }
-        await step("playlist-edit") {
-            guard await self.press("dulcet.playlist.edit") else { return false }
-            return await self.find("dulcet.playlist.done") != nil
-        }
-        _ = await press("dulcet.playlist.done")
-        await step("playlist-rename") {
-            guard await self.chooseMenuItem("Rename…", photographMenu: true, photographScreen: "playlist-more", opening: {
-                await self.press("dulcet.playlist.more")
-            }) else { return false }
-            return await self.waitFor(seconds: 5) { self.sheetHasText("Rename") }
-        }
-        await dismissAlert()
-        await step("playlist-delete-confirmation") {
-            guard await self.chooseMenuItem("Delete Playlist", opening: "dulcet.playlist.more") else { return false }
-            return await self.find("dulcet.playlist.delete.confirm") != nil
-        }
-        await dismissAlert()
-        guard window.attachedSheet == nil else {
-            XCTFail("The actual Delete confirmation Cancel button must dismiss its alert")
-            return
-        }
-        await step("playlist-create") {
-            store.selectLibrarySection(.playlists)
-            guard await self.press("dulcet.playlists.new") else { return false }
-            return await self.waitFor(seconds: 5) { self.sheetHasText("New Playlist") }
-        }
-        await step("playlist-create-filled") {
-            guard let sheet = self.window?.attachedSheet,
-                  let field = sheet.contentView.flatMap({ self.descendants(of: $0).compactMap { $0 as? NSTextField }.first { $0.isEditable } }) else {
-                return false
-            }
-            guard sheet.makeFirstResponder(field) else { return false }
-            field.currentEditor()?.selectAll(nil)
-            for character in "Evening Mix" {
-                let text = String(character)
-                for type in [NSEvent.EventType.keyDown, .keyUp] {
-                    guard let event = NSEvent.keyEvent(
-                        with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                        windowNumber: sheet.windowNumber, context: nil, characters: text,
-                        charactersIgnoringModifiers: text, isARepeat: false, keyCode: 0
-                    ) else { return false }
-                    NSApp.sendEvent(event)
+            await step("playlist-create-filled") {
+                guard let sheet = self.window?.attachedSheet,
+                      let field = sheet.contentView.flatMap({ self.descendants(of: $0).compactMap { $0 as? NSTextField }.first { $0.isEditable } }) else {
+                    return false
                 }
+                guard sheet.makeFirstResponder(field) else { return false }
+                field.currentEditor()?.selectAll(nil)
+                for character in "Evening Mix" {
+                    let text = String(character)
+                    for type in [NSEvent.EventType.keyDown, .keyUp] {
+                        guard let event = NSEvent.keyEvent(
+                            with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                            windowNumber: sheet.windowNumber, context: nil, characters: text,
+                            charactersIgnoringModifiers: text, isARepeat: false, keyCode: 0
+                        ) else { return false }
+                        NSApp.sendEvent(event)
+                    }
+                }
+                return field.stringValue == "Evening Mix"
             }
-            return field.stringValue == "Evening Mix"
-        }
-        await dismissAlert()
-        await step("search") {
-            store.selectDestination(.search)
-            store.searchQuery = "Threshold"
-            return await self.find("dulcet.search.result.0", seconds: 20) != nil
-        }
-        await step("downloads-populated") {
-            guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
-            store.requestDownload(nowPlaying.current)
-            guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
-            return await self.find("dulcet.reader.track") != nil
-        }
-        await step("downloads-offline") {
-            session.disconnect()
-            return await self.find("dulcet.reader.track") != nil
+            await dismissAlert()
+            await step("search") {
+                store.selectDestination(.search)
+                store.searchQuery = "Threshold"
+                return await self.find("dulcet.search.result.0", seconds: 20) != nil
+            }
+            await step("downloads-populated") {
+                guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
+                store.requestDownload(nowPlaying.current)
+                guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
+                return await self.find("dulcet.reader.track") != nil
+            }
+            await step("downloads-offline") {
+                session.disconnect()
+                return await self.find("dulcet.reader.track") != nil
+            }
         }
         await step("connection-saved-disconnected") {
             let savedSession = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName, readsDownloads: true))
