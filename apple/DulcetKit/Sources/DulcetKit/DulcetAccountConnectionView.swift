@@ -145,7 +145,7 @@ struct DulcetAccountConnectionView: View {
                         VStack(alignment: .leading, spacing: 24) {
                             Text(DulcetStrings.accountConnectBody)
                                 .font(.title3)
-                                .foregroundStyle(.secondary)
+                                .dulcetForeground(.secondaryTextOnWindow)
                             statusPanel
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -177,7 +177,7 @@ struct DulcetAccountConnectionView: View {
                     }
                     Text(DulcetStrings.accountConnectBody)
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .dulcetForeground(.secondaryTextOnWindow)
                     statusPanel
                     DulcetStreamingQualitySection(store: store)
                 }
@@ -266,7 +266,7 @@ struct DulcetAccountConnectionView: View {
                 .focused($focusedControl, equals: .allowLocalHTTP)
             Text(DulcetStrings.allowLocalHTTPHint)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .dulcetForeground(.secondaryTextOnControl)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .disabled(isConnecting)
@@ -278,7 +278,7 @@ struct DulcetAccountConnectionView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .dulcetForeground(.secondaryTextOnControl)
                 .fixedSize(horizontal: false, vertical: true)
             control()
 #if os(macOS)

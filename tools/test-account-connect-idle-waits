@@ -60,7 +60,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, window }
+enum XCUIElementType { case button, `switch`, window, tabBar }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
@@ -115,6 +115,7 @@ final class XCUIApplication: NSObject {
     var swipes = 0
     var windows: Element { Element(app: self, scope: "window", key: "window") }
     func swipeUp() { swipes += 1 }
+    func swipeDown() { preconditionFailure("the mock target never sits above the visible form") }
     var confirmationExists = false
     var confirmTapCount = 0
     var buttons: ElementQuery { ElementQuery(app: self, scope: "root") }

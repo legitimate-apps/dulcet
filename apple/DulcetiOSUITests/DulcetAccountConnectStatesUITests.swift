@@ -895,11 +895,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             dismissPasswordSavePromptIfPresent()
             if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
             if swipe < 6 {
-                if element.exists, element.frame.midY < window.frame.minY + 100 {
-                    app.swipeDown()
-                } else {
-                    app.swipeUp()
-                }
+                // Choose the direction from one window snapshot: live element geometry can
+                // wait on the animation idle that this scope exists to bypass.
+                let above = (try? window.snapshot()).map { snapshot in
+                    hitTarget(target, in: snapshot).map { $0.frame.midY < snapshot.frame.minY + 100 } ?? false
+                } ?? false
+                if above { app.swipeDown() } else { app.swipeUp() }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             }
         }

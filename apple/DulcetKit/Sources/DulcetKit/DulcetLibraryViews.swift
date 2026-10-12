@@ -25,7 +25,7 @@ struct DulcetEmptyLibraryView: View {
             VStack(spacing: 20) {
                 Image(systemName: "music.note")
                     .font(.system(size: introSymbolSize, weight: .regular))
-                    .foregroundStyle(.tint)
+                    .dulcetForeground(.accentIconOnWindow)
                     .accessibilityHidden(true)
                 Text(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.firstRunTitle)
                     .font(.largeTitle.weight(.bold))
@@ -58,7 +58,7 @@ struct DulcetEmptyLibraryView: View {
                 }
                 Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: introTextWidth)
