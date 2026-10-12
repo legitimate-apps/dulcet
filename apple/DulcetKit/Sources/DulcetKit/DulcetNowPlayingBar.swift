@@ -312,24 +312,59 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
     let onOpen: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dulcetPlaybackNotices) private var notices
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
 
     func body(content: Content) -> some View {
-        content
+        insettingBar(content
             .overlay(alignment: .bottom) {
                 if drawsNotices {
                     DulcetPlaybackNoticeRegion {
                         DulcetPlaybackNoticeStack(notices: notices)
                     }
                 }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !isSuppressed, store.showsNowPlayingBar {
-                // With Reduce Motion the bar fades in place rather than sliding up the screen.
-                bar.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-            }
-        }
+            })
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .snappy, value: store.showsNowPlayingBar)
     }
+
+    /// The bottom-inset contract every page shares: the bar takes its height out of the page's
+    /// safe area, so a list scrolled to its end rests its last row above the bar, never under
+    /// it. Where the system has scroll edge effects (iOS and macOS 26), the bar is a safe-area
+    /// BAR, so the edge effect extends under it as under a toolbar: content scrolling behind
+    /// the bar and the gap beneath it is softened instead of reading crisply through the
+    /// material.
+    @ViewBuilder
+    private func insettingBar(_ content: some View) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content.safeAreaBar(edge: .bottom, spacing: 0) { presentedBar }
+        } else {
+            content.safeAreaInset(edge: .bottom, spacing: 0) { presentedBar }
+        }
+    }
+
+    @ViewBuilder
+    private var presentedBar: some View {
+        if !isSuppressed, store.showsNowPlayingBar {
+            // With Reduce Motion the bar fades in place rather than sliding up the screen.
+            bar.transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    /// A phone's card spans the screen inside a small margin. In a regular-width column (an
+    /// iPad) a full-width strip read as a thin bar flush to the bottom: there the card keeps to
+    /// the column's content margin, stands clear of the bottom edge, and stops at a width a
+    /// glance can take in, centred.
+    private var regularWidth: Bool {
+#if os(iOS)
+        horizontalSizeClass == .regular
+#else
+        false
+#endif
+    }
+
+    static let regularWidthBarInset: CGFloat = 20
+    static let regularWidthBarMaxWidth: CGFloat = 640
 
     @ViewBuilder
     private var bar: some View {
@@ -347,8 +382,10 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
                 // Dropping a track or album on the bar adds it to the end of the queue.
                 .dulcetQueueDropTarget(store: store, cornerRadius: 16)
                 .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
-                .padding(.horizontal, DulcetSpacing.sm)
-                .padding(.bottom, DulcetSpacing.xs)
+                .frame(maxWidth: regularWidth ? Self.regularWidthBarMaxWidth : .infinity)
+                .padding(.horizontal, regularWidth ? Self.regularWidthBarInset : DulcetSpacing.sm)
+                .padding(.bottom, regularWidth ? DulcetSpacing.sm : DulcetSpacing.xs)
+                .frame(maxWidth: .infinity)
         case .docked:
             VStack(spacing: 0) {
                 Divider()
