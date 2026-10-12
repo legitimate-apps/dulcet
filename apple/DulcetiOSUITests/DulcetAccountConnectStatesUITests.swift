@@ -39,6 +39,8 @@ import XCTest
 /// process owns.
 final class DulcetAccountConnectStatesUITests: XCTestCase {
     private var afterTest: [() -> Void] = []
+    private var tourShot = 0
+    private var tourFilledValues: [String: String] = [:]
 
     override func setUp() {
         super.setUp()
@@ -63,6 +65,28 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     func testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPadOS() {
         guard requireSimulator(.pad, "The account-connect states proof on iPad") else { return }
         proveEveryAccountConnectState(compact: false)
+    }
+
+    /// Opt-in photographs of the same real account transitions used by the behavioural proof.
+    @MainActor
+    func testDesignTourAccountStates() {
+        guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" else { return }
+        XCUIDevice.shared.orientation = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_ORIENTATION"] == "landscape"
+            ? .landscapeLeft : .portrait
+        proveEveryAccountConnectState(compact: UIDevice.current.userInterfaceIdiom == .phone)
+        XCTAssertEqual(tourShot, 15, "The account tour must photograph every requested state")
+    }
+
+    @MainActor
+    private func tourPhotograph(_ screen: String) {
+        guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
+              let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] else { return }
+        tourShot += 1
+        let name = String(format: "%02d-%@", tourShot, screen)
+        let shot = XCUIScreen.main.screenshot()
+        do { try shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png")) }
+        catch { XCTFail("Could not save tour photograph: \(error)") }
+        print("DULCET DESIGN TOUR screen=\(screen) reached=true")
     }
 
     /// The event options belong to a process. A scope entered before launch must also reach
@@ -134,6 +158,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             launchInInteractionScope(app)
         }
 
+        if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
+            if compact { app.tabBars.buttons["Library"].firstMatch.tap() }
+            else { app.staticTexts["dulcet.sidebar.library"].firstMatch.tap() }
+            if app.staticTexts["Your music, wherever you listen"].firstMatch.waitForExistence(timeout: 10) {
+                tourPhotograph("first-run-library")
+            } else { XCTFail("First-run Library must have no saved account") }
+            if compact { app.tabBars.buttons["Search"].firstMatch.tap() }
+            else { app.staticTexts["dulcet.sidebar.search"].firstMatch.tap() }
+            tourPhotograph("first-run-search")
+        }
+
         // 1. Idle.
         let title = app.staticTexts["dulcet.account-connect.title"].firstMatch
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
@@ -149,6 +184,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Sign Out"].exists, "Idle is not connected")
         XCTAssertFalse(app.buttons["Try Again"].exists, "Idle shows no failure")
         print("DULCET ACCOUNT STATE reached=idle primary=\(primary.label.debugDescription)")
+        tourPhotograph("connection-empty")
+        if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
+            guard fill(app, serverURL: server.url, username: server.username, password: server.password) else { return }
+            tourPhotograph("connection-filled")
+        }
 
         // 2. An input error: an address that is not an OpenSubsonic URL is refused before any request.
         guard fill(app, serverURL: "ftp://127.0.0.1:\(refused.port)", username: server.username, password: server.password),
@@ -160,6 +200,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return
         }
         print("DULCET ACCOUNT STATE reached=error-input title=\(invalidAddress.label.debugDescription)")
+        tourPhotograph("connection-error-input")
 
         // 3. A security error: plain HTTP to the server with the local-HTTP consent off.
         guard fill(app, serverURL: server.url, username: server.username, password: server.password, allowLocalHTTP: false),
@@ -171,6 +212,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         XCTAssertFalse(invalidAddress.exists, "The input error must be replaced, not joined")
         print("DULCET ACCOUNT STATE reached=error-security title=\(plaintextRefused.label.debugDescription)")
+        tourPhotograph("connection-error-security")
 
         // 4. A transport error: the system refuses the connection.
         guard fill(app, serverURL: refusedURL, username: server.username, password: server.password),
@@ -181,6 +223,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return
         }
         print("DULCET ACCOUNT STATE reached=error-transport title=\(unreachable.label.debugDescription)")
+        tourPhotograph("connection-error-transport")
 
         // 5. An authentication error: the server's own answer to a wrong password.
         guard fill(app, serverURL: server.url, username: server.username, password: server.password + "-wrong"),
@@ -192,6 +235,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         XCTAssertFalse(unreachable.exists, "The transport error must be replaced, not joined")
         print("DULCET ACCOUNT STATE reached=error-authentication title=\(rejected.label.debugDescription)")
+        tourPhotograph("connection-error-authentication")
 
         // 6. A protocol error: the server's web-player address answers, but not as OpenSubsonic.
         guard fill(app, serverURL: server.url + "/app", username: server.username, password: server.password),
@@ -202,6 +246,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return
         }
         print("DULCET ACCOUNT STATE reached=error-protocol title=\(notOpenSubsonic.label.debugDescription)")
+        tourPhotograph("connection-error-protocol")
+
+        if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
+           let tlsURL = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_BAD_TLS_URL"] {
+            guard fill(app, serverURL: tlsURL, username: server.username, password: server.password),
+                  tap(tryAgain, in: app, name: "Try Again") else { return }
+            let tls = app.staticTexts["This server’s certificate isn’t trusted"].firstMatch
+            if tls.waitForExistence(timeout: 45) { tourPhotograph("connection-error-tls") }
+            else { tourPhotograph("connection-error-tls-UNREACHED"); XCTFail("Untrusted TLS must show its certificate error: " + app.debugDescription) }
+        }
 
         // 7. A server error: `ping` answered with an OpenSubsonic error the account is not at fault for.
         guard proxy.control("POST", "endpoint=ping&code=0&state=on") != nil else {
@@ -219,6 +273,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let answered = proxy.control("POST", "state=off")?["answered"] as? Int ?? -1
         XCTAssertGreaterThan(answered, 0, "The server error shown must be the answer the proxy gave")
         print("DULCET ACCOUNT STATE reached=error-server title=\(serverRejected.label.debugDescription) proxy-answers=\(answered)")
+        tourPhotograph("connection-error-server")
 
         // 8. In progress, then Cancel: a server that accepts the connection and never answers.
         guard fill(app, serverURL: silentURL, username: server.username, password: server.password),
@@ -230,6 +285,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return
         }
         print("DULCET ACCOUNT STATE reached=in-progress primary=\(primary.label.debugDescription)")
+        tourPhotograph("connection-connecting")
         guard tap(primary, in: app, name: "Cancel") else { return }
         guard connecting.waitForNonExistence(timeout: 10),
               waitForLabel(containing: "Connect", of: primary, timeout: 5) else {
@@ -261,6 +317,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let connected = element(labelPrefix: "Connected to", in: app)
         XCTAssertTrue(connected.waitForExistence(timeout: 5), "Connection must say it is connected: " + app.debugDescription)
         print("DULCET ACCOUNT STATE reached=connected label=\(connected.label.debugDescription)")
+        tourPhotograph("connection-connected")
 
         // 10. Saved and disconnected: a relaunch opens the saved account's library, sending nothing
         //    until Reconnect, and Connection names the saved server.
@@ -280,6 +337,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["Sign Out"].exists, "A saved account is not connected until Reconnect")
         print("DULCET ACCOUNT STATE reached=saved-disconnected label=\(savedServer.label.debugDescription)")
+        tourPhotograph("connection-saved-disconnected")
 
         // 11. Credential persistence: the active-account pointer names no Keychain item.
         app.terminate()
@@ -298,6 +356,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         )
         print("DULCET ACCOUNT STATE reached=error-persistence title=\(unreadable.label.debugDescription)"
             + " pointer=planted keychain=real")
+        tourPhotograph("connection-error-persistence")
 
         // The account saved in step 9 is untouched: the pointer above lived in this launch's
         // arguments only, so the next launch opens it again.
@@ -337,6 +396,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// restores the outer value, and the outer scope restores ordinary waits when the proof ends.
     @MainActor
     private func launchInInteractionScope(_ app: XCUIApplication) {
+        if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
+           let size = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
+        }
+        tourFilledValues.removeAll()
         app.launch()
         withoutIdleWaits(app) {}
     }
@@ -348,11 +412,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         _ app: XCUIApplication, serverURL: String, username: String, password: String, allowLocalHTTP allow: Bool = true
     ) -> Bool {
         guard replaceText(in: app.textFields["dulcet.account-connect.server-address"].firstMatch,
-                          with: serverURL, name: "server address"),
+                          with: serverURL, name: "server address", app: app),
               replaceText(in: app.textFields["dulcet.account-connect.username"].firstMatch,
-                          with: username, name: "username"),
+                          with: username, name: "username", app: app),
               replaceText(in: app.secureTextFields["dulcet.account-connect.password"].firstMatch,
-                          with: password, name: "password", secure: true),
+                          with: password, name: "password", secure: true, app: app),
               dismissKeyboardIfPresent(in: app) else { return false }
         // Cleartext to a loopback server needs the local-HTTP consent, which keeps its value
         // across edits; set it only when it differs.
@@ -587,10 +651,36 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     }
 
     @MainActor
-    private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false) -> Bool {
+    private func replaceText(in field: XCUIElement, with value: String, name: String, secure: Bool = false, app: XCUIApplication) -> Bool {
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The \(name) field must exist")
             return false
+        }
+        let photographing = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1"
+        if photographing, tourFilledValues[name] == value {
+            let observed = field.value as? String ?? ""
+            if secure ? observed.count == value.count : observed == value { return true }
+        }
+        if photographing {
+            // Large text can put the next field behind the software keyboard. Scroll the form
+            // within its visible area before tapping, without changing the behavioural proofs.
+            for _ in 0..<8 {
+                let window = app.windows.firstMatch.frame
+                let keyboard = app.keyboards.firstMatch
+                let top = window.minY + 100
+                let bottom = min(window.maxY - 24, keyboard.exists ? keyboard.frame.minY - 16 : window.maxY - 24)
+                let middle = field.frame.midY
+                if field.isHittable, middle >= top, middle <= bottom { break }
+                guard bottom > top else {
+                    XCTFail("The tour needs a visible form area above the keyboard")
+                    return false
+                }
+                let lower = (top + (bottom - top) * 0.8 - window.minY) / window.height
+                let upper = (top + (bottom - top) * 0.25 - window.minY) / window.height
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? upper : lower))
+                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: middle < top ? lower : upper))
+                start.press(forDuration: 0.01, thenDragTo: end)
+            }
         }
         // Synthesized typing on a loaded host can drop keystrokes or land before the field takes
         // focus, so each attempt is verified and a short field is retyped, never accepted.
@@ -604,7 +694,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         for attempt in 1...3 {
             var focused = false
             for _ in 0..<4 where !focused {
-                field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+                if photographing { field.tap() }
+                else { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
                 let deadline = Date().addingTimeInterval(3)
                 while !(field.value(forKey: "hasKeyboardFocus") as? Bool ?? false), Date() < deadline {
                     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -612,6 +703,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 focused = field.value(forKey: "hasKeyboardFocus") as? Bool ?? false
             }
             guard focused else {
+                if photographing {
+                    print("DULCET DESIGN TOUR focus-failure field=\(name) frame=\(field.frame) keyboard=\(app.keyboards.firstMatch.frame) " + app.debugDescription)
+                    tourPhotograph("connection-focus-UNREACHED")
+                }
                 XCTFail("The \(name) field must take keyboard focus on a tap")
                 return false
             }
@@ -631,7 +726,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             }
             field.typeText(value)
             observed = field.value as? String ?? ""
-            if secure ? observed.count == value.count : observed == value { return true }
+            if secure ? observed.count == value.count : observed == value {
+                if photographing { tourFilledValues[name] = value }
+                return true
+            }
             print("DULCET ACCOUNT STATES retype field=\(name) attempt=\(attempt) observed-length=\(observed.count) wanted-length=\(value.count)")
         }
         XCTFail("The \(name) field must contain exactly the value typed; observed \(observed.count) of \(value.count) characters")
@@ -686,7 +784,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             dismissPasswordSavePromptIfPresent()
             if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
             if swipe < 6 {
-                app.swipeUp()
+                if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
+                   element.exists, element.frame.midY < window.frame.minY + 100 {
+                    app.swipeDown()
+                } else {
+                    app.swipeUp()
+                }
                 RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             }
         }
@@ -730,8 +833,20 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             slowestSnapshot = max(slowestSnapshot, now - beforeSnapshot)
             guard now < deadline else { break }
             let frame = hitTarget(target, in: snapshot)?.frame ?? .null
+            var visibleFrame = snapshot.frame
+            if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
+                // The tab bar overlays the form. At large text a button's midpoint can be in
+                // the window but underneath that bar, and XCTest still calls it hittable.
+                func tabBar(in node: XCUIElementSnapshot) -> CGRect? {
+                    if node.elementType == .tabBar { return node.frame }
+                    return node.children.lazy.compactMap { tabBar(in: $0) }.first
+                }
+                let bottom = min(snapshot.frame.maxY - 24, (tabBar(in: snapshot)?.minY ?? snapshot.frame.maxY) - 16)
+                visibleFrame = CGRect(x: snapshot.frame.minX, y: snapshot.frame.minY + 100,
+                                      width: snapshot.frame.width, height: max(0, bottom - snapshot.frame.minY - 100))
+            }
             let visible = !frame.isNull && !frame.isEmpty
-                && snapshot.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+                && visibleFrame.contains(CGPoint(x: frame.midX, y: frame.midY))
             // An offscreen frame needs a swipe, not five seconds of identical snapshots.
             if !frame.isNull && !visible { return false }
             if !visible || frame != previous || snapshot.frame != previousWindow {
