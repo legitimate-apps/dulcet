@@ -35,6 +35,14 @@ outside the repository, with Library, Browse and album Add captures in the three
 The additional iPhone largest-text visibility case passed (21.375 seconds); it scrolls the album
 to keep Add above the tab bar, asserts the visible button bounds, and replaces that capture.
 Native app/UI targets compiled on all Apple platforms; Mac runtime remains unproven.
+After the DEBUG appearance change, the final DulcetKit run again passed all 299 tests across
+10 suites; the affected string-catalog and contrast source policies passed.
+
+Cleanup was observed after the runs: five fixture processes stopped by their recorded PIDs,
+all seven owned simulator leases released (the interrupted unleased clone was reaped),
+DerivedData/build capacity leases released, and local app/package build products deleted.
+`automationmodetool` reported Automation Mode disabled and authentication required to enable it.
+
 
 ## Runtime suite
 
