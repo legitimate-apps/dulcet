@@ -84,10 +84,10 @@ XCTest authorization.
 
 ## Limits
 
-Visual inspection found that the catalog root under Browse still displays its legacy Library title.
-At the largest iPhone text setting, the existing catalog section icons crowd the multiline labels;
-the iPad sidebar also wraps narrow labels. The passing interaction cases do not claim these layouts
-are polished. The iPhone album capture is scrolled to show Add at the largest size.
+The earlier Round 2 captures recorded a legacy Library title under Browse and crowded or wrapped
+catalog/sidebar labels at the largest text size. Those captures precede subsequent UI commits;
+they are historical evidence. The Round 3 functional checks below do not claim a new visual matrix.
+The earlier iPhone album capture is scrolled to show Add at the largest size.
 
 
 The unsigned Mac fixture uses the existing DEBUG disk credential store under a per-test UUID.
@@ -99,3 +99,40 @@ The core song facade currently lacks artist IDs and offline playability. Members
 available on unavailable tracks; this shell does not infer offline playback availability.
 `FEATURES.yml` remains partial until required CI runs provision and execute this runtime suite.
 Local runtime results, when recorded, do not assert that CI has executed the new tests.
+
+
+## Round 3 conformance recovery — 2026-10-13
+
+Base `7dd989f0` already contains core fix `53dc6e47`; no further rebase was needed. Investigation
+used the failures from apple-ci run `38403774798` and a disposable Navidrome 0.63.2 corpus.
+Navidrome does not advertise My Library.
+
+- **OBSERVED product bug, iPad:** opening Search from a pushed reader album crashes with
+  `SwiftUI.AnyNavigationPath.Error.comparisonTypeMismatch`. The split column retained navigation
+  state while the reader and snapshot stacks supplied different route types. Commit `c473bb8d`
+  gives both stacks one route type and captures the originating destination in the reader binding.
+  The saved-account Library/Search/favourite test passes unchanged.
+- **OBSERVED test-path bug, iPhone:** at the largest text size, the first Skip Probe row is
+  hittable before the second row is realized below the larger header. The helper now reveals
+  both rows before checking their order, retaining its six-swipe bound, first-row tap, playback
+  and notice-clearance assertions. Product scrolling and playback were not changed for this case.
+- **OBSERVED test-readiness bug, Mac:** the Play node is a SwiftUI `AccessibilityNode`; its
+  `NSAccessibilityProtocol` cast returns nil. The old test treated nil as enabled. With a one-second
+  playlist-response delay it pressed the loading node with zero track rows, then reached the
+  original 20-second “now playing=nil” timeout. Failure-stack reporting stalled; a process sample
+  captured that `XCTFail`, and the owned diagnostic was stopped. Commit `6ad38bc9` reads the actual
+  AX enabled getter on a freshly queried Play node. The product's disabled-while-loading behavior
+  and the test's first-entry, queue-order and playback-progress assertions remain intact.
+
+**OBSERVED local Debug results:** iPad 3/3 (saved account, ranked search, server star ratings);
+iPhone 4/4 (largest-text short and long skip notices, ordinary skip, saved account); Mac 4/4
+(playlist playback/order, playlist edits, stars and hearts). Each xcresult summary reports Passed,
+zero failures and zero skips. All four Mac cases ran with the one-second playlist-response delay.
+The exact previously failing cases ran in these bundles. The class-only Mac selector ran zero tests
+and is excluded from these counts; the validated bundle selected all four methods explicitly.
+
+**OBSERVED final gates:** all 27 argument-free apple-ci Python checks passed, and
+`swift test --no-parallel` passed 299 tests in 10 suites. Diagnostics and result bundles remain
+outside the repository. These are local results; a new apple-ci dispatch will establish CI results.
+The pending My Library Mac notification-dialog runtime proof and signed receipt renewals from
+Round 2 remain pending; this hosted Mac conformance proof does not replace them.
