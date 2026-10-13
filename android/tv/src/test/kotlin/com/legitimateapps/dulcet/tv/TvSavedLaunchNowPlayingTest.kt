@@ -82,7 +82,7 @@ class TvSavedLaunchNowPlayingTest {
         key(Key.DirectionCenter)
         repeat(6) { if (!focused("tv.player.playpause")) key(Key.DirectionLeft) }
         assertTrue(focused("tv.player.playpause"), "Return to Play")
-        assertFalse(exists("tv.player.reconnect"))
+        await("connected player removes its reconnect notice") { !exists("tv.player.reconnect") }
     }
 
     @Test fun aSavedPlayerShowsAuthenticationFailureAndManualReconnect() {
@@ -91,7 +91,7 @@ class TvSavedLaunchNowPlayingTest {
         leaveEarlierRun(context, saved.id, server.url, queue = listOf("jazz-song-1"), unsentPlays = emptyList())
         launch(SearchAccount(saved.id, server.url, "u", "p", true))
         await("authentication words and reconnect in the player") {
-            exists("tv.player.saved") && exists("tv.player.reconnect")
+            playerSaysCredentials() && exists("tv.player.reconnect")
         }
         val node = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true).fetchSemanticsNodes().single()
         assertTrue(node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].any {

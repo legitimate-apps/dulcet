@@ -225,7 +225,9 @@ class AndroidEmulatorAccountConnectProofTest {
             awaitNode("automatic reconnect in place", 60_000) {
                 relay.acceptedConnections.get() > triedBefore && !saysOffline() && exists("library.home.0.item.0")
             }
-            check(!exists("library.saved") && !exists("library.reconnect")) { "The connected library has no reconnect notice" }
+            awaitNode("the connected library removes its reconnect notice") {
+                !exists("library.saved") && !exists("library.reconnect")
+            }
             observed += "auto-reconnected(relaunch, tried=${relay.acceptedConnections.get() - triedBefore})"
         }
     }
