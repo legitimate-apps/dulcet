@@ -7841,6 +7841,18 @@ establish the earlier process's lifecycle. Signed Keychain relaunch proofs must 
 connected without tapping Reconnect; their existing receipts evidence the earlier proof only.
 New automatic-reconnect signed evidence requires a signed rerun.
 
+**2026-10-12 — Dulcet Server: Dulcet's own OpenSubsonic server**
+The project now includes a server, built from scratch in the Gradle module `:server` (Kotlin/JVM,
+Ktor, SQLite) and specified in §29. The apps do not change their contract. They still speak only
+OpenSubsonic `/rest`, and they treat Dulcet Server as one more OpenSubsonic server, just like
+Navidrome. What the server adds, it adds as advertised OpenSubsonic extensions. The first of these
+is `dulcetLibrary` v1, a per-user My Library (`docs/dulcet-server/dulcet-library-extension.md`).
+The apps adopt it only when a server advertises it. The server also fills in lyrics from LRCLIB
+when a track has none of its own, and it imports user data from a Navidrome. Dulcet Server is a
+second target for the `:core-conformance` suites. Navidrome stays the reference server for the
+client's own gates. CORPUS §1 and §7 are updated to match: "Not a server" is withdrawn, and the
+client sentence stands.
+
 **2026-10-12 — Apple account forms show local-HTTP consent only for an HTTP address.**
 The iOS, iPadOS, macOS and tvOS account forms show the existing consent control and warning only
 when the trimmed address begins with `http://`, case-insensitively. Hiding it leaves the user's
@@ -13306,3 +13318,140 @@ matters, so nobody re-derives revision 1's mistakes:
     state restoration, and local observability.
 13. **Jellyfin paper-validation demoted** from a binding gate to six seam invariants plus a non-binding
     architecture note, so the seam stops generating speculative abstractions (§9.5).
+
+## 29. Dulcet Server
+
+Dulcet Server is Dulcet's own music server. It lives in the Gradle module `:server`, a plain
+Kotlin/JVM application built on Ktor (CIO) and SQLite. Its dependencies are under Apache-2.0 or MIT
+only (licensee). It depends on nothing in the client, and nothing in the client depends on it.
+Navidrome, Gonic and the OpenSubsonic specification were read as references. No code was copied from
+them.
+
+### 29.1 Contract
+
+- It serves the OpenSubsonic `/rest` API, version 1.16.1 with `openSubsonic: true` and
+  `type: "dulcet"`. The goal is that every Dulcet app works against it unchanged. Wire behaviour
+  follows a real server:
+  - JSON, XML and JSONP envelopes.
+  - Error codes 0, 10, 40, 42, 50 and 70, each in an HTTP 200 envelope.
+  - Unknown methods answer 404 in plain text.
+  - Legacy `stream` and `getCoverArt` errors are envelopes.
+  - `getTranscodeStream` errors are bare HTTP: 404 `Not Found` or 400 `Bad Request`, in plain text.
+  - `getOpenSubsonicExtensions` needs no authentication.
+- Advertised extensions: `formPost` 1, `songLyrics` 1 and 2, `transcodeOffset` 1, `transcoding` 1
+  and `dulcetLibrary` 1.
+- Authentication accepts token plus salt and plain or `enc:` passwords. Passwords are kept with
+  AES-GCM under a key in the data folder, because token authentication needs the plaintext.
+- Request parameters are parsed by the server itself, without a parameter limit. A playlist replace
+  sends one `songId` per entry, and Ktor's parser would keep only the first 1000.
+
+### 29.2 Scanner
+
+- Tags are read with ffprobe, one process per changed file, with up to four running at a time.
+- The catalog holds:
+  - Artists and albums, with album artists split on `;` (never on `/`).
+  - Per-track artist credits by role.
+  - Compilations: the compilation flag, or several artists under no album artist.
+  - Disc and track numbers, disc subtitles, genres, years and MusicBrainz ids.
+  - Embedded artwork and embedded lyrics, per language.
+  - Folder images, such as `cover.jpg` (for a disc subfolder, the album folder's image is used),
+    and `.lrc`/`.txt` sidecars.
+- Ids are opaque and derived from content:
+  - An album's id comes from its MusicBrainz release id, or from its album artist plus title.
+  - A track's id comes from its recording id, or from album, disc, track and title, with the path
+    as a tiebreak.
+  - So a rescan, or a file moved and restored, keeps ids, and stars, plays and playlists survive.
+- Rescans are incremental: only files whose size, mtime or sidecar changed are probed again.
+- `lastScan` is the clients' equality-only scan clock (TRAPS 19). The periodic check
+  (`--rescan-interval`) writes nothing, and leaves `lastScan` alone, when no file, sidecar or folder
+  image changed. A forced scan (at start or `startScan`) always advances it.
+- FLAC bitrate counts only the audio frames (file size minus metadata blocks, over duration). The
+  container bitrate includes pictures and padding, and would wrongly look above a quality cap.
+
+### 29.3 Streaming, artwork, transcoding
+
+- `stream` and `download` serve the original file with `Range` (206, and 416 when unsatisfiable),
+  unless one of these applies: a `format` is named, the source is above `maxBitRate`, or a
+  `timeOffset` is given.
+- `getTranscodeDecision` reads the client's profile (bitrates in bits per second) and answers with
+  signed opaque `transcodeParams`. The signature is an HMAC with a server key, so a client cannot
+  ask for an arbitrary encode.
+- Transcodes made from the start are cached on disk. A repeat request is served with an exact
+  length and byte ranges. A first request that carries `Range` waits for the whole encode.
+- `getCoverArt`:
+  - Sources, in order: the folder image, then embedded art (extracted with ffmpeg), then the
+    artist image next to the album folder.
+  - Resized with ImageIO and cached as JPEG.
+  - A known item with no art gets a generated placeholder. An unknown id is error 70.
+
+### 29.4 Users and per-user data
+
+- Users and admins are created from the CLI or from `DULCET_ADMIN_USER`/`DULCET_ADMIN_PASSWORD`.
+- Each user has their own stars, ratings, play counts and last-played times. A scrobble counts
+  toward the song, the album and the artist. A scrobble of an id the server does not hold is
+  accepted and dropped.
+- Playlists are per user:
+  - `readonly` is true when the requesting user is not the owner.
+  - An admin sees every user's playlists, read-only.
+  - An empty `name` on update is ignored, and an empty `comment` clears the comment.
+  - A replace with no `songId` changes nothing.
+- My Library is per user: the `dulcetLibrary` extension
+  (`docs/dulcet-server/dulcet-library-extension.md`). The apps' split per account is My Library
+  plus Browse. Browse is the whole catalog, which every server already offers. My Library is
+  served by the extension where a server advertises it.
+
+### 29.5 Lyrics
+
+Lyrics are looked up in this order:
+1. A sidecar `.lrc` (synced, with its `[offset:]` honoured) or `.txt` (plain).
+2. Lyrics embedded in the file, per language.
+3. When enabled (`DULCET_LRCLIB`, on by default), LRCLIB `/api/get`. The request carries artist,
+   title, album and duration, and is made the first time a client asks for that track's lyrics.
+
+LRCLIB rules:
+- The User-Agent names Dulcet Server and its repository.
+- Requests are sent one at a time, at least 250 ms apart.
+- A 429 suspends every LRCLIB request for as long as `Retry-After` says (60 s when it is absent).
+- A found answer is cached for good. A definite "none" (404, or an empty answer) is cached for 30
+  days. A temporary failure is not cached.
+- No lyrics dump is bundled, and no central cache is run. Each server fetches for its own library,
+  under LRCLIB's terms.
+
+Lyrics are served as `getLyricsBySongId` (songLyrics, with `kind: "main"` for v2) and as legacy
+`getLyrics`.
+
+### 29.6 Importer
+
+`dulcet-server import navidrome --url --user --password --into <user> [--dry-run]` reads any
+OpenSubsonic server as that user.
+- What it reads: songs through paged `search3`, album and artist lists, and the user's own
+  playlists.
+- How it matches songs:
+  1. By path suffix: the last four, then three, then two folded path parts.
+  2. By MusicBrainz recording id.
+  3. By tags: title, artist containment, album, track number and duration within 2 s.
+- Albums match through votes from matched songs, then MusicBrainz, then name. Artists match by
+  MusicBrainz, then name.
+- Applying is idempotent:
+  - A star already on the item is kept; otherwise the remote star time is copied.
+  - Ratings are copied.
+  - Play counts take the larger value.
+  - Playlists are replaced by name, keeping order and dropping songs the local library lacks.
+- `ImportSource` is the seam for Jellyfin and Plex sources.
+
+### 29.7 Packaging
+
+- Local process: `./gradlew :server:installDist`, then
+  `server/build/install/dulcet-server/bin/dulcet-server serve --music=DIR --data=DIR`.
+- Image: `server/Dockerfile`, an Alpine image with a jlink'd runtime and ffmpeg. It runs as a
+  non-root user, with music mounted read-only at `/music` and state in `/data`.
+- Measured on arm64 (OBSERVED, `docker save | gzip`, `docker stats`):
+  - Image: 105 MB compressed.
+  - About 105 MiB resident after scanning the 314-track conformance corpus, and 142 MiB after a
+    burst of 500-row lists.
+
+### 29.8 Conformance
+
+Dulcet Server is a second target for the `:core-conformance` JVM suites. The suites run against it
+with the same seeded corpus and users as the disposable Navidrome. Results and the reasons for each
+difference are recorded in `docs/dulcet-server/README.md`.
