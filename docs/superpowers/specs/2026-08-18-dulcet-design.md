@@ -13508,8 +13508,12 @@ contract.
 
 **Offered only where advertised.** The core asks `getOpenSubsonicExtensions` when a shell first
 refreshes My Library on a connection, and keeps the answer per account. After a successful
-reconnect it asks again and refreshes, but only for an account whose server offered My Library, so
-a server without the extension sees no request it did not see before. A change made while the
+reconnect it asks again and refreshes for an account whose server offered My Library, or retries
+an initial detection the shell requested but which failed or ran offline without an answer.
+Accounts not yet asked for and servers known to lack the extension cost no discovery request on
+reconnect. The Android session requests the first refresh when its My Library is first used,
+before availability can drive the Library/Browse split; the reader's offline rule preserves a
+saved account's wait for the person to choose Reconnect. A change made while the
 answer is unknown waits for that first refresh. A valid extension list that does not advertise
 `dulcetLibrary` v1, or a discovery response establishing that the endpoint is unavailable
 (Subsonic error 70, or a bare HTTP 404 or 501), makes My Library `unavailable`: nothing is paged,

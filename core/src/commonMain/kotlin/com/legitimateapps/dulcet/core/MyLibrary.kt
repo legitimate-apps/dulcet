@@ -355,6 +355,7 @@ internal class MyLibrary(
     private val lock = Mutex()
     private val listeners = mutableListOf<() -> Unit>()
     private var detectedThisConnection = false
+    private var refreshRequested = false
     private var syncing = false
     private var lastError: DomainError? = null
     private var refreshedThisSession = false
@@ -366,13 +367,16 @@ internal class MyLibrary(
         // and windows' own (a closed search must leave it at zero).
         favourites.addOutcomeListener { outcome -> if (outcome.field == MutationField.InLibrary) changed() }
         reader.addVisibleSurface {
-            // A successful reconnect's revalidation, on an account whose server offered My Library:
-            // detect again (the server may have changed) and refresh. Any other account costs no
-            // request here; it is detected when a shell asks ([refresh]), so a server without the
-            // extension sees exactly the requests it saw before My Library existed.
+            // Revalidate an offered library, or retry detection a shell requested but which never
+            // obtained an answer (offline or failed). An account not asked for, or known to lack
+            // the extension, costs no discovery request here.
             if (reader.online) {
                 detectedThisConnection = false
-                if (availability() == MyLibraryAvailability.Available) launchRefresh()
+                when (availability()) {
+                    MyLibraryAvailability.Available -> launchRefresh()
+                    MyLibraryAvailability.Unknown -> if (refreshRequested) launchRefresh()
+                    MyLibraryAvailability.Unavailable -> Unit
+                }
             }
         }
     }
@@ -439,6 +443,7 @@ internal class MyLibrary(
      */
     suspend fun refresh(): MyLibraryRefreshOutcome {
         reader.checkConfined()
+        refreshRequested = true
         return lock.withLock {
             syncing = true
             changed()

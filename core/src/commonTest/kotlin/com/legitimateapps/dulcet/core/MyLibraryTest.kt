@@ -395,6 +395,45 @@ class MyLibraryTest {
     }
 
     @Test
+    fun detectionRequestedWhileOfflineRunsOnReconnectAndDeliversTheQueuedAdd() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        val session = session(env, server)
+        session.setOnline(false)
+        assertIs<MyLibraryRefreshOutcome.Failed>(session.myLibrary.refresh())
+        session.myLibrary.add(album3)
+        advanceUntilIdle()
+        assertEquals(0, server.count("getOpenSubsonicExtensions"), "no discovery is sent offline")
+        assertEquals(1L, session.favourites.pendingCount())
+        session.setOnline(true)
+        session.reader.reconnect()
+        advanceUntilIdle()
+        assertEquals(1, server.count("getOpenSubsonicExtensions"), "the requested detection is retried without another shell refresh")
+        assertEquals(MyLibraryAvailability.Available, session.myLibrary.availability())
+        assertEquals(1, server.count("addToDulcetLibrary"))
+        assertEquals(0L, session.favourites.pendingCount())
+        assertTrue(server.members.any { it.id == album3.rawId })
+    }
+
+    @Test
+    fun failedRequestedDetectionRetriesOnReconnectAndDeliversTheQueuedAdd() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        server.detectionResponse = server.envelope(""""error":{"code":0,"message":"refused"}""")
+        val session = online(session(env, server))
+        assertIs<MyLibraryRefreshOutcome.Failed>(session.myLibrary.refresh())
+        session.myLibrary.add(album3)
+        advanceUntilIdle()
+        assertEquals(1L, session.favourites.pendingCount())
+        server.detectionResponse = null
+        session.reader.reconnect()
+        advanceUntilIdle()
+        assertEquals(2, server.count("getOpenSubsonicExtensions"))
+        assertEquals(MyLibraryAvailability.Available, session.myLibrary.availability())
+        assertEquals(1, server.count("addToDulcetLibrary"))
+        assertEquals(0L, session.favourites.pendingCount())
+        assertTrue(server.members.any { it.id == album3.rawId })
+    }
+
+    @Test
     fun anAddOnAServerWithoutTheExtensionIsRefusedAndRolledBack() = sessionTest { env ->
         val server = DulcetLibraryTestServer().apply { advertise = false }
         val session = online(session(env, server))
