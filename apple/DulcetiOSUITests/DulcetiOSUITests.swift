@@ -1617,7 +1617,9 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         let headerActions = ["dulcet.album.play", "dulcet.album.shuffle"].map { app.buttons[$0].firstMatch.frame }
-        let rowSwipes = scrollIntoViewCountingSwipes(unplayableRow, in: app)
+        // The first row can be hittable while the second is still unrealized below the
+        // large-text header. Reveal both before checking their order, within the same bound.
+        let rowSwipes = scrollIntoViewCountingSwipes(unplayableRow, in: app, alsoRevealing: playableRow)
         guard let rowSwipes, playableRow.waitForExistence(timeout: 5),
               unplayableRow.frame.minY < playableRow.frame.minY else {
             XCTFail("The \(probe.album) album must list \(probe.unplayableTitle) before \(probe.playableTitle)"
@@ -5609,7 +5611,8 @@ final class DulcetiOSUITests: XCTestCase {
     private func scrollIntoViewCountingSwipes(
         _ element: XCUIElement,
         in app: XCUIApplication,
-        probingBlockingSystemAlerts: Bool = true
+        probingBlockingSystemAlerts: Bool = true,
+        alsoRevealing followingRow: XCUIElement? = nil
     ) -> Int? {
         let window = app.windows.firstMatch
         guard window.exists else {
@@ -5640,7 +5643,8 @@ final class DulcetiOSUITests: XCTestCase {
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
                 targetIsAboveWindow = !frame.isEmpty && !frame.isInfinite && midpoint.y < window.frame.minY
                 if !frame.isEmpty && !frame.isInfinite &&
-                    window.frame.contains(midpoint) && element.isHittable {
+                    window.frame.contains(midpoint) && element.isHittable &&
+                    (followingRow?.exists ?? true) {
                     return swipeCount
                 }
             }
