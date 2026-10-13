@@ -190,6 +190,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTAssertNotNil(proxy.control("POST", "state=off", path: "/__dulcet/outage"))
             defer {
                 app.terminate()
+                setLocalFixtureAppearance("light")
                 setLocalFixtureServer(running: true)
                 _ = proxy.control("POST", "state=off", path: "/__dulcet/outage")
             }
@@ -224,11 +225,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTAssertNotNil(proxy.control("POST", "state=on", path: "/__dulcet/outage"))
             let variants: [(String, [String])] = compact ? [
                 ("default", []),
-                ("dark", ["-AppleInterfaceStyle", "Dark"]),
+                ("dark", []),
                 ("largest-text", ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]),
             ] : [("default", [])]
             for (name, arguments) in variants {
                 app.terminate()
+                setLocalFixtureAppearance(name == "dark" ? "dark" : "light")
                 app.launchArguments = arguments
                 launchInInteractionScope(app)
                 XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 20),
@@ -247,22 +249,37 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let destination = compact ? app.tabBars.buttons["Library"].firstMatch
             : app.staticTexts["dulcet.sidebar.library"].firstMatch
         guard tap(destination, in: app, name: "Library") else { return false }
-        if !compact {
+        if compact {
+            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
+            // At accessibility sizes the account message places this row below the viewport.
+            for _ in 0..<6 where !albums.isHittable { app.swipeUp() }
+            guard tap(albums, in: app, name: "Albums") else { return false }
+        } else {
             guard tap(app.staticTexts["dulcet.sidebar.section.albums"].firstMatch, in: app, name: "Albums") else { return false }
         }
         let tile = app.buttons["dulcet.library.album"].firstMatch
-        guard tile.waitForExistence(timeout: 30) else {
-            XCTFail("The cached library must contain an album tile: " + app.debugDescription); return false
+        for _ in 0..<8 {
+            if tile.waitForExistence(timeout: 2), tile.isHittable { return true }
+            app.swipeUp()
         }
-        for _ in 0..<4 where !tile.isHittable { app.swipeUp() }
-        XCTAssertTrue(tile.isHittable, "Album covers must be visible in the capture")
-        return tile.isHittable
+        XCTFail("The cached library must contain a visible album tile: " + app.debugDescription)
+        return false
     }
 
     @MainActor
     private func captureArtwork(_ name: String, in app: XCUIApplication) {
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func setLocalFixtureAppearance(_ appearance: String) {
+        guard let url = ProcessInfo.processInfo.environment["DULCET_AUTORC_SERVER_CONTROL_URL"],
+              let device = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] else {
+            XCTFail("The local artwork capture needs its owned simulator identifier"); return
+        }
+        let result = FaultProxy(url: url).control("POST", "",
+            path: "/appearance?device=\(device)&style=\(appearance)")
+        XCTAssertEqual(result?["appearanceConfigured"] as? Bool, true)
     }
 
     /// The event options belong to a process. A scope entered before launch must also reach
