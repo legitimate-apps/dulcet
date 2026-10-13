@@ -7853,6 +7853,20 @@ on ordinary responses, and sends adds and removes through the favourites outbox.
 server nothing changes. Wire calls sit behind one transport seam, so another protocol can be added
 without changing the rest.
 
+**2026-10-12 — Dulcet API: a public standard; the apps speak it to Dulcet Server**
+By the maintainer's decision, the project defines **Dulcet API v1**, a public, open, Apache-2.0
+standard for music servers and clients (§30, `docs/dulcet-api/`), and Dulcet Server is its
+reference implementation. The apps will speak Dulcet API to any server that advertises it at
+`/.well-known/dulcet`, and OpenSubsonic `/rest` to every other server. Dulcet Server keeps serving
+OpenSubsonic `/rest` in full. This replaces, for Dulcet Server only, the product line "OpenSubsonic
+`/rest` only" and the entry below it that had the apps treat Dulcet Server as one more OpenSubsonic
+server. CORPUS §1, §3 item 5 and §4 lines 1 and 5, and CLAUDE.md's product lines, now state both
+contracts. Why a new standard rather than more OpenSubsonic extensions: header-only auth with OAuth
+and scopes, HTTP status codes for errors, cursor paging, ETags and a change feed change the base
+protocol's request and response shape, which OpenSubsonic's backward compatibility rightly forbids
+(`docs/dulcet-api/README.md` §21). This entry records the contract only: no endpoint is built, and
+no app adopts it yet. The server build follows §30.4.
+
 **2026-10-12 — Dulcet Server retains identity through retags and refuses destructive scans.**
 §29.2 now records persistent track identity, existing-id migration, fingerprint-based moves, and
 catalog retention when the music root is unavailable or suddenly empty. §29.6 records import
@@ -13587,3 +13601,67 @@ time; additions made on this device or read by a later `since` read are ordered 
 counts in the server's totals but is never listed, so step 2 always falls back to a full read for
 that user. A scan that changes the catalog during a full read can shift offsets without moving
 `changed`; the totals check then does not detect it.
+
+## 30. Dulcet API
+
+Dulcet API v1 is a public, open standard for music servers and clients, defined in
+`docs/dulcet-api/`. Dulcet Server is its reference implementation. The decision and its reasons are
+the 2026-10-12 §28 entry.
+
+### 30.1 Where it lives
+
+- `docs/dulcet-api/openapi.yaml` (OpenAPI 3.1) is the single source of truth. It lints clean under
+  Redocly's `recommended-strict` rules with the pinned `@redocly/cli@2.54.3`
+  (`docs/dulcet-api/redocly.yaml`). OBSERVED, 2026-10-12.
+- `docs/dulcet-api/README.md` is the human guide, with a rationale for each choice and the prior
+  art it drew on.
+- `docs/dulcet-api/llms.txt` is the compact guide for language models.
+- `docs/dulcet-api/CONFORMANCE.md` plans the public conformance suite, by profile. The suite is not
+  built.
+
+### 30.2 The contract in brief
+
+- Discovery at `/.well-known/dulcet`; v1 at `/dulcet/v1`; `GET /capabilities` for optional
+  features, limits and the minor version.
+- Auth by `Authorization: Bearer` only: OAuth 2.1 code flow with S256 PKCE, the device grant for TV
+  and command lines, rotating refresh tokens, revocation, and scoped personal access tokens. Scopes:
+  `library:read`, `media:read`, `user:read`, `user:write`, `plays:write`, `account`, `admin`,
+  `offline_access`.
+- Ids are opaque, unique across types, stable across retags and moves, never reused; merges answer
+  308 and leave a `replacedBy` tombstone.
+- RFC 9457 errors with `urn:dulcet:problem:` types; cursor pagination only; ETags and `If-Match`;
+  `Idempotency-Key` on POST.
+- Media through playback decisions (the client declares, the server decides) and short-lived signed
+  URLs in the path, so native players need no headers.
+- A per-user change feed covering catalog, item state (favourites, ratings, plays, My Library),
+  playlists, plays and queues, with tombstones, `start=now` for readers, `start=snapshot` for
+  mirrors, and `410 cursor-expired`. Every read carries `Dulcet-Sync-Cursor`.
+- My Library carries the `dulcetLibrary` semantics, plus removal records in the feed.
+- Plays carry a client-generated id recorded once, so retries never double-count.
+- Server-Sent Events, Standard Webhooks signing, and an MCP endpoint whose write tools require
+  `user:write` and which has no delete or admin tools.
+- v1 is additive only; clients ignore unknown fields and treat enums as open; v2 would run beside
+  v1 for at least 24 months.
+
+### 30.3 What it changes for the apps
+
+Nothing yet. When the apps adopt it, the change feed replaces, on Dulcet API servers only, the
+scan-clock bracket of §16.11–§16.12: a page read under one transaction and stamped with its feed
+cursor, then brought forward by the feed, needs neither the before-and-after `getScanStatus` reads
+nor the screen re-read for user state (TRAPS 18–19). The reader architecture of §16.8 stands: the
+apps use `start=now`, not a snapshot. The OpenSubsonic path keeps every rule it has.
+
+### 30.4 What the server build must do
+
+- Serve Dulcet API beside `/rest`, from the same database, with the same ids on both.
+- Make track and album ids survive a retag. §29.2 derives them from tags (title, album, track), so
+  a retag that changes one of those changes the id today. Identity must be keyed to the file (an
+  audio-content fingerprint that ignores tags, plus a path mapping for moves), with existing ids
+  carried over.
+- Write a journal row in the same transaction as every catalog and user-state change, with an
+  `instanceId` that changes on restore, and keep at least 90 days of it. Signed media URLs live six
+  hours.
+- Store Dulcet API credentials with a slow hash. The AES-GCM recoverable password of §29.1 remains
+  only for OpenSubsonic token authentication.
+- Pass the Core and Sync profiles of the conformance suite once it exists.
+
