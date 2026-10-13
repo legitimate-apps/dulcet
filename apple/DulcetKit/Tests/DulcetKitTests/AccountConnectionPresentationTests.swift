@@ -4269,3 +4269,113 @@ func anArtworkViewDrawnBeforeTheAccountConnectedLoadsOnceItConnects() async {
     #expect(artworkFetcher.requests.map(\.reference.artworkKey) == ["cover:late"])
 }
 #endif
+
+@Test @MainActor
+func savedAccountLoadsDeviceArtworkBeforeNegotiation() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid",
+        username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let connector = ControlledAccountConnector()
+    let fetcher = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(connector: connector,
+        credentialStore: InstanceCredentialStore(persisted: request, providerInstanceID: "art-provider"),
+        artworkFetcher: fetcher)
+    let reference = DulcetArtworkReference(serverID: "art-provider", artworkKey: "cover:versioned")
+    let png = try artworkMemoryFixturePNG()
+    var loaded: Data?
+    _ = source.loadArtwork(reference, sizeBucket: .pixels256) {
+        if case let .loaded(data) = $0 { loaded = data }
+    }
+    #expect(connector.requests.count == 1)
+    #expect(fetcher.requests.count == 1)
+    fetcher.complete(.loaded(png))
+    #expect(loaded == png)
+    #expect(fetcher.requests.first?.cachedOnly == true)
+    var second: Data?
+    _ = source.loadArtwork(reference, sizeBucket: .pixels256) {
+        if case let .loaded(data) = $0 { second = data }
+    }
+    #expect(second == png)
+    #expect(fetcher.requests.count == 1)
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid")))
+    _ = source.loadArtwork(reference, sizeBucket: .pixels256) { _ in }
+    #expect(fetcher.requests.count == 1, "Connecting must not refetch a cached cover")
+}
+
+@Test @MainActor
+func aSeenCoverIsServedSynchronouslyWithoutAnotherArtworkRead() throws {
+    let connector = ControlledAccountConnector()
+    let fetcher = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(connector: connector, artworkFetcher: fetcher,
+        providerInstanceIDFactory: { "art-provider" })
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid")))
+    let reference = DulcetArtworkReference(serverID: "art-provider", artworkKey: "cover:versioned")
+    let png = try artworkMemoryFixturePNG()
+    _ = store.loadArtwork(reference, sizeBucket: .pixels256) { _ in }
+    fetcher.complete(.loaded(png))
+    var loaded: Data?
+    let second = store.loadArtwork(reference, sizeBucket: .pixels256) {
+        if case let .loaded(data) = $0 { loaded = data }
+    }
+    #expect(second == nil)
+    #expect(loaded == png)
+    #expect(fetcher.requests.count == 1)
+}
+
+func artworkMemoryFixturePNG() throws -> Data {
+    let context = try #require(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(CGColor(red: 0.9, green: 0.1, blue: 0.2, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+    let png = NSMutableData()
+    let destination = try #require(CGImageDestinationCreateWithData(png, "public.png" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+    #expect(CGImageDestinationFinalize(destination))
+    return png as Data
+}
+
+
+@Test @MainActor
+func signOutClearsDecodedArtworkAndRejectsLateArtworkCompletion() async throws {
+    let connector = ControlledAccountConnector()
+    let fetcher = ControlledArtworkFetcher()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        artworkFetcher: fetcher, providerInstanceIDFactory: { "art-provider" })
+    let store = DulcetPresentationStore(source: source)
+    func connect() {
+        store.accountServerURL = "https://music.example.invalid"
+        store.accountUsername = "listener"
+        store.accountPassword = "fixture-password"
+        store.submitAccountConnection()
+        connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+            normalizedServerURL: "https://music.example.invalid")))
+    }
+    connect()
+    let seen = DulcetArtworkReference(serverID: "art-provider", artworkKey: "seen-cover")
+    let pending = DulcetArtworkReference(serverID: "art-provider", artworkKey: "pending-cover")
+    let png = try artworkMemoryFixturePNG()
+    _ = store.loadArtwork(seen, sizeBucket: .pixels256) { _ in }
+    fetcher.complete(.loaded(png))
+    #expect(store.cachedArtwork(seen, sizeBucket: .pixels256) != nil)
+    var lateWasDelivered = false
+    _ = store.loadArtwork(pending, sizeBucket: .pixels256) { _ in lateWasDelivered = true }
+    store.removeAccount()
+    for _ in 0..<30 { await Task.yield() }
+    #expect(try credentials.load() == nil)
+    #expect(fetcher.removedServerIDs == ["art-provider"])
+    fetcher.complete(.loaded(png))
+    #expect(!lateWasDelivered)
+    // Reusing the fixture provider id makes this detect retained pixels, rather than merely
+    // passing because the source rejects a reference after its account id is cleared.
+    connect()
+    #expect(store.cachedArtwork(seen, sizeBucket: .pixels256) == nil)
+    #expect(store.cachedArtwork(pending, sizeBucket: .pixels256) == nil)
+}

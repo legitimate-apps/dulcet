@@ -5052,6 +5052,14 @@ under a new key and the cache never has to revalidate an image — which it coul
 every layout's exact pixel size. Artwork keys are opaque and may be album- or song-scoped — never
 derived from an item id.
 
+A saved or connecting account reads cached artwork from the device without waiting for account
+negotiation and without sending an artwork request. Only a connected account may fetch a cache
+miss. Connecting does not refetch a cached cover. A bounded decoded-image memory cache supplies
+an already seen cover on the first paint, including another size bucket while the requested size
+loads. Disk cache accounting is incremental after one inventory; eviction may remove a small
+batch while keeping the byte and entry bounds. Sign-out cancels pending artwork work and removes
+both memory and disk entries for that server, so late completion cannot restore them.
+
 **Binary validation is unconditional and occurs before cache admission.** The body is inspected in
 this order regardless of HTTP status or advertised content type:
 
@@ -7777,6 +7785,13 @@ simulator runtime. The equivalent display-link delivery probe has mixed results 
 contended host: the largest gap increases on iPhone and decreases on iPad. This measures
 main-thread delivery, not GPU rendering. Gesture
 completion is verified, but a reduction in rendering hitches is not established by these runs.
+
+**2026-10-12 — cached album art paints from the device**
+
+§18.2 now requires disk-only artwork reads while a saved account reconnects, decoded-memory
+reuse on the first paint (with another-size fallback), incremental disk accounting and bounded
+batch eviction. Network misses remain gated on successful account negotiation; sign-out clears
+both cache layers and cancels late writers. This brings the Apple path to Android's cache policy.
 
 **2026-10-12 — a saved account reconnects on its own**
 A saved account paints the device library immediately and starts its account negotiation and

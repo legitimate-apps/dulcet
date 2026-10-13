@@ -1,3 +1,4 @@
+import CoreGraphics
 import Observation
 
 public enum DulcetPresentationAction: Sendable, Hashable {
@@ -628,6 +629,15 @@ public final class DulcetPresentationStore {
     public func activateSearchResult(_ id: DulcetProviderItemID) {
         dismissedPlaybackFailure = nil
         source.send(.activateSearchResult(id))
+    }
+
+    public func cachedArtwork(
+        _ reference: DulcetArtworkReference,
+        sizeBucket: DulcetArtworkSizeBucket,
+        allowingOtherSizes: Bool = true
+    ) -> CGImage? {
+        (source as? any DulcetArtworkLoading)?.cachedArtwork(
+            reference, sizeBucket: sizeBucket, allowingOtherSizes: allowingOtherSizes)
     }
 
     @discardableResult

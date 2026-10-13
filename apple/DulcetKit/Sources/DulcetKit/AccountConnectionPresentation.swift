@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Which credential-store operation a ``DulcetAccountFailureKind/credentialPersistenceFailed``
@@ -526,6 +527,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private let credentialStore: (any DulcetCredentialStoring)?
     private let libraryBrowser: (any DulcetLibraryBrowsing)?
     private let artworkFetcher: (any DulcetArtworkFetching)?
+    private let artworkMemoryCache = DulcetArtworkMemoryCache()
+    private var artworkGeneration = 0
     private let serverSearch: (any DulcetServerSearching)?
     private let playbackController: (any DulcetPlaybackControlling)?
     private let downloadController: (any DulcetDownloadControlling)?
@@ -2140,6 +2143,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         cancelLibraryBrowse()
         cancelLibraryRefresh()
         cancelSearchRequest()
+        artworkGeneration += 1
         let removedServerID = providerInstanceID
         let cacheRemover = artworkFetcher as? any DulcetArtworkCacheRemoving
         let removalID = UUID()
@@ -2160,8 +2164,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     self?.failAccountRemoval(removalID)
                     return
                 }
-                if let removedServerID, let cacheRemover {
-                    await cacheRemover.removeCachedArtwork(serverID: removedServerID)
+                if let removedServerID {
+                    self?.artworkMemoryCache.remove(serverID: removedServerID)
+                    if let cacheRemover { await cacheRemover.removeCachedArtwork(serverID: removedServerID) }
                 }
                 guard !Task.isCancelled else {
                     self?.failAccountRemoval(removalID)
@@ -2466,26 +2471,57 @@ extension DulcetAccountDataSource: DulcetLibraryNavigating {
 }
 
 extension DulcetAccountDataSource: DulcetArtworkLoading {
+    public func cachedArtwork(
+        _ reference: DulcetArtworkReference,
+        sizeBucket: DulcetArtworkSizeBucket,
+        allowingOtherSizes: Bool
+    ) -> CGImage? {
+        guard reference.serverID == providerInstanceID, accountRemovalID == nil else { return nil }
+        return artworkMemoryCache.image(for: DulcetArtworkCacheKey(serverID: reference.serverID,
+            artworkKey: reference.artworkKey, sizeBucket: sizeBucket), allowingOtherSizes: allowingOtherSizes)
+    }
+
     public func loadArtwork(
         _ reference: DulcetArtworkReference,
         sizeBucket: DulcetArtworkSizeBucket,
         completion: @escaping @MainActor (DulcetArtworkFetchOutcome) -> Void
     ) -> (any DulcetArtworkFetchOperation)? {
-        guard let artworkFetcher,
-              reference.serverID == providerInstanceID,
-              case let .connected(account) = currentSnapshot.accountConnection else {
+        guard reference.serverID == providerInstanceID, accountRemovalID == nil else {
             completion(.unavailable)
             return nil
         }
+        let key = DulcetArtworkCacheKey(serverID: reference.serverID,
+            artworkKey: reference.artworkKey, sizeBucket: sizeBucket)
+        if let data = artworkMemoryCache.data(for: key) {
+            completion(.loaded(data))
+            return nil
+        }
+        guard let artworkFetcher else { completion(.unavailable); return nil }
         let form = currentSnapshot.accountForm
+        let normalizedURL: String
+        let cachedOnly: Bool
+        if case let .connected(account) = currentSnapshot.accountConnection {
+            normalizedURL = account.normalizedServerURL
+            cachedOnly = false
+        } else {
+            normalizedURL = form.serverURL
+            cachedOnly = true
+        }
+        let requestGeneration = artworkGeneration
         return artworkFetcher.fetch(DulcetArtworkFetchRequest(
             reference: reference,
             sizeBucket: sizeBucket,
-            normalizedServerURL: account.normalizedServerURL,
+            normalizedServerURL: normalizedURL,
             username: form.username,
             password: form.password,
-            allowLocalHTTP: form.allowLocalHTTP
-        ), completion: completion)
+            allowLocalHTTP: form.allowLocalHTTP,
+            cachedOnly: cachedOnly
+        )) { [weak self] outcome in
+            guard let self, self.artworkGeneration == requestGeneration,
+                  self.providerInstanceID == reference.serverID, self.accountRemovalID == nil else { return }
+            if case let .loaded(data) = outcome { self.artworkMemoryCache.insert(data, for: key) }
+            completion(outcome)
+        }
     }
 
     /// A saved account's status on a surface that reads it without connecting: saved -- unless a
