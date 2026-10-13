@@ -364,12 +364,17 @@ internal class MyLibrary(
     init {
         favourites.membershipDelivery = this
         if (availability() == MyLibraryAvailability.Available) installSink()
-        favourites.addChangeListener { changed() }
+        // Outcomes, not change listeners: the session's change-listener count stays the searches'
+        // and windows' own (a closed search must leave it at zero).
+        favourites.addOutcomeListener { outcome -> if (outcome.field == MutationField.InLibrary) changed() }
         reader.addVisibleSurface {
-            // A successful reconnect's revalidation: detect again (the server may have changed) and refresh.
+            // A successful reconnect's revalidation, on an account whose server offered My Library:
+            // detect again (the server may have changed) and refresh. Any other account costs no
+            // request here; it is detected when a shell asks ([refresh]), so a server without the
+            // extension sees exactly the requests it saw before My Library existed.
             if (reader.online) {
                 detectedThisConnection = false
-                launchRefresh()
+                if (availability() == MyLibraryAvailability.Available) launchRefresh()
             }
         }
     }
@@ -401,7 +406,7 @@ internal class MyLibrary(
     /** Adds [target]. Shown at once; sent when online, else on reconnect. */
     fun add(target: LibraryEntityRef): MutationRecord {
         reader.checkConfined()
-        return favourites.setInLibrary(target, true)
+        return favourites.setInLibrary(target, true).also { changed() }
     }
 
     /**
@@ -415,13 +420,14 @@ internal class MyLibrary(
             snapshot.memberIds[CacheItemKind.Track].orEmpty()
                 .filter { trackId -> guarded(null) { reader.cache.track(trackId)?.record?.albumRawId } == target.rawId }
                 .forEach { favourites.setInLibrary(LibraryEntityRef(LibraryEntityKind.Track, it), false) }
+            changed()
             if (snapshot.memberIds[CacheItemKind.Album].orEmpty().contains(target.rawId).not() &&
                 snapshot.membership(CacheItemKind.Album, target.rawId) != MyLibraryMembership.Unknown
             ) {
                 return MutationRecord.Unchanged
             }
         }
-        return favourites.setInLibrary(target, false)
+        return favourites.setInLibrary(target, false).also { changed() }
     }
 
     fun membership(target: LibraryEntityRef): MyLibraryMembership {

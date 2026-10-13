@@ -13506,8 +13506,11 @@ model, presentation), the favourites outbox (`MutationField.InLibrary`), `AppleM
 `AndroidMyLibrary`. Tests: `MyLibraryTest`, against an in-process server that follows the wire
 contract.
 
-**Offered only where advertised.** The core asks `getOpenSubsonicExtensions` once per connection
-(and again after every successful reconnect) and keeps the answer per account. A server that does
+**Offered only where advertised.** The core asks `getOpenSubsonicExtensions` when a shell first
+refreshes My Library on a connection, and keeps the answer per account. After a successful
+reconnect it asks again and refreshes, but only for an account whose server offered My Library, so
+a server without the extension sees no request it did not see before. A change made while the
+answer is unknown waits for that first refresh. A server that does
 not advertise `dulcetLibrary` v1, or answers the call with an error (a Subsonic server without
 OpenSubsonic), makes My Library `unavailable`: nothing is paged, the `dulcetInLibrary` flag is not
 read, and the apps show Browse exactly as before. A server advertising only a later version is
