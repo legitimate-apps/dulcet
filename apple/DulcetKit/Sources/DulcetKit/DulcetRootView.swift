@@ -335,7 +335,10 @@ private struct DulcetTVSectionNavigation: View {
                     arrivalFocus.sectionChosenOnBar(destination)
                     store.selectDestination(destination)
                 } label: {
-                    Label(destination.windowTitle, systemImage: Self.symbolName(for: destination))
+                    // Text-only, as the platform's own bar: a borderless button holding a Label
+                    // draws the label's icon over its title while focused (observed on a tvOS
+                    // 26.5 simulator).
+                    Text(destination.windowTitle)
                         .font(.callout.weight(destination == selected ? .semibold : .regular))
                         .padding(.horizontal, DulcetSpacing.sm)
                         .padding(.vertical, DulcetSpacing.xxs)
@@ -358,16 +361,6 @@ private struct DulcetTVSectionNavigation: View {
         // Its own focus region, so moving up out of a surface reaches the bar as a whole rather
         // than searching for a control that happens to line up with what focus was on.
         .focusSection()
-    }
-
-    private static func symbolName(for destination: DulcetSidebarDestination) -> String {
-        switch destination {
-        case .library: "rectangle.grid.2x2"
-        case .browse: "globe"
-        case .search: "magnifyingglass"
-        case .nowPlaying: "waveform"
-        case .settings: "server.rack"
-        }
     }
 }
 #endif
@@ -830,6 +823,13 @@ private struct DulcetSidebar: View {
     /// The rows to show. The Mac lists Now Playing as a place; iOS presents it over the content
     /// from the now-playing bar instead, and leaves it out.
     var destinations: [DulcetSidebarDestination] = [.library, .search, .nowPlaying, .settings]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// The column takes more room at the accessibility text sizes: at the default width the rows'
+    /// labels wrapped inside words ("Li-brary").
+    private var columnWidth: (min: CGFloat, ideal: CGFloat, max: CGFloat) {
+        dynamicTypeSize.isAccessibilitySize ? (320, 400, 520) : (DulcetMetrics.sidebarMinWidth, 232, 300)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -896,9 +896,9 @@ private struct DulcetSidebar: View {
         }
         .background(.thinMaterial)
         .navigationSplitViewColumnWidth(
-            min: DulcetMetrics.sidebarMinWidth,
-            ideal: 232,
-            max: 300
+            min: columnWidth.min,
+            ideal: columnWidth.ideal,
+            max: columnWidth.max
         )
     }
 

@@ -119,6 +119,8 @@ public enum DulcetReaderRoute: Hashable, Sendable {
     case genre(String)
     /// One album list in one order: a home row's "See All".
     case albumList(DulcetAlbumListType)
+    /// A My Library section, pushed by the compact Library root's rows.
+    case myLibrarySection(DulcetMyLibrarySection)
 }
 
 /// The sign-out offer for changes that have not reached the server (§14.7 step 2).

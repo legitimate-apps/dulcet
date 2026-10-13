@@ -637,7 +637,7 @@ struct DulcetAlbumShelfItem: View {
     var onSelect: () -> Void = {}
 
     private var width: CGFloat {
-        tileWidth ?? (dynamicTypeSize.isAccessibilitySize ? 190 : 126)
+        tileWidth ?? (dynamicTypeSize.isAccessibilitySize ? 260 : 126)
     }
 
     var body: some View {
@@ -727,7 +727,7 @@ enum DulcetTrackRowSurface {
     }
 }
 
-struct DulcetTrackRow: View {
+struct DulcetTrackRow<Trailing: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let track: DulcetTrack
@@ -745,6 +745,35 @@ struct DulcetTrackRow: View {
     var albumArtists: [String] = []
     var onActivate: (() -> Void)?
     var onDownload: (() -> Void)?
+    /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
+    /// stacks and it sits on the meta line under the full-width title instead of crowding it.
+    let trailing: Trailing
+
+    init(
+        track: DulcetTrack,
+        showAlbum: Bool,
+        index: Int,
+        offline: Bool = false,
+        surface: DulcetTrackRowSurface = .window,
+        isCurrent: Bool = false,
+        showsArtwork: Bool = true,
+        albumArtists: [String] = [],
+        onActivate: (() -> Void)? = nil,
+        onDownload: (() -> Void)? = nil,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.track = track
+        self.showAlbum = showAlbum
+        self.index = index
+        self.offline = offline
+        self.surface = surface
+        self.isCurrent = isCurrent
+        self.showsArtwork = showsArtwork
+        self.albumArtists = albumArtists
+        self.onActivate = onActivate
+        self.onDownload = onDownload
+        self.trailing = trailing()
+    }
 
     private var unavailableOffline: Bool {
         offline && !track.downloadState.isLocallyPlayable
@@ -819,78 +848,38 @@ struct DulcetTrackRow: View {
     }
 
     private var rowContent: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                // A large type size cannot carry one line: the title takes the full width, and
+                // the number, duration and trailing control share a line under it. Words then fit
+                // whole -- the cramped line hyphenated them ("Twen-ty Nine Sec-onds").
+                stackedRowContent
+            } else {
+                inlineRowContent
+            }
+        }
+        .padding(.horizontal, DulcetSpacing.xs)
+        .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : DulcetMetrics.denseRowVerticalPadding)
+#if os(iOS)
+        // A touch listing gets full-height rows; the dense form is a pointer layout.
+        .frame(minHeight: !dynamicTypeSize.isAccessibilitySize && showsArtwork ? nil : 44)
+#endif
+        .contentShape(Rectangle())
+    }
+
+    private var inlineRowContent: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-                if showsIndex || (!showsArtwork && (unavailableOffline || isCurrent)) {
-                Group {
-                    if unavailableOffline {
-                        Image(systemName: "icloud.slash")
-                            .dulcetForeground(surface.offlinePair)
-                    } else if isCurrent {
-                        Image(systemName: "speaker.wave.2.fill")
-                            .dulcetForeground(surface.primaryPair)
-                    } else {
-                        Text(String(track.trackNumber.map { showsArtwork ? index : $0 } ?? index))
-                            .font(showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit())
-                            .dulcetForeground(surface.secondaryPair)
-                    }
-                }
-                .frame(minWidth: 20)
-                .accessibilityHidden(true)
-                }
+                leadingGroup
 
                 if showsArtwork {
-                    DulcetArtworkView(
-                        artwork: track.artwork,
-                        size: DulcetMetrics.denseRowArtworkSize,
-                        muted: unavailableOffline
-                    )
-                    .overlay {
-                        if !showsIndex, unavailableOffline || isCurrent {
-                            Image(systemName: unavailableOffline ? "icloud.slash" : "speaker.wave.2.fill")
-                                .font(.caption)
-                                .dulcetForeground(.primaryTextOnRegularMaterial)
-                                .padding(4)
-                                .background(.regularMaterial, in: Circle())
-                                .accessibilityHidden(true)
-                                .allowsHitTesting(false)
-                        }
-                    }
+                    artwork
                 }
 
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(track.title)
-                        .font(showsArtwork ? .callout.weight(.medium) : .body)
-                        .dulcetForeground(surface.primaryPair)
-                        .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
-                    if showsArtwork || showsArtistLine {
-                        Text(trackSubtitle)
-                            .font(.caption)
-                            .dulcetForeground(surface.secondaryPair)
-                            .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
-                    }
-                    if unavailableOffline, dynamicTypeSize >= .xxLarge {
-                        Text(DulcetStrings.offlineUnavailable)
-                            .font(.caption.weight(.medium))
-                            .dulcetForeground(surface.offlinePair)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                titleStack
 
                 Spacer(minLength: DulcetSpacing.xs)
 
-                if unavailableOffline {
-                    if dynamicTypeSize < .xxLarge {
-                        Text(DulcetStrings.offlineUnavailable)
-                            .font(.caption.weight(.medium))
-                            .dulcetForeground(surface.offlinePair)
-                            .lineLimit(nil)
-                    }
-                } else {
-                    Text(track.duration.dulcetDuration)
-                        .font(.caption.monospacedDigit())
-                        .dulcetForeground(surface.secondaryPair)
-                }
+                durationOrOffline
 
                 #if !os(macOS)
                 // On a touch listing the row itself plays, so Download lives in the row's menu;
@@ -900,14 +889,109 @@ struct DulcetTrackRow: View {
                 }
                 #endif
 
+                trailing
         }
-        .padding(.horizontal, DulcetSpacing.xs)
-        .padding(.vertical, dynamicTypeSize >= .xxLarge ? DulcetSpacing.xxs : DulcetMetrics.denseRowVerticalPadding)
-#if os(iOS)
-        // A touch listing gets full-height rows; the dense form is a pointer layout.
-        .frame(minHeight: showsArtwork ? nil : 44)
-#endif
-        .contentShape(Rectangle())
+    }
+
+    private var stackedRowContent: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+                if showsArtwork {
+                    artwork
+                }
+                titleStack
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+                leadingGroup
+                Spacer(minLength: DulcetSpacing.xs)
+                durationOrOffline
+                #if !os(macOS)
+                if !offline, onDownload != nil, track.downloadState != .notDownloaded {
+                    downloadStateGlyph
+                }
+                #endif
+                trailing
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var leadingGroup: some View {
+        if showsIndex || (!showsArtwork && (unavailableOffline || isCurrent)) {
+            Group {
+                if unavailableOffline {
+                    Image(systemName: "icloud.slash")
+                        .dulcetForeground(surface.offlinePair)
+                } else if isCurrent {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .dulcetForeground(surface.primaryPair)
+                } else {
+                    Text(String(track.trackNumber.map { showsArtwork ? index : $0 } ?? index))
+                        .font(showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit())
+                        .dulcetForeground(surface.secondaryPair)
+                }
+            }
+            .frame(minWidth: 20)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var artwork: some View {
+        DulcetArtworkView(
+            artwork: track.artwork,
+            size: DulcetMetrics.denseRowArtworkSize,
+            muted: unavailableOffline
+        )
+        .overlay {
+            if !showsIndex, unavailableOffline || isCurrent {
+                Image(systemName: unavailableOffline ? "icloud.slash" : "speaker.wave.2.fill")
+                    .font(.caption)
+                    .dulcetForeground(.primaryTextOnRegularMaterial)
+                    .padding(4)
+                    .background(.regularMaterial, in: Circle())
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var titleStack: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(track.title)
+                .font(showsArtwork ? .callout.weight(.medium) : .body)
+                .dulcetForeground(surface.primaryPair)
+                .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
+            if showsArtwork || showsArtistLine {
+                Text(trackSubtitle)
+                    .font(.caption)
+                    .dulcetForeground(surface.secondaryPair)
+                    .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
+            }
+            if unavailableOffline, dynamicTypeSize >= .xxLarge {
+                Text(DulcetStrings.offlineUnavailable)
+                    .font(.caption.weight(.medium))
+                    .dulcetForeground(surface.offlinePair)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var durationOrOffline: some View {
+        if unavailableOffline {
+            if dynamicTypeSize < .xxLarge {
+                Text(DulcetStrings.offlineUnavailable)
+                    .font(.caption.weight(.medium))
+                    .dulcetForeground(surface.offlinePair)
+                    .lineLimit(nil)
+            }
+        } else {
+            Text(track.duration.dulcetDuration)
+                .font(.caption.monospacedDigit())
+                .dulcetForeground(surface.secondaryPair)
+        }
     }
 
     private func performActivation() {
@@ -1030,6 +1114,35 @@ struct DulcetTrackRow: View {
         }
     }
     #endif
+}
+
+extension DulcetTrackRow where Trailing == EmptyView {
+    init(
+        track: DulcetTrack,
+        showAlbum: Bool,
+        index: Int,
+        offline: Bool = false,
+        surface: DulcetTrackRowSurface = .window,
+        isCurrent: Bool = false,
+        showsArtwork: Bool = true,
+        albumArtists: [String] = [],
+        onActivate: (() -> Void)? = nil,
+        onDownload: (() -> Void)? = nil
+    ) {
+        self.init(
+            track: track,
+            showAlbum: showAlbum,
+            index: index,
+            offline: offline,
+            surface: surface,
+            isCurrent: isCurrent,
+            showsArtwork: showsArtwork,
+            albumArtists: albumArtists,
+            onActivate: onActivate,
+            onDownload: onDownload,
+            trailing: { EmptyView() }
+        )
+    }
 }
 
 struct DulcetAlbumDetailView: View {
@@ -1819,7 +1932,7 @@ struct DulcetOfflineLibraryView: View {
                             columns: DulcetResponsiveGridLayout.columns(
                                 containerWidth: geometry.size.width,
                                 horizontalInsets: DulcetSpacing.lg * 2,
-                                minimumItemWidth: 190,
+                                minimumItemWidth: 260,
                                 spacing: DulcetSpacing.md,
                                 alignment: .top
                             ),
