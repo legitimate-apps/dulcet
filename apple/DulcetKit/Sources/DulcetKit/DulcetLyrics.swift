@@ -285,6 +285,8 @@ extension DulcetStrings {
     // synced one an ellipsis, so a blank line is a line rather than a row that has gone missing.
     static let lyricsPlainBlankLine = dynamicText("lyrics.blankLine.plain", fallback: " ")
     static let lyricsSyncedBlankLine = dynamicText("lyrics.blankLine.synced", fallback: "\u{2026}")
+    /// The three-dot mark on a long instrumental gap, named for VoiceOver.
+    static let lyricsInstrumental = dynamicText("lyrics.instrumental", fallback: "Instrumental")
 
     static func lyricsFailed(_ phrase: String) -> String {
         dynamicFormatted("lyrics.failed", fallback: "Lyrics couldn\u{2019}t be loaded \u{2014} %@", phrase)

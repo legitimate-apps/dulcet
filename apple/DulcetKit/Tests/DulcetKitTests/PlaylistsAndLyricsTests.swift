@@ -618,3 +618,85 @@ func withNoReaderTheModelSaysUnavailableRatherThanSpinning() {
     model.load(DulcetLyricsRequest(trackRawID: "t1", artist: nil, title: nil), from: nil)
     guard case .unavailable = model.state else { Issue.record("expected unavailable, got \(model.state)"); return }
 }
+
+private func syncedDocument(_ lines: [(String, Int64)]) -> DulcetLyricsDocument {
+    DulcetLyricsDocument(
+        synced: true,
+        lines: lines.map { DulcetLyricsLine(text: $0.0, startMilliseconds: $0.1) },
+        language: "en", trimmed: false, cursor: { _ in .none }
+    )
+}
+
+@Test
+func anInstrumentalGapShowsTheDotsWhereTheNextLineWillAppear() {
+    let song = syncedDocument([("one", 1_000), ("two", 5_000)])
+    // The gap before "two" runs four seconds: the dots stand at line 1 from the moment "one"
+    // lights, and are gone once "two" starts (nothing follows it).
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: song, at: .milliseconds(1_000)) == 1)
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: song, at: .milliseconds(4_999)) == 1)
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: song, at: .milliseconds(5_000)) == nil)
+    // Under the threshold there are no dots: the first line starts one second in.
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: song, at: .zero) == nil)
+    // A long silence before the first line gets the dots at line 0.
+    let slowStart = syncedDocument([("one", 6_000), ("two", 7_000)])
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: slowStart, at: .zero) == 0)
+    // Exactly at the threshold the gap counts.
+    let atThreshold = syncedDocument([("one", 4_000), ("two", 4_500)])
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: atThreshold, at: .zero) == 0)
+
+    // A blank line is itself the mark of a gap: no dots where one sits, and none on a gap it
+    // already holds (the fixture shape of "Thirty One Seconds": sung, blank, sung).
+    let withBlank = syncedDocument([("one", 1_000), ("", 2_000), ("three", 12_000)])
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: withBlank, at: .milliseconds(1_000)) == nil)
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: withBlank, at: .milliseconds(3_000)) == nil)
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: withBlank, at: .milliseconds(11_000)) == nil)
+
+    // Unsynced lyrics carry no starts and never show the dots.
+    let plain = DulcetLyricsDocument(
+        synced: false,
+        lines: [DulcetLyricsLine(text: "one", startMilliseconds: nil)],
+        language: "en", trimmed: false, cursor: { _ in .none }
+    )
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: plain, at: .zero) == nil)
+    // The control: a known long gap must be found, or the negatives above prove nothing.
+    #expect(DulcetLyricsPresentation.instrumentalGap(in: song, at: .milliseconds(2_000)) == 1)
+}
+
+@Test
+func aHandScrollPausesTheFollowUntilThreeSecondsAfterItStops() {
+    let t0 = Date(timeIntervalSince1970: 1_000)
+    var follow = DulcetLyricsFollow()
+    #expect(follow.following(at: t0))
+
+    follow.noteManualScroll(at: t0)
+    #expect(!follow.following(at: t0))
+    #expect(!follow.following(at: t0.addingTimeInterval(2.9)))
+    #expect(follow.following(at: t0.addingTimeInterval(3)))
+
+    // Another scroll before the pause runs out extends it.
+    follow.noteManualScroll(at: t0.addingTimeInterval(2))
+    follow.noteManualScroll(at: t0.addingTimeInterval(4))
+    #expect(!follow.following(at: t0.addingTimeInterval(6.9)))
+    #expect(follow.following(at: t0.addingTimeInterval(7)))
+}
+
+@Test
+func aLineTapSeeksToItsStartAndResumesTheFollow() {
+    let t0 = Date(timeIntervalSince1970: 1_000)
+    var follow = DulcetLyricsFollow()
+    follow.noteManualScroll(at: t0)
+    #expect(!follow.following(at: t0))
+
+    var seeks: [Duration] = []
+    let line = DulcetLyricsLine(text: "two", startMilliseconds: 2_000)
+    follow.lineTapped(line, canSeek: true, at: t0.addingTimeInterval(1)) { seeks.append($0) }
+    #expect(seeks == [.milliseconds(2_000)])
+    #expect(follow.following(at: t0.addingTimeInterval(1)), "a tap resumes the follow at once")
+
+    // A track that cannot be sought and a line without a start send nothing and keep the pause.
+    follow.noteManualScroll(at: t0)
+    follow.lineTapped(line, canSeek: false, at: t0.addingTimeInterval(1)) { seeks.append($0) }
+    follow.lineTapped(DulcetLyricsLine(text: "plain", startMilliseconds: nil), canSeek: true, at: t0.addingTimeInterval(1)) { seeks.append($0) }
+    #expect(seeks == [.milliseconds(2_000)])
+    #expect(!follow.following(at: t0.addingTimeInterval(1)))
+}

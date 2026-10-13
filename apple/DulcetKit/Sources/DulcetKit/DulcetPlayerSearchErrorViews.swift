@@ -223,6 +223,14 @@ struct DulcetNowPlayingView: View {
                             windowHeight: geometry.size.height,
                             playerHeight: sideBySidePlayerHeight
                         ))
+                        // Lyrics beside the player sit over the cover's colours, as the system
+                        // player draws its lyrics pane; the queue stays on the plain window.
+                        .background {
+                            if showingLyrics {
+                                DulcetLyricsBackdrop(artwork: player.current.artwork)
+                                    .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
+                            }
+                        }
                 }
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
@@ -246,10 +254,11 @@ struct DulcetNowPlayingView: View {
                 .padding(.horizontal, padding)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: geometry.size.height, alignment: .center)
+                .background { DulcetLyricsBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
 #else
                 // As the system player's lyrics: the track named small at the top, the lines
-                // taking the screen, and the scrubber and transport kept at the bottom, so
-                // pausing or skipping never means leaving the lyrics.
+                // taking the screen over the cover's colours, and the scrubber and transport kept
+                // at the bottom, so pausing or skipping never means leaving the lyrics.
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     lyricsHeader
                     lyricsPanel
@@ -262,6 +271,7 @@ struct DulcetNowPlayingView: View {
                 .padding(.bottom, DulcetSpacing.md)
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
+                .background { DulcetLyricsBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
 #endif
             } else if showingQueue {
                 // The queue replaces the artwork; the footer stays, so the control that opened it
@@ -558,7 +568,13 @@ struct DulcetNowPlayingView: View {
 #endif
 
     private var lyricsPanel: some View {
-        DulcetLyricsPanel(track: player.current, elapsed: player.elapsed, isPlaying: player.isPlaying)
+        DulcetLyricsPanel(
+            track: player.current,
+            elapsed: player.elapsed,
+            isPlaying: player.isPlaying,
+            canSeek: player.seekability == .seekable,
+            onSeek: { onControl(.seek($0)) }
+        )
 #if os(iOS)
             .dulcetPlayerGestureRegion()
 #endif
