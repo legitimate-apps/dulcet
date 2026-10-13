@@ -143,10 +143,9 @@ struct DulcetNowPlayingView: View {
     enum Presentation {
         /// A navigation destination: the sidebar's Now Playing on iPad and Mac, the tvOS section.
         case destination
-        /// The player presented from the iPhone's now-playing bar, as a sheet dragged down to
-        /// dismiss.
+        /// Compact styling for the player presented from the now-playing bar.
         case sheet
-        /// The player covering an iPad's whole window, presented from its now-playing bar.
+        /// Regular-width styling for the player presented from its now-playing bar.
         case fullScreen
     }
 
@@ -560,6 +559,9 @@ struct DulcetNowPlayingView: View {
 
     private var lyricsPanel: some View {
         DulcetLyricsPanel(track: player.current, elapsed: player.elapsed, isPlaying: player.isPlaying)
+#if os(iOS)
+            .dulcetPlayerGestureRegion()
+#endif
 #if os(tvOS)
             // A section, so Right from the footer reaches the panel's lines and Try Again: they
             // sit high in the right column, out of the footer's row, and without a section the
@@ -653,13 +655,18 @@ struct DulcetNowPlayingView: View {
 #if os(tvOS)
         ScrollView { queuePanel.padding(DulcetSpacing.xl) }
 #else
-        if player.queueEntries.isEmpty {
-            ScrollView { queuePanel.padding(DulcetSpacing.lg) }
-        } else {
-            DulcetUpNextList(nowPlaying: player, onEdit: onEdit)
-                .scrollContentBackground(.hidden)
-                .dulcetQueueDropTarget(store: store, cornerRadius: 12)
+        Group {
+            if player.queueEntries.isEmpty {
+                ScrollView { queuePanel.padding(DulcetSpacing.lg) }
+            } else {
+                DulcetUpNextList(nowPlaying: player, onEdit: onEdit)
+                    .scrollContentBackground(.hidden)
+                    .dulcetQueueDropTarget(store: store, cornerRadius: 12)
+            }
         }
+#if os(iOS)
+        .dulcetPlayerGestureRegion()
+#endif
 #endif
     }
 
@@ -906,6 +913,9 @@ struct DulcetNowPlayingView: View {
 #else
             if DulcetSystemVolumeSlider.isAvailable {
                 DulcetSystemVolumeSlider()
+#if os(iOS)
+                    .dulcetPlayerGestureRegion()
+#endif
             }
             let rows = Self.footerRows(footerControls(showsQueueToggle: showsQueueToggle))
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
@@ -1021,6 +1031,9 @@ struct DulcetNowPlayingView: View {
                     onControl(.seek(.milliseconds(Int64((seconds * 1_000).rounded()))))
                 }
             )
+#if os(iOS)
+            .dulcetPlayerGestureRegion()
+#endif
         } else {
             ProgressView(value: displayedSeconds, total: durationSeconds)
         }
@@ -1258,8 +1271,7 @@ extension EnvironmentValues {
 }
 
 #if os(iOS)
-/// The player presented from the now-playing bar: a sheet dragged down to dismiss on a compact
-/// width, a cover over the whole window on a regular one. It reads the store directly, so it
+/// The player presented from the now-playing bar over the whole window. It reads the store, so it
 /// follows the queue as tracks change and says so when playback is still opening or has failed.
 struct DulcetNowPlayingSheet: View {
     @Bindable var store: DulcetPresentationStore
@@ -1281,7 +1293,7 @@ struct DulcetNowPlayingSheet: View {
                         onControl: store.sendPlaybackControl,
                         onEdit: store.editQueue,
                         onNavigate: onClose,
-                        onDismiss: presentation == .fullScreen ? onClose : nil
+                        onDismiss: nil
                     )
                 } else if store.snapshot.playbackStatus == .preparing {
                     DulcetPlaybackPreparingView()
@@ -1309,8 +1321,7 @@ struct DulcetNowPlayingSheet: View {
         // bottom edge -- clear of the close button in its navigation bar.
         .dulcetPlaybackFeedback(store: store, drawsNotices: true)
         .dulcetUIProofMarkers()
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Color.dulcetWindow)
+        .background(Color.dulcetWindow.ignoresSafeArea())
     }
 }
 #endif

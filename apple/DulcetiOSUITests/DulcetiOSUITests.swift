@@ -3168,6 +3168,11 @@ final class DulcetiOSUITests: XCTestCase {
                 "The lyrics and the player must share a row; \(placement)")
         }
         attachScreenshot(named: "lyrics-synced", app: syncedApp)
+        let lyricDrag = syncedPanel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        lyricDrag.press(forDuration: 0.05, thenDragTo: lyricDrag.withOffset(CGVector(dx: 0, dy: 240)),
+                        withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(syncedPanel.exists && syncedApp.buttons["dulcet.now-playing.close"].firstMatch.isHittable,
+                      "Scrolling lyrics must leave the player open and usable")
 
         // 2. Plain: both lines, and nothing lit.
         guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
@@ -5871,5 +5876,229 @@ final class DulcetiOSUITests: XCTestCase {
             return nil
         }
         return data
+    }
+}
+
+
+extension DulcetiOSUITests {
+    /// Same finger path on phone and tablet, with a deterministic paused queue so network and
+    /// track endings cannot explain the outcome. Hitch collection targets the application,
+    /// including unsuccessful gestures; a missing transition is never reported as a fast one.
+    @MainActor
+    func testNowPlayingOpenAndCloseGestures() {
+        guard #available(iOS 26.0, *) else {
+            XCTFail("Gesture hitch evidence requires iOS 26 or newer")
+            return
+        }
+        let app = prepareGesturePlayer()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        let close = app.buttons["dulcet.now-playing.close"].firstMatch
+        var opens = 0
+        var closes = 0
+        var samples = 0
+        let options = XCTMeasureOptions()
+        options.iterationCount = 3
+        measure(metrics: [XCTClockMetric(), XCTHitchMetric(application: app)], options: options) {
+            samples += 1
+            let start = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = start.withOffset(CGVector(dx: 0, dy: -app.windows.firstMatch.frame.height * 0.55))
+            let openStart = ProcessInfo.processInfo.systemUptime
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            let openEnd = ProcessInfo.processInfo.systemUptime
+            let opened = title.waitForExistence(timeout: 2)
+            if opened { opens += 1 } else { bar.tap(); XCTAssertTrue(title.waitForExistence(timeout: 5)) }
+            // The track title is outside artwork, sliders, queue and lyrics. A title drag
+            // distinguishes a whole-player dismissal from the old artwork-only iPad handler.
+            let downStart = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let downEnd = downStart.withOffset(CGVector(dx: 0, dy: app.windows.firstMatch.frame.height * 0.3))
+            let closeStart = ProcessInfo.processInfo.systemUptime
+            downStart.press(forDuration: 0.05, thenDragTo: downEnd, withVelocity: .fast, thenHoldForDuration: 0)
+            let closeEnd = ProcessInfo.processInfo.systemUptime
+            print("NP_TIMING sample=\(samples) openStart=\(openStart) openEnd=\(openEnd) closeStart=\(closeStart) closeEnd=\(closeEnd)")
+            let closed = title.waitForNonExistence(timeout: 2)
+            if closed { closes += 1 } else { close.tap(); XCTAssertTrue(title.waitForNonExistence(timeout: 5)) }
+            print("NP_GESTURE sample=\(samples) open=\(opened) close=\(closed)")
+        }
+        XCTAssertEqual(opens, samples, "Every upward drag must open the player")
+        XCTAssertEqual(closes, samples, "Every downward title drag must close the player")
+    }
+
+    /// A diagonal downward seek must reach the scrubber without handing the touch to dismissal.
+    @MainActor
+    func testNowPlayingScrubberDragDoesNotDismiss() {
+        let app = prepareGesturePlayer()
+        app.buttons["dulcet.mini-player.open"].firstMatch.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let scrubber = app.sliders["Now Playing"].firstMatch
+        XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
+        let valueBefore = scrubber.value as? String
+        let start = scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: scrubber.frame.width * 0.25, dy: 180)),
+                    withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(title.exists && title.isHittable, "Seeking must leave the player open")
+        XCTAssertNotEqual(scrubber.value as? String, valueBefore, "The drag must actually seek")
+        let valueAfter = scrubber.value as? String
+        app.buttons["dulcet.now-playing.close"].firstMatch.tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
+        app.buttons["dulcet.mini-player.open"].firstMatch.tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(scrubber.value as? String, valueAfter,
+                       "The seek must survive reopening, not just change a drag preview")
+    }
+
+    /// Slow, short gestures return to their starting state and leave the next gesture usable.
+    @MainActor
+    func testNowPlayingShortDragsReturnAndCanBeRepeated() {
+        let app = prepareGesturePlayer()
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        for _ in 0..<2 {
+            let up = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            up.press(forDuration: 0.05, thenDragTo: up.withOffset(CGVector(dx: 0, dy: -65)),
+                     withVelocity: .slow, thenHoldForDuration: 0.5)
+            XCTAssertTrue(title.waitForNonExistence(timeout: 3), "An early release must return to the mini-player")
+            XCTAssertTrue(bar.isHittable)
+            bar.tap()
+            XCTAssertTrue(title.waitForExistence(timeout: 5))
+            let down = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            down.press(forDuration: 0.05, thenDragTo: down.withOffset(CGVector(dx: 0, dy: 65)),
+                       withVelocity: .slow, thenHoldForDuration: 0.5)
+            XCTAssertTrue(title.exists && title.isHittable, "An early release must return to the full player")
+            app.buttons["dulcet.now-playing.close"].firstMatch.tap()
+            XCTAssertTrue(title.waitForNonExistence(timeout: 5))
+        }
+    }
+
+    /// The queue retains its own scrolling pan, including a downward drag that could otherwise
+    /// look like dismissal. Its rows are a known positive before the exclusion is exercised.
+    @MainActor
+    func testNowPlayingQueueDragDoesNotDismiss() {
+        let app = prepareGesturePlayer()
+        app.buttons["dulcet.mini-player.open"].firstMatch.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        if app.windows.firstMatch.frame.width < 700 {
+            app.buttons["dulcet.now-playing.up-next"].firstMatch.tap()
+        }
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Disc 1 Track 1")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "The queue must actually have a row before dragging")
+        let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 240)),
+                    withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(app.buttons["dulcet.now-playing.close"].firstMatch.exists,
+                      "A queue drag must leave the presentation open")
+    }
+
+    /// The same distance cancels at rest and finishes when flicked: distance alone is insufficient.
+    @MainActor
+    func testNowPlayingFastShortCloseUsesVelocity() {
+        let app = prepareGesturePlayer()
+        app.buttons["dulcet.mini-player.open"].firstMatch.tap()
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let slow = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        slow.press(forDuration: 0.05, thenDragTo: slow.withOffset(CGVector(dx: 0, dy: 120)),
+                   withVelocity: .slow, thenHoldForDuration: 0.5)
+        print("NP_CANCEL window=\(app.windows.firstMatch.frame) title=\(title.frame) hittable=\(title.isHittable) state=\(app.state.rawValue)")
+        let canceled = XCTAttachment(screenshot: app.screenshot())
+        canceled.name = "Player after short close cancellation"
+        canceled.lifetime = .keepAlways
+        add(canceled)
+        XCTAssertTrue(title.exists && title.isHittable, "A short drag released at rest must return")
+        let fast = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        fast.press(forDuration: 0.05, thenDragTo: fast.withOffset(CGVector(dx: 0, dy: 120)),
+                   withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5), "A short fast flick must complete dismissal")
+    }
+
+    /// Uses the actual system preference, with restoration, rather than a simulated app flag.
+    @MainActor
+    func testNowPlayingReduceMotionKeepsGesturesUsable() {
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launch()
+        let accessibility = settings.staticTexts["Accessibility"].firstMatch
+        XCTAssertTrue(scrollIntoView(accessibility, in: settings, probingBlockingSystemAlerts: false))
+        accessibility.tap()
+        let motion = settings.staticTexts["Motion"].firstMatch
+        XCTAssertTrue(motion.waitForExistence(timeout: 5))
+        motion.tap()
+        let reduce = settings.switches["Reduce Motion"].firstMatch
+        XCTAssertTrue(reduce.waitForExistence(timeout: 5))
+        let switchFrame = reduce.frame
+        let original = reduce.value as? String
+        if original != "1" {
+            reduce.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: reduce.frame.width - 32, dy: reduce.frame.height / 2)).tap()
+        }
+        print("NP_REDUCE frame=\(reduce.frame) original=\(original ?? "nil") after=\(reduce.value as? String ?? "nil")")
+        XCTAssertEqual(reduce.value as? String, "1", "The actual Settings switch must be on")
+        defer {
+            // Settings can be terminated while our app is foreground. Navigate afresh instead
+            // of assuming that activation preserves its Motion page.
+            settings.terminate()
+            settings.launch()
+            XCTAssertTrue(scrollIntoView(accessibility, in: settings, probingBlockingSystemAlerts: false))
+            accessibility.tap()
+            XCTAssertTrue(motion.waitForExistence(timeout: 5))
+            motion.tap()
+            XCTAssertTrue(reduce.waitForExistence(timeout: 5))
+            // Activation can expose the app-switch animation's half-size snapshot. Wait for
+            // the original rendered bounds before deriving an absolute thumb inset.
+            let restoredFrame = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                reduce.exists && reduce.isHittable && reduce.frame == switchFrame
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [restoredFrame], timeout: 5), .completed,
+                           "Settings must restore the switch's full-size frame before toggling")
+            if reduce.value as? String != original {
+                reduce.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: reduce.frame.width - 32, dy: reduce.frame.height / 2)).tap()
+            }
+            XCTAssertEqual(reduce.value as? String, original, "Restore the system preference after the proof")
+            settings.terminate()
+        }
+        let app = prepareGesturePlayer(additionalArguments: ["-dulcet-debug-ui-markers"])
+        let marker = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            marker.exists && marker.label.contains("reduce-motion:true")
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed,
+                       "The production app must observe the real system Reduce Motion preference")
+        let up = app.buttons["dulcet.mini-player.open"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        up.press(forDuration: 0.05, thenDragTo: up.withOffset(CGVector(dx: 0, dy: -app.windows.firstMatch.frame.height * 0.55)),
+                 withVelocity: .slow, thenHoldForDuration: 0)
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let down = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        down.press(forDuration: 0.05, thenDragTo: down.withOffset(CGVector(dx: 0, dy: app.windows.firstMatch.frame.height * 0.3)),
+                   withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5), "Reduce Motion must preserve opening and dismissal")
+    }
+
+    @MainActor
+    private func prepareGesturePlayer(additionalArguments: [String] = []) -> XCUIApplication {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["-dulcet-account-connect-layout-fixture", "-dulcet-debug-player-frame-metrics"] + additionalArguments
+        app.launch()
+        let compact = app.windows.firstMatch.frame.width < 700
+        XCTAssertTrue(openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact))
+        if !compact {
+            XCTAssertTrue(app.staticTexts["Albums"].firstMatch.waitForExistence(timeout: 5),
+                          "The regular fixture must show its Albums grid before playing")
+        }
+        let album = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Double Lines")).firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 10))
+        XCTAssertTrue(scrollIntoView(album, in: app, probingBlockingSystemAlerts: false))
+        album.tap()
+        let track = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Disc 1 Track 1")).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 10))
+        track.tap()
+        let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(pause.waitForExistence(timeout: 10))
+        pause.tap()
+        XCTAssertTrue(waitForLabel("Play", of: pause, timeout: 5))
+        return app
     }
 }

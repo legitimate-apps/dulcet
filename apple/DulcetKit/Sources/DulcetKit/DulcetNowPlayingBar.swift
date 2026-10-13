@@ -59,6 +59,9 @@ struct DulcetNowPlayingBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+#if os(iOS)
+        .dulcetPlayerGestureRegion(source: true)
+#endif
         .dulcetHoverEffect()
         .accessibilityIdentifier("\(Self.identifier).open")
         .accessibilityLabel(accessibilityLabel)

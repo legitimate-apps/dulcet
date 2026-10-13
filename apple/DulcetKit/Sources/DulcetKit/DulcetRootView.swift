@@ -355,18 +355,13 @@ private struct DulcetTVSectionNavigation: View {
 /// rather than squeezing a sidebar into it.
 ///
 /// Now Playing is never a place on either: the now-playing bar sits above the content and opens
-/// the player over it, a sheet on a compact width and a cover over the whole window on a regular
-/// one. The presentation lives here, above both shells, so a window resized across the boundary
-/// keeps the player open and only changes how it is presented.
+/// the player over the whole window. The presentation lives here, above both shells, so a window
+/// resized across the boundary keeps the same player and its interaction state.
 private struct DulcetIOSShell: View {
     @Bindable var store: DulcetPresentationStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var playerPresented = false
-    /// Whether a player presentation is actually on screen, as opposed to asked for.
-    @State private var playerOnScreen = false
-    /// Set when a size-class change took the player down, so it comes back in the other style
-    /// once the old presentation has gone.
-    @State private var presentPlayerAfterDismissal = false
+    @State private var playerTransition = DulcetPlayerTransition()
     /// The last place the person was, so a Now Playing destination arriving from elsewhere (the
     /// Show Now Playing command, a restored selection) opens the player over that place.
     @State private var lastPlace: DulcetSidebarDestination = .library
@@ -376,7 +371,9 @@ private struct DulcetIOSShell: View {
     private var compact: Bool { horizontalSizeClass == .compact }
 
     var body: some View {
-        Group {
+        // A concrete container keeps the UIKit presenter alive when its shell child changes.
+        // Group distributes the background to that child and tears it down at the boundary.
+        ZStack {
             if compact {
                 DulcetCompactShell(store: store, lastTab: $lastPlace, onOpenPlayer: openPlayer)
             } else {
@@ -396,18 +393,23 @@ private struct DulcetIOSShell: View {
                 }
             }
         }
-        .sheet(isPresented: presented(whenCompact: true), onDismiss: playerDismissed) {
-            DulcetNowPlayingSheet(store: store, presentation: .sheet, onClose: closePlayer)
-                .onAppear { playerOnScreen = true }
-        }
-        .fullScreenCover(isPresented: presented(whenCompact: false), onDismiss: playerDismissed) {
-            DulcetNowPlayingSheet(store: store, presentation: .fullScreen, onClose: closePlayer)
-                .onAppear { playerOnScreen = true }
+        .environment(\.dulcetPlayerTransition, playerTransition)
+        .background {
+            DulcetPlayerPresenter(
+                transition: playerTransition,
+                presented: playerPresented,
+                content: {
+                    AnyView(DulcetNowPlayingSheet(store: store, presentation: compact ? .sheet : .fullScreen, onClose: closePlayer)
+                        .environment(store)
+                        .tint(.dulcetAccent)
+                        .environment(\.dulcetPlayerTransition, playerTransition))
+                },
+                onPresentedChanged: { if playerPresented != $0 { playerPresented = $0 } }
+            )
         }
         // The player carries its own while it is up; this one speaks for the shell under it.
         .dulcetPlaybackFeedback(store: store, isActive: !playerPresented)
-        .onChange(of: horizontalSizeClass) { _, _ in sizeClassChanged() }
-        .onAppear(perform: absorbNowPlayingDestination)
+        .onAppear { DulcetPlayerFrameProbe.startIfRequested(); absorbNowPlayingDestination() }
         .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
         .background {
             DulcetKeyboardShortcuts(store: store, onShowNowPlaying: openPlayer)
@@ -415,51 +417,7 @@ private struct DulcetIOSShell: View {
     }
 
     private func openPlayer() { playerPresented = true }
-    private func closePlayer() {
-        presentPlayerAfterDismissal = false
-        playerPresented = false
-    }
-
-    private func presented(whenCompact: Bool) -> Binding<Bool> {
-        Binding(
-            get: { playerPresented && compact == whenCompact },
-            set: { isPresented in
-                // Only a dismissal from the style currently in use closes the player; the other
-                // style reporting false while it hands over must not.
-                if !isPresented, compact == whenCompact { playerPresented = false }
-            }
-        )
-    }
-
-    /// A window crossing the compact/regular boundary with the player open: iPad Split View or
-    /// Stage Manager, or a large iPhone turned sideways. Both presentation styles flip in the same
-    /// update, so the new one is asked to present while the old one is still being dismissed.
-    /// The player is taken down instead, and presented again in the new style once the old
-    /// presentation has gone: from its dismissal when one was on screen, on the next pass of the
-    /// run loop when none was.
-    ///
-    /// This is a precaution, not a measured repair. A large iPhone turned sideways on iOS 26.5
-    /// hands the player over correctly without it -- the rotation UI test passes with this
-    /// handler removed -- and the Split View and Stage Manager crossings, which a simulator
-    /// cannot drive, are unobserved. The failure it guards against (the player asked for with
-    /// nothing on screen, and the bar unable to open it) is reasoned from the two presentations
-    /// sharing one flag, and has not been reproduced.
-    private func sizeClassChanged() {
-        guard playerPresented else { return }
-        playerPresented = false
-        if playerOnScreen {
-            presentPlayerAfterDismissal = true
-        } else {
-            DispatchQueue.main.async { playerPresented = true }
-        }
-    }
-
-    private func playerDismissed() {
-        playerOnScreen = false
-        guard presentPlayerAfterDismissal else { return }
-        presentPlayerAfterDismissal = false
-        DispatchQueue.main.async { playerPresented = true }
-    }
+    private func closePlayer() { playerPresented = false }
 
     private func absorbNowPlayingDestination() {
         let destination = store.selectedDestination

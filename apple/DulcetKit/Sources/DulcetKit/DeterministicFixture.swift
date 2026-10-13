@@ -424,21 +424,23 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
                 source: current.sourceDisplayName ?? "",
                 shuffle: current.shuffleEnabled
             )
-        case .next, .previous, .seek, .setShuffle, .cycleRepeat, .retry:
+        case let .seek(position):
+            playing = current.replacing(isPlaying: current.isPlaying, elapsed: min(current.current.duration, max(.zero, position)))
+        case .next, .previous, .setShuffle, .cycleRepeat, .retry:
             break
         }
     }
 }
 
 private extension DulcetNowPlaying {
-    func replacing(isPlaying: Bool) -> DulcetNowPlaying {
+    func replacing(isPlaying: Bool, elapsed newElapsed: Duration? = nil) -> DulcetNowPlaying {
         DulcetNowPlaying(
             sessionID: sessionID,
             current: current,
             queue: queue,
             currentIndex: currentIndex,
             sourceDisplayName: sourceDisplayName,
-            elapsed: elapsed,
+            elapsed: newElapsed ?? elapsed,
             isPlaying: isPlaying,
             outputName: outputName,
             volume: volume,
