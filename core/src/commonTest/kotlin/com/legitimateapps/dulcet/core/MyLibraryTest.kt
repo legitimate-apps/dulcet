@@ -22,8 +22,8 @@ internal class DulcetLibraryTestServer(val inner: SessionTestServer = SessionTes
     LibraryEndpointTransport {
     var advertise = true
 
-    /** Answers `getOpenSubsonicExtensions` with a Subsonic error: a server without OpenSubsonic. */
-    var noOpenSubsonic = false
+    /** Overrides extension discovery only, leaving the supported library and writes intact. */
+    var detectionResponse: LibraryEndpointResponse? = null
 
     data class Member(val kind: String, val id: String, val addedAt: Long)
 
@@ -74,7 +74,7 @@ internal class DulcetLibraryTestServer(val inner: SessionTestServer = SessionTes
         requests += SessionTestServer.Request(endpoint, parameters)
         return when (endpoint) {
             "getOpenSubsonicExtensions" -> when {
-                noOpenSubsonic -> envelope(""""error":{"code":0,"message":"unknown endpoint"}""")
+                detectionResponse != null -> detectionResponse!!
                 else -> envelope(
                     """"openSubsonicExtensions":[{"name":"songLyrics","versions":[1]}""" +
                         (if (advertise) """,{"name":"dulcetLibrary","versions":[1]}""" else "") + "]",
@@ -155,7 +155,7 @@ internal class DulcetLibraryTestServer(val inner: SessionTestServer = SessionTes
         else -> element
     }
 
-    private fun envelope(body: String?): LibraryEndpointResponse = LibraryEndpointResponse(
+    fun envelope(body: String?): LibraryEndpointResponse = LibraryEndpointResponse(
         statusCode = 200,
         body = """{"subsonic-response":{"status":"${if (body?.startsWith("\"error\"") == true) "failed" else "ok"}","version":"1.16.1","openSubsonic":true${body?.let { ",$it" } ?: ""}}}""",
         redactedUrl = "http://fixture.invalid/rest",
@@ -238,11 +238,160 @@ class MyLibraryTest {
     }
 
     @Test
-    fun aSubsonicServerWithoutOpenSubsonicOffersNoLibrary() = sessionTest { env ->
-        val server = DulcetLibraryTestServer().apply { noOpenSubsonic = true }
+    fun anUnavailableExtensionEndpointIsRememberedWithoutFurtherRequests() {
+        for (status in listOf(200, 404, 501)) sessionTest { env ->
+            val server = DulcetLibraryTestServer().apply {
+                detectionResponse = if (status == 200) envelope(""""error":{"code":70,"message":"not found"}""")
+                    else LibraryEndpointResponse(status, "endpoint unavailable", "http://fixture.invalid/rest")
+            }
+            val session = online(session(env, server))
+            session.myLibrary.add(album3)
+            advanceUntilIdle()
+            val outcomes = mutableListOf<MutationOutcome>()
+            session.favourites.addOutcomeListener { outcomes += it }
+            assertEquals(MyLibraryRefreshOutcome.Unavailable, session.myLibrary.refresh(), "HTTP $status")
+            advanceUntilIdle()
+            assertEquals(MyLibraryAvailability.Unavailable, session.myLibrary.availability())
+            assertEquals(0L, session.favourites.pendingCount(), "a definitive absence resolves queued changes")
+            assertEquals(DomainError.CapabilityUnsupported(CapabilityFeature.MyLibrary), assertIs<MutationOutcome.NotSaved>(outcomes.single()).error)
+            val requests = server.requests.size
+            session.myLibrary.refresh()
+            assertEquals(requests, server.requests.size, "remembered absence sends nothing on refresh")
+            session.reader.reconnect()
+            advanceUntilIdle()
+            assertEquals(1, server.count("getOpenSubsonicExtensions"))
+            assertEquals(0, server.count("getDulcetLibrary"))
+            assertEquals(0, server.count("addToDulcetLibrary"))
+        }
+    }
+
+    @Test
+    fun authAndPermissionDetectionErrorsKeepTheQueuedAddUntilDetectionSucceeds() {
+        for (code in listOf(40, 41, 42, 43, 44, 50)) detectionErrorKeepsQueuedAdd(code)
+    }
+
+    @Test
+    fun genericAndUnknownDetectionErrorsKeepTheQueuedAddUntilDetectionSucceeds() {
+        for (code in listOf(0, 999, 10, 20, 30, 60)) detectionErrorKeepsQueuedAdd(code)
+    }
+
+    private fun detectionErrorKeepsQueuedAdd(code: Int) = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        val error = AccountConnectionContract.mapSubsonicError(code, "", "")
+        assertDetectionFailureKeepsQueuedAdd(env, server, server.envelope(""""error":{"code":$code,"message":"refused"}"""), error)
+    }
+
+    @Test
+    fun httpDetectionFailuresKeepTheQueuedAddUntilDetectionSucceeds() {
+        for (status in listOf(401, 403, 407, 500, 503)) sessionTest { env ->
+            val error = if (status == 401) DomainError.Auth.InvalidCredentials else DomainError.Server.HttpStatus(status)
+            assertDetectionFailureKeepsQueuedAdd(env, DulcetLibraryTestServer(), LibraryEndpointResponse(status, "refused", "http://fixture.invalid/rest"), error)
+        }
+    }
+
+    @Test
+    fun anErrorEnvelopeAtANotFoundStatusDoesNotEstablishEndpointAbsence() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        assertDetectionFailureKeepsQueuedAdd(
+            env, server, server.envelope(""""error":{"code":42,"message":"refused"}""").copy(statusCode = 404),
+            DomainError.Server.Unknown(42),
+        )
+    }
+
+    @Test
+    fun failedRedetectionRetainsTheAdvertisementAndQueuedRemove() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        server.serverAdd("album", album3.rawId)
+        val first = online(session(env, server))
+        first.myLibrary.refresh()
+        first.setOnline(false)
+        first.myLibrary.remove(album3)
+        val queries = env.database.database.myLibraryQueries
+        val before = queries.selectState(SessionEnv.BINDING.serverId).executeAsOne()
+        val second = online(session(env, server))
+        server.detectionResponse = server.envelope(""""error":{"code":0,"message":"refused"}""")
+        assertEquals(MyLibraryRefreshOutcome.Failed(DomainError.Server.Known(0)), second.myLibrary.refresh())
+        assertEquals(before, queries.selectState(SessionEnv.BINDING.serverId).executeAsOne(), "failed redetection writes nothing")
+        assertEquals(MyLibraryAvailability.Available, second.myLibrary.availability())
+        assertEquals(1L, second.favourites.pendingCount())
+        assertEquals(0, server.count("removeFromDulcetLibrary"))
+        server.detectionResponse = null
+        second.myLibrary.refresh()
+        second.favourites.flush()
+        assertEquals(1, server.count("removeFromDulcetLibrary"))
+        assertTrue(server.members.isEmpty())
+        assertEquals(0L, second.favourites.pendingCount())
+    }
+
+    @Test
+    fun malformedExtensionListsKeepTheQueuedAddUntilDetectionSucceeds() {
+        for (body in listOf(
+            null,
+            """"openSubsonicExtensions":{}""",
+            """"openSubsonicExtensions":[{"name":"dulcetLibrary","versions":["1"]}]""",
+            """"openSubsonicExtensions":[{"name":"dulcetLibrary","versions":[1]},null]""",
+        )) sessionTest { env ->
+            val server = DulcetLibraryTestServer()
+            assertDetectionFailureKeepsQueuedAdd(env, server, server.envelope(body), DomainError.Protocol.MalformedEnvelope)
+        }
+    }
+
+    private suspend fun TestScope.assertDetectionFailureKeepsQueuedAdd(
+        env: SessionEnv,
+        server: DulcetLibraryTestServer,
+        response: LibraryEndpointResponse,
+        error: DomainError,
+    ) {
+        server.detectionResponse = response
         val session = online(session(env, server))
-        assertEquals(MyLibraryRefreshOutcome.Unavailable, session.myLibrary.refresh())
-        assertEquals(MyLibraryAvailability.Unavailable, session.myLibrary.availability())
+        assertEquals(MyLibraryRefreshOutcome.Failed(error), session.myLibrary.refresh())
+        assertEquals(MyLibraryAvailability.Unknown, session.myLibrary.availability())
+        assertNull(env.database.database.myLibraryQueries.selectState(SessionEnv.BINDING.serverId).executeAsOneOrNull(), "failed detection persists no answer")
+        val outcomes = mutableListOf<MutationOutcome>()
+        session.favourites.addOutcomeListener { outcomes += it }
+        assertEquals(MutationRecord.Pending, session.myLibrary.add(album3))
+        advanceUntilIdle()
+        session.favourites.flush()
+        assertEquals(1L, session.favourites.pendingCount())
+        assertTrue(outcomes.isEmpty())
+        assertEquals(0, server.count("addToDulcetLibrary"))
+        assertEquals(0, server.count("getDulcetLibrary"))
+        // The failed attempt must not suppress detection on the next sync of this connection.
+        assertEquals(MyLibraryRefreshOutcome.Failed(error), session.myLibrary.refresh())
+        assertEquals(2, server.count("getOpenSubsonicExtensions"))
+        assertEquals(1L, session.favourites.pendingCount())
+        server.detectionResponse = null
+        assertIs<MyLibraryRefreshOutcome.Full>(session.myLibrary.refresh())
+        advanceUntilIdle()
+        assertEquals(3, server.count("getOpenSubsonicExtensions"))
+        assertEquals(1, server.count("addToDulcetLibrary"))
+        assertTrue(server.members.any { it.id == album3.rawId })
+        assertEquals(0L, session.favourites.pendingCount())
+        assertEquals(MutationOutcome.Saved(album3, MutationField.InLibrary, 1), outcomes.single())
+    }
+
+    @Test
+    fun aWithdrawnCapabilityResolvesQueuedAddsAndRemovesWithoutSendingThem() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        server.serverAdd("album", album3.rawId)
+        val first = online(session(env, server))
+        first.myLibrary.refresh()
+        first.setOnline(false)
+        first.myLibrary.remove(album3)
+        first.myLibrary.add(album5)
+        assertEquals(2L, first.favourites.pendingCount())
+        // A new connection detects the server's explicit withdrawal before a flush.
+        server.advertise = false
+        val second = online(session(env, server))
+        val outcomes = mutableListOf<MutationOutcome>()
+        second.favourites.addOutcomeListener { outcomes += it }
+        assertEquals(MyLibraryRefreshOutcome.Unavailable, second.myLibrary.refresh())
+        advanceUntilIdle()
+        assertEquals(0L, second.favourites.pendingCount())
+        assertEquals(setOf(album3, album5), outcomes.map { assertIs<MutationOutcome.NotSaved>(it).target }.toSet())
+        outcomes.forEach { assertEquals(DomainError.CapabilityUnsupported(CapabilityFeature.MyLibrary), assertIs<MutationOutcome.NotSaved>(it).error) }
+        assertEquals(0, server.count("addToDulcetLibrary"))
+        assertEquals(0, server.count("removeFromDulcetLibrary"))
     }
 
     @Test

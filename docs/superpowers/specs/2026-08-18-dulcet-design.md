@@ -13510,11 +13510,18 @@ contract.
 refreshes My Library on a connection, and keeps the answer per account. After a successful
 reconnect it asks again and refreshes, but only for an account whose server offered My Library, so
 a server without the extension sees no request it did not see before. A change made while the
-answer is unknown waits for that first refresh. A server that does
-not advertise `dulcetLibrary` v1, or answers the call with an error (a Subsonic server without
-OpenSubsonic), makes My Library `unavailable`: nothing is paged, the `dulcetInLibrary` flag is not
-read, and the apps show Browse exactly as before. A server advertising only a later version is
-treated as not advertising one this client implements. `CapabilitySet.dulcetLibraryVersion()`
+answer is unknown waits for that first refresh. A valid extension list that does not advertise
+`dulcetLibrary` v1, or a discovery response establishing that the endpoint is unavailable
+(Subsonic error 70, or a bare HTTP 404 or 501), makes My Library `unavailable`: nothing is paged,
+the `dulcetInLibrary` flag is not read, and the apps show Browse exactly as before. The reader
+preserves an error envelope's meaning rather than treating its HTTP status as endpoint absence.
+Auth, permission, generic and unknown errors, other HTTP failures and malformed extension lists
+are failed detection, not an answer: nothing is persisted, waiting outbox changes are kept, and
+detection is retried on the next refresh. An earlier valid advertisement is retained when
+redetection fails. **OBSERVED:** the [Subsonic error table](https://opensubsonic.netlify.app/docs/responses/error/)
+defines 70 as requested data not found and 0 as generic; 0 does not establish endpoint absence.
+A server advertising only a later version is treated as not advertising one this client
+implements. `CapabilitySet.dulcetLibraryVersion()`
 gives the same answer from a negotiated capability set.
 
 **One seam for the wire.** Detection, paging and add/remove go through `MyLibraryTransport`.
@@ -13554,7 +13561,10 @@ inherit its guarantees (§18.6): shown at once, durable across relaunch, compact
 least once (both calls are set-to-value and idempotent), adopted on acknowledgement, and rolled
 back on a permanent failure. Error 70 (unknown id) is a refusal. A change made before detection
 waits; once the server is known not to advertise the extension the change is refused with
-`CapabilityUnsupported(MyLibrary)`. Outcomes use the favourite outcome stream with field
+`CapabilityUnsupported(MyLibrary)`. When definitive detection changes availability, it triggers
+the waiting changes' flush whether the extension is available or unavailable; withdrawal by a
+previously advertising server therefore resolves queued adds and removes with that same refusal,
+without sending membership requests. Outcomes use the favourite outcome stream with field
 `inLibrary`. Removing an album also removes its member songs.
 
 **Presentation.** Albums are the explicit members plus the albums of member songs; artists are the

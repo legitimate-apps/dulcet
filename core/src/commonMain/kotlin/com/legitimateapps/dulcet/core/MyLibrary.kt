@@ -86,7 +86,7 @@ internal data class MyLibraryWitness(val libraryClock: String?, val artistCount:
  * classifies a membership send like any other.
  */
 internal interface MyLibraryTransport {
-    /** The `dulcetLibrary` versions the server advertises; empty when it advertises none. */
+    /** The advertised versions; empty only on a valid absence answer, otherwise detection throws. */
     suspend fun advertisedVersions(): Set<Int>
 
     /** One page of every kind at [offset] (per kind), newest addition first; [sinceEpochMillis] limits it to additions after then. */
@@ -102,10 +102,14 @@ internal class OpenSubsonicMyLibraryTransport(private val reader: LibraryReader)
         val sent = try {
             reader.sendChecked("getOpenSubsonicExtensions")
         } catch (failure: LibraryRequestFailure) {
-            // A server that answers the call with an error envelope has no extension list: a
-            // Subsonic server without OpenSubsonic. Anything else (no answer) is not an answer.
-            if (failure !is ReaderSendRefused && failure.error is DomainError.Server.Known) return emptySet()
-            if (failure !is ReaderSendRefused && failure.error is DomainError.Server.Unknown) return emptySet()
+            // Only a missing/unimplemented endpoint establishes that there is no extension list.
+            // Auth, permission, generic and unknown failures are not capability answers.
+            val endpointUnavailable = when (val error = failure.error) {
+                is DomainError.Server.Known -> error.code == 70
+                is DomainError.Server.HttpStatus -> error.status == 404 || error.status == 501
+                else -> false
+            }
+            if (failure !is ReaderSendRefused && endpointUnavailable) return emptySet()
             throw failure
         }
         return parseOpenSubsonicExtensionVersions(sent.response.body, DULCET_LIBRARY_EXTENSION)
@@ -135,15 +139,9 @@ internal class OpenSubsonicMyLibraryTransport(private val reader: LibraryReader)
 /** The versions [name] is advertised at in a `getOpenSubsonicExtensions` answer; empty when absent. */
 internal fun parseOpenSubsonicExtensionVersions(body: String, name: String): Set<Int> {
     val payload = parseLibraryEnvelope(body)?.payload ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
-    val list = payload["openSubsonicExtensions"] as? kotlinx.serialization.json.JsonArray ?: return emptySet()
-    return list.asSequence()
-        .mapNotNull { it as? kotlinx.serialization.json.JsonObject }
-        .filter { (it["name"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content == name }
-        .flatMap { extension ->
-            (extension["versions"] as? kotlinx.serialization.json.JsonArray).orEmpty().asSequence()
-                .mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeUnless { p -> p.isString }?.content?.toIntOrNull() }
-        }
-        .toSet()
+    val extensions = payload["openSubsonicExtensions"].toExtensionMapOrNull()
+        ?: throw LibraryRequestFailure(DomainError.Protocol.MalformedEnvelope)
+    return extensions[name].orEmpty()
 }
 
 // ---- Store ----------------------------------------------------------------------------------------
@@ -480,8 +478,9 @@ internal class MyLibrary(
             store.setAdvertised(advertised)
             detectedThisConnection = true
             if (advertised) installSink() else reader.cache.membershipSink = null
-            if (advertised && before != MyLibraryAvailability.Available && reader.canSend) {
-                // Adds and removes made before the extension was known were kept; send them now.
+            if (before != availability() && reader.canSend) {
+                // Resolve waiting changes after a definitive answer: send if offered, otherwise
+                // refuse with CapabilityUnsupported, including when the server withdrew support.
                 reader.scope.launch { guardedSuspend { favourites.flush() } }
             }
         }
