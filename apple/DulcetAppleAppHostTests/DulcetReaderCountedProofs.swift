@@ -39,14 +39,14 @@ final class DulcetReaderCountedProofs {
     /// unavailable.
     ///
     /// 1. A first launch connects through the proxy and reads the albums and one album live.
-    /// 2. A relaunch with the account saved, in device-only mode, paints the albums and that album
-    ///    from this device -- the proxy logs NO request while it does --, an album seen only in the
-    ///    grid shows its cached header with its tracks unavailable, and an album never seen is
-    ///    unavailable offline.
-    /// 3. Reconnected, with every `getAlbum` held at the proxy, the opened album publishes what this
-    ///    device saw and the grid-only album its cached header with its tracks still loading, both
-    ///    while their reads are held unanswered -- so before any answer --, and neither ever as a
-    ///    whole-screen loading state; released, both go live.
+    /// 2. A saved launch starts negotiation with its first answer held at the proxy. Before any
+    ///    answer, the albums and opened album paint from this device, a grid-only album paints its
+    ///    cached header with tracks unavailable, and an album never seen is unavailable offline.
+    ///    Only the one unanswered negotiation request is sent; no reader request or loading state.
+    /// 3. With both album pages open, release negotiation and hold every `getAlbum` answer instead.
+    ///    Automatic reconnect keeps their cached content while revalidating; the grid-only header
+    ///    remains visible while its tracks load. Neither becomes a whole-screen loading state.
+    ///    Release those reads and both pages go live.
     func conf76() async throws {
         let fixture = try await counted()
         let databaseName = "dulcet-counted-76-\(platform)-\(UUID().uuidString).db"
@@ -72,10 +72,11 @@ final class DulcetReaderCountedProofs {
         page.close()
         await close(firstSession)
 
-        // 2. Relaunch, device-only: painted from this device, nothing sent.
-        let (second, secondSession) = makeStore(databaseName, providerInstanceID, credentials)
-        XCTAssertEqual(secondSession.mode, .deviceOnly, "Nothing is sent until Reconnect is chosen")
+        // 2. Hold the connector's first response before launch. Painting cannot rely on an answer.
+        try await fixture.proxy.rule("hold", endpoint: "getOpenSubsonicExtensions")
         let relaunchMark = try await fixture.proxy.total()
+        let (second, secondSession) = makeStore(databaseName, providerInstanceID, credentials)
+        XCTAssertEqual(secondSession.mode, .deviceOnly, "The library stays on the device while launch negotiation is unanswered")
         let cachedAlbums = Recorder()
         cachedAlbums.open(try XCTUnwrap(secondSession.reader), .albums(.alphabeticalByName))
         let cachedPage = Recorder()
@@ -87,10 +88,14 @@ final class DulcetReaderCountedProofs {
         try await waitUntil("cached: \(cachedAlbums.summary) \(cachedPage.summary) \(gridOnlyOffline.summary) \(neverSeen.summary)") {
             cachedAlbums.last != nil && cachedPage.last != nil && gridOnlyOffline.last != nil && neverSeen.last != nil
         }
-        try await settle(fixture)
-        let sentWhilePainting = try await fixture.proxy.requests(since: relaunchMark)
-        XCTAssertEqual(sentWhilePainting.map(\.description), [],
-            "The relaunch paints from this device and sends nothing at all")
+        var sentWhilePainting: [Seen] = []
+        try await waitUntil("launch negotiation held: \(sentWhilePainting)", condition: {
+            !sentWhilePainting.isEmpty
+        }, poll: { sentWhilePainting = (try? await fixture.proxy.requests(since: relaunchMark)) ?? [] })
+        try await settle(fixture, held: true)
+        sentWhilePainting = try await fixture.proxy.requests(since: relaunchMark)
+        XCTAssertEqual(sentWhilePainting.map(\.description), ["getOpenSubsonicExtensions:unanswered"],
+            "Only launch negotiation is in flight: cached painting precedes every answer and reader request")
         guard case .cached(.offline, _) = cachedAlbums.first?.freshness else {
             XCTFail("The albums' first publication must be what this device saw, offline: \(cachedAlbums.summary)")
             return
@@ -109,26 +114,40 @@ final class DulcetReaderCountedProofs {
         }, "Offline, nothing shows a loading state")
         for recorder in [cachedAlbums, cachedPage, gridOnlyOffline, neverSeen] { recorder.close() }
 
-        // 3. Online: with every album read held, both pages publish before any answer.
-        dulcetReaderRetry(second)
-        try await waitUntil("reconnect: mode=\(secondSession.mode)") { secondSession.mode == .connected && secondSession.reader != nil }
-        try await settle(fixture)
-        try await fixture.proxy.rule("hold", endpoint: "getAlbum")
+        // 3. Open both pages before releasing negotiation, so reconnect revalidates these pages.
+        // Switching the proxy's hold rule releases negotiation and holds the later album reads.
         let heldMark = try await fixture.proxy.total()
         let onlinePage = Recorder()
         onlinePage.open(try XCTUnwrap(secondSession.reader), .album(rawID: opened.id.rawID))
         let gridOnlyOnline = Recorder()
         gridOnlyOnline.open(try XCTUnwrap(secondSession.reader), .album(rawID: gridOnly.id.rawID))
+        try await fixture.proxy.rule("hold", endpoint: "getAlbum")
+        try await waitUntil("automatic reconnect: mode=\(secondSession.mode)") {
+            second.snapshot.accountConnected && secondSession.mode == .connected
+        }
         var heldReads: [Seen] = []
-        try await waitUntil("both album reads held: \(heldReads)", condition: {
-            heldReads.filter { !$0.answered }.count >= 2 && onlinePage.last != nil && gridOnlyOnline.last != nil
+        try await waitUntil("reconnect album read held: \(heldReads)", condition: {
+            heldReads.contains { !$0.answered } && onlinePage.last != nil
+                && gridOnlyOnline.all.contains {
+                    if case .cached(.revalidating, _) = $0.freshness { return $0.itemsState == .loading }
+                    return false
+                }
         }, poll: { heldReads = (try? await fixture.proxy.requests(since: heldMark).filter { $0.endpoint == "getAlbum" }) ?? [] })
+        // Reconnect revalidates handles serially: both cached pages paint while the first read
+        // is held, and the second read starts only after it answers. Do not wait for two holds.
         let beforeAnswer = (page: onlinePage.all, gridOnly: gridOnlyOnline.all)
         XCTAssertEqual(heldReads.filter(\.answered).count, 0, "No album read had been answered: \(heldReads)")
         try await fixture.proxy.rule("hold", endpoint: nil)
         try await waitUntil("released: \(onlinePage.summary) \(gridOnlyOnline.summary)") {
             onlinePage.last?.freshness == .live && gridOnlyOnline.last?.freshness == .live && gridOnlyOnline.last?.itemsState == .present
         }
+        try await settle(fixture)
+        let completedAlbumReads = try await fixture.proxy.requests(since: heldMark).filter { $0.endpoint == "getAlbum" }
+        XCTAssertEqual(Set(completedAlbumReads.map(\.id)), Set([opened.id.rawID, gridOnly.id.rawID]),
+            "Automatic reconnect actually reads both visible album pages")
+        XCTAssertEqual(completedAlbumReads.count, 2, "Each visible album is read once")
+        XCTAssertTrue(completedAlbumReads.allSatisfy { $0.answered && $0.status == 200 },
+            "Both album reads complete after the hold is released")
         guard case .cached = beforeAnswer.page.first?.freshness else {
             XCTFail("The opened album publishes what this device saw before its read is answered: \(beforeAnswer.page.map(\.freshness))")
             return
@@ -139,13 +158,16 @@ final class DulcetReaderCountedProofs {
             return
         }
         XCTAssertEqual(beforeAnswer.gridOnly.first?.header?.displayTitle, "Threshold Boundary")
-        XCTAssertEqual(beforeAnswer.gridOnly.first?.itemsState, .loading, "Its tracks say they are being read")
+        XCTAssertTrue(beforeAnswer.gridOnly.contains {
+            if case .cached(.revalidating, _) = $0.freshness { return $0.itemsState == .loading }
+            return false
+        }, "Automatic reconnect reads the tracks while keeping the cached header visible")
         XCTAssertFalse((onlinePage.all + gridOnlyOnline.all).contains { $0.freshness == .loading },
             "A cached open never gives way to a whole-screen loading state")
         onlinePage.close()
         gridOnlyOnline.close()
         await close(secondSession)
-        print("CONF-76 OBSERVED \(platform) relaunch-requests=\(sentWhilePainting.count) first-cached=\(String(describing: cachedAlbums.first?.freshness))"
+        print("CONF-76 OBSERVED \(platform) relaunch-before-answer=\(sentWhilePainting.map(\.description)) first-cached=\(String(describing: cachedAlbums.first?.freshness))"
             + " held-album-reads=\(heldReads.count) page-before-answer=\(beforeAnswer.page.map(\.freshness))"
             + " grid-only-before-answer=\(beforeAnswer.gridOnly.map { "\($0.freshness)/\($0.itemsState)" })"
             + " never-seen=\(String(describing: neverSeen.first?.freshness))")

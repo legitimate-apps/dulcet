@@ -4862,7 +4862,7 @@ server's behaviour and are R0's; *reader* ids drive the production code.
 | CONF-73 | `/rest` JSON reads carry no `ETag`/`Last-Modified`/`Cache-Control` and a conditional request returns a full `200` — with the positive control that the same responses' `X-Total-Count` header is observed | server fact | R0 |
 | CONF-74 | removal of an album under **both** `PurgeMissing` settings produces the §16.11 table, with before/after controls | server fact | R0 |
 | CONF-75 | `X-Total-Count` presence per `getAlbumList2` type equals the §16.9 table and is the list's total, not the page's length; it is absent on `search3`, with the positive control that the same lookup saw it on `getAlbumList2` (a server without it degrading to an unknown total is reader behaviour, moved to CONF-82) | server fact | R0 |
-| CONF-76 | an open with cached content publishes it before any request and before any loading state; a grid-only album paints its cached header first online; offline, a never-opened album is `unavailable` with copy | reader | R1b, R2b, R3 |
+| CONF-76 | an open with cached content publishes it before its reader request and without a whole-screen loading state (saved-account negotiation may already be in flight); a grid-only album paints its cached header first online; offline, a never-opened album is `unavailable` with copy | reader | R1b, R2b, R3 |
 | CONF-77 | reconnect performs outbox flush, epoch read, visible-screen revalidation and the downloaded-album recheck and nothing else, by counted requests | reader | R1b, R2b, R3 |
 | CONF-78 | eviction removes least-recently-accessed unpinned windows, then orphans; pinned metadata survives every ceiling | reader | R1a |
 | CONF-79 | search publishes the correct scope in each of its four cases, with seen-cache counts offline | reader | R1c, R2b, R3 |
@@ -6436,7 +6436,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-73 | `/rest` JSON reads carry no `ETag`/`Last-Modified`/`Cache-Control` and a conditional request returns a full `200`, with the positive control that `X-Total-Count` is observed on the same responses — server fact (§16.11) |
 | CONF-74 | removing an album produces the §16.11 table under both `PurgeMissing` settings, with before/after controls — server fact |
 | CONF-75 | `X-Total-Count` presence per `getAlbumList2` type equals the §16.9 table and is the total, not the page length; absent on `search3` with a positive control — server fact; unknown-total degradation moved to CONF-82 |
-| CONF-76 | an open with cached content publishes it before any request or loading state; a grid-only album paints its cached header first online; a never-opened album offline is `unavailable` with copy (§16.14) |
+| CONF-76 | an open with cached content publishes it before its reader request and without a whole-screen loading state (saved-account negotiation may already be in flight); a grid-only album paints its cached header first online; a never-opened album offline is `unavailable` with copy (§16.14) |
 | CONF-77 | reconnect performs outbox flush, epoch read, visible-screen revalidation and the downloaded-album recheck and nothing else, by counted requests (§16.14) |
 | CONF-78 | eviction removes least-recently-accessed unpinned windows, then orphans; pinned metadata survives every ceiling (§16.13) |
 | CONF-79 | search publishes the correct scope in each of its four cases, with seen-cache counts offline (§16.15) |
@@ -7785,6 +7785,16 @@ simulator runtime. The equivalent display-link delivery probe has mixed results 
 contended host: the largest gap increases on iPhone and decreases on iPad. This measures
 main-thread delivery, not GPU rendering. Gesture
 completion is verified, but a reduction in rendering hitches is not established by these runs.
+
+**2026-10-13 — cached publication stays ahead of launch reconnect**
+
+CONF-76 distinguishes a cached query's reader request from the saved account's parallel launch
+negotiation (§13.1). Cached content still publishes without waiting for an answer and never gives
+way to a whole-screen loading state. The counted Apple proof holds the first negotiation answer
+before relaunch, observes cached publications with only that unanswered request in flight, then
+holds album answers while automatic reconnect revalidates the visible cached pages. A grid-only
+header stays visible while its previously unread tracks load. CONF-77 and CONF-86 keep their
+outbox/epoch/visible-screen and independent-row request budgets.
 
 **2026-10-12 — cached album art paints from the device**
 
