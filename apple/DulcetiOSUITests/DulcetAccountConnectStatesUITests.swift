@@ -246,16 +246,18 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
 
     @MainActor
     private func openArtworkGrid(in app: XCUIApplication, compact: Bool) -> Bool {
-        let destination = compact ? app.tabBars.buttons["Library"].firstMatch
-            : app.staticTexts["dulcet.sidebar.library"].firstMatch
-        guard tap(destination, in: app, name: "Library") else { return false }
         if compact {
+            guard tap(app.tabBars.buttons["Library"].firstMatch, in: app, name: "Library") else { return false }
             let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
             // At accessibility sizes the account message places this row below the viewport.
             for _ in 0..<6 where !albums.isHittable { app.swipeUp() }
             guard tap(albums, in: app, name: "Albums") else { return false }
         } else {
-            guard tap(app.staticTexts["dulcet.sidebar.section.albums"].firstMatch, in: app, name: "Albums") else { return false }
+            let albums = app.staticTexts["dulcet.sidebar.section.albums"].firstMatch
+            guard albums.waitForExistence(timeout: 10), albums.isHittable else {
+                XCTFail("Albums must be visible in the sidebar: " + app.debugDescription); return false
+            }
+            albums.tap()
         }
         let tile = app.buttons["dulcet.library.album"].firstMatch
         for _ in 0..<8 {
