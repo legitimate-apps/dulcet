@@ -13426,7 +13426,9 @@ Lyrics are looked up in this order:
 
 LRCLIB rules:
 - The User-Agent names Dulcet Server and its repository.
-- Requests are sent one at a time, at least 250 ms apart.
+- Requests are sent one at a time, at least 250 ms apart. A lookup arriving while another remote
+  lookup is running returns a temporary unavailable result immediately, so it cannot hold up
+  local lyrics or cached answers.
 - A 429 suspends every LRCLIB request for as long as `Retry-After` says (60 s when it is absent).
 - A found answer is cached for good. A definite "none" (404, or an empty answer) is cached for 30
   days. A temporary failure is not cached.

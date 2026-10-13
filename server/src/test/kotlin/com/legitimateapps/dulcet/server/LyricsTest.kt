@@ -18,9 +18,13 @@ class FakeLrcLib : AutoCloseable {
     val requests: MutableList<Pair<String, String?>> = Collections.synchronizedList(ArrayList())
     @Volatile var status = 200
     @Volatile var body = """{"id":1,"trackName":"Song","artistName":"Band","instrumental":false,"plainLyrics":"la la","syncedLyrics":"[00:01.00]la\n[00:03.50]la la"}"""
+    @Volatile var entered: java.util.concurrent.CountDownLatch? = null
+    @Volatile var release: java.util.concurrent.CountDownLatch? = null
     @Volatile var retryAfter: String? = null
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/api/get") { exchange ->
+            entered?.countDown()
+            release?.await(5, java.util.concurrent.TimeUnit.SECONDS)
             requests.add(exchange.requestURI.rawQuery to exchange.requestHeaders.getFirst("User-Agent"))
             retryAfter?.let { exchange.responseHeaders.add("Retry-After", it) }
             val bytes = if (status == 200) body.toByteArray() else """{"code":$status}""".toByteArray()
@@ -81,6 +85,22 @@ class LyricsTest {
         assertTrue(agent!!.startsWith("DulcetServer/"), "the app identifies itself: $agent")
         ctx.lyrics.forTrack(id)
         assertEquals(1, fake.requests.size, "the answer is cached")
+    }
+
+    @Test fun busyRemoteLookupReturnsWithoutWaitingForAnotherNetworkCall() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        fake.entered = entered
+        fake.release = release
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit<com.legitimateapps.dulcet.server.lyrics.RemoteLyrics> { provider.lookup("Band", "Slow", null, 1) }
+            assertTrue(entered.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val second = pool.submit<com.legitimateapps.dulcet.server.lyrics.RemoteLyrics> { provider.lookup("Band", "Other", null, 1) }
+            assertTrue(second.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) is com.legitimateapps.dulcet.server.lyrics.RemoteLyrics.Unavailable)
+            release.countDown()
+            assertTrue(first.get(2, java.util.concurrent.TimeUnit.SECONDS) is com.legitimateapps.dulcet.server.lyrics.RemoteLyrics.Found)
+        } finally { release.countDown(); pool.shutdownNow() }
     }
 
     @Test

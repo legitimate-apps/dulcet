@@ -112,42 +112,45 @@ class LrcLibProvider(
     private val log = LoggerFactory.getLogger(LrcLibProvider::class.java)
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NORMAL).build()
     private val blockedUntil = AtomicLong(0)
-    private val gate = Any()
+    private val gate = java.util.concurrent.locks.ReentrantLock()
     private var lastRequest = 0L
 
-    override fun lookup(artist: String, title: String, album: String?, durationSeconds: Int?): RemoteLyrics = synchronized(gate) {
-        val now = clock()
-        if (now < blockedUntil.get()) return RemoteLyrics.Unavailable(blockedUntil.get() - now)
-        val wait = lastRequest + minGapMillis - now
-        if (wait > 0) Thread.sleep(wait)
-        lastRequest = clock()
-        fun q(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8)
-        val query = buildString {
-            append("artist_name=").append(q(artist)).append("&track_name=").append(q(title))
-            if (!album.isNullOrBlank()) append("&album_name=").append(q(album))
-            if (durationSeconds != null && durationSeconds > 0) append("&duration=").append(durationSeconds)
-        }
-        val request = HttpRequest.newBuilder(URI.create(baseUrl.trimEnd('/') + "/api/get?" + query))
-            .header("User-Agent", userAgent)
-            .header("Accept", "application/json")
-            .timeout(Duration.ofSeconds(10))
-            .GET().build()
-        val response = try {
-            client.send(request, HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            log.warn("LRCLIB request failed: {}", error.javaClass.simpleName)
-            return RemoteLyrics.Unavailable(null)
-        }
-        return when (response.statusCode()) {
-            200 -> parseFound(response.body())
-            404 -> RemoteLyrics.None
-            429 -> {
-                val retry = response.headers().firstValue("Retry-After").orElse(null)?.trim()?.toLongOrNull()?.times(1000) ?: 60_000L
-                blockedUntil.set(clock() + retry)
-                RemoteLyrics.Unavailable(retry)
+    override fun lookup(artist: String, title: String, album: String?, durationSeconds: Int?): RemoteLyrics {
+        if (!gate.tryLock()) return RemoteLyrics.Unavailable(null)
+        try {
+            val now = clock()
+            if (now < blockedUntil.get()) return RemoteLyrics.Unavailable(blockedUntil.get() - now)
+            val wait = lastRequest + minGapMillis - now
+            if (wait > 0) Thread.sleep(wait)
+            lastRequest = clock()
+            fun q(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8)
+            val query = buildString {
+                append("artist_name=").append(q(artist)).append("&track_name=").append(q(title))
+                if (!album.isNullOrBlank()) append("&album_name=").append(q(album))
+                if (durationSeconds != null && durationSeconds > 0) append("&duration=").append(durationSeconds)
             }
-            else -> RemoteLyrics.Unavailable(null)
-        }
+            val request = HttpRequest.newBuilder(URI.create(baseUrl.trimEnd('/') + "/api/get?" + query))
+                .header("User-Agent", userAgent)
+                .header("Accept", "application/json")
+                .timeout(Duration.ofSeconds(10))
+                .GET().build()
+            val response = try {
+                client.send(request, HttpResponse.BodyHandlers.ofString())
+            } catch (error: Exception) {
+                log.warn("LRCLIB request failed: {}", error.javaClass.simpleName)
+                return RemoteLyrics.Unavailable(null)
+            }
+            return when (response.statusCode()) {
+                200 -> parseFound(response.body())
+                404 -> RemoteLyrics.None
+                429 -> {
+                    val retry = response.headers().firstValue("Retry-After").orElse(null)?.trim()?.toLongOrNull()?.times(1000) ?: 60_000L
+                    blockedUntil.set(clock() + retry)
+                    RemoteLyrics.Unavailable(retry)
+                }
+                else -> RemoteLyrics.Unavailable(null)
+            }
+        } finally { gate.unlock() }
     }
 
     private fun parseFound(body: String): RemoteLyrics = try {
