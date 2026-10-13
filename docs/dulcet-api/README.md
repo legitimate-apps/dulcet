@@ -136,7 +136,7 @@ rate-limited per client and per address.
   revokes the whole grant, because it means the token was stolen. A refresh token unused for 90
   days expires.
 - **Personal access tokens** (`dulcet_pat_…`) last until their chosen expiry (at most the server's
-  maximum, 365 days on Dulcet Server). `noExpiry` may be asked for only by a personal token or a
+  maximum, `limits.maxTokenLifetimeDays`, 365 days on Dulcet Server; more answers `422`). `noExpiry` may be asked for only by a personal token or a
   first-party session, and the server may refuse it.
 - **Minted tokens stay inside their parent.** A token or webhook created through the API holds at
   most the scopes of the token that created it, and records it as `parentId`. Revoking an app's
@@ -206,6 +206,9 @@ top-level music folders an admin configures, which decide what each user can see
 count, My Library membership). "Library" in this standard means only My Library (section 8). The
 schemas are in the contract.
 
+A user's `sourceIds` lists the sources they can see. Left out when the user is created, it means
+every source that exists then; an empty list means none, so the user sees no catalog.
+
 **Ids** are opaque strings. Clients never parse them, sort them or build them.
 
 - **Unique across types.** No artist shares an id with an album. *Why:* a reference is one string,
@@ -220,7 +223,9 @@ schemas are in the contract.
   client already holds for something else.
 - **Merges are explicit.** When two items become one (duplicate albums merged), the old id answers
   `308 Permanent Redirect` to the survivor, and the change feed carries a tombstone with
-  `reason: merged` and `replacedBy`. A split lists every successor. The server keeps this mapping
+  `reason: merged` and `replacedBy`. A split lists every successor. Two albums that come to carry
+  the same MusicBrainz release id after a scan are always merged, and the survivor is the id issued
+  first; a server may merge in other cases it can justify, never across different release ids. The server keeps this mapping
   for as long as it runs, not only for the feed's retention, so a device offline for a year still
   finds its references. Clients rewrite stored references.
 - **`410` and `404` mean different things.** `410 Gone` means the server knows the id and it was
@@ -892,6 +897,32 @@ named suite version and publishing its report.
 | **Webhooks** | Signed webhooks with retries. |
 | **MCP** | The MCP endpoint and its scope rules. |
 | **Admin** | Users and scans. |
+| **Testing** | The test hooks below. Needed only to run the full suite; never claimed by a production server. |
+
+### Testing profile
+
+Some behaviour can be proven only if a test can make it happen: a cursor older than retention, an
+expired media URL, a restore, a rate limit, a sign-in with no person present. The **Testing
+profile** adds the few hooks for that, and nothing else.
+
+- **Off unless started on.** Test mode is a server-start setting (on Dulcet Server, an environment
+  variable), never an API call. A server refuses to start in test mode on data that was ever served
+  without it, so a production library cannot be switched into test mode by mistake. A server in
+  test mode says `testMode: true` in `/.well-known/dulcet`, and the conformance suite refuses to
+  run against a server that does not.
+- **Admin only.** Every hook needs the `admin` scope as well as test mode. Outside test mode the
+  hook paths answer `404`, like any unknown path.
+- **The hooks.** `PUT /admin/test/settings` sets in-memory overrides: auto-approval of sign-in and
+  device codes for named client ids (every other OAuth rule still applies), journal retention in
+  seconds, signed-URL lifetimes in seconds, and a rate limit. `POST /admin/test/checkpoints` saves
+  the data as a backup would; `POST /admin/test/checkpoints/{id}/restore` restores it through the
+  server's real restore path, so `instanceId` changes as after any restore.
+
+Things that need no hook: merges and retags are made by changing files in the test library and
+running `POST /admin/scans`; the server's own log is read from where the operator captured it
+(a file or the container's output); the token lifetime limit is published in
+`limits.maxTokenLifetimeDays`. The device-code lockout on the verification page stays a manual
+check: that page is HTML for people, and the standard does not define it as an API.
 
 A claim reads, for example: "Dulcet API v1.0 compatible: Core, Sync, Device, Transcoding (suite
 1.0.0, report linked)." The name "Dulcet API compatible" means exactly that the suite passed; it is

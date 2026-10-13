@@ -29,11 +29,20 @@ defined in [README §20](README.md#20-claiming-compatibility).
   corpus is identical everywhere.
 - **Server under test.** The operator points the suite at a base URL, a library directory the
   server scans, and admin credentials for a disposable instance. The suite creates its own users
-  and never runs against a server holding real people's data: it refuses to start unless the server
-  reports exactly the fixture corpus.
+  and never runs against a server holding real people's data: it refuses to start unless
+  `/.well-known/dulcet` reports `testMode: true` (README §20, Testing profile), which a server can
+  only be started with and never on data served without it.
 - **Mutations the suite needs** (retag a file, move a file, delete one, add one, trigger a scan) go
   through a small adapter: by default, file operations on the mounted library directory plus
-  `POST /admin/scans`.
+  `POST /admin/scans`. A **merge** is made the same way: write a second album with the first one's
+  MusicBrainz release id and scan; the contract says that is a merge and the first-issued id
+  survives.
+- **Conditions only a hook can create** use the Testing profile, all with an admin token:
+  sign-in and device approval without a person (`autoApprove`), a short journal retention, short
+  signed-URL lifetimes, a low rate limit, and checkpoint-and-restore. Checks that need a hook fail
+  (never skip) for a Testing claim and are listed as not run for other claims.
+- **The server's log** is read from wherever the operator captured it: `--server-log <file>`, or
+  `--server-log-command <cmd>` for a container (`docker logs …`). No API exposes logs.
 - **Output.** JUnit XML (one test case per check id) plus a JSON report and a one-line summary:
   `DULCET-CONFORMANCE suite=1.0.0 profiles=Core,Sync passed=N failed=M`.
 
@@ -99,9 +108,20 @@ Each check has a stable id (`DA-<area>-<n>`) so reports and claims can cite it.
 - Atomicity: a scan's changes become visible in the feed and the catalog together, never one
   without the other.
 
+### Testing
+
+- Discovery says `testMode: true`; the hook paths answer `404` on the same build started without
+  test mode, and `403` to a non-admin token in test mode.
+- A server refuses to start in test mode on data first served without it (checked through the
+  adapter).
+- `autoApprove` still enforces PKCE, exact redirects, `iss` and scope limits.
+- Overrides end when the server restarts.
+
 ### Other profiles
 
-- **Device:** codes, `authorization_pending`, `slow_down`, expiry, approval and denial.
+- **Device:** codes, `authorization_pending`, `slow_down`, expiry, approval (through `autoApprove`)
+  and denial. The five-wrong-entries lockout is on the HTML verification page and stays a
+  **manual** check, run by a person with the report's checklist.
 - **Transcoding:** a profile without the source codec gets a transcode in a requested target; a
   bitrate limit is honoured (bits per second); `lengthExact: false` plans really are estimates;
   `offsetMs` starts at the right time (within one frame) and `streamDurationMs` matches the bytes.

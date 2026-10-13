@@ -13670,6 +13670,14 @@ the 2026-10-12 §28 entry.
   unknown fields and treat enums as open. There is no planned v2; if one ever exists, v1 runs
   beside it for at least three years. Per-resource representation versions are not needed
   (`docs/dulcet-api/README.md` §17).
+- An optional **Testing profile** lets the conformance suite create conditions a real server
+  otherwise cannot show on demand: auto-approved sign-in and device codes for named clients, short
+  journal retention, short signed-URL lifetimes, a low rate limit, and checkpoint-and-restore
+  through the real restore path. It exists only on a server started in test mode (a start setting,
+  refused on data ever served without it), is advertised as `testMode: true` in discovery, needs
+  `admin`, and answers `404` otherwise. Merges (same MusicBrainz release id, first-issued id
+  survives), retags, logs and the token lifetime limit (`limits.maxTokenLifetimeDays`) need no
+  hook; the device-code lockout stays a manual check. An empty `sourceIds` means no sources.
 
 ### 30.3 What it changes for the apps
 
@@ -13697,5 +13705,6 @@ apps use `start=now`, not a snapshot. The OpenSubsonic path keeps every rule it 
   active device, and relay of commands to that device's event stream.
 - Store Dulcet API credentials with a slow hash. The AES-GCM recoverable password of §29.1 remains
   only for OpenSubsonic token authentication.
-- Pass the Core and Sync profiles of the conformance suite once it exists.
+- Offer test mode as a start setting only, refuse it on data ever served without it, and pass the
+  Core, Sync and Testing profiles of the conformance suite.
 

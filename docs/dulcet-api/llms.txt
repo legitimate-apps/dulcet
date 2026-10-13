@@ -15,7 +15,7 @@ Compatibility is proven by the suite in CONFORMANCE.md.
 - Auth: `Authorization: Bearer <token>` only. Never put a token in a URL.
   OAuth 2.1 authorization code + PKCE (S256) for apps; device grant (RFC 8628) for TV/CLI;
   personal access tokens (POST /me/tokens) for scripts; a minted token's scopes are a subset of the
-  caller's and it dies with its parent grant. Refresh tokens rotate (scope offline_access); the old
+  caller's and it dies with its parent grant; expiresInDays <= limits.maxTokenLifetimeDays. Refresh tokens rotate (scope offline_access); the old
   one still works for 60 s after rotation. Check `iss` on the authorization response (RFC 9207).
   Offline servers accept an unverified client (loopback or reverse-DNS scheme redirect only).
   Token prefixes: dulcet_at_, dulcet_rt_, dulcet_pat_.
@@ -90,6 +90,11 @@ Compatibility is proven by the suite in CONFORMANCE.md.
 - Account: GET|PATCH /me, POST /me/password, DELETE /me (account + user:delete + recent sign-in),
   /me/tokens, DELETE /me/tokens/{id}, GET /me/export (JSON Lines).
 - Admin: /users, /users/{id}, /admin/scans.
+  Empty sourceIds = no sources; omitted on create = every source.
+- Testing profile (test tools only): only when discovery says testMode: true (set at server start,
+  never by API). Admin scope: GET|PUT /admin/test/settings (autoApprove, syncRetentionSeconds,
+  mediaUrlTtlSeconds, artworkUrlTtlSeconds, rateLimit), POST /admin/test/checkpoints,
+  POST /admin/test/checkpoints/{id}/restore (rotates instanceId). 404 outside test mode.
 
 ## MCP
 

@@ -85,6 +85,8 @@ tags:
     description: Users, scans and server administration.
   - name: AI
     description: The Model Context Protocol endpoint.
+  - name: Testing
+    description: The optional Testing profile, present only on a server started in test mode (README "Testing").
 
 paths:
   /.well-known/dulcet:
@@ -173,6 +175,7 @@ paths:
                   maxBatchSize: 500
                   maxAlbumTracks: 500
                   syncRetentionDays: 90
+                  maxTokenLifetimeDays: 365
                   mediaUrlTtlSeconds: 21600
                   artworkUrlTtlSeconds: 604800
                 auth:
@@ -3301,6 +3304,10 @@ paths:
           private), the feed carries a `delete` with `reason: hidden`; when it becomes visible again,
           an `upsert`. A server that cannot list such entities answers `410` to that user's cursors
           instead.
+        - **When albums merge.** After a scan, two albums that carry the same
+          `externalIds.musicbrainzReleaseId` are one album: the server merges them, and the survivor
+          is the id it issued first. A server may merge in other cases it can justify; it never
+          merges albums whose release ids differ.
         - **Merges and splits.** A `delete` with `reason: merged` names the survivors in
           `replacedBy` (one id for a merge, several for a split, always live ids even after chains).
           Before that tombstone, the server has already moved the user's data onto the survivor and
@@ -3861,6 +3868,153 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/Default'
+
+  /admin/test/settings:
+    get:
+      tags: [Testing]
+      operationId: getTestSettings
+      summary: Read the test-mode overrides in effect
+      description: |
+        Testing profile only (README "Testing"). Exists only on a server started in test mode and
+        answers `404` everywhere else, exactly as an unknown path would. Needs `admin`.
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      responses:
+        '200':
+          description: The overrides in effect. Absent fields mean the normal behaviour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestSettings'
+              example:
+                autoApprove: [{clientId: 'http://127.0.0.1/conformance', userId: usr_02}]
+                syncRetentionSeconds: 5
+                mediaUrlTtlSeconds: 2
+                rateLimit: {requestsPerWindow: 10, windowSeconds: 5}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Default'
+    put:
+      tags: [Testing]
+      operationId: replaceTestSettings
+      summary: Set the test-mode overrides
+      description: |
+        Replaces every override at once; send `{}` to restore normal behaviour. Overrides live in
+        memory and end when the server stops. They may go below the minimums `limits` promises
+        (`limits` keeps reporting the configured values; this resource reports the effective ones).
+
+        - `autoApprove`: for each listed client id, `/oauth/authorize` skips the sign-in and consent
+          pages and redirects at once with a code for `userId`, and a device code requested by that
+          client is approved for `userId` as soon as it is issued. Every other rule still applies:
+          PKCE, exact redirects, `iss`, scope limits, and an unverified client never getting `admin`
+          or `account`.
+        - `syncRetentionSeconds`: journal entries older than this are compacted at once and on
+          every later write, so an old cursor answers `410`.
+        - `mediaUrlTtlSeconds`, `artworkUrlTtlSeconds`: lifetimes of signed URLs issued from now on.
+        - `rateLimit`: the limiter for every non-test endpoint, per token; a request over it answers
+          `429` with `Retry-After`. Test endpoints are never limited.
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSettings'
+            example:
+              autoApprove: [{clientId: 'http://127.0.0.1/conformance', userId: usr_02}]
+              syncRetentionSeconds: 5
+      responses:
+        '200':
+          description: The overrides now in effect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestSettings'
+              example:
+                autoApprove: [{clientId: 'http://127.0.0.1/conformance', userId: usr_02}]
+                syncRetentionSeconds: 5
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Default'
+
+  /admin/test/checkpoints:
+    post:
+      tags: [Testing]
+      operationId: createTestCheckpoint
+      summary: Save a copy of the server's data, as a backup would
+      description: |
+        Testing profile only; `404` outside test mode. Saves the database as the server's own backup
+        does. Restoring it later goes through the same restore path an operator's restore would.
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      responses:
+        '201':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestCheckpoint'
+              example: {id: ckpt_1, createdAt: '2026-10-13T09:00:00.000Z', instanceId: inst_7f3a9c21e4b80d56}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        default:
+          $ref: '#/components/responses/Default'
+
+  /admin/test/checkpoints/{checkpointId}/restore:
+    post:
+      tags: [Testing]
+      operationId: restoreTestCheckpoint
+      summary: Restore a saved checkpoint, as a restore from backup would
+      description: |
+        Testing profile only; `404` outside test mode. Replaces the data with the checkpoint's and
+        then behaves exactly as after an operator's restore: `instanceId` changes, every earlier
+        cursor answers `410`, no earlier ETag or revision matches, and ids issued after the
+        checkpoint are never reissued. Every token stays valid only if the checkpoint holds it; the
+        caller's own admin token is carried over so the suite can continue.
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - name: checkpointId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Restored. Returns the new server identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerInfo'
+              example: {name: Dulcet Server, instanceId: inst_c04e1a7b93d2f618}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         default:
           $ref: '#/components/responses/Default'
 
@@ -4543,6 +4697,14 @@ components:
           type: [string, 'null']
           format: uri
           description: Where this server also serves OpenSubsonic `/rest`, if it does.
+        testMode:
+          type: boolean
+          default: false
+          description: |
+            True only on a server started in test mode (README "Testing"), which exposes the test
+            hooks under `/admin/test/`. Test mode is set only by a server-start setting, never through
+            the API, and a server refuses to start in test mode on data that was ever served without
+            it. A client that is not a test tool should warn when it sees `true`.
 
     ServerInfo:
       type: object
@@ -4580,12 +4742,13 @@ components:
             $ref: '#/components/schemas/Capability'
         limits:
           type: object
-          required: [maxPageSize, maxBatchSize, syncRetentionDays, mediaUrlTtlSeconds]
+          required: [maxPageSize, maxBatchSize, syncRetentionDays, mediaUrlTtlSeconds, maxTokenLifetimeDays]
           properties:
             maxPageSize: {type: integer}
             maxBatchSize: {type: integer}
             maxAlbumTracks: {type: integer, minimum: 500, description: The most tracks one album response holds before it pages.}
             syncRetentionDays: {type: integer, minimum: 30}
+            maxTokenLifetimeDays: {type: integer, minimum: 1, description: 'The longest `expiresInDays` a personal token may ask for; more answers `422`.'}
             mediaUrlTtlSeconds: {type: integer, minimum: 3600}
             artworkUrlTtlSeconds: {type: integer, minimum: 3600, description: 'How long a signed artwork URL lives and stays the same for one user, id and size.'}
         auth:
@@ -4762,7 +4925,7 @@ components:
           $ref: '#/components/schemas/UserPermissions'
         sourceIds:
           type: array
-          description: The sources this user can see.
+          description: The sources this user can see. Empty means none; the user sees no catalog.
           items: {type: string}
         settings:
           $ref: '#/components/schemas/UserSettings'
@@ -4816,6 +4979,36 @@ components:
                 clientName: {type: string}
                 verified: {type: boolean, description: False when the client's metadata could not be verified at sign-in.}
 
+    TestSettings:
+      type: object
+      description: Test-mode overrides (Testing profile). Every field is optional; absent means normal behaviour.
+      properties:
+        autoApprove:
+          type: array
+          items:
+            type: object
+            required: [clientId, userId]
+            properties:
+              clientId: {type: string}
+              userId: {type: string}
+        syncRetentionSeconds: {type: integer, minimum: 1}
+        mediaUrlTtlSeconds: {type: integer, minimum: 1}
+        artworkUrlTtlSeconds: {type: integer, minimum: 1}
+        rateLimit:
+          type: object
+          required: [requestsPerWindow, windowSeconds]
+          properties:
+            requestsPerWindow: {type: integer, minimum: 1}
+            windowSeconds: {type: integer, minimum: 1}
+
+    TestCheckpoint:
+      type: object
+      required: [id, createdAt, instanceId]
+      properties:
+        id: {type: string}
+        createdAt: {type: string, format: date-time}
+        instanceId: {type: string, description: The instance the checkpoint was taken from.}
+
     UserCreate:
       type: object
       required: [username, password]
@@ -4830,6 +5023,7 @@ components:
           $ref: '#/components/schemas/UserPermissions'
         sourceIds:
           type: array
+          description: 'Omitted: every source that exists now. An empty list: none, so the user sees no catalog.'
           items: {type: string}
 
     UserUpdate:
