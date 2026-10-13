@@ -4,12 +4,14 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
+import java.util.concurrent.TimeUnit
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,12 +37,15 @@ class AndroidEmulatorMyLibraryProofTest {
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(label)
 
-        // An album the library does not hold yet, chosen from the catalog the server serves.
+        // An album the library does not hold yet, chosen from the catalog the server serves — the
+        // first with a real name, so the shots show one (the corpus's first is a singles bucket).
         val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
             .getJSONObject("albumList2").getJSONArray("album")
         check(albums.length() > 0) { "The fixture corpus has no albums" }
-        val albumId = albums.getJSONObject(0).getString("id")
-        val albumName = albums.getJSONObject(0).getString("name")
+        val picked = (0 until albums.length()).map(albums::getJSONObject)
+            .firstOrNull { !it.getString("name").startsWith("[") } ?: albums.getJSONObject(0)
+        val albumId = picked.getString("id")
+        val albumName = picked.getString("name")
 
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
             if (!expectSplit) {
@@ -71,10 +76,11 @@ class AndroidEmulatorMyLibraryProofTest {
             // Add it from its header; the check shows at once, and the server records it.
             click("album.library")
             check(awaitSelected("album.library", 10_000)) { "The album's membership did not show after Add" }
-            val inLibrary = probe.call("getDulcetLibrary", mapOf("type" to "album"))
-                .getJSONObject("dulcetLibrary").optJSONArray("album")
-            check(inLibrary != null && (0 until inLibrary.length()).any { inLibrary.getJSONObject(it).getString("id") == albumId }) {
-                "The server's own getDulcetLibrary does not hold the album added from Browse"
+            awaitServer("the album in getDulcetLibrary after Add") {
+                probe.call("getDulcetLibrary", mapOf("type" to "album"))
+                    .getJSONObject("dulcetLibrary").optJSONArray("album")?.let { inLibrary ->
+                        (0 until inLibrary.length()).any { inLibrary.getJSONObject(it).getString("id") == albumId }
+                    } == true
             }
             shots.step("mylibrary") {
                 click("library.open")
@@ -85,10 +91,10 @@ class AndroidEmulatorMyLibraryProofTest {
             click("mylibrary.recent.album.0")
             awaitTag("album.library")
             click("album.library")
-            val after = probe.call("getDulcetLibrary", mapOf("type" to "album"))
-                .getJSONObject("dulcetLibrary").optJSONArray("album")
-            check(after == null || (0 until after.length()).none { after.getJSONObject(it).getString("id") == albumId }) {
-                "The server still holds the album after Remove from Library"
+            awaitServer("the album out of getDulcetLibrary after Remove") {
+                val after = probe.call("getDulcetLibrary", mapOf("type" to "album"))
+                    .getJSONObject("dulcetLibrary").optJSONArray("album")
+                after == null || (0 until after.length()).none { after.getJSONObject(it).getString("id") == albumId }
             }
         }
         check(shots.unreached.isEmpty()) { "The My Library tour could not reach: ${shots.unreached}" }
@@ -119,4 +125,13 @@ class AndroidEmulatorMyLibraryProofTest {
                 .any { it.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Selected) { false } }
         }
     }.isSuccess
+
+    /** The server's own answer, polled: a write's send is asynchronous, after the UI has shown it. */
+    private fun awaitServer(what: String, timeoutMillis: Long = 15_000, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        while (!runCatching(condition).getOrDefault(false)) {
+            check(System.nanoTime() < deadline) { "never on the server: $what" }
+            Thread.sleep(250)
+        }
+    }
 }

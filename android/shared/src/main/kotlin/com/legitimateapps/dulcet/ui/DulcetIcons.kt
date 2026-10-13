@@ -47,6 +47,9 @@ public object DulcetIcons {
     public val PlaylistPlay: ImageVector = icon("PlaylistPlay",
         "M19 9H2v2h17V9zm0-4H2v2h17V5zM2 15h13v-2H2v2zm15-2v6l5-3-5-3z")
     public val Add: ImageVector = icon("Add", "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")
+    /** Browse, the whole catalog: a grid of covers, distinct from Search's magnifier. */
+    public val Browse: ImageVector = icon("Browse",
+        "M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z")
     public val MoreVert: ImageVector = icon("MoreVert",
         "M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z")
     public val Edit: ImageVector = icon("Edit",

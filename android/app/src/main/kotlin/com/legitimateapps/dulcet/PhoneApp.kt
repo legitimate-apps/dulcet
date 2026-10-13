@@ -209,7 +209,7 @@ internal fun PhoneApp(
             if (split) NavigationBarItem(
                 selected = tab == PhoneTab.Browse && routes.isEmpty(),
                 onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
-                icon = { Icon(DulcetIcons.Search, null) },
+                icon = { Icon(DulcetIcons.Browse, null) },
                 label = { Text(stringResource(SharedR.string.library_browse)) },
                 modifier = Modifier.testTag("browse.open"),
             )

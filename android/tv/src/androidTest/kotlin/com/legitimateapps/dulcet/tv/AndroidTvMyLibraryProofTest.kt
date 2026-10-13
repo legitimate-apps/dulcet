@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
+import java.util.concurrent.TimeUnit
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,7 +43,6 @@ class AndroidTvMyLibraryProofTest {
         val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
             .getJSONObject("albumList2").getJSONArray("album")
         check(albums.length() > 0) { "The fixture corpus has no albums" }
-        val albumId = albums.getJSONObject(0).getString("id")
 
         val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -58,24 +58,32 @@ class AndroidTvMyLibraryProofTest {
             shots.step("mylibrary") {
                 awaitTag("browse.open") && awaitTag("mylibrary.view.albums") && shots.settle(2_000)
             }
-            // Browse is the catalog; its home's first card opens an album.
+            // Browse is the catalog; its Albums view's first card opens an album.
             shots.step("browse") {
                 select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle(2_000)
             }
             shots.step("album-add") {
-                awaitFocused("library.home.0.item.0")
+                select("library.view.albums") && awaitFocused("library.albums.item.0")
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 awaitTag("album.surface") && awaitFocused("album.play") && shots.settle()
             }
+            // The album the remote opened, named on screen, resolved to its id through the probe.
+            val title = compose.onAllNodes(hasTestTag("album.title")).fetchSemanticsNodes()
+                .flatMap { it.config.getOrElse(SemanticsProperties.Text) { emptyList() } }
+                .firstOrNull()?.text ?: error("The album screen names nothing")
+            val albumId = (0 until albums.length()).map(albums::getJSONObject)
+                .firstOrNull { it.getString("name") == title }?.getString("id")
+                ?: error("The corpus has no album titled $title")
             // RIGHT along the album's actions to its Add to Library, then the centre key.
             var rights = 0
             while (!focused("album.library") && rights < 10) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); rights += 1 }
             check(focused("album.library")) { "Add to Library is not reachable by remote from the album's Play" }
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
-            val inLibrary = probe.call("getDulcetLibrary", mapOf("type" to "album"))
-                .getJSONObject("dulcetLibrary").optJSONArray("album")
-            check(inLibrary != null && (0 until inLibrary.length()).any { inLibrary.getJSONObject(it).getString("id") == albumId }) {
-                "The server's own getDulcetLibrary does not hold the album added by remote"
+            awaitServer("the album in getDulcetLibrary after Add") {
+                probe.call("getDulcetLibrary", mapOf("type" to "album"))
+                    .getJSONObject("dulcetLibrary").optJSONArray("album")?.let { inLibrary ->
+                        (0 until inLibrary.length()).any { inLibrary.getJSONObject(it).getString("id") == albumId }
+                    } == true
             }
             shots.step("mylibrary-added") {
                 select("library.open") && awaitTag("mylibrary.recent.album.0") && shots.settle(2_000)
@@ -117,5 +125,14 @@ class AndroidTvMyLibraryProofTest {
     private fun remote(code: Int) {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code)
         compose.waitForIdle()
+    }
+
+    /** The server's own answer, polled: a write's send is asynchronous, after the UI has shown it. */
+    private fun awaitServer(what: String, timeoutMillis: Long = 15_000, condition: () -> Boolean) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        while (!runCatching(condition).getOrDefault(false)) {
+            check(System.nanoTime() < deadline) { "never on the server: $what" }
+            Thread.sleep(250)
+        }
     }
 }

@@ -461,7 +461,7 @@ internal fun TvTopBar(
         TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,
             Modifier.padding(start = 8.dp), onLibrary)
         if (browse) TvTab(stringResource(SharedR.string.library_browse), root == ROUTE_BROWSE, "browse.open", focus.browse, focus,
-            Modifier.padding(start = 8.dp), onBrowse)
+            Modifier.padding(start = 8.dp), onBrowse, icon = DulcetIcons.Browse)
         Spacer(Modifier.weight(1f))
         if (playing) {
             Button(onClick = onNowPlaying, modifier = Modifier
