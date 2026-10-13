@@ -4631,7 +4631,7 @@ components:
           description: |
             Known values: `urn:dulcet:problem:` + `invalid-request`, `unauthenticated`,
             `insufficient-scope`, `permission-denied`, `not-found`, `conflict`, `revision-mismatch`,
-            `precondition-required`, `unknown-item`, `idempotency-key-reused`, `rate-limited`,
+            `precondition-required`, `unknown-item`, `idempotency-key-reused`, `token-lifetime-too-long`, `rate-limited`,
             `cursor-expired`, `cursor-types-mismatch`, `gone`, `media-grant-expired`,
             `unsupported-media`, `not-active-device`, `device-unavailable`,
             `reauthentication-required`, `server-error`, `unavailable`. Open set; treat an unknown
@@ -4748,7 +4748,7 @@ components:
             maxBatchSize: {type: integer}
             maxAlbumTracks: {type: integer, minimum: 500, description: The most tracks one album response holds before it pages.}
             syncRetentionDays: {type: integer, minimum: 30}
-            maxTokenLifetimeDays: {type: integer, minimum: 1, description: 'The longest `expiresInDays` a personal token may ask for; more answers `422`.'}
+            maxTokenLifetimeDays: {type: integer, minimum: 1, description: 'The longest `expiresInDays` a personal token may ask for; more answers `422` with problem type `token-lifetime-too-long`.'}
             mediaUrlTtlSeconds: {type: integer, minimum: 3600}
             artworkUrlTtlSeconds: {type: integer, minimum: 3600, description: 'How long a signed artwork URL lives and stays the same for one user, id and size.'}
         auth:

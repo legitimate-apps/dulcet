@@ -726,6 +726,7 @@ is an id the server's own logs also carry.
 | `unsupported-media` | 415 | The request body's media type is not accepted. |
 | `unknown-item` | 422 | An id in the body is not in the catalog. |
 | `idempotency-key-reused` | 422 | Same key, different request. |
+| `token-lifetime-too-long` | 422 | A token asked for a lifetime past `limits.maxTokenLifetimeDays`. |
 | `precondition-required` | 428 | This write needs `If-Match`. |
 | `rate-limited` | 429 | Wait `Retry-After` seconds. |
 | `server-error` | 500 | The server failed. |
