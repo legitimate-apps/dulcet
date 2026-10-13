@@ -29,6 +29,31 @@ The TV variant also uses the remote's press and hold context menu.
 The visual test attaches compressed JPEGs of Library, Browse and an album with Add in light,
 dark and the largest Dynamic Type setting. Only app images belong in the committed proof.
 
+### Fixture setup
+
+Generate the copyright-free music with `python3 tools/seed-corpus --runtime native --output <music-directory>`.
+Run Dulcet Server with that music on loopback port 4783 and create the disposable accounts below,
+each with password `fixture-password`. Start `python3 tools/my-library-ui-proxy --port <proxy-port>
+--upstream-port 4783` for each platform being tested. These are finite fixture processes; stop them
+after the run. The proxy's control route cuts only app traffic while independent assertions keep
+reading the real server.
+
+| Platform | Disposable user | Proxy port | Scheme / UI target |
+| --- | --- | --- | --- |
+| iPhone | apple-iphone | 4786 | DulcetiOS / DulcetiOSUITests |
+| iPad | apple-ipad | 4787 | DulcetiOS / DulcetiOSUITests |
+| Mac | apple-mac | 4784 | DulcetMac / DulcetMacUITests |
+| Apple TV | apple-tv | 4788 | DulcetTV / DulcetTVUITests |
+
+The fallback case also requires disposable Navidrome on port 4785 with the same corpus and
+published canary credentials `dulcet-admin` / `dulcet-ci-canary-password`.
+Run Debug `xcodebuild test` with the selected scheme, an explicit simulator destination, no parallel
+testing, and `-only-testing:<UI target>/DulcetMyLibraryUITests`. Simulator app signing must be enabled:
+unsigned builds can reach the server but fail to save the account in Keychain. Use a local
+`CONFIGURATION_BUILD_DIR` if build products on removable storage trigger an OS access prompt.
+The Mac scheme uses its dedicated proof host; runtime automation still requires the host's normal
+XCTest authorization.
+
 ## Limits
 
 The unsigned Mac fixture uses the existing DEBUG disk credential store under a per-test UUID.

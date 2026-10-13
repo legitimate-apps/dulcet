@@ -35,12 +35,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private let navidrome = "http://127.0.0.1:4785"
 
     @MainActor
-    func testBrowseAddRemoveRelaunchAndOfflineReplay() async throws {
+    func testBrowseAddRemoveRelaunchAndOfflineReplay() throws {
         continueAfterFailure = false
         try setOffline(false)
         let album = try fixtureAlbum()
         try removeAlbum(album.id)
-        try await launch()
+        try launch()
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
         try select("browse")
@@ -56,7 +56,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         try removeAlbum(album.id)
-        app.terminate(); try await launch()
+        app.terminate(); try launch()
         try select("browse")
 #endif
         try openAlbum(album.title)
@@ -69,7 +69,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
         app.terminate()
-        try await launch(connect: false)
+        try launch(connect: false)
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Saved account paints its durable My Library without reconnecting")
         activate(albumTile(album.title))
@@ -79,7 +79,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
         // Restore online to flush the durable remove, then cut only this fixture's HTTP route.
-        app.terminate(); try await launch()
+        app.terminate(); try launch()
         try awaitServerMembership(album.id, added: false)
         try select("browse"); try openAlbum(album.title)
         try setOffline(true)
@@ -89,15 +89,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         // A direct read bypasses the offline proxy: it proves the write has not reached the server.
-        XCTAssertFalse(try serverContains(album.id))
+        let pendingBeforeRelaunch = try serverContains(album.id)
+        XCTAssertFalse(pendingBeforeRelaunch)
         app.terminate()
-        try await launch(connect: false)
+        try launch(connect: false)
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline relaunch paints the durable pending add before reconnect")
-        XCTAssertFalse(try serverContains(album.id))
+        let pendingAfterRelaunch = try serverContains(album.id)
+        XCTAssertFalse(pendingAfterRelaunch)
         app.terminate()
         try setOffline(false)
-        try await launch()
+        try launch()
         try select("library")
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
         try awaitServerMembership(album.id, added: true)
@@ -105,11 +107,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 
     @MainActor
-    func testNonDulcetServerKeepsTheOriginalLibraryNavigation() async throws {
+    func testNonDulcetServerKeepsTheOriginalLibraryNavigation() throws {
         continueAfterFailure = false
-        try await launch(server: navidrome, username: "dulcet-admin", password: "dulcet-ci-canary-password")
+        try launch(server: navidrome, username: "dulcet-admin", password: "dulcet-ci-canary-password")
         try select("library")
-        let catalog = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", ["dulcet.reader.section.albums", "dulcet.sidebar.section.albums"])).firstMatch
+        let catalog = app.buttons["dulcet.library.album"].firstMatch
         XCTAssertTrue(catalog.waitForExistence(timeout: 30), "Positive catalog control must load before asserting absence")
         XCTAssertFalse(destination("browse").exists)
         XCTAssertFalse(app.descendants(matching: .any)["dulcet.myLibrary"].exists)
@@ -117,19 +119,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 
     @MainActor
-    func testLibraryBrowseAndAlbumInLightDarkAndLargestText() async throws {
+    func testLibraryBrowseAndAlbumInLightDarkAndLargestText() throws {
         continueAfterFailure = false
         try setOffline(false)
         let album = try fixtureAlbum()
         for variant in ["light", "dark", "largest-text"] {
             app.terminate()
             try removeAlbum(album.id)
-            try await launch(variant: variant)
+            try launch(variant: variant)
             try select("library")
             XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 30))
             try capture("Library-\(variant)")
             try select("browse")
-            XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 30))
+            XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
             try capture("Browse-\(variant)")
             try openAlbum(album.title)
             let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
@@ -140,7 +142,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") async throws {
+    private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") throws {
         var launchArguments = ["-AppleInterfaceStyle", variant == "dark" ? "Dark" : "Light"]
         if variant == "largest-text" { launchArguments += ["-dulcet-debug-largest-text"] }
         if connect {
@@ -154,6 +156,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.launch()
 #if os(macOS)
         app.activate()
+#elseif os(iOS)
+        if connect {
+            let connected = server == navidrome
+                ? app.buttons["dulcet.library.album"].firstMatch
+                : destination("browse")
+            if !connected.waitForExistence(timeout: 30) {
+                let welcome = app.buttons["Connect a Server"]
+                if welcome.exists { welcome.tap() }
+                let copy = app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
+                XCTFail("Disposable account fixture failed to connect: \(copy)")
+            }
+        }
 #endif
     }
     @MainActor private func destination(_ section: String) -> XCUIElement {
@@ -164,8 +178,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
-        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
-        return sidebar.exists ? sidebar : app.tabBars.buttons[section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"].firstMatch
+        let sidebar = app.cells.containing(.any, identifier: "dulcet.sidebar.\(section)").firstMatch
+        if sidebar.exists { return sidebar }
+        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            return app.cells.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        }
+        return app.tabBars.buttons[title].firstMatch
 #endif
     }
     @MainActor private func select(_ section: String) throws {
@@ -194,8 +213,25 @@ final class DulcetMyLibraryUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "identifier == 'dulcet.library.album' AND label BEGINSWITH %@", title)).firstMatch
     }
     @MainActor private func openAlbum(_ title: String) throws {
+#if !os(tvOS)
+        let all = app.buttons["dulcet.reader.home.recentlyAdded.all"]
+        if all.exists { activate(all) }
+#endif
         let tile = albumTile(title)
+#if !os(tvOS)
+        for _ in 0..<6 {
+            if tile.exists && tile.isHittable { break }
+#if os(macOS)
+            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -450)
+#else
+            app.scrollViews.firstMatch.swipeUp()
+#endif
+        }
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
+        XCTAssertTrue(tile.isHittable, "The album must be visible before activation")
+#else
+        XCTAssertTrue(tile.waitForExistence(timeout: 30))
+#endif
         activate(tile)
     }
     @MainActor private func activate(_ element: XCUIElement) {
@@ -250,14 +286,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func removeAlbum(_ id: String) throws { _ = try rest("removeFromDulcetLibrary", params: ["albumId": id]) }
     private func serverContains(_ id: String) throws -> Bool {
-        let library = try XCTUnwrap(try rest("getDulcetLibrary")["dulcetLibrary"] as? [String: Any])
+        let response = try rest("getDulcetLibrary")
+        let library = try XCTUnwrap(response["dulcetLibrary"] as? [String: Any])
         return (library["album"] as? [[String: Any]] ?? []).contains { ($0["id"] as? String) == id }
     }
     private func awaitServerMembership(_ id: String, added: Bool) throws {
         let deadline = Date().addingTimeInterval(30)
         repeat {
             if try serverContains(id) == added { return }
-            Thread.sleep(forTimeInterval: 0.2)
+            let pulse = XCTestExpectation(description: "Membership poll interval")
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { pulse.fulfill() }
+            _ = XCTWaiter.wait(for: [pulse], timeout: 1)
         } while Date() < deadline
         XCTFail("Server did not settle membership \(id) added=\(added)")
     }
@@ -265,13 +304,46 @@ final class DulcetMyLibraryUITests: XCTestCase {
         var url = URLComponents(string: "http://127.0.0.1:4783/rest/\(method).view")!
         let query = params.merging(["u": user, "p": password, "v": "1.16.1", "c": "dulcet-ui-proof", "f": "json"]) { _, b in b }
         url.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-        let data = try Data(contentsOf: url.url!)
+        let data = try fetch(url.url!)
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let response = try XCTUnwrap(body["subsonic-response"] as? [String: Any])
         XCTAssertEqual(response["status"] as? String, "ok")
         return response
     }
+    private func fetch(_ url: URL) throws -> Data {
+        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        let completed = XCTestExpectation(description: "Loopback fixture response")
+        let result = DulcetFixtureHTTPResult()
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error {
+                result.store(.failure(error))
+            } else if let data, (response as? HTTPURLResponse)?.statusCode == 200 {
+                result.store(.success(data))
+            } else {
+                result.store(.failure(URLError(.badServerResponse)))
+            }
+            completed.fulfill()
+        }
+        task.resume()
+        defer { task.cancel() }
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 16), .completed)
+        return try XCTUnwrap(result.load()).get()
+    }
     private func setOffline(_ offline: Bool) throws {
-        _ = try Data(contentsOf: URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+        _ = try fetch(URL(string: base + "/fixture/network?offline=\(offline ? "1" : "0")")!)
+    }
+}
+
+/// URLSession replies off the test actor; the waiter pumps the test run loop.
+private final class DulcetFixtureHTTPResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<Data, Error>?
+    func store(_ result: Result<Data, Error>) {
+        lock.lock(); defer { lock.unlock() }
+        value = result
+    }
+    func load() -> Result<Data, Error>? {
+        lock.lock(); defer { lock.unlock() }
+        return value
     }
 }
