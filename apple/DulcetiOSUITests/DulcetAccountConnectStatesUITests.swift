@@ -628,7 +628,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTFail("The Connection row must be visible in the sidebar: " + app.debugDescription)
             return false
         }
-        row.tap()
+        // As with the compact tab, preserve the form when Connection is already selected.
+        // Reselecting the sidebar republishes the source snapshot over unsubmitted edits.
+        if !row.isSelected { row.tap() }
         return true
     }
 
