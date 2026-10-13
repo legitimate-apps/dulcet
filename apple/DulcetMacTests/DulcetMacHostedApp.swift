@@ -67,7 +67,7 @@ final class HostedApp {
         if toolbar { hosting.sceneBridgingOptions = [.toolbars] }
         hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         hostingView = hosting
-        window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable],
+        window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = hosting
@@ -327,6 +327,11 @@ final class HostedApp {
         _ title: String, described description: String, attempts: Int = 1,
         opening open: () async throws -> Void
     ) async throws -> [String] {
+        // A dismissed sheet can leave an inactive hosted test with no key window. A real
+        // click re-keys its window before opening a menu; restore that condition here, while
+        // preserving a key Settings window when the caller has opened one.
+        if NSApp.keyWindow == nil { window.makeKeyAndOrderFront(nil) }
+        print("DULCET MAC MENU host-key=\(window.isKeyWindow) app-active=\(NSApp.isActive) item=\(title.debugDescription)")
         final class Tracking: @unchecked Sendable {
             var offered: [String] = []
             var performed = false

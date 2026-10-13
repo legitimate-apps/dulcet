@@ -415,7 +415,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("playlists", app) {
             self.selectLibrarySection(app, "playlists")
-                && app.navigationBars["Playlists"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.section.playlists"].firstMatch.isSelected
                 && self.settle(2)
         }
         // Creation is the only playlist editor shipped on TV; its page has no rename/edit action.
@@ -482,12 +482,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.select, forDuration: 1.5)
             return deleteMenuItem.waitForExistence(timeout: 10) && self.settle(1)
         }
-        let deleteQuestion = app.alerts["Delete this playlist? It is deleted from your server too."]
+        let deleteQuestion = app.alerts["Delete Playlist"]
         step("playlist-delete-confirmation", app) {
             guard deleteMenuItem.exists,
                   self.pressUntilFocused(app, deleteMenuItem, .down, limit: 12) else { return false }
             remote.press(.select)
             return deleteQuestion.waitForExistence(timeout: 15)
+                && deleteQuestion.staticTexts["Delete this playlist? It is deleted from your server too."].exists
                 && deleteQuestion.buttons.matching(NSPredicate(format: "label == %@", "Cancel")).firstMatch.exists
                 && self.settle(1)
         }
@@ -658,6 +659,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         case "playlists": title = "Playlists"
         case "favourites": title = "Favorites"
         default: title = "Library"
+        }
+        if section == "playlists" {
+            return app.buttons["dulcet.reader.section.playlists"].firstMatch.isSelected
         }
         return app.navigationBars[title].firstMatch.waitForExistence(timeout: 20)
     }

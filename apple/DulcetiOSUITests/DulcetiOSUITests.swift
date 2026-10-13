@@ -5525,9 +5525,11 @@ final class DulcetiOSUITests: XCTestCase {
                 }
             }
 
+            var targetIsAboveWindow = false
             if element.exists {
                 let frame = element.frame
                 let midpoint = CGPoint(x: frame.midX, y: frame.midY)
+                targetIsAboveWindow = !frame.isEmpty && !frame.isInfinite && midpoint.y < window.frame.minY
                 if !frame.isEmpty && !frame.isInfinite &&
                     window.frame.contains(midpoint) && element.isHittable {
                     return swipeCount
@@ -5538,7 +5540,10 @@ final class DulcetiOSUITests: XCTestCase {
 
             // This must remain a real event rather than an isHittable-gated preflight. Tap paths
             // can still invoke the interruption monitors installed as a backstop.
-            app.swipeUp()
+            // A restored scroll position can place an existing destination above the window.
+            // Keep the same swipe budget and reachability checks while scrolling toward it.
+            if targetIsAboveWindow { app.swipeDown() }
+            else { app.swipeUp() }
             swipeCount += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }

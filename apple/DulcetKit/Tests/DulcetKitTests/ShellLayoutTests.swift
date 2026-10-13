@@ -89,6 +89,29 @@ func equalWidthActionsFallBackToAColumnInsteadOfWrappingLabels() {
     #expect(narrow.height > wide.height * 1.5, "narrow \(narrow) wide \(wide)")
 }
 
+#if os(macOS)
+@Test(.enabled(if: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15)) @MainActor
+func detailHeaderHidesTheVisibleWindowTitleWithoutClearingItsName() async throws {
+    let store = DulcetPresentationStore(
+        source: DulcetDeterministicDataSource(initialState: .albumDetailMultiDisc)
+    )
+    let album = try #require(store.snapshot.selectedAlbum)
+    let hosting = NSHostingView(rootView: DulcetRootView(store: store))
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+        styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
+    )
+    window.isReleasedWhenClosed = false
+    window.contentView = hosting
+    window.makeKeyAndOrderFront(nil)
+    defer { window.close() }
+    hosting.layoutSubtreeIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(window.title == album.title, "The title must remain associated with the window")
+    #expect(window.titleVisibility == .hidden, "At rest the album header is the only visible title")
+}
+#endif
+
 @Test
 func nowPlayingGoesToOneColumnBelowItsSideBySideWidth() {
     #expect(!DulcetNowPlayingView.usesSideBySideLayout(width: 402, accessibilitySize: false))
