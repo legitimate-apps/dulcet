@@ -7841,6 +7841,12 @@ establish the earlier process's lifecycle. Signed Keychain relaunch proofs must 
 connected without tapping Reconnect; their existing receipts evidence the earlier proof only.
 New automatic-reconnect signed evidence requires a signed rerun.
 
+**2026-10-12 — Dulcet Server retains identity through retags and refuses destructive scans.**
+§29.2 now records persistent track identity, existing-id migration, fingerprint-based moves, and
+catalog retention when the music root is unavailable or suddenly empty. §29.6 records import
+snapshots and preservation of local ratings and playlist edits. Music paths resolve inside the
+real root at scan and read time; private playlist art follows playlist visibility.
+
 **2026-10-12 — Dulcet Server: Dulcet's own OpenSubsonic server**
 The project now includes a server, built from scratch in the Gradle module `:server` (Kotlin/JVM,
 Ktor, SQLite) and specified in §29. The apps do not change their contract. They still speak only
@@ -13441,9 +13447,12 @@ OpenSubsonic server as that user.
   MusicBrainz, then name.
 - Applying is idempotent:
   - A star already on the item is kept; otherwise the remote star time is copied.
-  - Ratings are copied.
+  - Ratings are copied only when no local rating is set.
   - Play counts take the larger value.
-  - Playlists are replaced by name, keeping order and dropping songs the local library lacks.
+  - Playlists are imported as snapshots, matched by name and the `Imported from <source>` comment.
+    A same-named local playlist is left alone. A repeat import preserves an existing imported
+    playlist, including local entries and edits; it does not refresh it from the source.
+    New snapshots keep order and drop songs the local library lacks.
 - `ImportSource` is the seam for Jellyfin and Plex sources.
 
 ### 29.7 Packaging

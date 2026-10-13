@@ -91,10 +91,17 @@ class ImporterTest {
             }
             assertEquals(listOf(local.getValue("By Tags"), local.getValue("By Path")), entries, "order kept, the missing song dropped")
 
-            // Running it again changes nothing: play counts take the larger value, playlists are replaced by name.
+            // Local edits survive another import.
+            target.db.write {
+                execute("UPDATE annotation SET rating = 5 WHERE item_id = ?", local.getValue("By MBZ"))
+                execute("INSERT INTO playlist_track SELECT id,2,? FROM playlist WHERE name = 'Mix'", local.getValue("By MBZ"))
+                execute("UPDATE playlist SET changed = changed + 1 WHERE name = 'Mix'")
+            }
             NavidromeImporter(target).run(options)
             assertEquals("3", annotation(local.getValue("By Tags"), "play_count"))
             assertEquals(1, target.db.read { long("SELECT COUNT(*) FROM playlist WHERE owner_id = ?", localUser.id) })
+            assertEquals("5", annotation(local.getValue("By MBZ"), "rating"))
+            assertEquals(3L, target.db.read { long("SELECT COUNT(*) FROM playlist_track") })
             assertTrue(remoteUser.id.isNotEmpty())
         } finally {
             server.stop(0, 0)

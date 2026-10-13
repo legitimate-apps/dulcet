@@ -228,7 +228,7 @@ class Importer(private val ctx: ServerContext) {
             fun apply(type: String, id: String, starred: Long?, rating: Int, playCount: Int, played: Long?) {
                 ensureAnnotation(user, type, id)
                 if (starred != null) { execute("UPDATE annotation SET starred = COALESCE(starred, ?) WHERE user_id = ? AND item_type = ? AND item_id = ?", starred, user, type, id); report.stars++ }
-                if (rating > 0) { execute("UPDATE annotation SET rating = ? WHERE user_id = ? AND item_type = ? AND item_id = ?", rating, user, type, id); report.ratings++ }
+                if (rating > 0) { execute("UPDATE annotation SET rating = CASE WHEN rating > 0 THEN rating ELSE ? END WHERE user_id = ? AND item_type = ? AND item_id = ?", rating, user, type, id); report.ratings++ }
                 if (playCount > 0) {
                     execute("UPDATE annotation SET play_count = MAX(play_count, ?), played = MAX(COALESCE(played, 0), ?) WHERE user_id = ? AND item_type = ? AND item_id = ?", playCount, played ?: 0, user, type, id)
                     report.playCounts++
@@ -244,6 +244,8 @@ class Importer(private val ctx: ServerContext) {
             for (playlist in playlists) {
                 val comment = "Imported from ${source.name}"
                 val existing = single("SELECT id FROM playlist WHERE owner_id = ? AND name = ? AND comment = ?", user, playlist.name, comment) { it.string("id") }
+                // Import is a snapshot: keep the local copy (including edits) on subsequent runs.
+                if (existing != null) { report.playlists++; continue }
                 val id = existing ?: Ids.of("playlist", user, playlist.name, "import", now.toString())
                 if (existing == null) execute("INSERT INTO playlist(id, owner_id, name, comment, public, created, changed) VALUES (?,?,?,?,0,?,?)", id, user, playlist.name, comment, now, now)
                 execute("DELETE FROM playlist_track WHERE playlist_id = ?", id)
@@ -261,7 +263,7 @@ class Importer(private val ctx: ServerContext) {
         return report
     }
 
-    /** Path suffix keys from the longest (artist/album/file) to the file name alone, folded. */
+    /** Folded path suffix keys, from four parts down to two (folder/file). */
     private fun suffixes(path: String): List<String> {
         val parts = path.replace('\\', '/').split('/').filter(String::isNotEmpty).map(::fold)
         return (minOf(parts.size, 4) downTo 2).map { n -> parts.takeLast(n).joinToString("/") }
