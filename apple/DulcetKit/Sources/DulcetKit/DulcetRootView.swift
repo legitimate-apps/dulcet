@@ -19,6 +19,14 @@ public struct DulcetRootView: View {
         self.variant = variant
     }
 
+    @Environment(\.dynamicTypeSize) private var preferredTextSize
+    private var proofTextSize: DynamicTypeSize {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-dulcet-debug-largest-text") { return .accessibility5 }
+#endif
+        return preferredTextSize
+    }
+
     public var body: some View {
 #if os(macOS)
         Group {
@@ -47,6 +55,7 @@ public struct DulcetRootView: View {
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
+        .environment(\.dynamicTypeSize, proofTextSize)
         .environment(store)
         .frame(minWidth: 900, minHeight: 600)
         .tint(.dulcetAccent)
@@ -60,6 +69,7 @@ public struct DulcetRootView: View {
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
+        .environment(\.dynamicTypeSize, proofTextSize)
         .environment(store)
         .tint(.dulcetAccent)
         .dulcetUIProofMarkers()
@@ -80,6 +90,7 @@ public struct DulcetRootView: View {
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
+        .environment(\.dynamicTypeSize, proofTextSize)
         .environment(store)
         .tint(.dulcetAccent)
 #endif
@@ -97,6 +108,7 @@ private struct DulcetLibrarySessionChrome: ViewModifier {
             .dulcetLibraryNotices(store: store)
             .dulcetSignOutOffer(store: store)
             .dulcetPlaylistSheets(store: store)
+            .onChange(of: store.librarySession?.readerGeneration) { _, _ in store.resetReaderNavigation() }
             // Foreground is "not in the background": an inactive app -- another window in
             // front, a system sheet -- still shows its library and keeps it current (§16.14).
             .onAppear { store.librarySession?.setForeground(scenePhase != .background) }
@@ -295,10 +307,10 @@ private struct DulcetTVSectionNavigation: View {
     private var readerPath: Binding<[DulcetReaderRoute]> {
         Binding(
             get: {
-                store.selectedDestination == .library && store.readerOwnsLibrary ? store.readerPath : []
+                store.isReaderDestination && store.readerOwnsLibrary ? store.readerPath : []
             },
             set: { path in
-                guard store.selectedDestination == .library, store.readerOwnsLibrary else { return }
+                guard store.isReaderDestination, store.readerOwnsLibrary else { return }
                 store.popReader(to: path)
             }
         )
@@ -306,7 +318,7 @@ private struct DulcetTVSectionNavigation: View {
 
     private func sectionBar(selected: DulcetSidebarDestination) -> some View {
         HStack(spacing: DulcetSpacing.xs) {
-            ForEach(DulcetSidebarDestination.allCases) { destination in
+            ForEach(store.destinations(DulcetSidebarDestination.allCases.filter { $0 != .browse })) { destination in
                 Button {
                     arrivalFocus.sectionChosenOnBar(destination)
                     store.selectDestination(destination)
@@ -339,6 +351,7 @@ private struct DulcetTVSectionNavigation: View {
     private static func symbolName(for destination: DulcetSidebarDestination) -> String {
         switch destination {
         case .library: "rectangle.grid.2x2"
+        case .browse: "globe"
         case .search: "magnifyingglass"
         case .nowPlaying: "waveform"
         case .settings: "server.rack"
@@ -381,7 +394,7 @@ private struct DulcetIOSShell: View {
                 ZStack {
                     Color.dulcetWindow.ignoresSafeArea()
                     NavigationSplitView {
-                        DulcetSidebar(store: store, destinations: Self.places)
+                        DulcetSidebar(store: store, destinations: store.destinations(Self.places))
                     } detail: {
                         DulcetDestinationStack(
                             store: store,
@@ -422,7 +435,7 @@ private struct DulcetIOSShell: View {
 
     private func absorbNowPlayingDestination() {
         let destination = store.selectedDestination
-        if Self.places.contains(destination) {
+        if store.destinations(Self.places).contains(destination) {
             lastPlace = destination
         } else if destination == .nowPlaying {
             // Back to the place the person was, as they left it: an album that was open stays
@@ -515,7 +528,7 @@ private struct DulcetCompactShell: View {
 
     var body: some View {
         TabView(selection: tabSelection) {
-            ForEach(DulcetIOSShell.places) { destination in
+            ForEach(store.destinations(DulcetIOSShell.places)) { destination in
                 DulcetDestinationStack(
                     store: store,
                     tab: destination,
@@ -535,7 +548,7 @@ private struct DulcetCompactShell: View {
         Binding(
             get: {
                 let destination = store.selectedDestination
-                return DulcetIOSShell.places.contains(destination) ? destination : lastTab
+                return store.destinations(DulcetIOSShell.places).contains(destination) ? destination : lastTab
             },
             set: { destination in
                 lastTab = destination
@@ -575,7 +588,7 @@ struct DulcetDestinationStack: View {
     private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
 
     var body: some View {
-        if destination == .library, store.readerOwnsLibrary {
+        if (destination == .library || destination == .browse), store.readerOwnsLibrary {
             readerStack
         } else {
             snapshotStack
@@ -586,7 +599,7 @@ struct DulcetDestinationStack: View {
     /// Each screen holds its own window, so a hidden tab keeps its rows without a snapshot.
     private var readerStack: some View {
         NavigationStack(path: readerPath) {
-            DulcetReaderLibraryRoot()
+            DulcetReaderCollectionRoot(destination: destination)
                 .allowsHitTesting(showing)
                 .modifier(bar(drawsNotices: showing && store.readerPath.isEmpty))
                 .navigationDestination(for: DulcetReaderRoute.self) { route in
@@ -600,10 +613,10 @@ struct DulcetDestinationStack: View {
 
     private var readerPath: Binding<[DulcetReaderRoute]> {
         Binding(
-            get: { store.readerPath },
+            get: { showing ? store.readerPath : [] },
             set: { path in
                 // The back button and the edge swipe pop; pushes go through the store.
-                guard store.selectedDestination == .library else { return }
+                guard store.selectedDestination == destination else { return }
                 store.popReader(to: path)
             }
         )
@@ -797,6 +810,7 @@ private struct DulcetLibraryRouteView: View {
 private enum DulcetSidebarSelection: Hashable {
     case destination(DulcetSidebarDestination)
     case section(DulcetLibrarySection)
+    case myLibrarySection(DulcetMyLibrarySection)
 }
 
 private struct DulcetSidebar: View {
@@ -812,6 +826,9 @@ private struct DulcetSidebar: View {
                     if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.library, symbol: DulcetSidebarDestination.library.symbolName, destination: .library)
                     }
+                    if store.myLibraryAvailable, destinations.contains(.library) {
+                        sidebarRow(DulcetStrings.browseSection, symbol: "globe", destination: .browse)
+                    }
                     if destinations.contains(.search) {
                         sidebarRow(DulcetStrings.search, symbol: DulcetSidebarDestination.search.symbolName, destination: .search)
                     }
@@ -823,7 +840,18 @@ private struct DulcetSidebar: View {
                         .textCase(.uppercase)
                 }
 
-                if store.readerOwnsLibrary, destinations.contains(.library) {
+                if store.myLibraryAvailable, destinations.contains(.library) {
+                    Section {
+                        ForEach(DulcetMyLibrarySection.allCases) { section in
+                            Label(section.title, systemImage: "music.note.list")
+                                .tag(DulcetSidebarSelection.myLibrarySection(section))
+                                .accessibilityIdentifier("dulcet.sidebar.myLibrary.\(section.rawValue)")
+                        }
+                    } header: {
+                        Text(DulcetStrings.library)
+                    }
+                }
+                if store.readerOwnsLibrary, destinations.contains(.library), !store.myLibraryAvailable || store.selectedDestination == .browse {
                     // The library's own places, as a music app's sidebar lists them.
                     Section {
                         ForEach(DulcetLibrarySection.allCases.filter { $0 != .home }) { section in
@@ -833,7 +861,7 @@ private struct DulcetSidebar: View {
                                 .accessibilityIdentifier("dulcet.sidebar.section.\(section.rawValue)")
                         }
                     } header: {
-                        Text(DulcetStrings.library)
+                        Text(store.myLibraryAvailable ? DulcetStrings.browseSection : DulcetStrings.library)
                             .textCase(.uppercase)
                     }
                 }
@@ -876,7 +904,9 @@ private struct DulcetSidebar: View {
     private var selection: Binding<DulcetSidebarSelection?> {
         Binding(
             get: {
-                if store.readerOwnsLibrary, store.selectedDestination == .library,
+                if store.myLibraryAvailable, store.selectedDestination == .library,
+                   store.myLibrarySection != .recent { return .myLibrarySection(store.myLibrarySection) }
+                if store.readerOwnsLibrary, store.selectedDestination == (store.myLibraryAvailable ? .browse : .library),
                    store.librarySection != .home {
                     return .section(store.librarySection)
                 }
@@ -890,7 +920,7 @@ private struct DulcetSidebar: View {
                     // Library, chosen from elsewhere, comes back as it was left. Chosen while
                     // showing a page, it returns to that section's root; chosen at a section's
                     // root, it goes Home.
-                    if destination == .library, store.readerOwnsLibrary, store.selectedDestination == .library,
+                    if destination == (store.myLibraryAvailable ? .browse : .library), store.readerOwnsLibrary, store.selectedDestination == destination,
                        store.readerPath.isEmpty, store.librarySection != .home {
                         store.selectLibrarySection(.home)
                     } else {
@@ -898,6 +928,8 @@ private struct DulcetSidebar: View {
                     }
                 case let .section(section):
                     store.selectLibrarySection(section)
+                case let .myLibrarySection(section):
+                    store.selectMyLibrarySection(section)
                 }
             }
         )
@@ -989,15 +1021,15 @@ private struct DulcetStateSurface: View {
     private var snapshot: DulcetSnapshot { snapshotOverride ?? store.snapshot }
 
     var body: some View {
-        switch snapshot.selectedDestination {
+        switch snapshotOverride == nil ? store.selectedDestination : snapshot.selectedDestination {
         case .settings:
             DulcetAccountConnectionView(
                 store: store,
                 allowsProgrammaticFocus: allowsProgrammaticFocus
             )
-        case .library:
+        case .library, .browse:
             if store.readerOwnsLibrary {
-                DulcetReaderLibraryRoot()
+                DulcetReaderCollectionRoot(destination: store.selectedDestination)
             } else {
                 librarySurface
             }
@@ -1151,6 +1183,7 @@ extension DulcetSidebarDestination {
     var symbolName: String {
         switch self {
         case .library: "rectangle.grid.2x2"
+        case .browse: "globe"
         case .search: "magnifyingglass"
         case .nowPlaying: "waveform"
         case .settings: "server.rack"
@@ -1160,6 +1193,7 @@ extension DulcetSidebarDestination {
     var windowTitle: String {
         switch self {
         case .library: DulcetStrings.library
+        case .browse: DulcetStrings.browseSection
         case .search: DulcetStrings.search
         case .nowPlaying: DulcetStrings.nowPlaying
         case .settings: DulcetStrings.settings

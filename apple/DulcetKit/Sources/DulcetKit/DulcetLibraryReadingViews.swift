@@ -780,6 +780,9 @@ struct DulcetReaderTrackRow: View {
                     }
                     .dulcetRowButtonStyle()
                     .accessibilityIdentifier("dulcet.reader.track.unavailable")
+                    .contextMenu {
+                        if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
+                    }
                 } else {
                     row(track)
                         .accessibilityIdentifier("dulcet.reader.track")
@@ -795,6 +798,9 @@ struct DulcetReaderTrackRow: View {
                 // The server never gave this track's length: listed with the list's chrome, and
                 // never handed to the player, so no play action and no bright title.
                 unplayableRow
+                    .contextMenu {
+                        if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
+                    }
             }
             if let target = item.favouriteTarget {
                 DulcetFavouriteButton(target: target, published: item.isFavourite, title: item.displayTitle)
@@ -996,6 +1002,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
             }
         }
         if let target = item.favouriteTarget {
+            DulcetMyLibraryButton(target: target, menu: true)
             DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
         }
         if item.kind == .album, let artistID = item.artistID {
@@ -1719,6 +1726,7 @@ struct DulcetReaderTrackListPage: View {
     @ViewBuilder
     private func favouriteButton(_ item: DulcetReaderItem?, window: DulcetLibraryWindow) -> some View {
         if let item, let target = item.favouriteTarget {
+            DulcetMyLibraryButton(target: target)
             DulcetFavouriteButton(
                 target: target,
                 published: item.isFavourite,
@@ -1805,6 +1813,7 @@ struct DulcetReaderArtistPage: View {
                             }
                             Spacer(minLength: 0)
                             if let target = header.favouriteTarget {
+                                DulcetMyLibraryButton(target: target)
                                 DulcetFavouriteButton(
                                     target: target,
                                     published: header.isFavourite,

@@ -818,7 +818,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     form: currentSnapshot.accountForm,
                     status: currentSnapshot.accountConnection
                 )
-            case .library:
+            case .library, .browse:
                 cancelSearchRequest()
                 openLibrary(reason: .entered)
             case .search:
@@ -1092,7 +1092,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 openConnectedReader(account: account, request: request)
                 publishInPlace(status: .connected(account), form: request)
                 switch currentSnapshot.selectedDestination {
-                case .library:
+                case .library, .browse:
                     openLibrary(reason: .connected)
                 case .search:
                     openSearch()
