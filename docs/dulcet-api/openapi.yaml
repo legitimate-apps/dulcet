@@ -2139,14 +2139,19 @@ paths:
       tags: [Plays]
       operationId: clearNowPlaying
       summary: Stop reporting now playing for a device
+      description: |
+        The device is named by the `deviceId` query parameter or, when that is absent, by the
+        `Dulcet-Device-Id` header. With neither, the server answers `400`.
       security:
         - oauth2: [plays:write]
         - personalToken: [plays:write]
       parameters:
         - name: deviceId
           in: query
-          required: true
+          required: false
+          description: The device to clear; defaults to the `Dulcet-Device-Id` header.
           schema: {type: string}
+        - $ref: '#/components/parameters/DeviceIdHeader'
       responses:
         '204':
           description: Cleared.
