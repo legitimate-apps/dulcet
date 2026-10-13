@@ -46,21 +46,25 @@ Each check has a stable id (`DA-<area>-<n>`) so reports and claims can cite it.
 | Area | What is proven |
 |---|---|
 | Discovery | `/.well-known/dulcet` shape; base URL is `/dulcet/v1`; capabilities without a token show only public data, with a token add `permissions`; `apiVersion` matches `1.x`. |
-| OAuth | Code flow with S256 PKCE succeeds; `plain` PKCE, a wrong verifier, a reused code and a mismatched redirect URI are refused; refresh rotates; a replayed refresh token revokes the grant; revocation stops the access token and its signed media URLs at once; a client id metadata document is fetched and its name shown. |
-| Tokens | Personal tokens carry only requested scopes; a scope above the user's role is refused; the secret is shown once; prefixes are correct. |
+| OAuth | Code flow with S256 PKCE succeeds; `plain` PKCE, a wrong verifier, a reused code and a mismatched redirect URI are refused; the response carries `iss` and metadata advertises it; refresh rotates; the old refresh token presented within 60 seconds returns the same new pair, and after the window revokes the grant; revocation stops the access token and its signed media URLs at once, while refreshing the access token does not. |
+| Client identity | A client id metadata document is fetched and its name shown; a document behind a redirect, on a private address, over 64 KiB or slower than 5 seconds is not trusted; with the metadata host unreachable the client is shown as unverified, may use only a loopback or reverse-DNS scheme redirect, and is never granted `admin` or `account`. |
+| Tokens | Personal tokens carry only requested scopes; a scope above the calling token's scopes or the user's role is refused; a token and a webhook minted under an OAuth grant carry `parentId` and stop working when that grant is revoked; a lifetime above the server maximum is refused; the secret is shown once; prefixes are correct. |
+| Delete scope | Every removal (delete playlist, remove entry, replace that drops entries, remove from My Library, delete play) answers `403 insufficient-scope` with `user:write` alone; a batch `libraryRemove` without `user:delete` fails only that op; account deletion needs `account`, `user:delete` and a recent sign-in (`reauthentication-required` otherwise). |
 | Header-only | A token in any query parameter is refused (never accepted, never echoed). |
 | Scopes | Every operation is called once with a token lacking its scope and must answer `403 insufficient-scope` with `requiredScopes`. |
 | Catalog | Lists page to completion with no duplicates and no gaps against the known corpus; `nextCursor` null only at the end; `ids` batch fetch; every `sort` value orders correctly with ties broken stably; `scope=library` follows the My Library rule. |
-| Ids | Ids are unique across types; a retag (title change) keeps the track id; a file move keeps it; a deleted id is not reused; a merged album answers `308` to the survivor. |
-| Pagination under change | Adding and deleting albums in the middle of a walk never makes the walk skip an album that existed throughout (the failure OpenSubsonic offset paging shows). |
-| ETags | `If-None-Match` gives `304`; a change gives a new ETag; `If-Match` mismatch gives `412` with `currentRevision`; replacing playlist items without `If-Match` gives `428`. |
+| Ids | Ids are unique across types; a retag (title change) keeps the track id; a file move keeps it; a deleted id is not reused, also after a restore; a merged album answers `308` to the survivor; a deleted one `410`, a split one `410` with every successor in `replacedBy`; an id never issued `404`. |
+| Pagination under change | Adding and deleting albums in the middle of a walk never makes the walk skip an album that existed throughout. |
+| ETags | `If-None-Match` gives `304`; a catalog change gives a new ETag; favouriting an album changes its ETag for that user only, and not its `revision`; ETag responses carry `Cache-Control: private` and `Vary: Authorization`; on playlists and the queue the ETag equals the quoted revision; `If-Match` mismatch gives `412` with `current`; replacing playlist items or the queue without `If-Match` gives `428`; after a restore, no earlier ETag answers `304`. |
+| Unknown input | Unknown query parameters and unknown body fields are ignored, not rejected; every write returns the resulting representation. |
 | Idempotency | A repeated `POST` with the same key returns the first response and creates one resource; the same key with a different body gives `422`. |
-| Artwork | Image bytes with a real image media type; the artwork id changes when the art changes; `immutable` caching. |
+| Artwork | Image bytes with a real image media type; the artwork id changes when the art changes; `private` `immutable` caching; a signed artwork URL is identical across two requests within `artworkUrlTtlSeconds`. |
 | Playback | A direct plan's URL serves the original bytes (checksum) with `Range` 206 and 416; expired and tampered grants give `403 media-grant-expired`; a revoked token kills its grants; the grant never appears in any response other than the plan; a decision records no play. |
-| Item state | Favourite, rating and My Library writes are idempotent and keep first timestamps; removal of a missing or unknown id succeeds; `POST /me/batch` reports per-operation results. |
+| Item state | Favourite, rating and My Library writes are idempotent and keep first timestamps; removal of a missing or unknown id succeeds; `POST /me/batch` reports per-operation results; a write with a `Dulcet-Action-Time` older than one already applied answers `applied: false` and changes nothing. |
 | My Library | All `dulcetLibrary` semantics: per-item membership, no cascade, whole-library counts, newest-first order with id tie-break, isolation between users. |
-| Plays | A play is counted once per id however many times it is submitted; an unknown track gives `unknownTrack`; now playing changes no count and expires after its TTL. |
+| Plays | A play is counted once per id however many times it is submitted; a deleted play does not come back when resubmitted; an unknown track gives `unknownTrack`; now playing changes no count, expires after its TTL, and is not shown to other users until they share. |
 | Playlists | Entry ids allow duplicates to be moved and removed exactly; every edit changes `revision`; a walk across an edit answers `409`; non-owners see `readOnly`. |
+| Account | `PATCH /me` changes the display name and settings; a password change revokes other tokens unless kept; account deletion removes the user's data and tokens. |
 | Export | The export parses as JSON Lines and holds exactly the user's favourites, ratings, library, playlists and plays, and no other user's. |
 | Errors | Every non-2xx body is `application/problem+json` with a known `type` for its status. |
 | CORS | Preflight allows the documented request headers and exposes the documented response headers; no API response sets a cookie. |
@@ -73,12 +77,25 @@ Each check has a stable id (`DA-<area>-<n>`) so reports and claims can cite it.
 - `start=snapshot` delivers every visible entity of the corpus exactly as the catalog endpoints do,
   then the `changes` phase; changes made **during** the snapshot (adds, deletes, favourites) all
   arrive; nothing is missing at the end, compared against a fresh catalog walk.
-- Every kind of change appears: catalog add, retag, delete (tombstone), merge (`replacedBy`), each
-  item-state field, playlist edit, play, queue save.
+- Every kind of change appears: catalog add, retag, delete (`reason: deleted`), merge and split
+  (`reason: merged`, `replacedBy` list), each item-state field, playlist edit, play, queue change.
+- **Merges carry state.** A user who favourited, rated, played and collected both albums of a
+  merge, and holds them in a playlist and the queue, sees the survivor's `itemState` with the
+  documented merge rules, the playlist and queue upserted with entry ids kept, and plays pointing at
+  the survivor, all before the tombstone in feed order.
+- **Visibility.** Taking a source away from a user produces `reason: hidden` tombstones for its
+  entities (or `410`); giving it back produces upserts.
+- **Replay.** Sending the same cursor twice returns the same changes or their later state; a
+  client applying both reaches the same state.
+- **Types.** A cursor sent with a different `types` value gives `400 cursor-types-mismatch`; a type
+  the token cannot read gives `403`; empty pages with `hasMore: true` are followed to the end.
 - A `Dulcet-Sync-Cursor` from any read, followed by the feed, reproduces the current state.
-- User isolation: user A never sees user B's state, nor a library A cannot access.
-- A cursor older than retention (shortened through the adapter) and a cursor from before a database
-  restore both give `410 cursor-expired`.
+- User isolation: user A never sees user B's state, nor a source A cannot access.
+- A cursor older than retention (shortened through the adapter) gives `410 cursor-expired`.
+- **A real restore.** The adapter backs up the server's data, the suite makes changes and new
+  items, and the adapter restores the backup. Then: `instanceId` changed; every earlier cursor
+  gives `410`; no earlier ETag answers `304`; no earlier revision passes `If-Match`; no id issued
+  after the backup names a different item.
 - Atomicity: a scan's changes become visible in the feed and the catalog together, never one
   without the other.
 
@@ -87,16 +104,29 @@ Each check has a stable id (`DA-<area>-<n>`) so reports and claims can cite it.
 - **Device:** codes, `authorization_pending`, `slow_down`, expiry, approval and denial.
 - **Transcoding:** a profile without the source codec gets a transcode in a requested target; a
   bitrate limit is honoured (bits per second); `lengthExact: false` plans really are estimates;
-  `startMs` starts at the right time (within one frame).
+  `offsetMs` starts at the right time (within one frame) and `streamDurationMs` matches the bytes.
 - **Lyrics:** sidecar, embedded and absent cases; synced times with offset applied; languages.
-- **Queues:** per-device save and read, `If-Match` conflict, listing order.
-- **Events:** each event type fires for its trigger; `Last-Event-ID` resumes; a revoked token gets
+- **Queue:** one queue per user seen identically by two devices; a playback report from a
+  non-active device gives `409 not-active-device` with the queue; position reports do not change
+  `revision`; a stale `If-Match` gives `412` with `current`; a transfer moves the active device and
+  the old device gets a `queue` event; two simultaneous transfers leave exactly one active device
+  and both devices agree which; an automatic transfer with a stale `If-Match` gets `412`; a command
+  reaches the active device's stream once and answers `202`, and `409 device-unavailable` with no
+  active device; an offline device reconnecting with a stale base revision gets `412` and the
+  server state is unchanged.
+- **Events:** each event type fires for its trigger, and its `data` validates against its schema; `Last-Event-ID` resumes; a revoked token gets
   `revoked` and a closed stream; heartbeats arrive in time.
 - **Webhooks:** signature verifies with the shown secret; retries on 500 with backoff; disable after
-  persistent failure; private-network targets refused by default.
-- **MCP:** initialization and tool listing per scope (no write tools without `user:write`); every
-  tool's result matches the equivalent API call; no tool can delete, administer or read another
-  user's data; injected instructions in a track title come back as plain data.
+  persistent failure; private-network targets refused by default, including a public name that
+  resolves to a private address and a target that redirects; the body validates against the
+  contract's `webhooks` schema.
+- **MCP:** initialization and tool listing per scope (no write tools without `user:write`, no
+  removal tools without `user:delete`); `tools/list` equals `mcp-tools.json` filtered by scope;
+  every tool's input and output validate against those schemas; every `user:delete` tool carries
+  `destructiveHint: true`; every tool's result matches the equivalent API call; no tool can
+  administer or read another user's data; requests with a foreign `Origin` are refused; a session
+  cannot be used with another token; injected instructions in a track title come back as plain
+  data.
 - **Admin:** user create, update, delete; role removal revokes dependent tokens; scans report
   progress and counts.
 
@@ -113,7 +143,10 @@ what the client did.
 | Header-only | Never send a token in a URL; never send `Authorization` across origins after a redirect; refuse an HTTPS-to-HTTP redirect. |
 | Forward compatibility | Keep working when every response carries unknown fields, unknown enum values, unknown change and event types, and unknown problem types. |
 | Paging | Follow cursors to the end; not stop on a short or empty page with a cursor. |
-| Sync | Store and resume the cursor; react to a `changes` event; restart cleanly on `410`. |
+| Sync | Store and resume the cursor; react to a `changes` event; restart cleanly on `410`, keeping unsent writes; follow `replacedBy` lists; drop `hidden` entities. |
+| Auth | Reject an authorization response whose `iss` differs; survive a lost refresh response by retrying within the window. |
+| Queue | Stop audio on `not-active-device` or a `queue` event naming another device; never retry an automatic write after `412`; send `If-Match` with the base revision when reconnecting from offline. |
+| Offline writes | Send `Dulcet-Action-Time` on writes queued while offline. |
 | Retries | Reuse the `Idempotency-Key` and the play id on retry; honour `Retry-After`. |
 | Media | Request a new plan when a grant expires mid-session; not treat an estimated length as exact. |
 | Plays | Submit only plays past its threshold; never submit for a URL it only resolved. |
