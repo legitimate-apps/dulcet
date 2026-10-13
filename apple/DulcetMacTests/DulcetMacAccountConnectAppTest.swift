@@ -817,16 +817,23 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             credentialStore: offlineCredentials,
             libraryBrowser: reopenedLibrary
         ))
+        // A saved account reconnects on launch; the unreachable endpoint fails that one attempt.
+        XCTAssertEqual(reopenedStore.snapshot.state, .accountConnecting)
+        XCTAssertEqual(offlineConnector.requests.map(\.serverURL), [unreachableURL.absoluteString])
+        offlineConnector.complete(.failed(DulcetAccountFailurePresentation(
+            kind: .transportUnreachable, serverName: "Music", title: "Offline", message: "Offline",
+            recovery: "Reconnect", automaticRetryFloor: .zero
+        )))
         XCTAssertEqual(reopenedStore.snapshot.state, .accountSavedDisconnected)
         reopenedStore.selectDestination(.library)
 
         XCTAssertEqual(reopenedStore.snapshot.state, .libraryBrowse)
         XCTAssertFalse(reopenedStore.snapshot.accountConnected)
-        XCTAssertTrue(offlineConnector.requests.isEmpty)
+        XCTAssertEqual(offlineConnector.requests.count, 1)
         XCTAssertEqual(reopenedLibrary.startedSyncCount, 0)
         XCTAssertEqual(reopenedLibrary.completedSyncGenerations, [])
         XCTAssertEqual(reopenedLibrary.displayedCommittedGenerations, [2])
-        // A saved-account reopen reads the committed library only: no server is contacted, so
+        // The failed reconnect starts no sync: the reopen reads the committed library only, so
         // it publishes once and there is no preview at all.
         XCTAssertEqual(reopenedLibrary.publicationOrder, ["committed"])
         XCTAssertEqual(reopenedLibrary.deliveredPreviewCount, 0)
@@ -836,7 +843,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             "LIBRARY SYNC APP INTEGRATION"
                 + " sync-generations=1,2 displayed-generations=1,2"
                 + " scheduled-refresh-fired=true offline-endpoint=unreachable"
-                + " offline-sync-starts=0 offline-displayed-generation=2"
+                + " offline-reconnect-attempts=1 offline-sync-starts=0 offline-displayed-generation=2"
         )
     }
 
