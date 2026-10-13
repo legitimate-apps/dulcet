@@ -53,6 +53,7 @@
 #   DULCET_DESIGN_TOUR_VARIANT       optional exact iOS variant label for an edit-and-reshoot loop
 #   DULCET_DESIGN_TOUR_SKIP_VARIANTS space-separated iOS labels whose verified shots are preserved
 #   DULCET_DESIGN_TOUR_PHASE         all (default), account or connected; account scopes all platforms
+#   DULCET_DESIGN_TOUR_SCREENS       optional space-separated capture names; all state proofs still run
 #   DULCET_DESIGN_TOUR_PORT          server port (default 4861)
 #
 # KNOWN LIMITS
@@ -137,6 +138,7 @@ export TEST_RUNNER_DULCET_DESIGN_TOUR_BAD_TLS_URL="$TLS_URL" DULCET_DESIGN_TOUR_
 
 # The published fixture account of the disposable server; never a real credential.
 export TEST_RUNNER_DULCET_DESIGN_TOUR_PHASE="$PHASE" DULCET_DESIGN_TOUR_PHASE="$PHASE"
+export TEST_RUNNER_DULCET_DESIGN_TOUR_SCREENS="${DULCET_DESIGN_TOUR_SCREENS:-}"
 export TEST_RUNNER_DULCET_DESIGN_TOUR=1
 export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL="$SERVER_URL"
 export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
@@ -271,6 +273,14 @@ run_tour() { # label xctestrun only-testing destination...
   done
   note "$label: $count shots, $(ls "$shots" | grep -c UNREACHED || true) unreached, in $(( $(date +%s) - t0 ))s"
   [[ $count -gt 0 ]] || FAILED=1
+  if [[ -n "${DULCET_DESIGN_TOUR_SCREENS:-}" ]]; then
+    local requested_screens
+    read -r -a requested_screens <<< "$DULCET_DESIGN_TOUR_SCREENS"
+    if [[ $count -ne ${#requested_screens[@]} ]]; then
+      note "$label: expected ${#requested_screens[@]} selected captures, got $count"
+      FAILED=1
+    fi
+  fi
   # A stopped diagnostic can still be finishing an owned copy into the bundle. Retry that
   # short cleanup race after exporting the JPEGs instead of aborting the remaining variants.
   for _ in {1..5}; do

@@ -179,7 +179,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
     @MainActor
     private func step(_ screen: String, _ app: XCUIApplication, _ reach: () -> Bool) {
-        let reached = reach()
+        var reached = reach()
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        if reached, requested.contains(screen),
+           ["connection-filled", "connection-connected"].contains(screen) {
+            // Selected account photos use consistent first-field focus after remote entry,
+            // keeping the address legible without lifting the selected tab icon.
+            reached = focusByRemote(app.textFields["dulcet.account-connect.server-address"].firstMatch, in: app)
+        }
         _ = settle(0.6)
         shoot(reached ? screen : screen + "-UNREACHED")
         if !reached {
@@ -194,6 +202,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func shoot(_ screen: String) {
         shotNumber += 1
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
         let name = String(format: "%02d-%@", shotNumber, screen)
         let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)
@@ -710,8 +721,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.element(labelPrefix: "Check the server address", in: app).waitForExistence(timeout: 15)
         }
         step("connection-error-security", app) {
-            self.setLocalHTTPByRemote(app, on: false)
-                && self.typeByRemote(server.url, into: address, in: app)
+            self.typeByRemote(server.url, into: address, in: app)
+                && self.setLocalHTTPByRemote(app, on: false)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
                 && self.element(labelPrefix: "Local HTTP is not allowed", in: app).waitForExistence(timeout: 15)
         }

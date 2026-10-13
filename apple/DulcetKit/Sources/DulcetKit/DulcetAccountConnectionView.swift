@@ -46,6 +46,11 @@ struct DulcetAccountConnectionView: View {
         return false
     }
 
+    private var showsLocalHTTPConsent: Bool {
+        store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().hasPrefix("http://")
+    }
+
     private var savedServerName: String? {
         if case let .saved(serverName) = store.snapshot.accountConnection { return serverName }
         return nil
@@ -76,6 +81,7 @@ struct DulcetAccountConnectionView: View {
         .scrollDismissesKeyboard(.interactively)
 #endif
 #if os(macOS)
+        .toolbarTitleDisplayMode(.inline)
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
         }
@@ -160,33 +166,28 @@ struct DulcetAccountConnectionView: View {
             .focusScope(accountFocusScope)
         }
 #elseif os(macOS)
-        // Grouped Form draws its fields in a graphics layer on macOS. Native GroupBox and
-        // NSTextField controls keep intrinsic field metrics and keyboard traversal observable.
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        GeometryReader { geometry in
+            Form {
                 if store.snapshot.accountRemoval == .removing {
-                    accountRemovalProgress
+                    Section { accountRemovalProgress }
                 } else {
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 16) { connectionForm }
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } label: {
-                        Text(DulcetStrings.accountDetails)
-                            .accessibilityIdentifier("dulcet.account-connect.title")
+                    Section {
+                        connectionForm
+                    } footer: {
+                        Text(DulcetStrings.accountConnectBody)
                     }
-                    Text(DulcetStrings.accountConnectBody)
-                        .font(.callout)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                    statusPanel
-                    DulcetStreamingQualitySection(store: store)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(DulcetStrings.accountDetails)
+                    .accessibilityIdentifier("dulcet.account-connect.title")
+                    Section { statusPanel }
+                    DulcetStreamingQualitySection(store: store, inForm: true)
                 }
             }
-            .padding(24)
-            .frame(maxWidth: 640)
-            .frame(maxWidth: .infinity)
+            .formStyle(.grouped)
+            .contentMargins(.horizontal, max(20, (geometry.size.width - 720) / 2), for: .scrollContent)
+            .padding(.top, 24)
         }
-        .safeAreaPadding(.top, 48)
+
 #else
         ScrollViewReader { proxy in
             Form {
@@ -240,34 +241,36 @@ struct DulcetAccountConnectionView: View {
     private var connectionForm: some View {
         Group {
             credentialRow(DulcetStrings.serverAddress) {
-                TextField(DulcetStrings.serverAddressPlaceholder, text: $store.accountServerURL)
+                TextField("", text: $store.accountServerURL, prompt: Text(DulcetStrings.serverAddressPlaceholder))
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityLabel(DulcetStrings.serverAddress)
                     .accessibilityIdentifier("dulcet.account-connect.server-address")
                     .focused($focusedControl, equals: .serverAddress)
             }
             credentialRow(DulcetStrings.username) {
-                TextField(DulcetStrings.username, text: $store.accountUsername)
+                TextField("", text: $store.accountUsername)
                     .dulcetCredentialInput(.username)
                     .accessibilityLabel(DulcetStrings.username)
                     .accessibilityIdentifier("dulcet.account-connect.username")
                     .focused($focusedControl, equals: .username)
             }
             credentialRow(DulcetStrings.password) {
-                SecureField(DulcetStrings.password, text: $store.accountPassword)
+                SecureField("", text: $store.accountPassword)
                     .dulcetCredentialInput(.password)
                     .accessibilityLabel(DulcetStrings.password)
                     .accessibilityIdentifier("dulcet.account-connect.password")
                     .focused($focusedControl, equals: .password)
             }
-            Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
-                .focused($focusedControl, equals: .allowLocalHTTP)
-            Text(DulcetStrings.allowLocalHTTPHint)
-                .font(.footnote)
-                .dulcetForeground(.secondaryTextOnControl)
-                .fixedSize(horizontal: false, vertical: true)
+            if showsLocalHTTPConsent {
+                Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
+                    .focused($focusedControl, equals: .allowLocalHTTP)
+                Text(DulcetStrings.allowLocalHTTPHint)
+                    .font(.footnote)
+                    .dulcetForeground(.secondaryTextOnControl)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .disabled(isConnecting)
     }
@@ -275,21 +278,27 @@ struct DulcetAccountConnectionView: View {
     private func credentialRow<Control: View>(
         _ title: String, @ViewBuilder control: () -> Control
     ) -> some View {
+#if os(macOS)
+        LabeledContent(title) {
+            control()
+                .textFieldStyle(.roundedBorder)
+                .labelsHidden()
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: 400)
+        }
+#else
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.subheadline)
                 .dulcetForeground(.secondaryTextOnControl)
                 .fixedSize(horizontal: false, vertical: true)
             control()
-#if os(macOS)
-                .textFieldStyle(.roundedBorder)
-#else
                 .textFieldStyle(.plain)
-#endif
                 .font(.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 6)
+#endif
     }
 #endif
 
@@ -321,7 +330,7 @@ struct DulcetAccountConnectionView: View {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.username)
                     .font(.headline)
-                TextField(DulcetStrings.username, text: $store.accountUsername)
+                TextField("", text: $store.accountUsername)
                     .dulcetTVTextField(focused: focusedControl == .username)
                     .dulcetCredentialInput(.username)
                     .submitLabel(.next)
@@ -334,26 +343,28 @@ struct DulcetAccountConnectionView: View {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.password)
                     .font(.headline)
-                SecureField(DulcetStrings.password, text: $store.accountPassword)
+                SecureField("", text: $store.accountPassword)
                     .dulcetTVTextField(focused: focusedControl == .password)
                     .dulcetCredentialInput(.password)
                     .submitLabel(.next)
-                    .onSubmit { focusedControl = .allowLocalHTTP }
+                    .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
                     .accessibilityLabel(DulcetStrings.password)
                     .accessibilityIdentifier("dulcet.account-connect.password")
                     .focused($focusedControl, equals: .password)
             }
 
-            Toggle(
-                DulcetStrings.allowLocalHTTP,
-                isOn: $store.accountAllowLocalHTTP
-            )
-            .font(.headline)
-            .padding(.horizontal, DulcetSpacing.md)
-            .padding(.vertical, DulcetSpacing.sm)
-            .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
-            .focused($focusedControl, equals: .allowLocalHTTP)
+            if showsLocalHTTPConsent {
+                Toggle(
+                    DulcetStrings.allowLocalHTTP,
+                    isOn: $store.accountAllowLocalHTTP
+                )
+                .font(.headline)
+                .padding(.horizontal, DulcetSpacing.md)
+                .padding(.vertical, DulcetSpacing.sm)
+                .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
+                .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
+                .focused($focusedControl, equals: .allowLocalHTTP)
+            }
 
             Text(DulcetStrings.tvTextEntryHint)
                 .font(.callout)
@@ -478,7 +489,14 @@ struct DulcetAccountConnectionView: View {
             }
 
             if isConnecting { connectingStatus }
+#if os(macOS)
+            HStack {
+                Spacer()
+                accountPrimaryAction
+            }
+#else
             accountPrimaryAction
+#endif
 
             if !isConnecting {
                 Text(DulcetStrings.accountCredentialFootnote)
@@ -517,13 +535,13 @@ struct DulcetAccountConnectionView: View {
                     : (savedServerName == nil ? DulcetStrings.connect : DulcetStrings.reconnect),
                 systemImage: isConnecting ? "xmark" : "link"
             )
-#if !os(macOS)
+#if os(macOS)
+            .frame(minWidth: 96)
+#else
             .frame(maxWidth: .infinity, minHeight: 32)
 #endif
         }
-#if !os(macOS)
         .controlSize(.large)
-#endif
         .buttonStyle(.borderedProminent)
         .dulcetConnectionProminentLabel()
         .dulcetDefaultActionShortcut()
@@ -576,7 +594,11 @@ struct DulcetAccountConnectionView: View {
                     store.submitAccountConnection()
                 } label: {
                     Text(DulcetStrings.tryAgain)
+#if os(macOS)
+                        .frame(minWidth: 96)
+#else
                         .frame(maxWidth: .infinity, minHeight: 32)
+#endif
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
@@ -603,6 +625,9 @@ struct DulcetAccountConnectionView: View {
                 }
 #endif
             }
+#if os(macOS)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+#endif
         }
         .padding(DulcetSpacing.md)
         .fixedSize(horizontal: false, vertical: true)

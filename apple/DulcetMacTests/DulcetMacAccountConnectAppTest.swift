@@ -413,7 +413,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         for expected in [
             DulcetAccountConnectionFocus.username,
             .password,
-            .allowLocalHTTP,
             .primaryAction,
         ] {
             try sendKey(.tab, to: window)
@@ -426,8 +425,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
 
         for expected in [
-            DulcetAccountConnectionFocus.allowLocalHTTP,
-            .password,
+            DulcetAccountConnectionFocus.password,
             .username,
             .serverAddress,
         ] {
@@ -442,7 +440,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         for expected in [
             DulcetAccountConnectionFocus.username,
             .password,
-            .allowLocalHTTP,
             .primaryAction,
         ] {
             try sendKey(.tab, to: window)
@@ -499,15 +496,12 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             .serverAddress,
             .username,
             .password,
-            .allowLocalHTTP,
             .primaryAction,
-            .allowLocalHTTP,
             .password,
             .username,
             .serverAddress,
             .username,
             .password,
-            .allowLocalHTTP,
             .primaryAction,
         ]
         XCTAssertEqual(focusTrace, expectedTrace)
@@ -563,7 +557,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         for expected in [
             DulcetAccountConnectionFocus.username,
             .password,
-            .allowLocalHTTP,
             .primaryAction,
         ] {
             try sendKey(.tab, to: window)

@@ -76,6 +76,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unifiedCompact
         window.appearance = appearance
         hosting.appearance = appearance
         hosting.sceneBridgingOptions = [.toolbars]
@@ -412,6 +413,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
     private func shoot(_ screen: String) async {
         guard let view = hostingView, let window else { return }
         shotNumber += 1
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        // Scene toolbar bridging installs the toolbar after the window mounts. Match the
+        // production WindowGroup's compact unified style once that toolbar exists.
+        if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+        // Flush the hosted window after native sidebar rows are inserted or removed.
+        await settle(seconds: 1.2)
+        guard await waitFor(seconds: 5, { NSApp.isActive }) else {
+            XCTFail("Mac photography requires the hosted app to be active")
+            return
+        }
+        window.display()
         let name = String(format: "%02d-%@", shotNumber, screen)
         let captureWindow = window.attachedSheet ?? window
         let captureView = captureWindow.contentView ?? view

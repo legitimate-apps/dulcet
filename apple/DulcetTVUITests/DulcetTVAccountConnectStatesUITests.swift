@@ -116,8 +116,8 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         print("DULCET TV ACCOUNT STATE reached=error-input title=\(invalidAddress.label.debugDescription)")
 
         // 3. Security error: plain HTTP to the server with the local-HTTP consent off.
-        guard setLocalHTTPByRemote(app, on: false),
-              typeByRemote(server.url, into: addressField, in: app),
+        guard typeByRemote(server.url, into: addressField, in: app),
+              setLocalHTTPByRemote(app, on: false),
               pressByRemote(tryAgain, in: app, name: "Try Again") else { return }
         let plaintextRefused = element(labelPrefix: "Local HTTP is not allowed", in: app)
         guard plaintextRefused.waitForExistence(timeout: 15) else {

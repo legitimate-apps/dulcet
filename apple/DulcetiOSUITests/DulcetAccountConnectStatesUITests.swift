@@ -40,6 +40,7 @@ import XCTest
 final class DulcetAccountConnectStatesUITests: XCTestCase {
     private var afterTest: [() -> Void] = []
     private var tourShot = 0
+    private var tourCapturedScreens: Set<String> = []
     private var tourFilledValues: [String: String] = [:]
 
     override func setUp() {
@@ -75,12 +76,24 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             ? .landscapeLeft : .portrait
         proveEveryAccountConnectState(compact: UIDevice.current.userInterfaceIdiom == .phone)
         XCTAssertEqual(tourShot, 15, "The account tour must photograph every requested state")
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        if !requested.isEmpty {
+            XCTAssertEqual(tourCapturedScreens, Set(requested), "Every selected screen must be photographed")
+        }
     }
 
     @MainActor
     private func tourPhotograph(_ screen: String) {
         guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
               let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] else { return }
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        if !requested.isEmpty && !requested.contains(screen) {
+            // Retain the canonical state index without photographing unselected states.
+            tourShot += 1
+            return
+        }
         // Photograph the reached state above the floating tab bar, including at large text.
         let app = XCUIApplication()
         if screen == "connection-empty" {
@@ -119,6 +132,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let shot = XCUIScreen.main.screenshot()
         do { try shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png")) }
         catch { XCTFail("Could not save tour photograph: \(error)") }
+        tourCapturedScreens.insert(screen)
         print("DULCET DESIGN TOUR screen=\(screen) reached=true")
         let accessibilityText = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?
             .contains("Accessibility") == true
@@ -134,7 +148,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save certificate-help photograph: \(error)") }
         }
-        if screen == "connection-empty" || (screen == "first-run-library" && accessibilityText) {
+        if requested.isEmpty && (screen == "connection-empty" || (screen == "first-run-library" && accessibilityText)) {
             // Companion evidence shows the bottom of a legitimately scrolling intro page.
             for _ in 0..<(accessibilityText ? 6 : 3) { app.swipeUp() }
             Thread.sleep(forTimeInterval: 0.6)
@@ -493,6 +507,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
               enterCredential(in: app.secureTextFields["dulcet.account-connect.password"].firstMatch,
                           with: password, name: "password", secure: true, app: app),
               dismissKeyboardIfPresent(in: app) else { return false }
+        guard serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().hasPrefix("http://") else {
+            XCTAssertFalse(app.switches["Allow HTTP on this local network"].firstMatch.exists,
+                           "Consent must be hidden when the address is not HTTP")
+            return true
+        }
         // Cleartext to a loopback server needs the local-HTTP consent, which keeps its value
         // across edits; set it only when it differs.
         let allowLocalHTTP = app.switches["Allow HTTP on this local network"].firstMatch
