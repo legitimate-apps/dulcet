@@ -86,6 +86,23 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = hosting
         self.window = window
 
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 30, { store.snapshot.accountConnected && session.mode == .connected }) else {
+                XCTFail("The saved-state tour setup must connect")
+                return
+            }
+            await step("connection-saved-disconnected") {
+                await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
+                    credentials: credentials, frame: hosting.frame, window: window)
+            }
+            return
+        }
+
         await step("first-run-library") {
             store.selectDestination(.library)
             return await self.findLabel("Connect a Server") != nil
@@ -358,19 +375,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
         }
         await step("connection-saved-disconnected") {
-            let savedSession = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName, readsDownloads: true))
-            let savedStore = DulcetPresentationStore(source: DulcetAccountDataSource(
-                connector: DulcetCoreAccountConnector(), credentialStore: credentials,
-                providerInstanceIDFactory: { providerInstanceID }, librarySession: savedSession
-            ))
-            savedStore.selectDestination(.settings)
-            let savedHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: savedStore))
-            savedHosting.frame = hosting.frame
-            savedHosting.appearance = self.appearance
-            window.contentView = savedHosting
-            self.hostingView = savedHosting
-            guard savedStore.snapshot.state == .accountSavedDisconnected else { return false }
-            return await self.find("dulcet.account-connect.title") != nil
+            await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
+                credentials: credentials, frame: hosting.frame, window: window)
         }
         await step("connection-error-persistence") {
             let key = "com.legitimateapps.dulcet.active-account-id"
@@ -395,6 +401,27 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         print("DULCET DESIGN TOUR absent=downloads-screen,songs-list (downloads appear on track rows; library has no Songs destination)")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    private func showSavedDisconnected(databaseName: String, providerInstanceID: String,
+                                       credentials: DesignTourCredentialStore, frame: NSRect,
+                                       window: NSWindow) async -> Bool {
+        let savedSession = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName, readsDownloads: true))
+        let savedStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+            connector: DulcetCoreAccountConnector(), credentialStore: credentials,
+            providerInstanceIDFactory: { providerInstanceID }, librarySession: savedSession
+        ))
+        // This shot is the saved state after the person cancels the launch reconnect.
+        // A reachable saved launch otherwise connects automatically.
+        savedStore.cancelAccountConnection()
+        savedStore.selectDestination(.settings)
+        let savedHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: savedStore))
+        savedHosting.frame = frame
+        savedHosting.appearance = self.appearance
+        window.contentView = savedHosting
+        self.hostingView = savedHosting
+        guard savedStore.snapshot.state == .accountSavedDisconnected else { return false }
+        return await self.find("dulcet.account-connect.title") != nil
     }
 
     // MARK: - Steps and shots

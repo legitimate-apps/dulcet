@@ -4948,6 +4948,19 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        let searchMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
+        guard searchMarker.waitForExistence(timeout: 10),
+              let searchBaseline = waitForScrobbleDeliveryCounts(
+                in: searchMarker, timeout: 10,
+                until: { $0["delivered"] != nil && $0["pending"] == 0 }
+              ), let searchPreviouslyDelivered = searchBaseline["delivered"] else {
+            XCTFail("Search must observe a settled delivery baseline before activation")
+            return
+        }
+        XCTAssertEqual(searchBaseline["persisted"], 0, "Search has not started a new play before its result is pressed")
+        XCTAssertEqual(searchBaseline["now-playing"], 0, "Saved queue restoration does not announce playback")
+        guard searchBaseline["persisted"] == 0, searchBaseline["now-playing"] == 0 else { return }
+
         canaryResult.tap()
 
         // Activation plays without leaving the results; the bar is the way to the full player
@@ -4990,6 +5003,18 @@ final class DulcetiOSUITests: XCTestCase {
             playbackEvidence,
             "Real playback of the activated track must begin and expose progressing media time"
         )
+        // This phase plays the same canary as the next threshold proof. Finish its submission
+        // before CI records that proof's server baseline, so a later launch cannot drain it then.
+        guard let searchDelivery = waitForScrobbleDeliveryCounts(
+            in: deliveryMarker, timeout: 60,
+            until: { ($0["delivered"] ?? 0) >= searchPreviouslyDelivered + 1 && $0["pending"] == 0 }
+        ) else {
+            XCTFail("Search playback must finish its submitted-play delivery before this phase returns: " + deliveryMarker.label)
+            return
+        }
+        XCTAssertEqual(searchDelivery["persisted"], 1, "Search activation produces one submitted play")
+        XCTAssertEqual(searchDelivery["delivered"], searchPreviouslyDelivered + 1, "The current search play must reach the server once")
+        XCTAssertEqual(searchDelivery["refused-dropped"], searchBaseline["refused-dropped"], "No search play may be dropped")
         print(
             "DULCET SEARCH UI PASS width=\(windowExpectation == .compactWidth ? "compact" : "regular")"
                 + " query=typed ranks=\(observedLabels)"
@@ -5184,15 +5209,9 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Negative control, before any playback: the marker must be live and read three zeros,
-        // each excluding a different way a later "delivered=1" could be credited to the wrong
-        // event. The counts are per process; only `pending` reads the durable outbox.
-        //   delivered=0  this launch has not yet delivered anything (a leftover row drained on
-        //                configureDelivery would already show here);
-        //   pending=0    no row survives from an earlier launch on a reused simulator, so a
-        //                drain that has not happened yet cannot supply the 1 either;
-        //   persisted=0  this launch has not itself persisted a play (a crossing before the
-        //                account settled, or a restored session, would show here).
+        // Saved launch may drain a submitted play queued by an earlier process. Settle that
+        // outbox before taking the baseline; a new play or ephemeral now-playing before the tap
+        // remains a failure. Only delivered acknowledgements from THIS crossing count below.
         let deliveryMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
         guard deliveryMarker.waitForExistence(timeout: 10) else {
             XCTFail("The app's scrobble delivery marker must exist when its launch argument is passed")
@@ -5201,15 +5220,18 @@ final class DulcetiOSUITests: XCTestCase {
         guard let baseline = waitForScrobbleDeliveryCounts(
             in: deliveryMarker,
             timeout: 10,
-            until: { $0["delivered"] != nil }
+            until: { $0["delivered"] != nil && $0["pending"] == 0 }
         ) else {
             XCTFail("The scrobble delivery marker must report counts; last label: \(deliveryMarker.label)")
             return
         }
-        XCTAssertEqual(baseline["delivered"], 0, "No play may be delivered before playback starts")
+        let previouslyDelivered = baseline["delivered"] ?? -1
+        XCTAssertGreaterThanOrEqual(previouslyDelivered, 0, "The delivery counter must be readable")
         XCTAssertEqual(baseline["pending"], 0, "No play may be waiting in the outbox from an earlier launch")
         XCTAssertEqual(baseline["persisted"], 0, "No play may be persisted by this launch before playback")
-        guard baseline["delivered"] == 0, baseline["pending"] == 0, baseline["persisted"] == 0 else {
+        XCTAssertEqual(baseline["now-playing"], 0, "A paused saved queue must not send now-playing before playback")
+        guard previouslyDelivered >= 0, baseline["pending"] == 0, baseline["persisted"] == 0,
+              baseline["now-playing"] == 0 else {
             return
         }
 
@@ -5296,14 +5318,17 @@ final class DulcetiOSUITests: XCTestCase {
         guard let delivered = waitForScrobbleDeliveryCounts(
             in: deliveryMarker,
             timeout: 60,
-            until: { ($0["delivered"] ?? 0) >= 1 }
+            until: { ($0["delivered"] ?? 0) >= previouslyDelivered + 1 }
         ) else {
             XCTFail(
                 "The app must report the scrobble delivered before this proof returns; last marker: \(deliveryMarker.label)"
             )
             return
         }
-        XCTAssertEqual(delivered["delivered"], 1, "Exactly one play is expected for one crossing")
+        XCTAssertEqual(delivered["delivered"], previouslyDelivered + 1, "Exactly one new play is expected for this crossing")
+        XCTAssertEqual(delivered["persisted"], 1, "Only this playback may persist a new play")
+        XCTAssertEqual(delivered["refused-dropped"], baseline["refused-dropped"], "The new play must be delivered, never dropped")
+        print("DULCET THRESHOLD BASELINE delivered=\(previouslyDelivered) final=\(deliveryMarker.label)")
         // A refused attempt that a retry then delivered is the designed path, not a failure of
         // this proof (apple-ci's server-side play count still has to read exactly one); what must
         // not be left is a play waiting in the outbox.

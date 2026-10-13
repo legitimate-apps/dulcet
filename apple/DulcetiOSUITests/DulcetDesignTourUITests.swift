@@ -50,7 +50,13 @@ final class DulcetDesignTourUITests: XCTestCase {
             return
         }
         continueAfterFailure = true
-        let server = TourServer(url: url, username: username, password: password)
+        guard let proxyURL = environment["DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL"],
+              let proxy = URLComponents(string: proxyURL), proxy.scheme == "http",
+              proxy.host == "127.0.0.1", proxy.port != nil else {
+            XCTFail("The tour requires the disposable loopback fault proxy for its offline relaunch")
+            return
+        }
+        let server = TourServer(url: proxyURL, username: username, password: password)
         preparePlaylist(on: server)
 
         XCUIDevice.shared.orientation = environment["DULCET_DESIGN_TOUR_ORIENTATION"] == "landscape" ? .landscapeLeft : .portrait
@@ -71,6 +77,11 @@ final class DulcetDesignTourUITests: XCTestCase {
         guard awaitConnection(in: app, compact: compact) else {
             shoot("connection-UNREACHED", app)
             XCTFail("The disposable account must connect before the tour: " + app.debugDescription)
+            return
+        }
+
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "offline" {
+            offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
             return
         }
 
@@ -324,39 +335,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             return app.buttons["dulcet.addToPlaylist.playlist"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
-        step("downloads-populated", app) {
-            guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
-            let track = app.buttons["dulcet.reader.track"].firstMatch
-            guard track.waitForExistence(timeout: 20), self.scrollIntoView(track, in: app) else { return false }
-            // A retake can reuse the real file downloaded by its preceding pass. Its badge is
-            // the required state; the menu correctly offers removal instead of Download then.
-            if (track.value as? String)?.contains("Downloaded") == true { return self.settle(app) }
-            _ = self.settle(app, seconds: 0.8)
-            track.press(forDuration: 1.2)
-            let download = app.buttons["Download"].firstMatch
-            if !download.waitForExistence(timeout: 2) {
-                let more = app.buttons["More"].firstMatch
-                if more.exists { more.tap() }
-            }
-            if download.waitForExistence(timeout: 5) { download.tap() }
-            else { app.tap(); return false }
-            return self.waitFor(timeout: 60) { (track.value as? String)?.contains("Downloaded") == true }
-                && self.settle(app)
-        }
-        // A saved account relaunch is genuinely disconnected; its library contains device data.
-        app.terminate()
-        app.launchArguments = []
-        if let size = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] { app.launchArguments += ["-UIPreferredContentSizeCategoryName", size] }
-        launchInInteractionScope(app)
-        step("device-only-library", app) {
-            self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
-                && app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
-        }
-        step("downloads-offline", app) {
-            self.openAlbum("Threshold Boundary", in: app, compact: compact)
-                && self.scrollIntoView(app.buttons["dulcet.reader.track"].firstMatch, in: app)
-                && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
-        }
+        offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         XCTAssertEqual(shotNumber, compact ? 34 : 36, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
@@ -574,6 +553,63 @@ final class DulcetDesignTourUITests: XCTestCase {
             _ = settle(app, seconds: 0.6)
         }
         return visible(frame())
+    }
+
+    @MainActor
+    private func offlineScreens(_ app: XCUIApplication, server: TourServer, compact: Bool, textSize: String?) {
+        step("downloads-populated", app) {
+            guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+            let track = app.buttons["dulcet.reader.track"].firstMatch
+            guard track.waitForExistence(timeout: 20), self.scrollIntoView(track, in: app) else { return false }
+            // A retake can reuse the real file downloaded by its preceding pass. Its badge is
+            // the required state; the menu correctly offers removal instead of Download then.
+            if (track.value as? String)?.contains("Downloaded") == true { return self.settle(app) }
+            _ = self.settle(app, seconds: 0.8)
+            track.press(forDuration: 1.2)
+            let download = app.buttons["Download"].firstMatch
+            if !download.waitForExistence(timeout: 2) {
+                let more = app.buttons["More"].firstMatch
+                if more.exists { more.tap() }
+            }
+            if download.waitForExistence(timeout: 5) { download.tap() }
+            else { app.tap(); return false }
+            return self.waitFor(timeout: 60) { (track.value as? String)?.contains("Downloaded") == true }
+                && self.settle(app)
+        }
+        // Hold a real outage before saved launch; reachable saved accounts reconnect themselves.
+        guard setTourOutage(server.url, enabled: true) else { return }
+        defer { _ = setTourOutage(server.url, enabled: false) }
+        app.terminate()
+        app.launchArguments = []
+        if let size = textSize { app.launchArguments += ["-UIPreferredContentSizeCategoryName", size] }
+        self.launchInInteractionScope(app)
+        step("device-only-library", app) {
+            self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
+                && app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+        }
+        step("downloads-offline", app) {
+            self.openAlbum("Threshold Boundary", in: app, compact: compact)
+                && self.scrollIntoView(app.buttons["dulcet.reader.track"].firstMatch, in: app)
+                && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+        }
+    }
+
+    /// This is the tour's own disposable proxy; changing it never stops a shared server process.
+    private func setTourOutage(_ proxyURL: String, enabled: Bool) -> Bool {
+        guard let url = URL(string: proxyURL + "/__dulcet/outage?state=" + (enabled ? "on" : "off")) else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        final class Outcome: @unchecked Sendable { var status = -1 }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { _, response, _ in
+            outcome.status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 20) == .success else { task.cancel(); return false }
+        XCTAssertEqual(outcome.status, 200, "The tour's disposable outage control must answer")
+        return outcome.status == 200
     }
 
     // MARK: - Server fixture
