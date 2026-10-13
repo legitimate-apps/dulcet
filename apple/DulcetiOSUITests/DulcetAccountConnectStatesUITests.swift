@@ -193,13 +193,18 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 setLocalFixtureServer(running: true)
                 _ = proxy.control("POST", "state=off", path: "/__dulcet/outage")
             }
-            let before = proxy.control("GET", "", path: "/__dulcet/requests")?["total"] as? Int ?? 0
             app.launchArguments = [
                 "-dulcet-debug-connect-account",
                 "-dulcet-debug-account-server-url", proxy.url,
                 "-dulcet-debug-account-username", server.username,
                 "-dulcet-debug-account-password", server.password,
             ]
+            launchInInteractionScope(app)
+            // A preceding reconnect proof can leave this account and its disk covers saved.
+            // Clear it through production Sign Out before witnessing fresh fixture bytes.
+            guard awaitSignOut(in: app, compact: compact), signOut(in: app) else { return }
+            app.terminate()
+            let before = proxy.control("GET", "", path: "/__dulcet/requests")?["total"] as? Int ?? 0
             launchInInteractionScope(app)
             guard awaitSignOut(in: app, compact: compact), openArtworkGrid(in: app, compact: compact) else { return }
             let deadline = Date().addingTimeInterval(30)
