@@ -2652,7 +2652,9 @@ paths:
       description: |
         A device is one installation of a client, named by a stable id it generates once (a UUID)
         and sends as `Dulcet-Device-Id`. A device is `online` while it holds an `/events` stream
-        with that header, or reported within the last two minutes. Only online devices with
+        with that header, or has made any authenticated request carrying that header within the
+        last two minutes. Registering is such a request, so a newly registered device is online for
+        two minutes. Only online devices with
         `canPlay` can receive a transfer.
       security:
         - oauth2: [user:read]
@@ -3423,8 +3425,9 @@ paths:
         Reconnect with `Last-Event-ID` to resume; a gap the server cannot replay is reported as a
         `changes` event, which a client answers by pulling the feed, and as a `queue` event, which a
         device answers by reading `/me/queue`. A `heartbeat` comes at least every 30 seconds.
-        Event types need the scope of the data they describe; asking for one the token cannot read
-        answers `403`.
+        Event types need the scope of the data they describe. Without `types`, the stream leaves
+        out, silently, the events the token cannot read; naming one of those in `types` answers
+        `403`.
       security:
         - oauth2: [catalog:read]
         - oauth2: [user:read]
@@ -3519,14 +3522,20 @@ paths:
         Delivery bodies are defined in this document's `webhooks` section.
 
         **A webhook carries no more than the token that made it.** Its events are limited to what the
-        creating token's scopes can read, and a webhook created through an OAuth grant belongs to
-        that grant: it is disabled when the grant is revoked or expires.
+        creating token's scopes can read: asking for an event type outside them answers
+        `403 insufficient-scope`, with `requiredScopes` and the refused event types in `events`. A
+        webhook belongs to the grant or token that created it and is deleted (not disabled) when that
+        grant or token is revoked or expires. `disabledReason` covers only delivery failures and an
+        admin's disabling.
 
         **Targets.** HTTPS only, on port 443 unless an admin allows other ports. The server resolves
         the host, checks the address, and connects to that same address (no second lookup); it
         follows no redirects. Loopback, private, carrier-grade NAT, unique-local and link-local
         addresses are refused unless an admin allows private targets, and link-local and cloud
-        metadata addresses are refused even then.
+        metadata addresses are refused even then. A refused target answers
+        `422 webhook-target-refused`. In test mode, the Testing override
+        `webhooks.allowPrivateTargets` also allows `http://`, any port, and loopback and private
+        addresses (still never link-local or cloud metadata ones).
       security:
         - oauth2: [account]
         - personalToken: [account]
@@ -3926,6 +3935,18 @@ paths:
         - `mediaUrlTtlSeconds`, `artworkUrlTtlSeconds`: lifetimes of signed URLs issued from now on.
         - `rateLimit`: the limiter for every non-test endpoint, per token; a request over it answers
           `429` with `Retry-After`. Test endpoints are never limited.
+        - `trustedClients`: client id metadata documents, given inline, that the server treats as
+          fetched and verified (README "Registered"), so a verified client, which may be granted
+          `account`, can sign in with no network. Each document's `client_id` is its key; every
+          other rule still applies.
+        - `webhooks.allowPrivateTargets`: webhook targets may be `http://`, on any port, and on
+          loopback or private addresses (never link-local or cloud metadata ones), so a receiver
+          can run beside the suite. Outside test mode the target rules are unchanged.
+        - `webhooks.retryScheduleSeconds`: after a failed delivery, the server tries again after
+          each of these delays in turn, then gives that delivery up.
+        - `webhooks.disableAfterFailures`: after this many consecutive failed attempts the webhook
+          becomes `active: false` with `disabledReason: delivery-failures` and gets no more
+          deliveries until re-enabled.
       security:
         - oauth2: [admin]
         - personalToken: [admin]
@@ -4137,7 +4158,9 @@ paths:
         members, plays) need `user:delete` and carry `destructiveHint: true`. A tool is never listed
         without its scope. No tool administers the server or reaches outside the user's own data.
         Every tool's `inputSchema`, `outputSchema` and annotations are published in
-        `docs/dulcet-api/mcp-tools.json`, and `tools/list` returns exactly those.
+        `docs/dulcet-api/mcp-tools.json`, and `tools/list` returns exactly those the token's scopes
+        allow, and no others. Each is returned with the file's `x-dulcet-scope` replaced by
+        `_meta: {"dulcet/scopes": [...]}`, naming the scopes it needs.
 
         The server validates `Origin` on every request and refuses any origin it does not expect
         (DNS-rebinding defence), binds each `Mcp-Session-Id` to the token that opened it, and never
@@ -4636,7 +4659,8 @@ components:
           description: |
             Known values: `urn:dulcet:problem:` + `invalid-request`, `unauthenticated`,
             `insufficient-scope`, `permission-denied`, `not-found`, `conflict`, `revision-mismatch`,
-            `precondition-required`, `unknown-item`, `idempotency-key-reused`, `token-lifetime-too-long`, `rate-limited`,
+            `precondition-required`, `unknown-item`, `idempotency-key-reused`, `token-lifetime-too-long`,
+            `webhook-target-refused`, `rate-limited`,
             `cursor-expired`, `cursor-types-mismatch`, `gone`, `media-grant-expired`,
             `unsupported-media`, `not-active-device`, `device-unavailable`,
             `reauthentication-required`, `server-error`, `unavailable`. Open set; treat an unknown
@@ -4659,6 +4683,10 @@ components:
               detail: {type: string}
         requiredScopes:
           type: array
+          items: {type: string}
+        events:
+          type: array
+          description: On a `403 insufficient-scope` from creating or changing a webhook, the event types the token may not read.
           items: {type: string}
         currentRevision: {type: string}
         current:
@@ -5005,6 +5033,28 @@ components:
           properties:
             requestsPerWindow: {type: integer, minimum: 1}
             windowSeconds: {type: integer, minimum: 1}
+        trustedClients:
+          type: array
+          description: Client id metadata documents the server treats as fetched and verified.
+          items:
+            type: object
+            required: [client_id, client_name, redirect_uris]
+            properties:
+              client_id: {type: string, format: uri}
+              client_name: {type: string}
+              redirect_uris:
+                type: array
+                minItems: 1
+                items: {type: string}
+            additionalProperties: true
+        webhooks:
+          type: object
+          properties:
+            allowPrivateTargets: {type: boolean}
+            retryScheduleSeconds:
+              type: array
+              items: {type: integer, minimum: 0}
+            disableAfterFailures: {type: integer, minimum: 1}
 
     TestCheckpoint:
       type: object
@@ -6161,7 +6211,9 @@ components:
         createdAt: {type: string, format: date-time}
         lastDeliveryAt: {type: [string, 'null'], format: date-time}
         consecutiveFailures: {type: integer}
-        disabledReason: {type: [string, 'null']}
+        disabledReason:
+          type: [string, 'null']
+          description: 'Why `active` is false. Known values: `delivery-failures` (retries ran out), `admin` (an admin disabled it). A webhook whose grant or token ends is deleted instead.'
 
     WebhookCreate:
       type: object

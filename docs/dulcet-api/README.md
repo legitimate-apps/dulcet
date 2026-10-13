@@ -115,7 +115,9 @@ Many self-hosted servers have no internet, so the server handles three cases:
   private-use scheme in reverse-DNS form (`com.example.player:/oauth/callback`) is accepted. An
   unverified client is never granted `admin` or `account`.
 - **Registered.** A server may offer dynamic client registration (RFC 7591), and may preload the
-  metadata of clients it trusts so they show as verified offline.
+  metadata of clients it trusts so they show as verified offline. A preloaded client is verified
+  under every rule above (exact redirects from its document, `admin` and `account` allowed),
+  without a fetch.
 
 *Why:* a self-hosted server cannot pre-register every app in the world, an HTTPS client id lets the
 consent screen show a verifiable name when it can, and a server with no internet still works,
@@ -572,7 +574,8 @@ and the tablet shows and controls what is playing.
 
 - **Devices.** Each client registers once with `PUT /me/devices/{deviceId}` (a UUID it keeps) and
   sends `Dulcet-Device-Id` on every request. A device is online while it holds an `/events` stream
-  or has reported in the last two minutes.
+  or has made any authenticated request carrying its `Dulcet-Device-Id` in the last two minutes.
+  Registering is such a request, so a newly registered device is online for two minutes.
 - **State and revision.** `GET /me/queue` returns the queue's `revision`, entry count, current
   entry, shuffle, repeat and `activeDeviceId`. Entries page from `/me/queue/entries`, each with its
   own `entryId`. The revision changes on every change to those, and never on a position report.
@@ -638,12 +641,16 @@ Deliveries are signed with the [Standard Webhooks](https://www.standardwebhooks.
 `webhook-id`, `webhook-timestamp` and `webhook-signature` (HMAC-SHA256 over
 `id.timestamp.body`, with a `whsec_` secret shown once). Receivers reject stale timestamps and
 dedupe on `webhook-id`. Failed deliveries retry with backoff for about a day, then the hook is
-disabled with a reason. A webhook only ever carries what its creating token could read, and a
-webhook created under an app's grant is deleted when that grant is revoked.
+disabled with `disabledReason: delivery-failures`; an admin may also disable one (`admin`). A
+webhook only ever carries what its creating token could read: asking for an event type outside its
+scopes answers `403 insufficient-scope`, naming those events in `events` (the `/events` stream
+instead leaves out, silently, what the token cannot read). A webhook belongs to the grant or token
+that created it and is deleted, not disabled, when that grant or token is revoked or expires.
 
 Targets must be HTTPS and must not resolve to private, loopback or link-local addresses, unless an
 admin allows private targets (home automation on the same network is a real use). The server
-checks the address it actually connects to, on every delivery, and follows no redirects. *Why:*
+checks the address it actually connects to, on every delivery, and follows no redirects. A refused
+target answers `422 webhook-target-refused`. *Why:*
 without that rule, a webhook is a way to make the server probe its own network.
 
 ## 13. AI and MCP
@@ -666,8 +673,9 @@ same OAuth flow as any app, and gets tools built on the same API and the same sc
 | `remove_from_my_library`, `remove_from_playlist`, `delete_playlist`, `delete_play` | `user:delete` | Remove things. |
 
 The exact definitions, with input and output schemas and annotations, are in
-[`mcp-tools.json`](mcp-tools.json). A server's `tools/list` returns exactly those, filtered by the
-token's scopes.
+[`mcp-tools.json`](mcp-tools.json). A server's `tools/list` returns exactly those the token's scopes
+allow, and no others. Each is returned with the file's `x-dulcet-scope` replaced by
+`_meta: {"dulcet/scopes": [...]}`, naming the scopes it needs.
 
 Rules:
 
@@ -727,6 +735,7 @@ is an id the server's own logs also carry.
 | `unknown-item` | 422 | An id in the body is not in the catalog. |
 | `idempotency-key-reused` | 422 | Same key, different request. |
 | `token-lifetime-too-long` | 422 | A token asked for a lifetime past `limits.maxTokenLifetimeDays`. |
+| `webhook-target-refused` | 422 | A webhook URL is not HTTPS, or resolves to an address the server refuses. |
 | `precondition-required` | 428 | This write needs `If-Match`. |
 | `rate-limited` | 429 | Wait `Retry-After` seconds. |
 | `server-error` | 500 | The server failed. |
@@ -915,7 +924,11 @@ profile** adds the few hooks for that, and nothing else.
   hook paths answer `404`, like any unknown path.
 - **The hooks.** `PUT /admin/test/settings` sets in-memory overrides: auto-approval of sign-in and
   device codes for named client ids (every other OAuth rule still applies), journal retention in
-  seconds, signed-URL lifetimes in seconds, and a rate limit. `POST /admin/test/checkpoints` saves
+  seconds, signed-URL lifetimes in seconds, a rate limit, trusted clients (`trustedClients`, client
+  id metadata documents given inline, so a verified client can be signed in with no network), and
+  webhook delivery (`webhooks.allowPrivateTargets` for an `http://` or private receiver beside the
+  suite, `webhooks.retryScheduleSeconds` and `webhooks.disableAfterFailures`, so retries and
+  disabling happen in seconds). `POST /admin/test/checkpoints` saves
   the data as a backup would; `POST /admin/test/checkpoints/{id}/restore` restores it through the
   server's real restore path, so `instanceId` changes as after any restore.
 

@@ -38,8 +38,10 @@ defined in [README §20](README.md#20-claiming-compatibility).
   MusicBrainz release id and scan; the contract says that is a merge and the first-issued id
   survives.
 - **Conditions only a hook can create** use the Testing profile, all with an admin token:
-  sign-in and device approval without a person (`autoApprove`), a short journal retention, short
-  signed-URL lifetimes, a low rate limit, and checkpoint-and-restore. Checks that need a hook fail
+  sign-in and device approval without a person (`autoApprove`), a verified client with no network
+  (`trustedClients`), a short journal retention, short signed-URL lifetimes, a low rate limit, a
+  webhook receiver beside the suite with a seconds-long retry schedule (`webhooks`), and
+  checkpoint-and-restore. Checks that need a hook fail
   (never skip) for a Testing claim and are listed as not run for other claims.
 - **The server's log** is read from wherever the operator captured it: `--server-log <file>`, or
   `--server-log-command <cmd>` for a container (`docker logs …`). No API exposes logs.
@@ -136,12 +138,16 @@ Each check has a stable id (`DA-<area>-<n>`) so reports and claims can cite it.
   server state is unchanged.
 - **Events:** each event type fires for its trigger, and its `data` validates against its schema; `Last-Event-ID` resumes; a revoked token gets
   `revoked` and a closed stream; heartbeats arrive in time.
-- **Webhooks:** signature verifies with the shown secret; retries on 500 with backoff; disable after
-  persistent failure; private-network targets refused by default, including a public name that
-  resolves to a private address and a target that redirects; the body validates against the
-  contract's `webhooks` schema.
+- **Webhooks:** signature verifies with the shown secret; retries on 500 follow
+  `webhooks.retryScheduleSeconds`; the hook is disabled with `delivery-failures` after
+  `webhooks.disableAfterFailures`; private-network and `http://` targets answer
+  `422 webhook-target-refused` without `allowPrivateTargets`, including a public name that resolves
+  to a private address and a target that redirects; an event type outside the token's scopes
+  answers `403 insufficient-scope`; a webhook made under a verified client's OAuth grant is deleted
+  when that grant is revoked; the body validates against the contract's `webhooks` schema.
 - **MCP:** initialization and tool listing per scope (no write tools without `user:write`, no
-  removal tools without `user:delete`); `tools/list` equals `mcp-tools.json` filtered by scope;
+  removal tools without `user:delete`); `tools/list` equals `mcp-tools.json` filtered by scope,
+  with `x-dulcet-scope` replaced by `_meta["dulcet/scopes"]`;
   every tool's input and output validate against those schemas; every `user:delete` tool carries
   `destructiveHint: true`; every tool's result matches the equivalent API call; no tool can
   administer or read another user's data; requests with a foreign `Origin` are refused; a session

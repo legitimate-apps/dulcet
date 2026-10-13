@@ -1,5 +1,5 @@
 {
-  "$comment": "Dulcet API v1 MCP tools. tools/list on a conforming server returns exactly these definitions for the scopes the token holds (README section 13). Additive only, like the rest of v1.",
+  "$comment": "Dulcet API v1 MCP tools. tools/list on a conforming server returns exactly these definitions for the scopes the token holds, and no others (README section 13), each with x-dulcet-scope replaced by _meta: {\"dulcet/scopes\": [that scope]}. Additive only, like the rest of v1.",
   "version": "1.0.0",
   "pageLimit": 100,
   "tools": [

@@ -7879,7 +7879,13 @@ client, with SSRF-safe metadata fetches, exact redirects, `iss` and optional cer
 or pairing; top-level folders are renamed **sources** so "library" means only My Library
 (`library:read` becomes `catalog:read`); and minted tokens are a subset of their creator's scopes
 and die with its grant. The Dulcet apps still trust only the operating system's certificate store
-and build no queue sync in v1; the standard supplies the queue model for when they do.
+and build no queue sync in v1; the standard supplies the queue model for when they do. Amended
+again (2026-10-13) with five maintainer answers from the conformance suite's questions: test mode's
+overrides gain `trustedClients` and `webhooks` (private and `http://` targets, a retry schedule,
+auto-disable); a webhook is deleted, never disabled, when its grant or token ends; a refused target
+answers `422 webhook-target-refused`; a webhook for events outside its scopes answers
+`403 insufficient-scope`, while `/events` filters silently; MCP `tools/list` carries each tool's
+scopes in `_meta`; and any request with `Dulcet-Device-Id` keeps a device online for two minutes.
 
 **2026-10-12 — Dulcet Server retains identity through retags and refuses destructive scans.**
 §29.2 now records persistent track identity, existing-id migration, fingerprint-based moves, and
