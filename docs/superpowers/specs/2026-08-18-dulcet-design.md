@@ -7865,7 +7865,21 @@ contracts. Why a new standard rather than more OpenSubsonic extensions: header-o
 and scopes, HTTP status codes for errors, cursor paging, ETags and a change feed change the base
 protocol's request and response shape, which OpenSubsonic's backward compatibility rightly forbids
 (`docs/dulcet-api/README.md` §21). This entry records the contract only: no endpoint is built, and
-no app adopts it yet. The server build follows §30.4.
+no app adopts it yet. The server build follows §30.4. Amended the same day after an independent
+review and three maintainer answers (2026-10-13): v1 is built to live for years, with no planned
+v2 and, if one ever exists, at least three years of v1 beside it; removals sit behind their own
+`user:delete` scope, and the MCP removal tools carry `destructiveHint`; and per-device queues are
+replaced by **one shared queue per user** with an active device, handoff, remote commands, a
+revision with `If-Match`, and an offline rule. The review's blockers are fixed in the contract:
+`instanceId` is an epoch kept outside the database and embedded in cursors, revisions and ETags,
+with random never-reused ids; the feed gains replay, type-bound cursors, `hidden` and `merged`
+tombstones with a `replacedBy` list and documented merge of user state; ETag (per user and
+representation) is split from `revision` (per entity); sign-in works offline as an unverified
+client, with SSRF-safe metadata fetches, exact redirects, `iss` and optional certificate pinning
+or pairing; top-level folders are renamed **sources** so "library" means only My Library
+(`library:read` becomes `catalog:read`); and minted tokens are a subset of their creator's scopes
+and die with its grant. The Dulcet apps still trust only the operating system's certificate store
+and build no queue sync in v1; the standard supplies the queue model for when they do.
 
 **2026-10-12 — Dulcet Server retains identity through retags and refuses destructive scans.**
 §29.2 now records persistent track identity, existing-id migration, fingerprint-based moves, and
@@ -13612,7 +13626,7 @@ the 2026-10-12 §28 entry.
 
 - `docs/dulcet-api/openapi.yaml` (OpenAPI 3.1) is the single source of truth. It lints clean under
   Redocly's `recommended-strict` rules with the pinned `@redocly/cli@2.54.3`
-  (`docs/dulcet-api/redocly.yaml`). OBSERVED, 2026-10-12.
+  (`docs/dulcet-api/redocly.yaml`). OBSERVED, 2026-10-12, and again after the 2026-10-13 revision.
 - `docs/dulcet-api/README.md` is the human guide, with a rationale for each choice and the prior
   art it drew on.
 - `docs/dulcet-api/llms.txt` is the compact guide for language models.
@@ -13623,29 +13637,45 @@ the 2026-10-12 §28 entry.
 
 - Discovery at `/.well-known/dulcet`; v1 at `/dulcet/v1`; `GET /capabilities` for optional
   features, limits and the minor version.
-- Auth by `Authorization: Bearer` only: OAuth 2.1 code flow with S256 PKCE, the device grant for TV
-  and command lines, rotating refresh tokens, revocation, and scoped personal access tokens. Scopes:
-  `library:read`, `media:read`, `user:read`, `user:write`, `plays:write`, `account`, `admin`,
-  `offline_access`.
-- Ids are opaque, unique across types, stable across retags and moves, never reused; merges answer
-  308 and leave a `replacedBy` tombstone.
-- RFC 9457 errors with `urn:dulcet:problem:` types; cursor pagination only; ETags and `If-Match`;
-  `Idempotency-Key` on POST.
+- Auth by `Authorization: Bearer` only: OAuth 2.1 code flow with S256 PKCE and `iss`, the device
+  grant for TV and command lines, rotating refresh tokens with a 60-second retry window,
+  revocation, and scoped personal access tokens that never exceed their creator and die with its
+  grant. Client identity works offline (an unverified client is labelled and limited). Scopes:
+  `catalog:read`, `media:read`, `user:read`, `user:write`, `user:delete`, `plays:write`,
+  `account`, `admin`, `offline_access`.
+- Ids are opaque, random, unique across types, stable across retags and moves, never reused even
+  after a restore; merges answer 308 and leave a `merged` tombstone with a `replacedBy` list,
+  deleted ids answer 410. Top-level folders are "sources"; "library" means only My Library.
+- RFC 9457 errors with `urn:dulcet:problem:` types; cursor pagination only; per-user ETags split
+  from per-entity revisions, and `If-Match`; `Idempotency-Key` on POST; `Dulcet-Action-Time` on
+  offline writes (latest action wins).
 - Media through playback decisions (the client declares, the server decides) and short-lived signed
   URLs in the path, so native players need no headers.
 - A per-user change feed covering catalog, item state (favourites, ratings, plays, My Library),
-  playlists, plays and queues, with tombstones, `start=now` for readers, `start=snapshot` for
-  mirrors, and `410 cursor-expired`. Every read carries `Dulcet-Sync-Cursor`.
+  playlists, plays and the queue, with tombstones (`deleted`, `merged`, `hidden`), replayable
+  cursors bound to their types, `start=now` for readers, `start=snapshot` for mirrors, and
+  `410 cursor-expired` for an old cursor or a changed `instanceId`. Every read carries
+  `Dulcet-Sync-Cursor`.
+- One shared queue per user, played by one active device at a time: devices register and send
+  `Dulcet-Device-Id`; the queue has a revision taken by `If-Match`, with `412` returning the current
+  queue; playback position is a separate resource only the active device writes; transfer is last
+  wins; remote commands are relayed over `/events`; an offline device reconnects with its base
+  revision and the server's queue wins unless the person chooses "Continue here".
 - My Library carries the `dulcetLibrary` semantics, plus removal records in the feed.
 - Plays carry a client-generated id recorded once, so retries never double-count.
-- Server-Sent Events, Standard Webhooks signing, and an MCP endpoint whose write tools require
-  `user:write` and which has no delete or admin tools.
-- v1 is additive only; clients ignore unknown fields and treat enums as open; v2 would run beside
-  v1 for at least 24 months.
+- Server-Sent Events with a schema per event type, Standard Webhooks signing with SSRF rules, and
+  an MCP endpoint (`docs/dulcet-api/mcp-tools.json`) whose write tools require `user:write`, whose
+  removal tools require `user:delete` and carry `destructiveHint`, and which has no admin tools.
+- v1 is built to live for years: additive only, servers ignore unknown input, clients ignore
+  unknown fields and treat enums as open. There is no planned v2; if one ever exists, v1 runs
+  beside it for at least three years. Per-resource representation versions are not needed
+  (`docs/dulcet-api/README.md` §17).
 
 ### 30.3 What it changes for the apps
 
-Nothing yet. When the apps adopt it, the change feed replaces, on Dulcet API servers only, the
+Nothing yet. The apps keep trusting only the operating system's certificate store, and build no
+shared-queue sync in v1 (CORPUS §5 and §5a item 9); the standard defines the queue model for when they do. When
+the apps adopt it, the change feed replaces, on Dulcet API servers only, the
 scan-clock bracket of §16.11–§16.12: a page read under one transaction and stamped with its feed
 cursor, then brought forward by the feed, needs neither the before-and-after `getScanStatus` reads
 nor the screen re-read for user state (TRAPS 18–19). The reader architecture of §16.8 stands: the
@@ -13658,9 +13688,13 @@ apps use `start=now`, not a snapshot. The OpenSubsonic path keeps every rule it 
   a retag that changes one of those changes the id today. Identity must be keyed to the file (an
   audio-content fingerprint that ignores tags, plus a path mapping for moves), with existing ids
   carried over.
-- Write a journal row in the same transaction as every catalog and user-state change, with an
-  `instanceId` that changes on restore, and keep at least 90 days of it. Signed media URLs live six
-  hours.
+- Write a journal row in the same transaction as every catalog and user-state change, and keep at
+  least 90 days of it. Keep `instanceId` outside the database, regenerate it whenever journal
+  continuity cannot be proven (a restore, a copy, a rollback), and embed it in cursors, revisions
+  and ETags. Mint ids randomly so a restore can never reissue one. Keep the merge mapping for as
+  long as the server runs. Signed media URLs live six hours; signed artwork URLs a week.
+- Hold the shared queue per user with its revision, a separate playback record written only by the
+  active device, and relay of commands to that device's event stream.
 - Store Dulcet API credentials with a slow hash. The AES-GCM recoverable password of §29.1 remains
   only for OpenSubsonic token authentication.
 - Pass the Core and Sync profiles of the conformance suite once it exists.
