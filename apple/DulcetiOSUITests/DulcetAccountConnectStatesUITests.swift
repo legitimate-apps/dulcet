@@ -18,7 +18,7 @@ import XCTest
 /// | domain error, server | the fault proxy in front of the disposable server answers `ping` with OpenSubsonic error 0 |
 /// | in progress | Connect to a loopback port this process listens on and never answers; Cancel ends it |
 /// | connected | the right account, submitted through Connect's own path by the DEBUG launch hook: Connection says connected |
-/// | saved, disconnected | a relaunch with the account saved: the library offers Reconnect, Connection names the server |
+/// | saved launch | reconnects automatically; an unreachable server leaves the device library and manual Reconnect |
 /// | credential persistence | a relaunch whose active-account pointer names no Keychain item |
 ///
 /// The persistence error is reached through the production launch-time read: the pointer, a
@@ -159,6 +159,105 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save scrolled intro photograph: \(error)") }
         }
+    }
+
+
+    @MainActor
+    func testCachedArtworkSurvivesOfflineRelaunchOnIPhone() throws {
+        guard requireSimulator(.phone, "The device artwork relaunch proof on iPhone") else { return }
+        try proveCachedArtworkSurvivesOfflineRelaunch(compact: true)
+    }
+
+    @MainActor
+    func testCachedArtworkSurvivesOfflineRelaunchOnIPadOS() throws {
+        guard requireSimulator(.pad, "The device artwork relaunch proof on iPad") else { return }
+        try proveCachedArtworkSurvivesOfflineRelaunch(compact: false)
+    }
+
+    /// Local evidence uses an owned Navidrome process with real fixture covers. The proxy counts
+    /// requests; it does not provide images or account outcomes. Unit controls separately prove
+    /// synchronous decoded-memory hits and cross-size first paint.
+    @MainActor
+    private func proveCachedArtworkSurvivesOfflineRelaunch(compact: Bool) throws {
+        guard ProcessInfo.processInfo.environment["DULCET_AUTORC_SERVER_CONTROL_URL"] != nil else {
+            throw XCTSkip("This proof needs the owned disposable-server process controller")
+        }
+        guard let server = disposableServer(), let proxy = faultProxy() else { return }
+        let app = XCUIApplication()
+        withoutIdleWaits(app) { [self] in
+            installSystemAlertInterruptionMonitors()
+            setLocalFixtureServer(running: true)
+            XCTAssertNotNil(proxy.control("POST", "state=off", path: "/__dulcet/outage"))
+            defer {
+                app.terminate()
+                setLocalFixtureServer(running: true)
+                _ = proxy.control("POST", "state=off", path: "/__dulcet/outage")
+            }
+            let before = proxy.control("GET", "", path: "/__dulcet/requests")?["total"] as? Int ?? 0
+            app.launchArguments = [
+                "-dulcet-debug-connect-account",
+                "-dulcet-debug-account-server-url", proxy.url,
+                "-dulcet-debug-account-username", server.username,
+                "-dulcet-debug-account-password", server.password,
+            ]
+            launchInInteractionScope(app)
+            guard awaitSignOut(in: app, compact: compact), openArtworkGrid(in: app, compact: compact) else { return }
+            let deadline = Date().addingTimeInterval(30)
+            var fetchedCover = false
+            repeat {
+                let requests = proxy.control("GET", "since=\(before)", path: "/__dulcet/requests")?["requests"] as? [[String: Any]] ?? []
+                fetchedCover = requests.contains { ($0["endpoint"] as? String) == "getCoverArt"
+                    && ($0["answered"] as? Bool) == true && ($0["status"] as? Int) == 200 }
+                if !fetchedCover { RunLoop.current.run(until: Date().addingTimeInterval(0.5)) }
+            } while !fetchedCover && Date() < deadline
+            XCTAssertTrue(fetchedCover, "Warm the device from a real successful cover response")
+            guard fetchedCover else { return }
+            // Let the completed production cache write reach disk before terminating its process.
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+            captureArtwork("cached-artwork-online", in: app)
+            setLocalFixtureServer(running: false)
+            XCTAssertNotNil(proxy.control("POST", "state=on", path: "/__dulcet/outage"))
+            let variants: [(String, [String])] = compact ? [
+                ("default", []),
+                ("dark", ["-AppleInterfaceStyle", "Dark"]),
+                ("largest-text", ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]),
+            ] : [("default", [])]
+            for (name, arguments) in variants {
+                app.terminate()
+                app.launchArguments = arguments
+                launchInInteractionScope(app)
+                XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 20),
+                    "The saved launch must show its device library while negotiation fails")
+                guard openArtworkGrid(in: app, compact: compact) else { return }
+                captureArtwork("cached-artwork-offline-\(name)", in: app)
+                let dropped = proxy.control("GET", "", path: "/__dulcet/outage")?["dropped"] as? [String: Int] ?? [:]
+                XCTAssertEqual(dropped["getCoverArt"] ?? 0, 0, "An offline cover must come from the device")
+            }
+            print("DULCET ARTWORK saved-relaunch=offline variants=\(variants.count) network-cover-requests=0")
+        }
+    }
+
+    @MainActor
+    private func openArtworkGrid(in app: XCUIApplication, compact: Bool) -> Bool {
+        let destination = compact ? app.tabBars.buttons["Library"].firstMatch
+            : app.staticTexts["dulcet.sidebar.library"].firstMatch
+        guard tap(destination, in: app, name: "Library") else { return false }
+        if !compact {
+            guard tap(app.staticTexts["dulcet.sidebar.section.albums"].firstMatch, in: app, name: "Albums") else { return false }
+        }
+        let tile = app.buttons["dulcet.library.album"].firstMatch
+        guard tile.waitForExistence(timeout: 30) else {
+            XCTFail("The cached library must contain an album tile: " + app.debugDescription); return false
+        }
+        for _ in 0..<4 where !tile.isHittable { app.swipeUp() }
+        XCTAssertTrue(tile.isHittable, "Album covers must be visible in the capture")
+        return tile.isHittable
+    }
+
+    @MainActor
+    private func captureArtwork(_ name: String, in app: XCUIApplication) {
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
 
     /// The event options belong to a process. A scope entered before launch must also reach

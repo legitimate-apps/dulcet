@@ -93,6 +93,10 @@ func XCTUnwrap<T>(_ e: @autoclosure () throws -> T?, _ m: @autoclosure () -> Str
     guard let value = try e() else { throw CocoaError(.coderValueNotFound) }
     return value
 }
+// The Swift overlay's XCTSkip initializer also does not resolve through this standalone path.
+func XCTSkip(_ message: String = "", file: StaticString = #filePath, line: UInt = #line) -> Error {
+    CocoaError(.userCancelled)
+}
 """
 
 

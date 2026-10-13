@@ -117,6 +117,9 @@ __DOWNLOAD__
     }
     func resume() { let saved = continuation; continuation = nil; saved?.resume() }
 }
+@MainActor final class ArtworkMemory {
+    func remove(serverID: String) {}
+}
 // The library reader's session: removal must see it stopped before the credential goes.
 @MainActor final class ReaderSession {
     var closes = 0
@@ -143,6 +146,8 @@ struct Snapshot {
     var currentSnapshot = Snapshot()
     var accountRemovalStatus: Removal = .idle
     var generation = 0
+    var artworkGeneration = 0
+    let artworkMemoryCache = ArtworkMemory()
     var activeOperation: Operation?
     var providerInstanceID: String? = "kept"
     var artworkFetcher: AnyObject?
