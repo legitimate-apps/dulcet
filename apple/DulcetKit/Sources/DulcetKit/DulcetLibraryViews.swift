@@ -1519,6 +1519,7 @@ private struct DulcetTrackContextMenu: ViewModifier {
                 EmptyView()
             }
         }
+        DulcetMyLibraryButton(target: DulcetFavouriteTarget(kind: .track, id: track.id), menu: true)
         DulcetAddTrackToPlaylistMenuItem(track: track)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
