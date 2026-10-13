@@ -48,10 +48,14 @@ public extension DulcetLibrarySession {
 
     @discardableResult
     func toggleMyLibrary(_ target: DulcetFavouriteTarget) -> Bool {
+        setMyLibraryMembership(target, added: myLibraryMembership(target) != .added)
+    }
+
+    @discardableResult
+    func setMyLibraryMembership(_ target: DulcetFavouriteTarget, added: Bool) -> Bool {
         guard myLibrary.availability == .available,
               account?.providerInstanceID == target.id.providerInstanceID,
               let library = reader as? any DulcetMyLibraryReading else { return false }
-        let added = library.myLibraryMembership(target) != .added
         let accepted = library.setMyLibraryMembership(target, added: added)
         if !accepted { post(DulcetStrings.readerChangeNotRecorded) }
         return accepted

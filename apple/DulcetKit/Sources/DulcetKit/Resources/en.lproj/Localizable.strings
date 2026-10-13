@@ -384,3 +384,4 @@
 "myLibrary.empty.body" = "Find music in Browse and add the albums, artists and songs you want to keep here.";
 
 "myLibrary.refresh" = "Refresh Library";
+"myLibrary.refreshFailed" = "Couldn’t refresh your library. %@";
