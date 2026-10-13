@@ -297,6 +297,12 @@ with tempfile.TemporaryDirectory(prefix="dulcet-proxy-evidence-") as directory:
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+withdrawn_cells = {
+    (row.get("id"), row.get("platform"))
+    for row in json.loads(Path("FEATURES.yml").read_text()).get("accepted_regressions", [])
+    if row.get("id") == "account.connect"
+}
+
 for platform, label, expected, deferral, stale in (
     ("ipados", "receipt-removed", "must cite the signed main receipt as a bounded observation", None, None),
     ("ipados", "demoted", "a lower status is an undeclared regression", None, None),
@@ -311,6 +317,10 @@ for platform, label, expected, deferral, stale in (
     ("ios", "stale-device-claim", "must reflect the observed signed iPhone run", None,
      " The connected window rotates from portrait to landscape."),
 ):
+    # A cell whose signed receipt is declared withdrawn (see test-spec-evidence-boundaries) has no
+    # shipped-cell checks to mutate; its withdrawal checks are mutated below instead.
+    if ("account.connect", platform) in withdrawn_cells:
+        continue
     with tempfile.TemporaryDirectory(prefix=f"dulcet-{platform}-boundary-") as directory:
         root = Path(directory)
         materialize(root)
@@ -330,5 +340,39 @@ for platform, label, expected, deferral, stale in (
         result = invoke(root)
         if result.returncode == 0 or expected not in result.stdout:
             raise AssertionError(f"{platform} {label}: expected rejection {expected!r}, output={result.stdout!r}")
+
+receipt_prefixes = {
+    "ipados": "evidence/receipts/signed-ipad-account-connect-",
+    "ios": "evidence/receipts/signed-iphone-account-connect-",
+    "macos": "evidence/receipts/signed-mac-account-connect-",
+}
+for _, platform in sorted(withdrawn_cells):
+    for label, expected in (
+        ("undeclared", f"account.connect/{platform}"),
+        ("receipt-recited", "still cites the receipt it declares withdrawn"),
+        ("condition-dropped", "withdrawn receipt needs a blocked promotion condition"),
+        ("reason-silent", "reason must say the withdrawn receipt is no longer cited"),
+    ):
+        with tempfile.TemporaryDirectory(prefix=f"dulcet-{platform}-withdrawn-") as directory:
+            root = Path(directory)
+            materialize(root)
+            path = root / "FEATURES.yml"
+            document = json.loads(path.read_text())
+            cell = next(f for f in document["features"] if f["id"] == "account.connect")["platforms"][platform]
+            if label == "undeclared":
+                document["accepted_regressions"] = [
+                    row for row in document["accepted_regressions"]
+                    if (row.get("id"), row.get("platform")) != ("account.connect", platform)
+                ]
+            elif label == "receipt-recited":
+                cell["evidence"].append({"observes": "x", "receipt": receipt_prefixes[platform] + "0.json", "test": "x"})
+            elif label == "condition-dropped":
+                cell.pop("promotion_condition", None)
+            else:
+                cell["reason"] = cell["reason"].replace("no longer cited as active evidence", "")
+            path.write_text(json.dumps(document))
+            result = invoke(root)
+            if result.returncode == 0 or expected not in result.stdout:
+                raise AssertionError(f"{platform} withdrawn {label}: expected rejection {expected!r}, output={result.stdout!r}")
 
 print("spec evidence-boundary mutations are rejected")
