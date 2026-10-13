@@ -362,7 +362,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         print("DULCET ACCOUNT STATE reached=in-progress primary=\(primary.label.debugDescription)")
         tourPhotograph("connection-connecting")
-        guard tap(primary, in: app, name: "Cancel") else { return }
+        // Cancellation must be reachable in the current viewport, without reveal or a swipe.
+        guard waitForStableHitTarget(primary, matching: .identifier("dulcet.account-connect.primary-action"),
+                                    in: app.windows.firstMatch, timeout: 5), primary.isEnabled else {
+            XCTFail("Cancel must be visible and tappable without scrolling: " + app.debugDescription)
+            return
+        }
+        let cancelShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        cancelShot.name = "Cancel visible without scrolling"
+        cancelShot.lifetime = .keepAlways
+        add(cancelShot)
+        primary.tap()
         guard connecting.waitForNonExistence(timeout: 10),
               waitForLabel(containing: "Connect", of: primary, timeout: 5) else {
             XCTFail("Cancel must end the connection and offer Connect again: " + app.debugDescription)
@@ -373,6 +383,38 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let accepted = silent.drainAcceptedConnections()
         XCTAssertGreaterThan(accepted, 0, "The progress shown must have been a real connection to the silent port")
         print("DULCET ACCOUNT STATE left=in-progress via=cancel silent-connections=\(accepted)")
+
+        // Repeat the real silent-server request at the largest accessibility text size. The
+        // existing DEBUG entry hook submits through the production connector, skipping typing
+        // only; no layout fixture or injected connection state supplies this Cancel control.
+        app.terminate()
+        app.launchArguments = [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            "-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", silentURL,
+            "-dulcet-debug-account-username", server.username,
+            "-dulcet-debug-account-password", server.password,
+        ]
+        launchInInteractionScope(app)
+        guard openConnection(in: app, compact: compact),
+              waitForLabel(containing: "Cancel", of: primary, timeout: 5),
+              waitForStableHitTarget(primary, matching: .identifier("dulcet.account-connect.primary-action"),
+                                    in: app.windows.firstMatch, timeout: 5), primary.isEnabled else {
+            XCTFail("Cancel must be visible and tappable without scrolling at the largest text size: " + app.debugDescription)
+            return
+        }
+        let largestTextShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        largestTextShot.name = "Cancel visible at largest accessibility text size"
+        largestTextShot.lifetime = .keepAlways
+        add(largestTextShot)
+        primary.tap()
+        guard waitForLabel(containing: "Connect", of: primary, timeout: 5), !tryAgain.exists else {
+            XCTFail("Cancel at the largest text size must end the request without a failure: " + app.debugDescription)
+            return
+        }
+        let largestTextAccepted = silent.drainAcceptedConnections()
+        XCTAssertGreaterThan(largestTextAccepted, 0, "Largest-text Cancel must stop a real silent-server connection")
+        print("DULCET ACCOUNT STATE left=in-progress via=cancel text=accessibility-XXXL silent-connections=\(largestTextAccepted)")
 
         // 9. Connected: the right account lands on the library, and Connection says connected.
         //    The account arrives through the DEBUG launch hook, which hands the form these values
@@ -475,7 +517,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     @MainActor
     private func launchInInteractionScope(_ app: XCUIApplication) {
         if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
-           let size = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] {
+           let size = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"],
+           !app.launchArguments.contains("-UIPreferredContentSizeCategoryName") {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
         }
         tourFilledValues.removeAll()

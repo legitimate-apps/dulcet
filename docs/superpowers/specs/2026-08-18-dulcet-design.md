@@ -7746,6 +7746,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-13 — iOS and iPadOS account cancellation stays in the visible safe area.**
+The grouped account Form keeps credentials and status scrollable, while its existing primary action
+occupies a bottom safe-area inset in idle, saved and connecting states. Connect, Reconnect and Cancel
+retain one identifier and focus identity; the inset reserves space above the tab bar and keyboard.
+Cancel must be visible and tappable without scrolling at default and the largest accessibility text
+size. Mac and TV placement and the action's submission, cancellation and Return behavior are unchanged.
+The hosted account-state proof exercises a real silent-server request and direct cancellation at
+both sizes on iPhone and iPad; its run result supplies the platform observation.
+
 **2026-10-12 — Apple account forms show local-HTTP consent only for an HTTP address.**
 The iOS, iPadOS, macOS and tvOS account forms show the existing consent control and warning only
 when the trimmed address begins with `http://`, case-insensitively. Hiding it leaves the user's
