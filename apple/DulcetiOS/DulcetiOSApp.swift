@@ -73,7 +73,8 @@ struct DulcetiOSApp: App {
         // constant for a server destroyed with the runner. It is NOT acceptable for a personal or
         // production instance, and this hook must never be used against one -- which is also why
         // it is compiled out entirely below.
-        if arguments.contains("-dulcet-debug-connect-account"),
+        let debugConnectAccount = arguments.contains("-dulcet-debug-connect-account")
+        if debugConnectAccount || arguments.contains("-dulcet-debug-prefill-account"),
            let serverURL = Self.launchArgumentValue(
                "-dulcet-debug-account-server-url",
                in: arguments
@@ -90,7 +91,9 @@ struct DulcetiOSApp: App {
             presentation.accountUsername = username
             presentation.accountPassword = password
             presentation.accountAllowLocalHTTP = serverURL.lowercased().hasPrefix("http://")
-            presentation.submitAccountConnection()
+            // Prefill leaves the production connector idle until the visible Connect action
+            // is activated; connection proofs can start their request deadline after launch.
+            if debugConnectAccount { presentation.submitAccountConnection() }
         }
         _presentation = State(initialValue: presentation)
 #if DULCET_SIGNED_IPAD_PROOF

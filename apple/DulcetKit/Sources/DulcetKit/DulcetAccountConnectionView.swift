@@ -214,6 +214,23 @@ struct DulcetAccountConnectionView: View {
                 proxy.scrollTo("account-status", anchor: .top)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if store.snapshot.accountRemoval == .idle {
+                switch store.snapshot.accountConnection {
+                case .idle, .saved, .connecting:
+                    // Keep the same action and focus identity outside the scrolling Form.
+                    // The inset reserves space above the tab bar and keyboard at every text size.
+                    accountPrimaryAction
+                        .padding(.horizontal, DulcetSpacing.lg)
+                        .padding(.vertical, DulcetSpacing.sm)
+                        .frame(maxWidth: 640)
+                        .frame(maxWidth: .infinity)
+                        .background(.bar)
+                case .connected, .failed:
+                    EmptyView()
+                }
+            }
+        }
 #endif
     }
 
@@ -497,7 +514,7 @@ struct DulcetAccountConnectionView: View {
                 Spacer()
                 accountPrimaryAction
             }
-#else
+#elseif os(tvOS)
             accountPrimaryAction
 #endif
 

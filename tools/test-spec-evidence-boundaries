@@ -41,96 +41,124 @@ errors.extend(validate_promotion_conditions(Path.cwd()))
 account_connect = next(
     feature for feature in features["features"] if feature["id"] == "account.connect"
 )
+# A signed device receipt goes stale when a source it pins changes, and signed device runs execute only
+# on main after merge. The PR that changes such a source may therefore withdraw the receipt: it declares
+# the cell in accepted_regressions, returns it to partial behind a blocked promotion condition, stops
+# citing the receipt and says so in the reason. A withdrawn cell skips its shipped-cell checks below
+# until a new audited signed main run restores them; an undeclared lower status still fails.
+declared_regressions = {
+    (row.get("id"), row.get("platform")) for row in features.get("accepted_regressions", [])
+}
+
+
+def withdrawn(platform: str, receipt_prefix: str) -> bool:
+    if ("account.connect", platform) not in declared_regressions:
+        return False
+    cell = account_connect["platforms"][platform]
+    if cell.get("status") != "partial":
+        errors.append(f"account.connect/{platform} is a declared regression but is not partial")
+    if (cell.get("promotion_condition") or {}).get("status") != "blocked":
+        errors.append(f"account.connect/{platform} withdrawn receipt needs a blocked promotion condition")
+    if any(row.get("receipt", "").startswith(receipt_prefix) for row in cell.get("evidence", [])):
+        errors.append(f"account.connect/{platform} still cites the receipt it declares withdrawn")
+    if "no longer cited as active evidence" not in cell.get("reason", ""):
+        errors.append(f"account.connect/{platform} reason must say the withdrawn receipt is no longer cited")
+    return True
+
+
 ipad_account_connect = account_connect["platforms"]["ipados"]
-if ipad_account_connect.get("status") != "shipped":
-    errors.append(
-        "account.connect/ipados ships on the simulator state proof plus the audited signed main run; "
-        "a lower status is an undeclared regression"
-    )
-ipad_reason = ipad_account_connect.get("reason", "")
-if not any(
-    row.get("receipt", "").startswith("evidence/receipts/signed-ipad-account-connect-")
-    and "observes" in row
-    and row.get("test")
-    == "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect"
-    for row in ipad_account_connect.get("evidence", [])
-):
-    errors.append("account.connect/ipados must cite the signed main receipt as a bounded observation")
-# The device proof types by touch, taps Library Reconnect and rotates once; a hardware keyboard and
-# Split View or Slide Over are deferred by §28, and the reason must keep saying so.
-for marker in ("by touch on the iPad's software keyboard", "Library's own Reconnect button is tapped",
-               "rotates from portrait to landscape", "no account hook", "saved=PASS",
-               "private-token audit", "tools/verify-evidence-receipt",
-               "Hardware-keyboard entry and Split View or Slide Over widths are deferred"):
-    if marker not in ipad_reason:
-        errors.append(f"account.connect/ipados shipped reason is missing {marker!r}")
-for stale in ("zero device passes", "has not run", "Physical execution is still unobserved",
-              "receipt is historical", "Library Reconnect is observed, not tapped"):
-    if stale in ipad_reason:
-        errors.append("account.connect/ipados reason must reflect the observed signed run")
+if not withdrawn("ipados", "evidence/receipts/signed-ipad-account-connect-"):
+    if ipad_account_connect.get("status") != "shipped":
+        errors.append(
+            "account.connect/ipados ships on the simulator state proof plus the audited signed main run; "
+            "a lower status is an undeclared regression"
+        )
+    ipad_reason = ipad_account_connect.get("reason", "")
+    if not any(
+        row.get("receipt", "").startswith("evidence/receipts/signed-ipad-account-connect-")
+        and "observes" in row
+        and row.get("test")
+        == "DulcetSignedIPadAccountConnectUITests/testSignedIPadConnectKeychainRelaunchAndTouchReconnect"
+        for row in ipad_account_connect.get("evidence", [])
+    ):
+        errors.append("account.connect/ipados must cite the signed main receipt as a bounded observation")
+    # The device proof types by touch, taps Library Reconnect and rotates once; a hardware keyboard and
+    # Split View or Slide Over are deferred by §28, and the reason must keep saying so.
+    for marker in ("by touch on the iPad's software keyboard", "Library's own Reconnect button is tapped",
+                   "rotates from portrait to landscape", "no account hook", "saved=PASS",
+                   "private-token audit", "tools/verify-evidence-receipt",
+                   "Hardware-keyboard entry and Split View or Slide Over widths are deferred"):
+        if marker not in ipad_reason:
+            errors.append(f"account.connect/ipados shipped reason is missing {marker!r}")
+    for stale in ("zero device passes", "has not run", "Physical execution is still unobserved",
+                  "receipt is historical", "Library Reconnect is observed, not tapped"):
+        if stale in ipad_reason:
+            errors.append("account.connect/ipados reason must reflect the observed signed run")
 ios_account_connect = account_connect["platforms"]["ios"]
-if ios_account_connect.get("status") != "shipped":
-    errors.append(
-        "account.connect/ios ships on the simulator state proof plus the audited signed iPhone main run; "
-        "a lower status is an undeclared regression"
-    )
-ios_reason = ios_account_connect.get("reason", "")
-if not any(
-    row.get("receipt", "").startswith("evidence/receipts/signed-iphone-account-connect-")
-    and "observes" in row
-    and row.get("test")
-    == "DulcetSignedIPhoneAccountConnectUITests/testSignedIPhoneConnectKeychainRelaunchAndTouchReconnect"
-    for row in ios_account_connect.get("evidence", [])
-):
-    errors.append("account.connect/ios must cite the signed iPhone main receipt as a bounded observation")
-# The iPhone lane types by touch and taps Library Reconnect but never rotates; a hardware keyboard and
-# rotation are deferred by §28, and the reason must keep saying so.
-for marker in ("by touch into the rendered fields", "Library's own Reconnect button is tapped",
-               "no account hook", "Local Network prompt for that host only", "private-token audit",
-               "tools/verify-evidence-receipt",
-               "Hardware-keyboard entry and rotation on iPhone are deferred",
-               "migration and background enforcement of the saved item remain ASSUMED"):
-    if marker not in ios_reason:
-        errors.append(f"account.connect/ios shipped reason is missing {marker!r}")
-for stale in ("remains unproved, so shipped would be unearned", "the cell remains partial",
-              "rotates from portrait to landscape", "Library Reconnect is observed, not tapped"):
-    if stale in ios_reason:
-        errors.append("account.connect/ios reason must reflect the observed signed iPhone run")
+if not withdrawn("ios", "evidence/receipts/signed-iphone-account-connect-"):
+    if ios_account_connect.get("status") != "shipped":
+        errors.append(
+            "account.connect/ios ships on the simulator state proof plus the audited signed iPhone main run; "
+            "a lower status is an undeclared regression"
+        )
+    ios_reason = ios_account_connect.get("reason", "")
+    if not any(
+        row.get("receipt", "").startswith("evidence/receipts/signed-iphone-account-connect-")
+        and "observes" in row
+        and row.get("test")
+        == "DulcetSignedIPhoneAccountConnectUITests/testSignedIPhoneConnectKeychainRelaunchAndTouchReconnect"
+        for row in ios_account_connect.get("evidence", [])
+    ):
+        errors.append("account.connect/ios must cite the signed iPhone main receipt as a bounded observation")
+    # The iPhone lane types by touch and taps Library Reconnect but never rotates; a hardware keyboard and
+    # rotation are deferred by §28, and the reason must keep saying so.
+    for marker in ("by touch into the rendered fields", "Library's own Reconnect button is tapped",
+                   "no account hook", "Local Network prompt for that host only", "private-token audit",
+                   "tools/verify-evidence-receipt",
+                   "Hardware-keyboard entry and rotation on iPhone are deferred",
+                   "migration and background enforcement of the saved item remain ASSUMED"):
+        if marker not in ios_reason:
+            errors.append(f"account.connect/ios shipped reason is missing {marker!r}")
+    for stale in ("remains unproved, so shipped would be unearned", "the cell remains partial",
+                  "rotates from portrait to landscape", "Library Reconnect is observed, not tapped"):
+        if stale in ios_reason:
+            errors.append("account.connect/ios reason must reflect the observed signed iPhone run")
 macos_account_connect = account_connect["platforms"]["macos"]
-if macos_account_connect.get("status") != "shipped":
-    errors.append(
-        "account.connect/macos ships on the hosted state proof plus the audited signed main run; "
-        "a lower status is an undeclared regression"
-    )
-macos_rows = macos_account_connect.get("evidence", [])
-if not any(
-    row.get("conformance") == "CONF-09b"
-    and row.get("test")
-    == "DulcetMacAccountConnectStatesAppTest/everyAccountConnectStateIsReachedThroughTheHostedMacApp"
-    for row in macos_rows
-):
-    errors.append("account.connect/macos must cite the hosted Mac state proof for CONF-09b")
-if not any(
-    row.get("receipt", "").startswith("evidence/receipts/signed-mac-account-connect-")
-    and row.get("test")
-    == "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI"
-    for row in macos_rows
-):
-    errors.append("account.connect/macos must cite the signed main run's receipt for the Keychain half")
-account_reason = macos_account_connect.get("reason", "")
-for marker in (
-    "DulcetMacAccountConnectStatesAppTest",
-    "in-memory credential store",
-    "Keychain half on main",
-    "separate host processes",
-    "private-token audit",
-    "tools/verify-evidence-receipt",
-    "capabilityUnsupported has no account-connect origin",
-    "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState",
-    "migration and background enforcement of the saved item remain ASSUMED",
-):
-    if marker not in account_reason:
-        errors.append(f"account.connect/macos shipped reason is missing {marker!r}")
+if not withdrawn("macos", "evidence/receipts/signed-mac-account-connect-"):
+    if macos_account_connect.get("status") != "shipped":
+        errors.append(
+            "account.connect/macos ships on the hosted state proof plus the audited signed main run; "
+            "a lower status is an undeclared regression"
+        )
+    macos_rows = macos_account_connect.get("evidence", [])
+    if not any(
+        row.get("conformance") == "CONF-09b"
+        and row.get("test")
+        == "DulcetMacAccountConnectStatesAppTest/everyAccountConnectStateIsReachedThroughTheHostedMacApp"
+        for row in macos_rows
+    ):
+        errors.append("account.connect/macos must cite the hosted Mac state proof for CONF-09b")
+    if not any(
+        row.get("receipt", "").startswith("evidence/receipts/signed-mac-account-connect-")
+        and row.get("test")
+        == "DulcetSignedMacAccountConnectTests/testLiveConnectSavesDeviceOnlyCredentialAndRendersConnectedUI"
+        for row in macos_rows
+    ):
+        errors.append("account.connect/macos must cite the signed main run's receipt for the Keychain half")
+    account_reason = macos_account_connect.get("reason", "")
+    for marker in (
+        "DulcetMacAccountConnectStatesAppTest",
+        "in-memory credential store",
+        "Keychain half on main",
+        "separate host processes",
+        "private-token audit",
+        "tools/verify-evidence-receipt",
+        "capabilityUnsupported has no account-connect origin",
+        "connectSuccessCrossesLiveKotlinFacadeIntoPersistenceFailureState",
+        "migration and background enforcement of the saved item remain ASSUMED",
+    ):
+        if marker not in account_reason:
+            errors.append(f"account.connect/macos shipped reason is missing {marker!r}")
 
 derived_revision_header = (
     "**Revision:** derived from the highest dated §28 record; "
