@@ -277,6 +277,7 @@
 "player.skipped" = "Couldn’t play a track. Skipped.";
 "player.skipped.track" = "Couldn’t play “%@”. Skipped.";
 "queue.drag.refused" = "Can’t be added to Up Next";
+"lyrics.instrumental" = "Instrumental";
 "library.album.hint" = "Opens the album";
 "reader.untitled" = "Unknown";
 "reader.track.durationUnknown" = "–";

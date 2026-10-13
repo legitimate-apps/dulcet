@@ -4212,3 +4212,62 @@ func anInPlaceRetryCanBeCancelledFromConnection() {
     #expect(!store.snapshot.accountConnected)
     #expect(store.snapshot.selectedDestination == .settings)
 }
+
+#if os(macOS)
+import AppKit
+import SwiftUI
+
+/// A cover drawn before the account had connected -- the player restored at launch, a page drawn
+/// while the connection was still being made -- was answered unavailable and stayed a placeholder
+/// for as long as the view lived. Once the account connects, a view still showing its
+/// placeholder asks again.
+@Test @MainActor
+func anArtworkViewDrawnBeforeTheAccountConnectedLoadsOnceItConnects() async {
+    let connector = ControlledAccountConnector()
+    let artworkFetcher = ControlledArtworkFetcher()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        artworkFetcher: artworkFetcher,
+        providerInstanceIDFactory: { "provider-instance-fixture" }
+    ))
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+
+    let artwork = DulcetArtwork(
+        seed: "late",
+        palette: .indigoCoral,
+        remoteReference: DulcetArtworkReference(
+            serverID: "provider-instance-fixture",
+            artworkKey: "cover:late"
+        )
+    )
+    let hostingView = NSHostingView(rootView: DulcetArtworkView(artwork: artwork, size: 120)
+        .environment(store))
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+        styleMask: [.titled],
+        backing: .buffered,
+        defer: false
+    )
+    window.isReleasedWhenClosed = false
+    window.contentView = hostingView
+    window.orderFront(nil)
+    defer { window.close() }
+    hostingView.layoutSubtreeIfNeeded()
+    for _ in 0..<20 { try? await Task.sleep(for: .milliseconds(10)) }
+    #expect(!store.snapshot.accountConnected, "control: the view was drawn while connecting")
+    #expect(artworkFetcher.requests.isEmpty, "control: nothing was fetched before the connection")
+
+    connector.complete(.connected(DulcetConnectedAccountSummary(
+        serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid"
+    )))
+    for _ in 0..<50 where artworkFetcher.requests.isEmpty {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(store.snapshot.accountConnected)
+    #expect(artworkFetcher.requests.map(\.reference.artworkKey) == ["cover:late"])
+}
+#endif

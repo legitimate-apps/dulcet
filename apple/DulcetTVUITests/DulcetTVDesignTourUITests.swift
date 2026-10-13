@@ -132,7 +132,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.select)
             let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
             return panel.waitForExistence(timeout: 10)
-                && app.staticTexts["dulcet.lyrics.line.current"].firstMatch.waitForExistence(timeout: 25)
+                && app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch.waitForExistence(timeout: 25)
                 && self.settle(1.5)
         }
         // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.

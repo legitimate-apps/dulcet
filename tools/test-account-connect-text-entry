@@ -5,7 +5,7 @@ This checks the input protocol, not UIKit animation completion. The field models
 secure bullets, placeholders and dropped typing. Hardware-key events are recorded to check the chosen
 ordinary-Delete input protocol; this does not diagnose UIKit animation-idle failures. A trailing-edge
 tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
-replays the original helper to prove that the control rejects that input protocol.
+replays an earlier helper to prove that the controls reject incorrect cursor handling and stale focus.
 """
 import argparse
 from pathlib import Path
@@ -26,7 +26,16 @@ method = source[start:end].replace("private func", "func", 1)
 
 collaborators = r'''
 import Foundation
-struct CGVector { let dx: Double; let dy: Double }
+import CoreGraphics
+@MainActor final class XCUIApplication {
+    @MainActor struct Query { var firstMatch: XCUIElement { XCUIElement("") } }
+    var windows: Query { Query() }
+    var keyboards: Query { Query() }
+    var debugDescription: String { "input protocol collaborator" }
+    func coordinate(withNormalizedOffset point: CGVector) -> XCUIElement.Coordinate {
+        fatalError("This control exercises normal entry, not tour scrolling")
+    }
+}
 struct Modifiers: OptionSet {
     let rawValue: Int
     static let command = Self(rawValue: 1)
@@ -35,6 +44,9 @@ enum XCUIKeyboardKey: String { case delete = "\u{7f}" }
 func XCTFail(_ message: String) { fatalError(message) }
 @MainActor
 final class XCUIElement {
+    var frame: CGRect { CGRect(x: 0, y: 0, width: 320, height: 640) }
+    var isHittable: Bool { true }
+    var exists: Bool { true }
     var text: String
     let secure: Bool
     let placeholderValue: String? = "Credential"
@@ -44,8 +56,12 @@ final class XCUIElement {
     var hardwareEvents = 0
     var dropNextInsertion = false
     var insertions = 0
+    var dropFocusOnNextValueRead = false
     init(_ text: String, secure: Bool = false) { self.text = text; self.secure = secure }
     var value: Any? {
+        // A live query can outlast keyboard/layout settling. The next typing event must
+        // reacquire focus rather than rely on the check made before reading this value.
+        if dropFocusOnNextValueRead { dropFocusOnNextValueRead = false; focused = false }
         if text.isEmpty { return placeholderValue }
         return secure ? String(repeating: "•", count: text.count) : text
     }
@@ -55,6 +71,9 @@ final class XCUIElement {
     @MainActor struct Coordinate {
         let field: XCUIElement
         let point: CGVector
+        func press(forDuration: Double, thenDragTo: Coordinate) {
+            fatalError("This control exercises normal entry, not tour scrolling")
+        }
         func tap() {
             field.focused = true
             // The field shows 20 characters; a trailing-edge tap on wider text lands under the tap.
@@ -92,7 +111,11 @@ final class XCUIElement {
     }
 }
 @MainActor
-struct Proof {
+final class Proof {
+    var tourFilledValues: [String: String] = [:]
+    func tourPhotograph(_ screen: String) {
+        fatalError("This control exercises normal entry, not tour photographs")
+    }
 '''
 controls = r'''
 }
@@ -117,9 +140,26 @@ struct Controls {
             precondition(field.insertions == (dropped ? 2 : 1), "Dropped typing must be retried and verified")
             print("\(name): PASS")
         }
+        for (name, old, secure) in [
+            ("focus-lost-before-delete", "previous-user", false),
+            ("focus-lost-before-insert", "", false),
+            ("focus-lost-secure", "previous-password", true)
+        ] {
+            let field = XCUIElement(old, secure: secure)
+            field.dropFocusOnNextValueRead = true
+            precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure))
+            precondition(field.text == "canary", "Focus recovery must still replace the whole credential")
+            precondition(field.hardwareEvents == 0)
+            print("\(name): PASS")
+        }
     }
 }
 '''
+# Current source carries the application for tour-only geometry. Older --source-ref controls
+# retain their original signature; both execute the same credential replacement assertions.
+if "app: XCUIApplication" in method:
+    controls = controls.replace("name: name, secure: secure)", "name: name, secure: secure, app: XCUIApplication())")
+
 with tempfile.TemporaryDirectory(prefix="dulcet-account-text-entry-") as directory:
     swift = Path(directory) / "control.swift"
     binary = Path(directory) / "control"

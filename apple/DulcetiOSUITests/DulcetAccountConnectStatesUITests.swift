@@ -871,9 +871,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // than the field puts the insertion point under the tap instead (iPhone CI kept 3 of a
         // longer address's characters), so clearing repeats until the field reads empty.
         // Secure fields report one bullet per character and are cleared the same way.
-        var observed = ""
-        for attempt in 1...3 {
-            var focused = false
+        // Each live value read and cursor tap is a separate interaction. Require keyboard
+        // focus again for the typing event that follows, rather than retain an earlier check.
+        func focusForTyping(retap: Bool = false) -> Bool {
+            var focused = !retap && (field.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
             for _ in 0..<4 where !focused {
                 if photographing { field.tap() }
                 else { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
@@ -888,13 +889,18 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 XCTFail("The \(name) field must take keyboard focus on a tap")
                 return false
             }
+            return true
+        }
+        var observed = ""
+        for attempt in 1...3 {
+            guard focusForTyping(retap: true) else { return false }
             func remaining() -> String {
                 (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
             }
             for round in 0..<4 {
                 let existing = remaining()
                 if existing.isEmpty { break }
-                if round > 0 { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
+                guard focusForTyping(retap: round > 0) else { return false }
                 field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
             }
             let left = remaining()
@@ -902,6 +908,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 print("DULCET ACCOUNT STATES clear field=\(name) attempt=\(attempt) remaining-length=\(left.count)")
                 continue
             }
+            guard focusForTyping() else { return false }
             field.typeText(value)
             observed = field.value as? String ?? ""
             if secure ? observed.count == value.count : observed == value {

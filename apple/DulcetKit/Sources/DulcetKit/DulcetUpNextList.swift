@@ -177,10 +177,17 @@ public struct DulcetUpNextList: View {
     public var body: some View {
         List {
             DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit)
+                .listRowBackground(Color.clear)
 #if !os(tvOS)
             DulcetQueueHistorySection(nowPlaying: nowPlaying, onEdit: onEdit)
+                .listRowBackground(Color.clear)
 #endif
         }
+        // Rows on the player's own background, as the system player's queue: the default style
+        // drew an inset card in the dark appearance and bare rows in the light one.
+#if !os(tvOS)
+        .listStyle(.plain)
+#endif
         .accessibilityIdentifier("dulcet.upNext")
     }
 }

@@ -538,10 +538,12 @@ final class DulcetTVUITests: XCTestCase {
         XCUIRemote.shared.press(.select)
         let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
         XCTAssertTrue(panel.waitForExistence(timeout: 10), "The lyrics panel must open: " + app.debugDescription)
-        let shown = app.staticTexts.matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
+        // Synced lines are buttons on television (the remote selects one to seek), so the queries
+        // match by label and identifier, not by element type.
+        let shown = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
         XCTAssertTrue(shown.waitForExistence(timeout: 20), "The panel must show the English layer: " + app.debugDescription)
         // The control: a lit line proves the cursor follows media time, not only that text was drawn.
-        let current = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
+        let current = app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch
         XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
         let lit = current.exists ? current.label : "<none>"
         XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
@@ -616,6 +618,53 @@ final class DulcetTVUITests: XCTestCase {
         print("DULCET TV NOW PLAYING PASS track=\(track.debugDescription) heart-presses=\(heartPresses.joined(separator: ","))"
             + " heart=remote-select starred=true->false lyrics=remote-select lyrics-presses=\(lyricsPresses) lit=\(lit.debugDescription)"
             + " setup=debug-account-only")
+    }
+
+    /// A synced line selected by the remote seeks the track to the line's start (spec §18.4): the
+    /// remote moves into the panel's lines, and Select on "Dulcet English line one" while line
+    /// two is lit sends the track back to two seconds, so line one lights again -- playback alone
+    /// never returns to it, which is the control. Moving into the lines is a hand scroll: the
+    /// follow pauses while the remote is on the sheet, so it does not scroll out from under the
+    /// viewer mid-press.
+    @MainActor
+    func testASyncedLineSelectedByRemoteSeeksToItsStart() throws {
+        continueAfterFailure = false
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["SIMULATOR_UDID"], "This control requires a tvOS simulator")
+        let server = try disposableServer()
+        let track = "Twenty Nine Seconds"
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        try openSearchResult(app, query: "Twenty Nine", named: track, kind: "Track")
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the track must present Now Playing")
+        XCTAssertEqual(title.label, track, "Now Playing must show the track this proof drives")
+
+        _ = try showLyricsByRemote(app)
+        // Synced lines are buttons on television (Select seeks), so match by identifier, not type.
+        let current = app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
+        // Line two starts at seven seconds; with it lit, line one is behind playback and only a
+        // seek can light it again.
+        let lineTwoDeadline = ContinuousClock.now.advanced(by: .seconds(20))
+        while !(current.exists && current.label == "Dulcet English line two"), ContinuousClock.now < lineTwoDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertEqual(current.exists ? current.label : "<none>", "Dulcet English line two",
+            "Line two must be lit before the remote goes into the panel: " + app.debugDescription)
+
+        let lineOne = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
+        XCTAssertTrue(focusByRemote(lineOne, in: app), "Line one must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        // The lit-line identifier moves between elements as the seek lands; poll with an
+        // existence guard so the transition frame is never sampled as a failure.
+        let litDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        var litAgain = false
+        while !litAgain, ContinuousClock.now < litDeadline {
+            litAgain = current.exists && current.label == "Dulcet English line one"
+            if !litAgain { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        XCTAssertTrue(litAgain,
+            "Selecting line one must seek to its start; playing on never relights it: " + app.debugDescription)
+        print("DULCET TV LYRICS SEEK PASS track=\(track.debugDescription)")
     }
 
     /// The hearts on an album page and an artist page (spec §16.20), every step by remote: the
@@ -924,7 +973,8 @@ final class DulcetTVUITests: XCTestCase {
         }
         XCTAssertTrue(retry.hasFocus, "The remote must reach Try Again: " + failedApp.debugDescription)
         XCUIRemote.shared.press(.select)
-        let recovered = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet synced line")).firstMatch
+        // Synced lines are buttons on television (Select seeks), so match by label, not type.
+        let recovered = failedApp.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet synced line")).firstMatch
         XCTAssertTrue(recovered.waitForExistence(timeout: 30), "Try Again must read the lyrics again and show them: " + failedApp.debugDescription)
         let afterRetry = try XCTUnwrap(proxyControl("GET", "/__dulcet/observations?song=\(failingID)", proxyURL: proxyURL))
         let retryReads = afterRetry["forwardedAfterDisarm"] as? Int ?? 0

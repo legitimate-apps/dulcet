@@ -382,8 +382,8 @@ horizontal size class**, never by the device:
 
 | window | navigation | full player |
 |---|---|---|
-| compact (every iPhone in portrait; a narrow iPad Split View or Stage Manager window) | a tab bar: Library, Search, Connection | a sheet from the now-playing bar |
-| regular (an iPad window; a Plus or Pro Max iPhone turned sideways) | a sidebar and a detail column | a full-screen cover from the now-playing bar, with Up Next beside the player |
+| compact (every iPhone in portrait; a narrow iPad Split View or Stage Manager window) | a tab bar: Library, Search, Connection | a full-window player from the now-playing bar, with compact typography |
+| regular (an iPad window; a Plus or Pro Max iPhone turned sideways) | a sidebar and a detail column | the same full-window player, with Up Next beside the player |
 
 - **Now Playing is a presentation, not a destination.** It is never a tab or a sidebar row. The
   persistent now-playing bar opens it; a request to show it from elsewhere (a menu command, a
@@ -396,13 +396,16 @@ horizontal size class**, never by the device:
   presentation store, not derived from the source's snapshot: a snapshot describes one destination
   at a time, and deriving the stack from it reset Library to its grid on every return.
 - **A window crossing the size-class boundary loses nothing.** The shell swaps between tab bar and
-  sidebar keeping the selected destination and every stack; an open player is taken down and
-  presented again in the other style once the old presentation has gone, because both styles flip
-  in one update and the new one would otherwise be asked to present while the old one is still
-  being dismissed. **ASSUMED:** that this handover is needed. **OBSERVED:** a 6.9-inch iPhone turned
-  sideways on iOS 26.5 keeps the player on screen and the bar able to reopen it *with the handover
-  removed* as well as with it, so the one crossing a simulator can drive does not exhibit the
-  failure; the iPad Split View and Stage Manager crossings are not driven.
+  sidebar keeping the selected destination and every stack. The player keeps its hosting controller
+  while its layout follows the window; there is no dismissal and re-presentation between styles.
+- **One gesture owner presents and dismisses the player.** Tapping or dragging upward from the
+  mini-player opens it. A downward drag on the player, outside sliders and scrolling lyrics/queue,
+  closes it. UIKit's interactive transition context and interruptible spring animator track the
+  finger; projected velocity decides completion, and an early release returns to the starting state.
+  Reduce Motion replaces the spatial transition with opacity. Public sheet and zoom APIs supply
+  interactive dismissal but do not expose presentation progress driven by an external mini-player
+  pan, so this presentation uses a custom UIKit transition. Simulator behavior remains ASSUMED
+  until the gesture acceptance tests run.
 - **A failed track is not a dead end.** A failure that belongs to the track itself -- it cannot be
   decoded, the server has no playable file for it -- does not stop the queue at all: the queue moves
   past it and says so in a brief notice, "Couldn't play *title*. Skipped.", which VoiceOver
@@ -7754,6 +7757,32 @@ Cancel must be visible and tappable without scrolling at default and the largest
 size. Mac and TV placement and the action's submission, cancellation and Return behavior are unchanged.
 The hosted account-state proof exercises a real silent-server request and direct cancellation at
 both sizes on iPhone and iPad; its run result supplies the platform observation.
+
+**2026-10-13 — iPhone/iPad Now Playing shares an interactive presentation.**
+The player opens from the mini-player and closes through one UIKit transition rather than separate
+compact sheets and regular full-screen covers. Slider and scrolling-panel geometry excludes those
+controls at touch-down; the artwork retains only its next/previous role in the presented player.
+A short drag cancels, a velocity-projected drag completes, and Reduce Motion uses opacity.
+OBSERVED on iPhone and iPad simulators: the opening swipe and downward title drag each complete
+4/4 times, versus 0/4 on the prior presentation. Vertical seeking changes the actual seek position,
+keeps the player visible, and persists after reopening; queue pans and repeated early releases
+also pass. Actual Reduce Motion is enabled, read back by the app, and restored by the UI test.
+A stable root container keeps the same modal controller through compact/regular shell changes;
+the unchanged size-class rotation regression passes. Signed iOS, macOS and tvOS shell builds compile. The presentation keeps the
+compact/regular typography and window-dependent player/queue layout from the prior visual changes.
+
+UIKit's modal lifecycle and `UIPercentDrivenInteractiveTransition` own the interactive animation
+and cancellation. The custom parts route the external mini-player pan, protect control geometry,
+apply resistance outside the progress bounds, and decide completion from release velocity.
+SwiftUI's public sheet and [zoom transition](https://developer.apple.com/videos/play/wwdc2024/10145/)
+APIs do not provide a progress driver for an opening pan from the mini-player, which is why this
+bridge is needed. It avoids publishing SwiftUI state for every pan update.
+
+Performance evidence has a limit: `XCTHitchMetric` returned no measurement entries on the tested
+simulator runtime. The equivalent display-link delivery probe has mixed results on a heavily
+contended host: the largest gap increases on iPhone and decreases on iPad. This measures
+main-thread delivery, not GPU rendering. Gesture
+completion is verified, but a reduction in rendering hitches is not established by these runs.
 
 **2026-10-12 — Apple account forms show local-HTTP consent only for an HTTP address.**
 The iOS, iPadOS, macOS and tvOS account forms show the existing consent control and warning only
