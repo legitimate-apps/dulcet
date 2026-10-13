@@ -376,7 +376,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
               tap(primary, in: app, name: "Connect") else { return }
         let invalidAddress = app.staticTexts["Check the server address"].firstMatch
         let tryAgain = app.buttons["Try Again"].firstMatch
-        guard invalidAddress.waitForExistence(timeout: 15), tryAgain.waitForExistence(timeout: 5) else {
+        guard waitForAccountError("Check the server address", in: app) else {
             XCTFail("An ftp:// address must show the input error: " + app.debugDescription)
             return
         }
@@ -922,6 +922,21 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return element.exists && element.label.contains(text)
     }
 
+    /// Witness both controls in one current window snapshot. A label query timed out on Xcode
+    /// 27 even though its failure snapshot contained the expected error and retry button.
+    @MainActor
+    private func waitForAccountError(_ title: String, in app: XCUIApplication) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 30
+        let window = app.windows.firstMatch
+        repeat {
+            if let snapshot = try? window.snapshot(),
+               hitTarget(.staticText(title), in: snapshot) != nil,
+               hitTarget(.button("Try Again"), in: snapshot) != nil { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return false
+    }
+
     @MainActor
     private func waitForValue(_ expected: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
@@ -1071,6 +1086,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private enum HitTarget {
         case identifier(String)
         case button(String)
+        case staticText(String)
         case localHTTPConsent
         case cancel
 
@@ -1081,6 +1097,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 return snapshot.elementType == .button && snapshot.identifier == identifier
             case .button(let label):
                 return snapshot.elementType == .button && snapshot.label == label
+            case .staticText(let label):
+                return snapshot.elementType == .staticText && snapshot.label == label
             case .localHTTPConsent:
                 return snapshot.elementType == .switch && snapshot.label == "Allow HTTP on this local network"
             case .cancel:

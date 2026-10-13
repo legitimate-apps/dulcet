@@ -60,7 +60,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, window, tabBar }
+enum XCUIElementType { case button, `switch`, window, tabBar, staticText }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
