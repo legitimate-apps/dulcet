@@ -33,7 +33,7 @@ struct DulcetMyLibraryButton: View {
             .accessibilityIdentifier("dulcet.membership.\(target.kind.rawValue).\(target.id.rawID)")
             if menu && membership == .partial {
                 Button(DulcetStrings.removeFromLibrary, systemImage: "minus.circle") {
-                    _ = (session.reader as? any DulcetMyLibraryReading)?.setMyLibraryMembership(target, added: false)
+                    session.setMyLibraryMembership(target, added: false)
                 }
             }
         }
@@ -80,7 +80,7 @@ struct DulcetMyLibraryView: View {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
                                 if let error = library.error {
-                                    Text(DulcetStrings.readerChangeNotSaved(DulcetStrings.readerErrorPhrase(error)))
+                                    Text(DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)))
                                     Button(DulcetStrings.tryAgain) { refresh() }
                                 } else if library.syncState == "syncing" {
                                     ProgressView()

@@ -8,6 +8,9 @@ enum DulcetStrings {
     static let addToLibrary = text("action.library.add", "Add to Library")
     static let removeFromLibrary = text("action.library.remove", "Remove from Library")
     static let myLibraryRefresh = text("myLibrary.refresh", "Refresh Library")
+    static func myLibraryRefreshFailed(_ phrase: String) -> String {
+        formatted("myLibrary.refreshFailed", "Couldn\u{2019}t refresh your library. %@", phrase)
+    }
     static let myLibrarySongs = text("myLibrary.songs", "Songs")
     static let myLibraryEmptyTitle = text("myLibrary.empty.title", "Your library starts here")
     static let myLibraryEmptyBody = text("myLibrary.empty.body", "Find music in Browse and add the albums, artists and songs you want to keep here.")

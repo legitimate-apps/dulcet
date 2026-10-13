@@ -2106,6 +2106,7 @@ func myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication() throw
     #expect(reader.libraryChanges.last?.1 == true)
     let foreign = DulcetFavouriteTarget(kind: .album, id: DulcetProviderItemID(providerInstanceID: "another-account", rawID: "album"))
     #expect(!session.toggleMyLibrary(foreign))
+    #expect(!session.setMyLibraryMembership(foreign, added: false))
     #expect(reader.libraryChanges.count == 3)
     session.close()
     #expect(reader.libraryCancelled)
