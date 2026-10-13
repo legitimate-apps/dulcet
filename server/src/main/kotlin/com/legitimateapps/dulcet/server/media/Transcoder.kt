@@ -54,16 +54,25 @@ data class OutputFormat(val name: String, val container: String, val codec: Stri
 }
 
 /** Runs ffmpeg for one transcode, writing to its standard output. */
+class TranscodeBusyException : Exception("Transcode capacity reached")
+
 class Transcoder(private val ffmpeg: String) {
+    private val slots = java.util.concurrent.Semaphore(4)
     fun start(source: Path, format: OutputFormat, bitrateKbps: Int, channels: Int?, offsetSeconds: Int): Process {
         val command = buildList {
             add(ffmpeg); add("-hide_banner"); add("-loglevel"); add("error"); add("-nostdin")
             if (offsetSeconds > 0) { add("-ss"); add(offsetSeconds.toString()) }
+            addAll(AUDIO_INPUT_ARGS)
             add("-i"); add(source.toString())
             addAll(format.ffmpegArgs(bitrateKbps, channels))
             add("-")
         }
-        return ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        if (!slots.tryAcquire()) throw TranscodeBusyException()
+        return try {
+            ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start().also { process ->
+                process.onExit().whenComplete { _, _ -> slots.release() }
+            }
+        } catch (error: Exception) { slots.release(); throw error }
     }
 }
 

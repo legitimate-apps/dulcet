@@ -27,6 +27,16 @@ class FileSafetyTest {
         assertEquals("image/png", ctx.artwork.image("ar-$artist", null)!!.contentType)
     }
 
+    @Test fun rootArtistNeverReadsAboveMusicFolder() {
+        val root = createTempDirectory("root-artist")
+        val ctx = Fixtures.context(root)
+        Fixtures.track(ctx.config.musicFolder.resolve("song.flac"), tags = mapOf("artist" to "Singer"))
+        Fixtures.jpeg(root.resolve("artist.jpg"), 32)
+        ctx.scanner.scan()
+        val id = ctx.db.read { string("SELECT id FROM artist")!! }
+        assertEquals("image/png", ctx.artwork.image("ar-$id", null)!!.contentType)
+    }
+
     @Test fun servingRechecksSymlinksAndTraversalAfterScan() = testApplication {
         val root = createTempDirectory("file-serving")
         val ctx = Fixtures.context(root)

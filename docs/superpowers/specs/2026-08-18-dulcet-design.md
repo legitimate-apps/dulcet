@@ -13354,6 +13354,8 @@ them.
 ### 29.2 Scanner
 
 - Tags are read with ffprobe, one process per changed file, with up to four running at a time.
+  ffprobe and ffmpeg accept only the file protocol and self-contained audio demuxers, excluding
+  playlists that could open additional files or network URLs.
 - The catalog holds:
   - Artists and albums, with album artists split on `;` (never on `/`).
   - Per-track artist credits by role.
@@ -13389,6 +13391,7 @@ them.
 - `getTranscodeDecision` reads the client's profile (bitrates in bits per second) and answers with
   signed opaque `transcodeParams`. The signature is an HMAC with a server key, so a client cannot
   ask for an arbitrary encode.
+- At most four transcode processes run at once. A request above that limit returns HTTP 429.
 - Transcodes made from the start are cached on disk. A repeat request is served with an exact
   length and byte ranges. A first request that carries `Range` waits for the whole encode.
 - `getCoverArt`:

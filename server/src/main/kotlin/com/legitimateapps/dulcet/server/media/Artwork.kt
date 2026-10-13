@@ -91,7 +91,7 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
     }
 
     private fun extractEmbedded(file: Path): ByteArray? {
-        val process = ProcessBuilder(ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", file.toString(), "-an", "-map", "0:v:0", "-c:v", "copy", "-frames:v", "1", "-f", "image2pipe", "-")
+        val process = ProcessBuilder(listOf(ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin") + AUDIO_INPUT_ARGS + listOf("-i", file.toString(), "-an", "-map", "0:v:0", "-c:v", "copy", "-frames:v", "1", "-f", "image2pipe", "-"))
             .redirectError(ProcessBuilder.Redirect.DISCARD).start()
         val bytes = process.inputStream.readBytes()
         if (!process.waitFor(30, TimeUnit.SECONDS)) process.destroyForcibly()

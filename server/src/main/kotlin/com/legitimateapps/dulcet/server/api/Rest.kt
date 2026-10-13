@@ -163,6 +163,10 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
                 is Reply.Envelope -> result.node
                 Reply.Handled -> return
             }
+        } catch (error: com.legitimateapps.dulcet.server.media.TranscodeBusyException) {
+            call.response.headers.append(io.ktor.http.HttpHeaders.RetryAfter, "1")
+            call.respondText("Transcode capacity reached", ContentType.Text.Plain, HttpStatusCode.TooManyRequests)
+            return
         } catch (error: SubsonicError) {
             Envelope.error(error.code, error.message)
         } catch (error: kotlinx.coroutines.CancellationException) {

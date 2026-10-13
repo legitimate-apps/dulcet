@@ -63,19 +63,28 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
             withContext(Dispatchers.IO) {
                 Files.createDirectories(cached.parent)
                 val temporary = Files.createTempFile(cached.parent, key, ".part")
-                val process = ctx.transcoder.start(media.path, format, bitrate, channels, 0)
-                Files.newOutputStream(temporary).use { out -> process.inputStream.copyTo(out) }
-                if (process.waitFor() == 0) Files.move(temporary, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-                else Files.deleteIfExists(temporary)
+                var process: Process? = null
+                try {
+                    process = ctx.transcoder.start(media.path, format, bitrate, channels, 0)
+                    Files.newOutputStream(temporary).use { out -> process.inputStream.copyTo(out) }
+                    if (process.waitFor() == 0) Files.move(temporary, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                } finally {
+                    process?.destroyForcibly()
+                    Files.deleteIfExists(temporary)
+                }
             }
         }
         if (Files.isRegularFile(cached)) {
             serveFile(call, cached, type)
             return
         }
-        val process = withContext(Dispatchers.IO) { ctx.transcoder.start(media.path, format, bitrate, channels, 0) }
         withContext(Dispatchers.IO) { Files.createDirectories(cached.parent) }
-        call.ktor.respond(ProcessContent(process, type, withContext(Dispatchers.IO) { Files.createTempFile(cached.parent, key, ".part") }, cached))
+        val temporary = withContext(Dispatchers.IO) { Files.createTempFile(cached.parent, key, ".part") }
+        val process = try {
+            withContext(Dispatchers.IO) { ctx.transcoder.start(media.path, format, bitrate, channels, 0) }
+        } catch (error: Exception) { Files.deleteIfExists(temporary); throw error }
+        try { call.ktor.respond(ProcessContent(process, type, temporary, cached)) }
+        catch (error: Exception) { process.destroyForcibly(); Files.deleteIfExists(temporary); throw error }
     }
 
     return mapOf(

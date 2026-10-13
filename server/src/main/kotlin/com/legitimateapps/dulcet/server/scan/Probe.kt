@@ -38,9 +38,8 @@ class Probe(private val ffprobe: String) {
 
     fun probe(file: Path): ProbedTags {
         val process = ProcessBuilder(
-            ffprobe, "-v", "error", "-hide_banner",
-            "-print_format", "json", "-show_format", "-show_streams",
-            file.toAbsolutePath().toString(),
+            *(listOf(ffprobe, "-v", "error", "-hide_banner") + com.legitimateapps.dulcet.server.media.AUDIO_INPUT_ARGS +
+                listOf("-print_format", "json", "-show_format", "-show_streams", file.toAbsolutePath().toString())).toTypedArray(),
         ).redirectErrorStream(false).start()
         val output = process.inputStream.readBytes().decodeToString()
         val errors = process.errorStream.readBytes().decodeToString()
