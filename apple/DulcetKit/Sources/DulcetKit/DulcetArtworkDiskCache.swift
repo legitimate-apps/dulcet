@@ -169,7 +169,8 @@ public actor DulcetArtworkDiskCache {
                   ]),
                   values.isRegularFile == true else { return nil }
             return Entry(
-                url: url,
+                // Enumeration can spell a system symlink differently from URL construction.
+                url: url.standardizedFileURL.resolvingSymlinksInPath(),
                 byteCount: values.fileSize ?? 0,
                 lastAccess: values.contentModificationDate ?? .distantPast
             )
