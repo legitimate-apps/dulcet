@@ -828,7 +828,7 @@ private struct DulcetSidebar: View {
     /// The column takes more room at the accessibility text sizes: at the default width the rows'
     /// labels wrapped inside words ("Li-brary").
     private var columnWidth: (min: CGFloat, ideal: CGFloat, max: CGFloat) {
-        dynamicTypeSize.isAccessibilitySize ? (320, 400, 520) : (DulcetMetrics.sidebarMinWidth, 232, 300)
+        dynamicTypeSize.isAccessibilitySize ? (360, 440, 560) : (DulcetMetrics.sidebarMinWidth, 232, 300)
     }
 
     var body: some View {
@@ -855,7 +855,7 @@ private struct DulcetSidebar: View {
                 if store.myLibraryAvailable, destinations.contains(.library) {
                     Section {
                         ForEach(DulcetMyLibrarySection.allCases) { section in
-                            Label(section.title, systemImage: "music.note.list")
+                            Label(section.title, systemImage: section.symbolName)
                                 .tag(DulcetSidebarSelection.myLibrarySection(section))
                                 .accessibilityIdentifier("dulcet.sidebar.myLibrary.\(section.rawValue)")
                         }
