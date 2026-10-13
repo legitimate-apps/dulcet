@@ -1,0 +1,122 @@
+package com.legitimateapps.dulcet
+
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.emulator.DesignTourShots
+import com.legitimateapps.dulcet.emulator.DisposableServerProbe
+import com.legitimateapps.dulcet.emulator.connectSavedAccount
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * The phone's My Library / Browse split against the disposable server the runner names (spec §29.9):
+ * the production app, production reader and core `AndroidMyLibrary`, driven by touch. With
+ * `dulcetExpectSplit=true` (a Dulcet Server): the Library and Browse tabs split, an album added from
+ * Browse appears in Library at once and on the server's own read-back, and a remove takes it out;
+ * each screen is photographed ([DesignTourShots]). With `dulcetExpectSplit=false` (Navidrome): the
+ * app is exactly as before — no Browse tab, and no library endpoint is ever called (the probe reads
+ * the server log is not available, so the no-call claim is the Robolectric integration test's).
+ */
+@RunWith(AndroidJUnit4::class)
+class AndroidEmulatorMyLibraryProofTest {
+    @get:Rule val compose = createEmptyComposeRule()
+
+    @Test fun myLibrarySplit() {
+        val probe = DisposableServerProbe.fromInstrumentation()
+        val expectSplit = InstrumentationRegistry.getArguments().getString("dulcetExpectSplit") != "false"
+        val label = InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "phone"
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots(label)
+
+        // An album the library does not hold yet, chosen from the catalog the server serves.
+        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
+            .getJSONObject("albumList2").getJSONArray("album")
+        check(albums.length() > 0) { "The fixture corpus has no albums" }
+        val albumId = albums.getJSONObject(0).getString("id")
+        val albumName = albums.getJSONObject(0).getString("name")
+
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+            if (!expectSplit) {
+                // Navidrome: nothing splits, and the library is the whole catalog as it always was.
+                shots.step("library-nosplit") {
+                    click("library.open")
+                    awaitTag("library.home.0.item.0") && shots.settle(2_000) &&
+                        noTag("browse.open", 5_000)
+                }
+                check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the tabs" }
+                return@use
+            }
+            shots.step("browse") {
+                click("browse.open")
+                awaitTag("library.surface") && awaitTag("library.home.0.item.0") && shots.settle(2_000)
+            }
+            shots.step("album-add") {
+                click("browse.open")
+                click("library.view.albums")
+                awaitTag("library.albums.item.0")
+                compose.onNodeWithTag("library.albums").performScrollToNode(
+                    androidx.compose.ui.test.hasText(albumName))
+                compose.onNode(androidx.compose.ui.test.hasText(albumName)
+                    .and(androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag("library.albums"))))
+                    .performClick()
+                awaitTag("album.surface") && awaitTag("album.library") && shots.settle()
+            }
+            // Add it from its header; the check shows at once, and the server records it.
+            click("album.library")
+            check(awaitSelected("album.library", 10_000)) { "The album's membership did not show after Add" }
+            val inLibrary = probe.call("getDulcetLibrary", mapOf("type" to "album"))
+                .getJSONObject("dulcetLibrary").optJSONArray("album")
+            check(inLibrary != null && (0 until inLibrary.length()).any { inLibrary.getJSONObject(it).getString("id") == albumId }) {
+                "The server's own getDulcetLibrary does not hold the album added from Browse"
+            }
+            shots.step("mylibrary") {
+                click("library.open")
+                awaitTag("mylibrary.surface") && shots.settle(2_000)
+            }
+            check(awaitTag("mylibrary.recent.album.0", 10_000)) { "The added album never showed in My Library" }
+            // And Remove takes it out, on the server too.
+            click("mylibrary.recent.album.0")
+            awaitTag("album.library")
+            click("album.library")
+            val after = probe.call("getDulcetLibrary", mapOf("type" to "album"))
+                .getJSONObject("dulcetLibrary").optJSONArray("album")
+            check(after == null || (0 until after.length()).none { after.getJSONObject(it).getString("id") == albumId }) {
+                "The server still holds the album after Remove from Library"
+            }
+        }
+        check(shots.unreached.isEmpty()) { "The My Library tour could not reach: ${shots.unreached}" }
+        println("MYLIBRARY PROOF done label=$label split=$expectSplit")
+    }
+
+    private fun click(tag: String) {
+        awaitTag(tag)
+        compose.onNodeWithTag(tag).performClick()
+        compose.waitForIdle()
+    }
+
+    private fun awaitTag(tag: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
+        compose.waitUntil("$tag on screen", timeoutMillis) {
+            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }.isSuccess
+
+    private fun noTag(tag: String, timeoutMillis: Long): Boolean = runCatching {
+        compose.waitUntil("$tag absent", timeoutMillis) {
+            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()
+        }
+    }.isSuccess
+
+    private fun awaitSelected(tag: String, timeoutMillis: Long): Boolean = runCatching {
+        compose.waitUntil("$tag selected", timeoutMillis) {
+            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes()
+                .any { it.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Selected) { false } }
+        }
+    }.isSuccess
+}

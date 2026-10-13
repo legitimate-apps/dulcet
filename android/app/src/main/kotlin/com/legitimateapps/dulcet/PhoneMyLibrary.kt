@@ -243,6 +243,7 @@ private fun MyLibraryTrackRow(
     // Every song in these lists is a member, pending or not; the row's menu removes it.
     TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag(tag),
         onUnavailable = {},
+        rowTagOverride = tag,
         library = TrackLibrary(MyLibraryMembership.Added) { myLibrary.remove(target) }) {
         actions.playTracks(tracks, track.rawId,
             track.albumTitle ?: track.artistName ?: track.title.orEmpty())

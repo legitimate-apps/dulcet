@@ -7,6 +7,14 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.core.AndroidMyLibrary
+import com.legitimateapps.dulcet.core.AndroidMyLibraryAvailability
+import com.legitimateapps.dulcet.core.AndroidMyLibraryMembership
+import com.legitimateapps.dulcet.core.AndroidMyLibraryPublication
+import com.legitimateapps.dulcet.core.AndroidMyLibraryRefreshOutcome
+import com.legitimateapps.dulcet.core.AndroidMyLibrarySort
+import com.legitimateapps.dulcet.core.AndroidMyLibrarySyncState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,9 +87,17 @@ public data class MyLibraryPublication(
     val albums: List<MyLibraryAlbum>,
     val artists: List<MyLibraryArtist>,
     val songs: List<MyLibrarySong>,
+    /**
+     * The core's membership over every item it holds, listed or not; null for a fixture, whose
+     * membership is the lists'. Not part of [equals]: it is a view, not state.
+     */
+    @get:JvmName("membershipResolver")
+    val resolver: ((AndroidLibraryEntity) -> MyLibraryMembership)? = null,
 ) {
     /** What the account's library holds of [target]. */
-    public fun membership(target: AndroidLibraryEntity): MyLibraryMembership = when (target.kind) {
+    public fun membership(target: AndroidLibraryEntity): MyLibraryMembership {
+        resolver?.let { return it(target) }
+        return when (target.kind) {
         AndroidLibraryEntityKind.Album -> albums.firstOrNull { it.rawId == target.rawId }?.let { album ->
             when {
                 album.explicitlyAdded -> MyLibraryMembership.Added
@@ -96,12 +112,13 @@ public data class MyLibraryPublication(
             MyLibraryMembership.Added
         } ?: if (availability == MyLibraryAvailability.Available && hasRead()) MyLibraryMembership.NotAdded else MyLibraryMembership.Unknown
         else -> MyLibraryMembership.Unknown
+        }
     }
 
     private fun hasRead(): Boolean = syncState == MyLibrarySyncState.Current || syncState == MyLibrarySyncState.Cached
 }
 
-public enum class MyLibraryRefreshOutcome { Unchanged, Incremental, Full, Unavailable, Failed }
+public enum class MyLibraryRefreshOutcome { Unchanged, Incremental, Full, Unsettled, Unavailable, Failed }
 
 public data class MyLibraryRefresh(
     val availability: MyLibraryAvailability,
@@ -120,6 +137,23 @@ public interface MyLibrarySource {
     public fun refresh(completion: (MyLibraryRefresh) -> Unit = {})
     public fun add(target: AndroidLibraryEntity): Boolean
     public fun remove(target: AndroidLibraryEntity): Boolean
+}
+
+/** The production source: the core's [AndroidMyLibrary] over the account's reader, mapped verbatim. */
+public class CoreMyLibrarySource(reader: AndroidLibraryReader) : MyLibrarySource {
+    private val delegate = AndroidMyLibrary(reader)
+
+    override fun observe(sort: MyLibrarySort, listener: (MyLibraryPublication) -> Unit): AutoCloseable {
+        val registration = delegate.observe(sort.toCore()) { listener(it.toShell()) }
+        return AutoCloseable { registration.close() }
+    }
+
+    override fun refresh(completion: (MyLibraryRefresh) -> Unit) {
+        delegate.refresh { completion(MyLibraryRefresh(it.availability.toShell(), it.outcome.toShell(), it.error?.let { error -> error::class.simpleName })) }
+    }
+
+    override fun add(target: AndroidLibraryEntity): Boolean = delegate.add(target)
+    override fun remove(target: AndroidLibraryEntity): Boolean = delegate.remove(target)
 }
 
 /**
@@ -248,4 +282,61 @@ public fun MyLibraryAlbum.toLibraryItem(): AndroidLibraryItem.Album = AndroidLib
 public fun MyLibraryArtist.toLibraryItem(): AndroidLibraryItem.Artist = AndroidLibraryItem.Artist(
     rawId = rawId, name = name, albumCount = albumCount.takeIf { it >= 0 }, artworkKey = artworkKey,
     favourite = null, rating = null,
+)
+
+// ---- Core facade mapping (spec §29.9) ---------------------------------------------------------------------
+
+private fun MyLibrarySort.toCore(): AndroidMyLibrarySort = when (this) {
+    MyLibrarySort.RecentlyAdded -> AndroidMyLibrarySort.RecentlyAdded
+    MyLibrarySort.Alphabetical -> AndroidMyLibrarySort.Alphabetical
+}
+
+private fun AndroidMyLibraryAvailability.toShell(): MyLibraryAvailability = when (this) {
+    AndroidMyLibraryAvailability.Available -> MyLibraryAvailability.Available
+    AndroidMyLibraryAvailability.Unavailable -> MyLibraryAvailability.Unavailable
+    AndroidMyLibraryAvailability.Unknown -> MyLibraryAvailability.Unknown
+}
+
+private fun AndroidMyLibrarySyncState.toShell(): MyLibrarySyncState = when (this) {
+    AndroidMyLibrarySyncState.Never -> MyLibrarySyncState.Never
+    AndroidMyLibrarySyncState.Syncing -> MyLibrarySyncState.Syncing
+    AndroidMyLibrarySyncState.Current -> MyLibrarySyncState.Current
+    AndroidMyLibrarySyncState.Cached -> MyLibrarySyncState.Cached
+    AndroidMyLibrarySyncState.Failed -> MyLibrarySyncState.Failed
+}
+
+private fun AndroidMyLibraryRefreshOutcome.toShell(): MyLibraryRefreshOutcome = when (this) {
+    AndroidMyLibraryRefreshOutcome.Unchanged -> MyLibraryRefreshOutcome.Unchanged
+    AndroidMyLibraryRefreshOutcome.Incremental -> MyLibraryRefreshOutcome.Incremental
+    AndroidMyLibraryRefreshOutcome.Full -> MyLibraryRefreshOutcome.Full
+    AndroidMyLibraryRefreshOutcome.Unsettled -> MyLibraryRefreshOutcome.Unsettled
+    AndroidMyLibraryRefreshOutcome.Unavailable -> MyLibraryRefreshOutcome.Unavailable
+    AndroidMyLibraryRefreshOutcome.Failed -> MyLibraryRefreshOutcome.Failed
+}
+
+private fun AndroidMyLibraryMembership.toShell(): MyLibraryMembership = when (this) {
+    AndroidMyLibraryMembership.Added -> MyLibraryMembership.Added
+    AndroidMyLibraryMembership.Partial -> MyLibraryMembership.Partial
+    AndroidMyLibraryMembership.NotAdded -> MyLibraryMembership.NotAdded
+    AndroidMyLibraryMembership.Unknown -> MyLibraryMembership.Unknown
+}
+
+private fun AndroidMyLibraryPublication.toShell(): MyLibraryPublication = MyLibraryPublication(
+    availability = availability.toShell(),
+    syncState = syncState.toShell(),
+    errorKind = error?.let { it::class.simpleName },
+    lastReadAtEpochMillis = lastReadAtEpochMillis,
+    albums = albums.map {
+        MyLibraryAlbum(it.rawId, it.title, it.artistName, it.artistRawId, it.year ?: 0, it.artworkKey,
+            it.songCount ?: -1, it.explicitlyAdded, it.memberSongCount, it.pending)
+    },
+    artists = artists.map {
+        MyLibraryArtist(it.rawId, it.name, it.artworkKey, it.albumCount ?: -1, it.explicitlyAdded, it.pending)
+    },
+    songs = songs.map {
+        MyLibrarySong(it.rawId, it.title, it.albumRawId, it.albumTitle, it.artistName,
+            it.durationMilliseconds ?: -1, it.artworkKey, it.pending)
+    },
+    // The core's membership covers items the lists leave out (held but never listed here).
+    resolver = { target -> membership(target).toShell() },
 )

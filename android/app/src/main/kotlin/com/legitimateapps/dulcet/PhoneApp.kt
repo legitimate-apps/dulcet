@@ -129,6 +129,8 @@ internal fun PhoneApp(
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
     if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
+    // The split says the server advertises the extension; bring the device's library up to its.
+    LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect

@@ -203,7 +203,8 @@ class PhoneMyLibraryTest {
         click("library.open")
         click("mylibrary.view.artists")
         await("the artist in My Library") { exists("mylibrary.artists.0") }
-        assertTrue(text("mylibrary.artists.0").startsWith("artist-1"), text("mylibrary.artists.0"))
+        assertTrue(text("mylibrary.artists.0").contains("artist-1"),
+            "the fake holds it by id, pending metadata: " + text("mylibrary.artists.0"))
     }
 
     @Test fun aKeptSongPlaysFromTheSongsSectionAndRemovesFromItsRow() {

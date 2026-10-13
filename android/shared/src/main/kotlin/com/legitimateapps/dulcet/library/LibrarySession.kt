@@ -212,13 +212,13 @@ public class LibrarySession internal constructor(
     private var myLibrarySession: MyLibrarySession? = null
 
     /**
-     * The account's My Library (spec §29.4, the `dulcetLibrary` extension): what this account added,
-     * beside the whole catalog the reader windows. Backed by the core's `AndroidMyLibrary` once that
-     * facade lands on `feat/my-library`; until then [UnavailableMyLibrarySource] answers for every
-     * server, so nothing splits and no library endpoint is ever called. Closed with this session.
+     * The account's My Library (spec §29.4, §29.9): what this account added on a server advertising
+     * `dulcetLibrary`, beside the whole catalog the reader windows — the core's `AndroidMyLibrary`
+     * over this session's reader. On any other server every publication says Unavailable, so nothing
+     * splits and no library endpoint is ever called. Closed with this session.
      */
     public val myLibrary: MyLibrarySession
-        get() = myLibrarySession ?: MyLibrarySession(UnavailableMyLibrarySource()).also { myLibrarySession = it }
+        get() = myLibrarySession ?: MyLibrarySession(CoreMyLibrarySource(reader)).also { myLibrarySession = it }
 
     internal val isClosed: Boolean get() = closed
 

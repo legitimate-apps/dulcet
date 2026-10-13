@@ -244,6 +244,8 @@ internal fun TvLibraryEntry(
     val myLibrarySession = myLibrary ?: session.myLibrary
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
+    // The split says the server advertises the extension; bring the device's library up to its.
+    LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()

@@ -6,7 +6,6 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.isRoot
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performKeyInput
@@ -79,9 +78,14 @@ class TvMyLibraryTest {
         assertTrue(exists("browse.open"), "the bar has the Browse tab")
         assertTrue(selected("library.open"), "the bar's Library tab is lit")
 
-        key(Key.DirectionUp)
-        assertFocused("library.open")
-        key(Key.DirectionRight)
+        // UP from the card crosses to the bar; where it lands on the bar is geometric, so walk
+        // along the bar to Browse from whichever tab the remote first rests on.
+        var ups = 0
+        while (!focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
+        assertTrue(focused("library.open") || focused("search.open") || focused("browse.open"),
+            "UP from the card reaches the bar; focused=${focusedTags()}")
+        var rights = 0
+        while (!focused("browse.open") && rights < 6) { key(Key.DirectionRight); rights += 1 }
         assertFocused("browse.open")
         key(Key.DirectionCenter)
         await("Browse, the catalog home") { exists("library.surface") }

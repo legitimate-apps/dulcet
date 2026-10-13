@@ -1036,6 +1036,8 @@ internal fun TrackRow(
     queue: TrackQueue? = null,
     onRate: ((Int) -> Unit)? = null,
     library: TrackLibrary? = null,
+    /** The row's tag when no favouriteTag names it (a row with no heart, as My Library's). */
+    rowTagOverride: String? = null,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
@@ -1048,7 +1050,7 @@ internal fun TrackRow(
     val downloadLine = download?.status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
     val supporting = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
         else downloadLine ?: track.artistName
-    val rowTag = favouriteTag?.removeSuffix(".favourite")
+    val rowTag = rowTagOverride ?: favouriteTag?.removeSuffix(".favourite")
     ListItem(
         headlineContent = {
             Text(track.title ?: stringResource(R.string.unknown_title), maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent)
