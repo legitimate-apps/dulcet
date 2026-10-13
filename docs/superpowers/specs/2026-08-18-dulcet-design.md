@@ -1054,7 +1054,7 @@ queued for main-actor delivery is stale, cannot publish a connected account, and
 credentials after the person's last instruction was Cancel. The tvOS root deliberately uses a
 full-screen `NavigationStack`, remote-focus sections, large focus-visible controls, and native tvOS
 text fields whose software text-entry session advances URL → username → password → local-HTTP
-choice. It does not reuse the desktop split-view or pointer/keyboard affordances. iPadOS-specific
+choice for an HTTP address, or directly to the primary action otherwise. It does not reuse the desktop split-view or pointer/keyboard affordances. iPadOS-specific
 layout evidence, Android, and Android TV remain future work. This paragraph makes no `shipped`
 account-setup claim for any platform.
 
@@ -2759,7 +2759,10 @@ are common — and it is recorded as **OQ-9** rather than pretended away. What w
 trust-all path and call it a preference.
 
 **The local-HTTP exception** permits plain `http` only after an explicit per-server opt-in with a
-visible warning. The opt-in is persisted as account state; a URL spelling, including a `.local` name,
+visible warning. Apple account forms show the consent and its warning only while the trimmed
+server address begins with `http://` (case-insensitive). Hiding the row never changes its value;
+HTTPS and empty addresses do not acquire another keyboard stop. The opt-in is persisted as account
+state; a URL spelling, including a `.local` name,
 never grants permission by itself. Immediately before **every** plaintext request, the transport
 resolves the logical hostname and requires every returned address to be IPv4 RFC1918, IPv4 loopback,
 IPv6 loopback (`::1`), or IPv6 unique-local (`fc00::/7`). Empty, malformed, mixed local/public, IPv4
@@ -7742,6 +7745,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-12 — Apple account forms show local-HTTP consent only for an HTTP address.**
+The iOS, iPadOS, macOS and tvOS account forms show the existing consent control and warning only
+when the trimmed address begins with `http://`, case-insensitively. Hiding it leaves the user's
+choice untouched, including the persisted per-account opt-in; URL normalization, request validation,
+DNS pinning and plaintext security enforcement are unchanged (§10.2, §13.5). HTTPS keyboard traversal
+skips the hidden control. The Mac's hosted keyboard proofs retain exact focus traces, Return submission,
+Escape cancellation and duplicate-Return assertions with that expected sequence. Credential labels
+no longer repeat as placeholders, and the Mac uses a grouped native Form with a trailing default action.
 
 **2026-10-11 — `account.connect/ios` ships on the signed iPhone device receipt.**
 The signed iPhone lane runs the shared signed account-connect proof, without rotation, on a fresh

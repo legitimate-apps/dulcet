@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Group Apple tour JPEGs by screen, labeling device/appearance/text/orientation side by side.
+
+Usage: tools/design-tour-contact-sheets SHOT_DIRECTORY
+Requires Pillow. Writes compressed 1600px-wide JPEGs and contact-sheets.txt under SHOT_DIRECTORY.
+"""
+import argparse
+from collections import defaultdict
+from pathlib import Path
+import re
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+
+def variant_order(item):
+    label, path = item
+    device = next((index for index, name in enumerate(('iphone', 'ipad', 'mac', 'tvos'))
+                   if label.startswith(name)), 4)
+    appearance = 0 if '-light' in label else 1
+    if device == 0:
+        layout = 0 if '-default' in label else 1 if '-xxl' in label else 2
+    elif device == 1:
+        layout = 0 if '-portrait' in label else 1
+    else:
+        layout = 0
+    return device, layout, appearance, 0 if '-account' in label else 1, path.name
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('directory', type=Path)
+    args = parser.parse_args()
+    screens = defaultdict(list)
+    for shot in sorted(args.directory.glob('*.jpg')):
+        match = re.fullmatch(r'(.+)-(\d+)-(.+)\.jpg', shot.name)
+        if match:
+            variant, _, screen = match.groups()
+            screen = screen.removesuffix('-UNREACHED')
+            original_screen = screen
+            screen = {'all-albums': 'albums', 'all-artists': 'artists',
+                      'sidebar-albums': 'albums', 'library-sidebar': 'library',
+                      'recently-added-all': 'recently-added', 'recently-played-all': 'recently-played',
+                      'most-played-all': 'most-played', 'add-to-playlist': 'playlist-add',
+                      'album-sort-options': 'album-sort',
+                      'downloads-offline': 'offline-album',
+                      'streaming-quality': 'settings-quality',
+                      'playlists-populated': 'playlists', 'favourites-populated': 'favourites'}.get(screen, screen)
+            # Keep the account-phase label: Connection is photographed both at the end of
+            # the real form journey and from the connected reader tour. Distinguish additional
+            # populated/sidebar shots when their filenames share a canonical screen group.
+            label = variant
+            if original_screen in {'sidebar-albums', 'playlists-populated', 'favourites-populated'}:
+                label += ' (' + original_screen.split('-')[-1] + ')'
+            screens[screen].append((label, shot))
+    out = args.directory / 'contact-sheets'
+    out.mkdir(exist_ok=True)
+    try:
+        font = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 20)
+        title_font = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 28)
+    except OSError:
+        font = ImageFont.load_default(size=20)
+        title_font = ImageFont.load_default(size=28)
+    manifest = []
+    for screen, shots in sorted(screens.items()):
+        shots.sort(key=variant_order)
+        columns = min(4, len(shots))
+        cell_width = 1600 // columns
+        cell_height = 590
+        rows = (len(shots) + columns - 1) // columns
+        sheet = Image.new('RGB', (1600, 60 + rows * cell_height), '#202124')
+        draw = ImageDraw.Draw(sheet)
+        draw.text((16, 14), screen, font=title_font, fill='white')
+        for index, (variant, path) in enumerate(shots):
+            x, y = index % columns * cell_width, 60 + index // columns * cell_height
+            with Image.open(path) as image:
+                fitted = ImageOps.contain(ImageOps.exif_transpose(image).convert('RGB'), (cell_width - 16, cell_height - 70))
+                sheet.paste(fitted, (x + (cell_width - fitted.width) // 2, y + 55))
+            label = variant + (' UNREACHED' if 'UNREACHED' in path.name else '')
+            # Two lines preserve every variant component at smaller phone cells.
+            if draw.textlength(label, font=font) > cell_width - 16:
+                split = label.rfind('-', 0, len(label) // 2 + 5)
+                label = label[:split] + '\n' + label[split + 1:]
+            draw.multiline_text((x + 8, y + 5), label, font=font,
+                                fill='#ffb4ab' if 'UNREACHED' in path.name else 'white', spacing=3)
+        target = out / f'{screen}.jpg'
+        sheet.save(target, quality=76, optimize=True)
+        manifest.append(f'contact-sheets/{target.name} ({len(shots)} variants)')
+    (args.directory / 'contact-sheets.txt').write_text('\n'.join(manifest) + '\n')
+    print(f'{len(manifest)} contact sheets from {sum(map(len, screens.values()))} shots')
+
+
+if __name__ == '__main__':
+    main()

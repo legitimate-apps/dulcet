@@ -21,56 +21,74 @@ struct DulcetEmptyLibraryView: View {
     }
 
     private var content: some View {
-        VStack(spacing: DulcetSpacing.xl) {
-            Spacer(minLength: DulcetSpacing.xl)
-
-            ZStack {
-                Circle()
-                    .fill(Color.dulcetAccent.opacity(0.10))
-                    .frame(width: 112, height: 112)
-                Image(systemName: "music.note.house")
-                    .font(.system(size: 42, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .dulcetForeground(.accentIconOnTint)
+        ContentUnavailableView {
+            VStack(spacing: 20) {
+                Image(systemName: "music.note")
+                    .font(.system(size: introSymbolSize, weight: .regular))
+                    .dulcetForeground(.accentIconOnWindow)
                     .accessibilityHidden(true)
-            }
-
-            VStack(spacing: DulcetSpacing.sm) {
                 Text(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.firstRunTitle)
-                    .font(.largeTitle.weight(.semibold))
+                    .font(.largeTitle.weight(.bold))
                     .multilineTextAlignment(.center)
-                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.firstRunBody)
-                    .font(.title3)
+                    .frame(maxWidth: introTextWidth)
+            }
+        } description: {
+            Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.firstRunBody)
+                .font(.title3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: introBodyWidth)
+        } actions: {
+            VStack(spacing: 24) {
+                if !connected {
+                    Button(action: onConnect) {
+                        Text(DulcetStrings.connectServer)
+                            .font(.headline)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.borderedProminent)
+#if os(iOS)
+                    .dulcetForeground(.labelOnAccentFill)
+#endif
+                    .controlSize(.large)
+                    .dulcetDefaultActionShortcut()
+                    .accessibilityLabel(DulcetStrings.connectServer)
+                }
+                Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
+                    .font(.footnote)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .multilineTextAlignment(.center)
-                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 560)
+                    .frame(maxWidth: introTextWidth)
             }
-
-            if !connected {
-                DulcetProminentAction(
-                    DulcetStrings.connectServer,
-                    systemImage: "plus",
-                    isDefaultAction: true,
-                    action: onConnect
-                )
-                .accessibilityLabel(DulcetStrings.connectServer)
-            }
-
-            Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
-                .font(.footnote)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 520)
-
-            Spacer(minLength: DulcetSpacing.xl)
         }
-        .padding(DulcetSpacing.xxl)
+        .padding(.vertical, 24)
+    }
+
+    private var introTextWidth: CGFloat {
+#if os(tvOS)
+        860
+#else
+        420
+#endif
+    }
+
+    private var introBodyWidth: CGFloat {
+#if os(tvOS)
+        860
+#else
+        480
+#endif
+    }
+
+    private var introSymbolSize: CGFloat {
+#if os(tvOS)
+        100
+#else
+        64
+#endif
     }
 }
 

@@ -72,8 +72,8 @@ struct DulcetSearchView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-#if !os(iOS)
-                // On iOS the navigation bar's title already says it.
+#if os(tvOS)
+                // iOS and macOS already name this destination in the navigation bar.
                 Text(DulcetStrings.searchTitle)
                     .font(.title.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
@@ -139,6 +139,9 @@ struct DulcetSearchView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(DulcetStrings.search)
+#if os(macOS)
+        .safeAreaPadding(.top, 48)
+#endif
     }
 
 #if os(iOS)
@@ -342,20 +345,23 @@ struct DulcetSearchView: View {
     }
 
     private func searchMessage(symbol: String, title: String, body: String) -> some View {
-        VStack(spacing: DulcetSpacing.sm) {
-            Image(systemName: symbol)
-                .font(.system(size: 36, weight: .medium))
-                .dulcetForeground(.secondaryTextOnWindow)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.title2.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
+        ContentUnavailableView {
+            Label {
+                Text(title)
+                    .font(.title.weight(.bold))
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: symbol)
+                    .font(.system(size: 56, weight: .regular))
+                    .accessibilityHidden(true)
+            }
+        } description: {
             Text(body)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
+                .font(.title3)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: 440)
+        .frame(maxWidth: 600)
+
     }
 }
 

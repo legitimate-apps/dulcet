@@ -18,6 +18,7 @@ struct DulcetAccountConnectionView: View {
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
 #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
 #if os(tvOS)
@@ -45,6 +46,11 @@ struct DulcetAccountConnectionView: View {
         return false
     }
 
+    private var showsLocalHTTPConsent: Bool {
+        store.accountServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().hasPrefix("http://")
+    }
+
     private var savedServerName: String? {
         if case let .saved(serverName) = store.snapshot.accountConnection { return serverName }
         return nil
@@ -64,24 +70,7 @@ struct DulcetAccountConnectionView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                if store.snapshot.accountRemoval == .removing {
-                    accountRemovalProgress
-                } else {
-                    heading
-                    connectionForm
-                    statusPanel
-                    DulcetStreamingQualitySection(store: store)
-                }
-            }
-            .padding(DulcetSpacing.xl)
-            .frame(maxWidth: contentMaxWidth)
-            .frame(maxWidth: .infinity)
-#if os(tvOS)
-            .focusScope(accountFocusScope)
-#endif
-        }
+        accountSurface
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         // Connection is a launch surface: its navigation bar's identifier is how tests read the
@@ -92,6 +81,7 @@ struct DulcetAccountConnectionView: View {
         .scrollDismissesKeyboard(.interactively)
 #endif
 #if os(macOS)
+        .toolbarTitleDisplayMode(.inline)
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
         }
@@ -147,103 +137,180 @@ struct DulcetAccountConnectionView: View {
         }
     }
 
-    private var contentMaxWidth: CGFloat {
+    @ViewBuilder
+    private var accountSurface: some View {
 #if os(tvOS)
-        1_100
+        ScrollView {
+            VStack(alignment: .leading, spacing: 32) {
+                if store.snapshot.accountRemoval == .removing {
+                    accountRemovalProgress
+                } else {
+                    HStack(alignment: .top, spacing: 48) {
+                        tvConnectionForm
+                            .frame(maxWidth: .infinity)
+                        VStack(alignment: .leading, spacing: 24) {
+                            Text(DulcetStrings.accountConnectBody)
+                                .font(.title3)
+                                .dulcetForeground(.secondaryTextOnWindow)
+                            statusPanel
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .focusSection()
+                    }
+                    DulcetStreamingQualitySection(store: store)
+                }
+            }
+            .padding(40)
+            .frame(maxWidth: 1600)
+            .frame(maxWidth: .infinity)
+            .focusScope(accountFocusScope)
+        }
+#elseif os(macOS)
+        GeometryReader { geometry in
+            Form {
+                if store.snapshot.accountRemoval == .removing {
+                    Section { accountRemovalProgress }
+                } else {
+                    Section {
+                        connectionForm
+                    } footer: {
+                        Text(DulcetStrings.accountConnectBody)
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(DulcetStrings.accountDetails)
+                    .accessibilityIdentifier("dulcet.account-connect.title")
+                    Section { statusPanel }
+                    DulcetStreamingQualitySection(store: store, inForm: true)
+                }
+            }
+            .formStyle(.grouped)
+            .contentMargins(.horizontal, max(20, (geometry.size.width - 720) / 2), for: .scrollContent)
+            .padding(.top, 24)
+        }
+
 #else
-        720
+        ScrollViewReader { proxy in
+            Form {
+                if store.snapshot.accountRemoval == .removing {
+                    Section { accountRemovalProgress }
+                } else {
+                    accountCredentialsSection
+                    accountStatusSection
+                    DulcetStreamingQualitySection(store: store, inForm: true)
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .safeAreaPadding(.bottom, DulcetSpacing.lg)
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
+            .background(Color(uiColor: .systemGroupedBackground))
+            .task(id: store.snapshot.accountConnection) {
+                guard dynamicTypeSize.isAccessibilitySize,
+                      store.snapshot.accountConnection != .idle else { return }
+                // A native Form realizes its scroll targets after mounting. Wait for that
+                // layout before revealing a restored status; changing state cancels this task.
+                do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+                proxy.scrollTo("account-status", anchor: .top)
+            }
+        }
 #endif
     }
 
-    private var heading: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            Text(DulcetStrings.accountConnectTitle)
-                .font(.largeTitle.weight(.bold))
-                .lineLimit(nil)
+#if os(iOS)
+    private var accountCredentialsSection: some View {
+        Section {
+            connectionForm
+        } header: {
+            Text(DulcetStrings.accountDetails)
                 .accessibilityIdentifier("dulcet.account-connect.title")
-                .accessibilityAddTraits(.isHeader)
+        } footer: {
             Text(DulcetStrings.accountConnectBody)
-                .font(.callout)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .lineLimit(nil)
         }
     }
 
+    private var accountStatusSection: some View {
+        Section {
+            statusPanel.id("account-status")
+        }
+    }
+
+#endif
+
+#if !os(tvOS)
     private var connectionForm: some View {
-#if os(tvOS)
-        tvConnectionForm
-#else
-        GroupBox(DulcetStrings.accountDetails) {
-            Grid(
-                alignment: .leadingFirstTextBaseline,
-                horizontalSpacing: DulcetSpacing.md,
-                verticalSpacing: DulcetSpacing.sm
-            ) {
-                GridRow {
-                    Text(DulcetStrings.serverAddress)
-                    TextField(
-                        DulcetStrings.serverAddressPlaceholder,
-                        text: $store.accountServerURL
-                    )
-                    .textFieldStyle(.roundedBorder)
+        Group {
+            credentialRow(DulcetStrings.serverAddress) {
+                TextField(DulcetStrings.serverAddress, text: $store.accountServerURL, prompt: Text(DulcetStrings.serverAddressPlaceholder))
+                    .labelsHidden()
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityLabel(DulcetStrings.serverAddress)
                     .accessibilityIdentifier("dulcet.account-connect.server-address")
                     .focused($focusedControl, equals: .serverAddress)
-                }
-                GridRow {
-                    Text(DulcetStrings.username)
-                    TextField(DulcetStrings.username, text: $store.accountUsername)
-                        .textFieldStyle(.roundedBorder)
-                        .dulcetCredentialInput(.username)
-                        .accessibilityLabel(DulcetStrings.username)
-                        .accessibilityIdentifier("dulcet.account-connect.username")
-                        .focused($focusedControl, equals: .username)
-                }
-                GridRow {
-                    Text(DulcetStrings.password)
-                    SecureField(DulcetStrings.password, text: $store.accountPassword)
-                        .textFieldStyle(.roundedBorder)
-                        .dulcetCredentialInput(.password)
-                        .accessibilityLabel(DulcetStrings.password)
-                        .accessibilityIdentifier("dulcet.account-connect.password")
-                        .focused($focusedControl, equals: .password)
-                }
-                GridRow {
-                    // This cell only occupies the label column; it has no text, so under the grid's
-                    // .leadingFirstTextBaseline guide there is no first text baseline to align to and
-                    // one has to be synthesised for the row. gridCellAnchor switches this cell to
-                    // anchor-based alignment, which is documented to take it out of the alignment-guide
-                    // strategy entirely, so the row's geometry no longer depends on resolving a
-                    // baseline that does not exist.
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .gridCellAnchor(.topLeading)
-                    Toggle(
-                        DulcetStrings.allowLocalHTTP,
-                        isOn: $store.accountAllowLocalHTTP
-                    )
+            }
+            credentialRow(DulcetStrings.username) {
+                TextField(DulcetStrings.username, text: $store.accountUsername)
+                    .labelsHidden()
+                    .dulcetCredentialInput(.username)
+                    .accessibilityLabel(DulcetStrings.username)
+                    .accessibilityIdentifier("dulcet.account-connect.username")
+                    .focused($focusedControl, equals: .username)
+            }
+            credentialRow(DulcetStrings.password) {
+                SecureField(DulcetStrings.password, text: $store.accountPassword)
+                    .labelsHidden()
+                    .dulcetCredentialInput(.password)
+                    .accessibilityLabel(DulcetStrings.password)
+                    .accessibilityIdentifier("dulcet.account-connect.password")
+                    .focused($focusedControl, equals: .password)
+            }
+            if showsLocalHTTPConsent {
+                Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
                     .focused($focusedControl, equals: .allowLocalHTTP)
-                }
+                Text(DulcetStrings.allowLocalHTTPHint)
+                    .font(.footnote)
+                    .dulcetForeground(.secondaryTextOnControl)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            // The surrounding ScrollView owns vertical overflow. Preserve the grid's ideal vertical
-            // size so an undersized proposal scrolls the form instead of distributing a deficit into
-            // an arbitrary equal-priority row. This deliberately does not name a point height: each
-            // field's native intrinsic size remains the source of truth at every content size.
-            .fixedSize(horizontal: false, vertical: true)
-            .disabled(isConnecting)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, DulcetSpacing.xxs)
         }
+        .disabled(isConnecting)
+    }
+
+    private func credentialRow<Control: View>(
+        _ title: String, @ViewBuilder control: () -> Control
+    ) -> some View {
+#if os(macOS)
+        LabeledContent(title) {
+            control()
+                .textFieldStyle(.roundedBorder)
+                .labelsHidden()
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: 400)
+        }
+#else
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .dulcetForeground(.secondaryTextOnControl)
+                .fixedSize(horizontal: false, vertical: true)
+            control()
+                .textFieldStyle(.plain)
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 6)
 #endif
     }
+#endif
 
 #if os(tvOS)
     private var tvConnectionForm: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
             Text(DulcetStrings.accountDetails)
                 .font(.title2.weight(.semibold))
+                .accessibilityIdentifier("dulcet.account-connect.title")
                 .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
@@ -283,22 +350,24 @@ struct DulcetAccountConnectionView: View {
                     .dulcetTVTextField(focused: focusedControl == .password)
                     .dulcetCredentialInput(.password)
                     .submitLabel(.next)
-                    .onSubmit { focusedControl = .allowLocalHTTP }
+                    .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
                     .accessibilityLabel(DulcetStrings.password)
                     .accessibilityIdentifier("dulcet.account-connect.password")
                     .focused($focusedControl, equals: .password)
             }
 
-            Toggle(
-                DulcetStrings.allowLocalHTTP,
-                isOn: $store.accountAllowLocalHTTP
-            )
-            .font(.headline)
-            .padding(.horizontal, DulcetSpacing.md)
-            .padding(.vertical, DulcetSpacing.sm)
-            .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
-            .focused($focusedControl, equals: .allowLocalHTTP)
+            if showsLocalHTTPConsent {
+                Toggle(
+                    DulcetStrings.allowLocalHTTP,
+                    isOn: $store.accountAllowLocalHTTP
+                )
+                .font(.headline)
+                .padding(.horizontal, DulcetSpacing.md)
+                .padding(.vertical, DulcetSpacing.sm)
+                .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
+                .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
+                .focused($focusedControl, equals: .allowLocalHTTP)
+            }
 
             Text(DulcetStrings.tvTextEntryHint)
                 .font(.callout)
@@ -393,7 +462,7 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityHidden(true)
             }
 
-            HStack(spacing: DulcetSpacing.sm) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                 Button(DulcetStrings.tryAgain) {
                     store.removeAccount()
                 }
@@ -422,13 +491,15 @@ struct DulcetAccountConnectionView: View {
                     .lineLimit(nil)
             }
 
-            HStack(alignment: .top, spacing: DulcetSpacing.md) {
+            if isConnecting { connectingStatus }
+#if os(macOS)
+            HStack {
+                Spacer()
                 accountPrimaryAction
-
-                if isConnecting {
-                    connectingStatus
-                }
             }
+#else
+            accountPrimaryAction
+#endif
 
             if !isConnecting {
                 Text(DulcetStrings.accountCredentialFootnote)
@@ -437,12 +508,7 @@ struct DulcetAccountConnectionView: View {
                     .lineLimit(nil)
             }
         }
-        .padding(DulcetSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            isConnecting ? Color.dulcetControl.opacity(0.52) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 12)
-        )
     }
 
     private var connectingStatus: some View {
@@ -472,7 +538,13 @@ struct DulcetAccountConnectionView: View {
                     : (savedServerName == nil ? DulcetStrings.connect : DulcetStrings.reconnect),
                 systemImage: isConnecting ? "xmark" : "link"
             )
+#if os(macOS)
+            .frame(minWidth: 96)
+#else
+            .frame(maxWidth: .infinity, minHeight: 32)
+#endif
         }
+        .controlSize(.large)
         .buttonStyle(.borderedProminent)
         .dulcetConnectionProminentLabel()
         .dulcetDefaultActionShortcut()
@@ -518,34 +590,20 @@ struct DulcetAccountConnectionView: View {
 
     private func failurePanel(_ failure: DulcetAccountFailurePresentation) -> some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-            HStack(alignment: .top, spacing: DulcetSpacing.sm) {
-                ZStack {
-                    Circle()
-                        .fill(Color.dulcetDanger.opacity(0.11))
-                        .frame(width: 42, height: 42)
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.title2)
-                        .dulcetForeground(.dangerIconOnTint)
-                        .accessibilityHidden(true)
-                }
-                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                    Text(failure.title)
-                        .font(.title2.weight(.semibold))
-                        .lineLimit(nil)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(failure.message)
-                        .lineLimit(nil)
-                    Text(failure.recovery)
-                        .font(.callout)
-                        .dulcetForeground(.secondaryTextOnControl)
-                        .lineLimit(nil)
-                }
-            }
+            failureDetails(failure)
 
-            HStack(spacing: DulcetSpacing.sm) {
-                Button(DulcetStrings.tryAgain) {
+            VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                Button {
                     store.submitAccountConnection()
+                } label: {
+                    Text(DulcetStrings.tryAgain)
+#if os(macOS)
+                        .frame(minWidth: 96)
+#else
+                        .frame(maxWidth: .infinity, minHeight: 32)
+#endif
                 }
+                .controlSize(.large)
                 .buttonStyle(.borderedProminent)
                 .dulcetConnectionProminentLabel()
                 .dulcetDefaultActionShortcut()
@@ -570,10 +628,73 @@ struct DulcetAccountConnectionView: View {
                 }
 #endif
             }
+#if os(macOS)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+#endif
         }
         .padding(DulcetSpacing.md)
-        .background(Color.dulcetControl.opacity(0.52), in: RoundedRectangle(cornerRadius: 12))
+        .fixedSize(horizontal: false, vertical: true)
         .dulcetForeground(.primaryTextOnControl)
+    }
+
+    @ViewBuilder
+    private func failureDetails(_ failure: DulcetAccountFailurePresentation) -> some View {
+#if os(iOS)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                    failureSymbol
+                    failureTitle(failure)
+                }
+                // Explanations use the full row at large text, rather than an icon column.
+                failureExplanation(failure)
+            }
+        } else {
+            horizontalFailureDetails(failure)
+        }
+#else
+        horizontalFailureDetails(failure)
+#endif
+    }
+
+    private func horizontalFailureDetails(_ failure: DulcetAccountFailurePresentation) -> some View {
+        HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+            failureSymbol
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                failureTitle(failure)
+                failureExplanation(failure)
+            }
+        }
+    }
+
+    private var failureSymbol: some View {
+        ZStack {
+            Circle()
+                .fill(Color.dulcetDanger.opacity(0.11))
+                .frame(width: 42, height: 42)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title2)
+                .dulcetForeground(.dangerIconOnTint)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func failureTitle(_ failure: DulcetAccountFailurePresentation) -> some View {
+        Text(failure.title)
+            .font(.headline)
+            .lineLimit(nil)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func failureExplanation(_ failure: DulcetAccountFailurePresentation) -> some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+            Text(failure.message)
+                .lineLimit(nil)
+            Text(failure.recovery)
+                .font(.callout)
+                .dulcetForeground(.secondaryTextOnControl)
+                .lineLimit(nil)
+        }
     }
 
     private func preferredFocus(

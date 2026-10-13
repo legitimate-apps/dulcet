@@ -74,7 +74,7 @@ enum DulcetStrings {
     static let queue = text("player.queue", "Queue")
     static let playingOn = text("player.playingOn", "Playing on")
     static let firstRunTitle = text("empty.title", "Your music, wherever you listen")
-    static let firstRunBody = text("empty.body", "Connect an OpenSubsonic server to browse your library and listen with native controls.")
+    static let firstRunBody = text("empty.body", "Connect your music server to browse your library and start listening.")
     static let firstRunFootnote = text("empty.footnote", "Dulcet keeps account credentials in the system Keychain and sends no analytics.")
     static let connectedEmptyTitle = text("library.empty.connected.title", "This library is empty")
     static let connectedEmptyBody = text("library.empty.connected.body", "The connected server returned no artists or albums.")

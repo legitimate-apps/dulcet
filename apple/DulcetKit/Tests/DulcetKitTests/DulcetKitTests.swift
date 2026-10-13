@@ -321,7 +321,7 @@ func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
 
 #if os(macOS)
 @Test @MainActor
-func accountFieldsResolveToEqualIntrinsicHeights() {
+func accountFieldsResolveToEqualIntrinsicHeights() async {
     let store = DulcetPresentationStore(
         source: DulcetDeterministicDataSource(initialState: .tlsUntrusted)
     )
@@ -334,6 +334,18 @@ func accountFieldsResolveToEqualIntrinsicHeights() {
     view.layoutSubtreeIfNeeded()
     view.displayIfNeeded()
 
+    // A grouped Form realizes its rows in a window, after the next layout turn.
+    let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = view
+    window.orderBack(nil)
+    defer { window.close() }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while accountTextFields(in: view).count != 3, ContinuousClock.now < deadline {
+        view.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    view.layoutSubtreeIfNeeded()
     let fields = accountTextFields(in: view)
     #expect(fields.count == 3)
     let assignedHeights = fields.map(\.frame.height)
@@ -378,14 +390,19 @@ func searchFieldResolvesToIntrinsicHeightAcrossFlexibleContentStates() throws {
 
 @MainActor
 private func accountTextFields(in root: NSView) -> [NSTextField] {
-    textFields(
-        in: root,
-        matching: [
-            DulcetStrings.serverAddressPlaceholder,
-            DulcetStrings.username,
-            DulcetStrings.password,
-        ]
-    )
+    var fields: [NSTextField] = []
+    func visit(_ view: NSView) {
+        // Form's SwiftUI accessibility proxies carry the identifiers; its native field views
+        // are editable NSTextFields, and blank credentials have no placeholder to query.
+        if let field = view as? NSTextField, field.isEditable {
+            fields.append(field)
+        }
+        view.subviews.forEach(visit)
+    }
+    visit(root)
+    return fields.sorted { lhs, rhs in
+        lhs.convert(lhs.bounds, to: root).maxY > rhs.convert(rhs.bounds, to: root).maxY
+    }
 }
 
 @MainActor

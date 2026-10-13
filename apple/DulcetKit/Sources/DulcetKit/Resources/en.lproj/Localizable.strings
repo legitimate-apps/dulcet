@@ -63,7 +63,7 @@
 "player.progress" = "%1$@ of %2$@";
 "player.audioFormat" = "%1$@ · %2$@ kHz";
 "empty.title" = "Your music, wherever you listen";
-"empty.body" = "Connect an OpenSubsonic server to browse your library and listen with native controls.";
+"empty.body" = "Connect your music server to browse your library and start listening.";
 "empty.footnote" = "Dulcet keeps account credentials in the system Keychain and sends no analytics.";
 "library.empty.connected.title" = "This library is empty";
 "library.empty.connected.body" = "The connected server returned no artists or albums.";

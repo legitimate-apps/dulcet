@@ -42,6 +42,7 @@ struct DulcetMacApp: App {
 #endif
         }
         .defaultSize(width: 1180, height: 760)
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             DulcetPlaybackCommands(store: presentation)
             DulcetLibraryCommands(store: presentation)

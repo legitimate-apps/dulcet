@@ -9,28 +9,33 @@
 #   run), then runs one tour per device and writes compressed JPEGs, about 1000 px on the long
 #   edge, to:
 #       <out-dir>/<device>-<nn>-<screen>.jpg
-#   where <device> is iphone-light, iphone-dark, ipad, mac or tvos. A screen the tour could not reach is
+#   where <device> includes appearance, text size (iPhone) and orientation (iPad). A screen the tour could not reach is
 #   still written, as <nn>-<screen>-UNREACHED.jpg, and the command exits 1 naming it.
 #   <out-dir>/tour-summary.txt lists every shot and the result of each device's run.
+#   Labeled 1600px-wide JPEG contact sheets are grouped per screen in contact-sheets/ (Pillow).
 #
 # SCREENS
 #   iPhone and iPad (apple/DulcetiOSUITests/DulcetDesignTourUITests.swift): Library root, the
 #   Albums section beside the sidebar (iPad only), an album, an artist, Now Playing while playing,
 #   the lyrics panel, Up Next, Playlists, a playlist, Search with results.
+#   The opt-in account-state tour also photographs first run, filled Connection and each real
+#   error family using loopback fixtures. Connected tours include all Library sections, playlist
+#   prompts and streaming-quality settings. iPhone: light/dark at default, XXL and Accessibility L;
+#   iPad: light/dark in portrait/landscape; Mac: light/dark. No standalone Songs or Downloads
+#   destination exists in the current Apple shell; downloaded rows/device data are photographed.
 #   Mac (apple/DulcetMacTests/DulcetMacDesignTourTest.swift): the same places in the production
 #   root view in a 1280x800 window of the hosted app, captured with screencapture (the terminal
 #   running this tool needs the Screen Recording permission; without it the shot falls back to
 #   the view hierarchy drawn into an image, which leaves translucent materials out).
-#   Apple TV (apple/DulcetTVUITests/DulcetTVDesignTourUITests.swift), by the remote alone: Library
-#   root with its launch focus, an album, Now Playing while playing with focus on Play/Pause, the
-#   same with focus on the third star and then on the heart (focused, never pressed), the lyrics
-#   panel while playing, Search with results, and Settings with focus on streaming quality.
+#   Apple TV (apple/DulcetTVUITests/DulcetTVDesignTourUITests.swift), by the remote alone: first
+#   run and Connection/error states, Library and its full lists/sections, details and context
+#   menus, playlist creation/deletion prompts, Now Playing with Play/Pause, star and heart focus,
+#   lyrics, Search results, and inline streaming-quality choices.
 #
-# RUNTIME (measured on an Apple Silicon laptop)
-#   cold: first build ~80 s (iOS) + ~40 s (Mac), plus the first boot of a newly created simulator,
-#   which took ~10 min once. warm (simulators reused, nothing changed): ~2 min per iOS tour,
-#   ~2.5 min for iPad, ~25 s for Mac, ~7 min for all four. An edit rebuilds incrementally (~10 s).
-#   tvOS: first build ~130 s and a first tour ~3 min on a newly created simulator; warm, ~70 s.
+# RUNTIME
+#   Allow over an hour for the full appearance/text/orientation matrix. Each variant exercises
+#   real account errors and connected navigation; products are built once per platform and reused
+#   between variants. An optional DULCET_DESIGN_TOUR_VARIANT scopes an iOS edit-and-reshoot loop.
 #
 # ENVIRONMENT (all optional)
 #   DULCET_DESIGN_TOUR_WORK          server root, result bundles and logs
@@ -45,6 +50,10 @@
 #                                    simulators named "Dulcet Design Tour iPhone"/"... iPad"/
 #                                    "... Apple TV".
 #   DULCET_DESIGN_TOUR_NAVIDROME     a Navidrome binary to use instead of fetching the pinned one
+#   DULCET_DESIGN_TOUR_VARIANT       optional exact iOS variant label for an edit-and-reshoot loop
+#   DULCET_DESIGN_TOUR_SKIP_VARIANTS space-separated iOS labels whose verified shots are preserved
+#   DULCET_DESIGN_TOUR_PHASE         all (default), account or connected; account scopes all platforms
+#   DULCET_DESIGN_TOUR_SCREENS       optional space-separated capture names; all state proofs still run
 #   DULCET_DESIGN_TOUR_PORT          server port (default 4861)
 #
 # KNOWN LIMITS
@@ -54,8 +63,8 @@
 #     stopped at the end. A simulator this tool booted is shut down at the end unless
 #     --keep-simulator; for a quick edit-and-reshoot loop pass both flags, since a first boot of a
 #     new simulator can take several minutes.
-#   - The Mac window is the production root view hosted by the test in its own window. It is
-#     never the key window, so it renders in the inactive style (grey selection and controls).
+#   - The Mac production root view is hosted in a test window that follows the requested
+#     appearance and bridges its production toolbar.
 #   - Only the automated disposable server is ever used. Never point this at a personal server.
 set -euo pipefail
 
@@ -63,6 +72,10 @@ usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [[ $# -ge 1 ]] || usage
 OUT="$1"; shift
 DEVICE=all
+VARIANT="${DULCET_DESIGN_TOUR_VARIANT:-}"
+SKIP_VARIANTS="${DULCET_DESIGN_TOUR_SKIP_VARIANTS:-}"
+PHASE="${DULCET_DESIGN_TOUR_PHASE:-all}"
+case "$PHASE" in all|account|connected) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account or connected" >&2; exit 2 ;; esac
 KEEP_SERVER=0
 KEEP_SIMULATOR=0
 while [[ $# -gt 0 ]]; do
@@ -95,8 +108,10 @@ SERVER_LINE=$("$REPO/tools/design-tour-server" "${SERVER_ARGS[@]}" | tail -1)
 SERVER_URL=$(sed -n 's/.*url=\([^ ]*\).*/\1/p' <<<"$SERVER_LINE")
 [[ -n "$SERVER_URL" ]] || { echo "server did not start: $SERVER_LINE" >&2; exit 1; }
 BOOTED_BY_US=()
+FAULT_PID=
 XCB_PID=
 cleanup() {
+  [[ -z "$FAULT_PID" ]] || kill "$FAULT_PID" 2>/dev/null || true
   [[ -n "$XCB_PID" ]] && kill "$XCB_PID" 2>/dev/null || true
   [[ $KEEP_SIMULATOR -eq 1 ]] || for udid in "${BOOTED_BY_US[@]:-}"; do
     [[ -n "$udid" ]] && xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
@@ -107,7 +122,23 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 note "server $SERVER_URL ($SERVER_LINE)"
 
+# Error fixtures use ephemeral loopback ports and an untrusted one-day local certificate.
+rm -f "$WORK/faults/endpoints.json"
+"$REPO/tools/design-tour-faults" --upstream "$SERVER_URL" --work "$WORK/faults" > "$LOGS/faults.log" 2>&1 &
+FAULT_PID=$!
+for _ in {1..100}; do
+  [[ ! -f "$WORK/faults/endpoints.json" ]] || break
+  kill -0 "$FAULT_PID" 2>/dev/null || { cat "$LOGS/faults.log" >&2; exit 1; }
+  sleep 0.1
+done
+PROXY_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["proxy"])' "$WORK/faults/endpoints.json")
+TLS_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bad_tls"])' "$WORK/faults/endpoints.json")
+export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$PROXY_URL" DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$PROXY_URL"
+export TEST_RUNNER_DULCET_DESIGN_TOUR_BAD_TLS_URL="$TLS_URL" DULCET_DESIGN_TOUR_BAD_TLS_URL="$TLS_URL"
+
 # The published fixture account of the disposable server; never a real credential.
+export TEST_RUNNER_DULCET_DESIGN_TOUR_PHASE="$PHASE" DULCET_DESIGN_TOUR_PHASE="$PHASE"
+export TEST_RUNNER_DULCET_DESIGN_TOUR_SCREENS="${DULCET_DESIGN_TOUR_SCREENS:-}"
 export TEST_RUNNER_DULCET_DESIGN_TOUR=1
 export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL="$SERVER_URL"
 export TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin
@@ -146,10 +177,13 @@ tour_xctestrun() { # pattern label
   python3 - "$built" "$copy" <<'PY'
 import plistlib, sys
 plan = plistlib.load(open(sys.argv[1], "rb"))
+targets = [value for key, value in plan.items()
+           if key != "__xctestrun_metadata__" and isinstance(value, dict)]
 for configuration in plan.get("TestConfigurations", []):
-    for target in configuration.get("TestTargets", []):
-        target["PreferredScreenCaptureFormat"] = "screenshots"
-        target["SystemAttachmentLifetime"] = "keepNever"
+    targets.extend(configuration.get("TestTargets", []))
+for target in targets:
+    target["PreferredScreenCaptureFormat"] = "screenshots"
+    target["SystemAttachmentLifetime"] = "keepNever"
 plistlib.dump(plan, open(sys.argv[2], "wb"))
 PY
   # xcodebuild resolves the products relative to the .xctestrun's own directory.
@@ -157,16 +191,49 @@ PY
   echo "$copy"
 }
 
-# The Mac tour asks for each shot by writing <name>.request holding its window number; the window
-# is captured here, from this process, because the hosted test cannot capture the screen itself.
+# The Mac tour writes <name>.request with a window number, or a numeric region for a native menu
+# whose overlay is outside the window capture. Capture runs here because the hosted test cannot
+# capture the screen itself. Region requests are bounded by the test's owned window/menu frames.
 serve_capture_requests() { # shots-dir
-  local request name
+  local request name target
   for request in "$1"/*.request; do
     [[ -e "$request" ]] || continue
     name="${request%.request}"
-    screencapture -x -o -l"$(cat "$request")" "$name.tmp.png" 2>/dev/null && mv "$name.tmp.png" "$name.png"
+    target=$(cat "$request")
+    local capture_args=()
+    if [[ "$target" =~ ^region=(-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+)$ ]]; then
+      capture_args=(-R"${BASH_REMATCH[1]}")
+    elif [[ "$target" =~ ^[0-9]+$ ]]; then
+      capture_args=(-l"$target")
+    else
+      touch "$name.fallback"; rm -f "$request"; continue
+    fi
+    if screencapture -x -o "${capture_args[@]}" "$name.tmp.png" 2>/dev/null; then
+      mv "$name.tmp.png" "$name.png"
+    else
+      rm -f "$name.tmp.png"
+      touch "$name.fallback"
+    fi
     rm -f "$request"
   done
+}
+
+# Xcode may orphan a ten-minute simulator diagnostic after a failed UI capture. Its output path
+# ties it to this run; do not terminate diagnostics belonging to another test or session.
+stop_owned_diagnostics() { # result-bundle
+  python3 - "$1" <<'PY'
+import os, signal, subprocess, sys
+prefix = "--output=" + os.path.realpath(sys.argv[1]) + "/"
+for line in subprocess.check_output(["ps", "-axo", "pid=,command="], text=True).splitlines():
+    parts = line.strip().split(None, 1)
+    command = parts[1].replace("--output=/tmp/", "--output=/private/tmp/") if len(parts) == 2 else ""
+    if "/simctl diagnose " in command and prefix in command:
+        try:
+            os.kill(int(parts[0]), signal.SIGTERM)
+            print("design-tour: stopped this run's simctl diagnose pid=" + parts[0])
+        except ProcessLookupError:
+            pass
+PY
 }
 
 # Runs one tour. The test writes each shot as a PNG into a directory of its own as it goes, so
@@ -192,11 +259,12 @@ run_tour() { # label xctestrun only-testing destination...
   done
   wait "$pid" 2>/dev/null || true
   XCB_PID=
+  stop_owned_diagnostics "$RESULTS/$label.xcresult"
   local verdict
   verdict=$(grep -a "Executed 1 test" "$log" | tail -1 | sed 's/^[[:space:]]*//')
   note "$label: ${verdict:-no test executed; see $log}"
   [[ "$verdict" == "Executed 1 test, with 0 failures"* ]] || FAILED=1
-  rm -f "$OUT/$label"-*.jpg
+  rm -f "$OUT/$label"-[0-9][0-9]-*.jpg
   local png count=0
   for png in "$shots"/*.png; do
     [[ -e "$png" ]] || continue
@@ -205,6 +273,25 @@ run_tour() { # label xctestrun only-testing destination...
   done
   note "$label: $count shots, $(ls "$shots" | grep -c UNREACHED || true) unreached, in $(( $(date +%s) - t0 ))s"
   [[ $count -gt 0 ]] || FAILED=1
+  if [[ -n "${DULCET_DESIGN_TOUR_SCREENS:-}" ]]; then
+    local requested_screens
+    read -r -a requested_screens <<< "$DULCET_DESIGN_TOUR_SCREENS"
+    if [[ $count -ne ${#requested_screens[@]} ]]; then
+      note "$label: expected ${#requested_screens[@]} selected captures, got $count"
+      FAILED=1
+    fi
+  fi
+  # A stopped diagnostic can still be finishing an owned copy into the bundle. Retry that
+  # short cleanup race after exporting the JPEGs instead of aborting the remaining variants.
+  for _ in {1..5}; do
+    rm -rf "$RESULTS/$label.xcresult" "$shots" 2>/dev/null && break
+    sleep 0.5
+  done
+  if [[ -e "$RESULTS/$label.xcresult" ]]; then
+    note "$label: result cleanup incomplete ($RESULTS/$label.xcresult)"
+    FAILED=1
+  fi
+
 }
 
 # ---- iOS --------------------------------------------------------------------------------------
@@ -256,21 +343,44 @@ prepare_simulator() { # udid appearance
 }
 
 IOS_ONLY=DulcetiOSUITests/DulcetDesignTourUITests/testDesignTour
+ACCOUNT_ONLY=DulcetiOSUITests/DulcetAccountConnectStatesUITests/testDesignTourAccountStates
+run_ios_variant() { # label destination appearance text-size orientation
+  local label="$1" udid="$2" appearance="$3" size="$4" orientation="$5"
+  [[ -z "$VARIANT" || "$VARIANT" == "$label" ]] || return 0
+  [[ " $SKIP_VARIANTS " != *" $label "* ]] || { note "$label: preserved (requested skip)"; return 0; }
+  prepare_simulator "$udid" "$appearance"
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_TEXT_SIZE="$size" DULCET_DESIGN_TOUR_TEXT_SIZE="$size"
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_ORIENTATION="$orientation" DULCET_DESIGN_TOUR_ORIENTATION="$orientation"
+  if [[ "$PHASE" != connected ]]; then run_tour "$label-account" "$RUN" "$ACCOUNT_ONLY" -destination "id=$udid"; fi
+  if [[ "$PHASE" != account ]]; then run_tour "$label" "$RUN" "$IOS_ONLY" -destination "id=$udid"; fi
+}
 if want iphone; then
   IPHONE=$(simulator "${DULCET_DESIGN_TOUR_IPHONE_UDID:-}" "Dulcet Design Tour iPhone" "iPhone 17 Pro")
   RUN=$(tour_xctestrun 'DulcetiOS_iphonesimulator*.xctestrun' ios)
   for appearance in light dark; do
-    prepare_simulator "$IPHONE" "$appearance"
-    run_tour "iphone-$appearance" "$RUN" "$IOS_ONLY" -destination "id=$IPHONE"
+    for size in default xxl accessibility-l; do
+      case "$size" in
+        default) category=UICTContentSizeCategoryL ;;
+        xxl) category=UICTContentSizeCategoryXXL ;;
+        accessibility-l) category=UICTContentSizeCategoryAccessibilityL ;;
+      esac
+      run_ios_variant "iphone-$appearance-$size" "$IPHONE" "$appearance" "$category" portrait
+    done
   done
-  xcrun simctl ui "$IPHONE" appearance light
+  [[ $KEEP_SIMULATOR -eq 1 ]] || xcrun simctl shutdown "$IPHONE"
 fi
 if want ipad; then
   IPAD=$(simulator "${DULCET_DESIGN_TOUR_IPAD_UDID:-}" "Dulcet Design Tour iPad" "iPad Pro 13-inch (M5)")
   RUN=$(tour_xctestrun 'DulcetiOS_iphonesimulator*.xctestrun' ios)
-  prepare_simulator "$IPAD" light
-  run_tour ipad "$RUN" "$IOS_ONLY" -destination "id=$IPAD"
+  for appearance in light dark; do
+    for orientation in portrait landscape; do
+      run_ios_variant "ipad-$appearance-$orientation" "$IPAD" "$appearance" UICTContentSizeCategoryL "$orientation"
+    done
+  done
+  [[ $KEEP_SIMULATOR -eq 1 ]] || xcrun simctl shutdown "$IPAD"
 fi
+unset TEST_RUNNER_DULCET_DESIGN_TOUR_TEXT_SIZE DULCET_DESIGN_TOUR_TEXT_SIZE
+unset TEST_RUNNER_DULCET_DESIGN_TOUR_ORIENTATION DULCET_DESIGN_TOUR_ORIENTATION
 
 # ---- tvOS -------------------------------------------------------------------------------------
 if want tvos; then
@@ -283,9 +393,18 @@ fi
 # ---- macOS ------------------------------------------------------------------------------------
 if want mac; then
   RUN=$(tour_xctestrun 'DulcetMac_macosx*.xctestrun' mac)
-  run_tour mac "$RUN" DulcetMacTests/DulcetMacDesignTourTest/testDesignTour -destination platform=macOS
+  for appearance in light dark; do
+    export DULCET_DESIGN_TOUR_APPEARANCE="$appearance" TEST_RUNNER_DULCET_DESIGN_TOUR_APPEARANCE="$appearance"
+    run_tour "mac-$appearance" "$RUN" DulcetMacTests/DulcetMacDesignTourTest/testDesignTour -destination platform=macOS
+  done
 fi
 
 grep -q UNREACHED "$SUMMARY" && FAILED=1
+if command -v python3 >/dev/null && python3 -c 'import PIL' >/dev/null 2>&1; then
+  "$REPO/tools/design-tour-contact-sheets" "$OUT" | tee -a "$SUMMARY"
+else
+  note "contact sheets need Pillow: install it, then run tools/design-tour-contact-sheets $OUT"
+  FAILED=1
+fi
 note "total $(( $(date +%s) - START ))s; shots in $OUT"
 exit $FAILED
