@@ -5,7 +5,7 @@ This checks the input protocol, not UIKit animation completion. The field models
 secure bullets, placeholders and dropped typing. Hardware-key events are recorded to check the chosen
 ordinary-Delete input protocol; this does not diagnose UIKit animation-idle failures. A trailing-edge
 tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
-replays the original helper to prove that the control rejects that input protocol.
+replays an earlier helper to prove that the controls reject incorrect cursor handling and stale focus.
 """
 import argparse
 from pathlib import Path
@@ -56,8 +56,12 @@ final class XCUIElement {
     var hardwareEvents = 0
     var dropNextInsertion = false
     var insertions = 0
+    var dropFocusOnNextValueRead = false
     init(_ text: String, secure: Bool = false) { self.text = text; self.secure = secure }
     var value: Any? {
+        // A live query can outlast keyboard/layout settling. The next typing event must
+        // reacquire focus rather than rely on the check made before reading this value.
+        if dropFocusOnNextValueRead { dropFocusOnNextValueRead = false; focused = false }
         if text.isEmpty { return placeholderValue }
         return secure ? String(repeating: "•", count: text.count) : text
     }
@@ -134,6 +138,18 @@ struct Controls {
             precondition(field.text == wanted, "Replacement must clear the old value and type the whole new one")
             precondition(field.hardwareEvents == 0, "Credential replacement must not attach/minimize a hardware keyboard")
             precondition(field.insertions == (dropped ? 2 : 1), "Dropped typing must be retried and verified")
+            print("\(name): PASS")
+        }
+        for (name, old, secure) in [
+            ("focus-lost-before-delete", "previous-user", false),
+            ("focus-lost-before-insert", "", false),
+            ("focus-lost-secure", "previous-password", true)
+        ] {
+            let field = XCUIElement(old, secure: secure)
+            field.dropFocusOnNextValueRead = true
+            precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure))
+            precondition(field.text == "canary", "Focus recovery must still replace the whole credential")
+            precondition(field.hardwareEvents == 0)
             print("\(name): PASS")
         }
     }
