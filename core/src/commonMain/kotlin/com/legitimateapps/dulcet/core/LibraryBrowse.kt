@@ -837,6 +837,32 @@ internal fun parseReaderSearch3(body: String): CacheEntities {
     )
 }
 
+/** One `getDulcetLibrary` page (spec §29.9), as seen-cache records plus the library's totals and clock. */
+internal data class DulcetLibraryPageBody(
+    val libraryClock: String?,
+    val artistCount: Int,
+    val albumCount: Int,
+    val songCount: Int,
+    val entities: CacheEntities,
+)
+
+internal fun parseReaderDulcetLibrary(body: String): DulcetLibraryPageBody {
+    val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
+    val library = payload["dulcetLibrary"] as? JsonObject ?: malformed()
+    fun count(name: String): Int = library.int(name)?.takeIf { it >= 0 } ?: malformed()
+    return DulcetLibraryPageBody(
+        libraryClock = library.string("changed")?.takeIf(String::isNotBlank),
+        artistCount = count("artistCount"),
+        albumCount = count("albumCount"),
+        songCount = count("songCount"),
+        entities = CacheEntities(
+            artists = library.arrayOrEmpty("artist").map { (it as? JsonObject ?: malformed()).readerArtist() }.distinctBy { it.rawId },
+            albums = library.arrayOrEmpty("album").map { (it as? JsonObject ?: malformed()).readerAlbum() }.distinctBy { it.rawId },
+            tracks = library.arrayOrEmpty("song").map { (it as? JsonObject ?: malformed()).readerTrack(null) }.distinctBy { it.rawId },
+        ),
+    )
+}
+
 internal fun parseReaderGenres(body: String): List<String> {
     val payload = parseLibraryEnvelope(body)?.payload ?: malformed()
     val container = payload["genres"] as? JsonObject ?: malformed()
@@ -894,6 +920,7 @@ private fun JsonObject.readerUserState(withPlays: Boolean): CacheUserState {
         userRating = int("userRating")?.takeIf { it in 0..5 } ?: 0,
         playCount = if (withPlays) (long("playCount")?.takeIf { it >= 0 } ?: 0L) else null,
         played = if (withPlays) string("played")?.takeIf(String::isNotBlank) else null,
+        inLibrary = (get(DULCET_IN_LIBRARY_ATTRIBUTE) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull == true,
     )
 }
 

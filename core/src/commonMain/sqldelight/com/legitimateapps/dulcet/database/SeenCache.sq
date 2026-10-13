@@ -559,6 +559,12 @@ SELECT raw_id FROM cache_album AS a
 WHERE a.server_id = :server_id
   AND a.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'album')
   AND a.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'album')
+  AND a.raw_id NOT IN (SELECT raw_id FROM my_library_item WHERE server_id = :server_id AND item_kind = 'album' AND member = 1)
+  AND a.raw_id NOT IN (
+    SELECT t.album_raw_id FROM my_library_item AS m
+    JOIN cache_track AS t ON t.server_id = m.server_id AND t.raw_id = m.raw_id
+    WHERE m.server_id = :server_id AND m.item_kind = 'track' AND m.member = 1 AND t.album_raw_id IS NOT NULL
+  )
   AND a.raw_id NOT IN (
     SELECT t.album_raw_id FROM cache_pin AS p
     JOIN cache_track AS t ON t.server_id = p.server_id AND t.raw_id = p.raw_id
@@ -573,6 +579,7 @@ SELECT raw_id FROM cache_track AS t
 WHERE t.server_id = :server_id
   AND t.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'track')
   AND t.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'track')
+  AND t.raw_id NOT IN (SELECT raw_id FROM my_library_item WHERE server_id = :server_id AND item_kind = 'track' AND member = 1)
   AND (
     t.album_ordinal IS NULL OR t.album_raw_id IS NULL OR
     t.album_raw_id NOT IN (SELECT raw_id FROM cache_album WHERE server_id = :server_id AND detail_complete = 1)
@@ -585,6 +592,7 @@ SELECT raw_id FROM cache_artist AS r
 WHERE r.server_id = :server_id
   AND r.raw_id NOT IN (SELECT raw_id FROM cache_pin WHERE server_id = :server_id AND item_kind = 'artist')
   AND r.raw_id NOT IN (SELECT raw_id FROM cache_list_member WHERE server_id = :server_id AND item_kind = 'artist')
+  AND r.raw_id NOT IN (SELECT raw_id FROM my_library_item WHERE server_id = :server_id AND item_kind = 'artist' AND member = 1)
 ORDER BY r.last_access_wall, r.raw_id
 LIMIT :limit;
 
@@ -705,6 +713,8 @@ purgeNamespace {
   DELETE FROM cache_pin WHERE server_id = :server_id;
   DELETE FROM cache_epoch WHERE server_id = :server_id;
   DELETE FROM cache_binding WHERE server_id = :server_id;
+  DELETE FROM my_library_item WHERE server_id = :server_id;
+  DELETE FROM my_library_state WHERE server_id = :server_id;
 }
 
 countNamespaceRows:
@@ -718,6 +728,8 @@ SELECT sum(row_count) FROM (
   UNION ALL SELECT count(*) FROM cache_playlist WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_pin WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_epoch WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM my_library_item WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM my_library_state WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_lyrics WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_lyrics_layer WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_lyrics_line WHERE server_id = :server_id

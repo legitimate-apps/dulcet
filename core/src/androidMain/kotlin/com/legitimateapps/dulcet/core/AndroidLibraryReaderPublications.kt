@@ -291,7 +291,13 @@ public enum class AndroidLibraryEntityKind { Artist, Album, Track }
 
 public data class AndroidLibraryEntity(val kind: AndroidLibraryEntityKind, val rawId: String)
 
-public enum class AndroidLibraryChangeField { Favourite, Rating }
+public enum class AndroidLibraryChangeField {
+    Favourite,
+    Rating,
+
+    /** My Library membership (spec §29.9): value 1 added, 0 removed. */
+    InLibrary,
+}
 
 /** How one favourite or rating change ended; every outcome except [Saved] needs words (§16.20). */
 public sealed interface AndroidLibraryChangeOutcome {
@@ -531,6 +537,7 @@ internal fun LibraryEntityRef.toAndroid(): AndroidLibraryEntity = AndroidLibrary
 internal fun MutationField.toAndroid(): AndroidLibraryChangeField = when (this) {
     MutationField.Starred -> AndroidLibraryChangeField.Favourite
     MutationField.Rating -> AndroidLibraryChangeField.Rating
+    MutationField.InLibrary -> AndroidLibraryChangeField.InLibrary
 }
 
 internal fun MutationOutcome.toAndroid(): AndroidLibraryChangeOutcome = when (this) {

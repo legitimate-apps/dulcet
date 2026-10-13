@@ -230,6 +230,13 @@ internal data class CacheUserState(
     val userRating: Int? = null,
     val playCount: Long? = null,
     val played: String? = null,
+    /**
+     * `dulcetInLibrary` (spec §29.9): true when a live response flagged the item a member of this
+     * user's My Library, false when a live response did not; null when not read from a live response.
+     * False means "not a member" only on a server that advertises `dulcetLibrary` — elsewhere the
+     * flag never appears — so it is acted on only through [BoundSeenCache.membershipSink].
+     */
+    val inLibrary: Boolean? = null,
 )
 
 internal data class CacheCredit(
@@ -470,6 +477,19 @@ internal class BoundSeenCache internal constructor(
     private val queries get() = database.seenCacheQueries
 
     /**
+     * Told the `dulcetInLibrary` flag of every artist, album and track a live response writes, with
+     * the response's issue sequence, inside the write's transaction (spec §29.9). Set by My Library
+     * only while the account's server advertises the extension; null otherwise, so on any other
+     * server the flag's absence is never read as "not a member".
+     */
+    var membershipSink: ((kind: CacheItemKind, rawId: String, member: Boolean, issueSeq: Long) -> Unit)? = null
+
+    private fun noteMembership(kind: CacheItemKind, rawId: String, state: CacheUserState, issueSeq: Long) {
+        val member = state.inLibrary ?: return
+        membershipSink?.invoke(kind, rawId, member, issueSeq)
+    }
+
+    /**
      * Takes the issue sequence for a request about to be SENT. Durable, so a request issued after
      * a relaunch still outranks every row written before it; the counter is shared across
      * accounts, which costs nothing and keeps a single ordering.
@@ -524,6 +544,7 @@ internal class BoundSeenCache internal constructor(
     private fun upsertArtist(stamp: CacheWriteStamp, artist: CacheArtistRecord): Boolean {
         val existing = queries.selectArtistIssueSeq(serverId, artist.rawId).executeAsOneOrNull()
         val state = artist.userState
+        noteMembership(CacheItemKind.Artist, artist.rawId, state, stamp.issueSeq)
         if (existing == null) {
             queries.insertArtist(
                 serverId, artist.rawId, artist.name, normalizeSearchText(artist.name),
@@ -559,6 +580,7 @@ internal class BoundSeenCache internal constructor(
     ): Boolean {
         val existing = queries.selectAlbumSequences(serverId, album.rawId).executeAsOneOrNull()
         val state = album.userState
+        noteMembership(CacheItemKind.Album, album.rawId, state, stamp.issueSeq)
         val artist = album.credits.firstOrNull()
         if (existing == null) {
             queries.insertAlbum(
@@ -606,6 +628,7 @@ internal class BoundSeenCache internal constructor(
     ): Boolean {
         val existing = queries.selectTrackIssueSeq(serverId, track.rawId).executeAsOneOrNull()
         val state = track.userState
+        noteMembership(CacheItemKind.Track, track.rawId, state, stamp.issueSeq)
         val artist = track.credits.firstOrNull()
         if (existing == null) {
             queries.insertTrack(

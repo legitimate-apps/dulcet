@@ -408,6 +408,7 @@ public class AndroidLibraryReader internal constructor(
         when (outcome.field) {
             MutationField.Starred -> acknowledgedFavourites[kind to outcome.target.rawId] = known == 1
             MutationField.Rating -> acknowledgedRatings[kind to outcome.target.rawId] = known
+            MutationField.InLibrary -> return
         }
         favouriteWatches.toList()
             .filter { it.target.rawId == outcome.target.rawId && it.target.kind == kind }

@@ -197,6 +197,12 @@ public enum class CapabilityFeature {
      * in batches instead and never meet this.
      */
     PlaylistWholeListWrite,
+
+    /**
+     * My Library (spec §29.9): the account's server does not advertise the `dulcetLibrary`
+     * extension, so an add or remove queued while it did, or before it was known, cannot be sent.
+     */
+    MyLibrary,
 }
 
 /** Parsed protocol components retain no server-controlled source text. */

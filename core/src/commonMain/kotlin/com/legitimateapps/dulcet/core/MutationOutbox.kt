@@ -76,7 +76,13 @@ internal data class LibraryEntityRef(val kind: LibraryEntityKind, val rawId: Str
 /** The set-to-value fields of §18.3. A future set-to-value mutation adds a field here (§16.20). */
 internal enum class MutationField(val wireName: String) {
     Starred("starred"),
-    Rating("rating");
+    Rating("rating"),
+
+    /**
+     * Membership of this account's My Library (spec §29.9): `1` added, `0` removed. Sent only to a
+     * server that advertises `dulcetLibrary`, through [MembershipDelivery].
+     */
+    InLibrary("inLibrary");
 
     companion object {
         fun fromWireName(value: String): MutationField? = entries.firstOrNull { it.wireName == value }
@@ -237,6 +243,8 @@ internal fun decideDelivery(
 internal class MutationOutbox(
     private val database: DulcetDatabase,
     private val cache: BoundSeenCache,
+    /** My Library's read model: where an acknowledged membership change is adopted (§29.9). */
+    internal val membership: MyLibraryStore = MyLibraryStore(database, cache),
 ) : LibraryMutationOverlay {
     private val queries get() = database.protectedReservedDataQueries
 
@@ -277,6 +285,7 @@ internal class MutationOutbox(
             result[member] = when (change.field) {
                 MutationField.Starred -> state.copy(starred = change.value == 1)
                 MutationField.Rating -> state.copy(userRating = change.value)
+                MutationField.InLibrary -> state.copy(inLibrary = change.value == 1)
             }
         }
         return result
@@ -378,12 +387,14 @@ internal class MutationOutbox(
                 LibraryEntityKind.Album -> queries.adoptAlbumRating(value, acknowledgedSeq, serverId, rawId)
                 LibraryEntityKind.Track -> queries.adoptTrackRating(value, acknowledgedSeq, serverId, rawId)
             }
+            MutationField.InLibrary -> membership.adopt(change.target, change.value == 1, acknowledgedSeq)
         }
         removeIfUnchanged(change)
     }
 
     /** What the cache says the server holds for [field] of [target], and the issue of that read. */
     fun serverState(target: LibraryEntityRef, field: MutationField): Pair<Int?, Long>? {
+        if (field == MutationField.InLibrary) return membership.serverState(target)
         val (state, issueSeq) = when (target.kind) {
             LibraryEntityKind.Artist -> cache.artist(target.rawId)?.let { it.record.userState to it.row.issueSeq }
             LibraryEntityKind.Album -> cache.album(target.rawId)?.let { it.record.userState to it.row.issueSeq }
@@ -392,6 +403,7 @@ internal class MutationOutbox(
         val value = when (field) {
             MutationField.Starred -> state.starred?.let { if (it) 1 else 0 }
             MutationField.Rating -> state.userRating
+            MutationField.InLibrary -> null
         }
         return value to issueSeq
     }
@@ -435,7 +447,7 @@ internal class MutationOutbox(
 }
 
 private fun MutationField.isValid(value: Int): Boolean = when (this) {
-    MutationField.Starred -> value == 0 || value == 1
+    MutationField.Starred, MutationField.InLibrary -> value == 0 || value == 1
     MutationField.Rating -> value in 0..5
 }
 
@@ -520,6 +532,13 @@ internal class LibraryFavourites(
     /** This outbox's run of 429s: [MutationOutcome.Held] is told once per run. */
     private val busyRun = BusyRun()
 
+    /**
+     * Where a My Library change is sent (§29.9), set by [MyLibrary]. Null, or a delivery that does
+     * not yet know whether the server advertises `dulcetLibrary`, keeps such a change pending and
+     * moves on; a server known not to advertise it refuses the change ([CapabilityFeature.MyLibrary]).
+     */
+    var membershipDelivery: MembershipDelivery? = null
+
     /** Told how each change ended; every outcome except [MutationOutcome.Saved] needs words. */
     fun addOutcomeListener(listener: (MutationOutcome) -> Unit) {
         reader.checkConfined()
@@ -564,6 +583,10 @@ internal class LibraryFavourites(
 
     /** Sets a 1–5 rating, or removes it with 0. Any other value is [MutationRecord.Invalid]. */
     fun setRating(target: LibraryEntityRef, rating: Int): MutationRecord = change(target, MutationField.Rating, rating)
+
+    /** Adds [target] to My Library or removes it (§29.9); [MyLibrary] is the entry point. */
+    internal fun setInLibrary(target: LibraryEntityRef, member: Boolean): MutationRecord =
+        change(target, MutationField.InLibrary, if (member) 1 else 0)
 
     /**
      * For the sign-out offer of §14.7: changes that have not reached the server, or null when the
@@ -706,6 +729,22 @@ internal class LibraryFavourites(
             stoppedBy = reader.busyError()
             if (stoppedBy != null) break
             val change = outbox.all().firstOrNull { "${it.target.rawId}|${it.key}" !in deferred } ?: break
+            if (change.field == MutationField.InLibrary) {
+                when (membershipDelivery?.availability() ?: MyLibraryAvailability.Unknown) {
+                    MyLibraryAvailability.Available -> Unit
+                    MyLibraryAvailability.Unknown -> {
+                        deferred += "${change.target.rawId}|${change.key}"
+                        continue
+                    }
+                    MyLibraryAvailability.Unavailable -> {
+                        outbox.removeIfUnchanged(change)
+                        refused += 1
+                        changed(setOf(change.target.rawId))
+                        emit(MutationOutcome.NotSaved(change.target, change.field, DomainError.CapabilityUnsupported(CapabilityFeature.MyLibrary)))
+                        continue
+                    }
+                }
+            }
             val server = outbox.serverState(change.target, change.field)
             when (val decision = decideDelivery(change, server?.first, server?.second)) {
                 DeliveryDecision.AlreadyApplied -> {
@@ -729,7 +768,12 @@ internal class LibraryFavourites(
                         // One of the two kinds of request an offline reader sends — and only while
                         // canSend holds when it reaches the front of the queue, not only when queued.
                         // It is an outbox request because [flush] runs in [OutboxRequests].
-                        reader.sendChecked(change.endpoint(), change.parameters())
+                        if (change.field == MutationField.InLibrary) {
+                            val delivery = membershipDelivery ?: throw ReaderSendRefused()
+                            delivery.setMembership(change.target, change.value == 1)
+                        } else {
+                            reader.sendChecked(change.endpoint(), change.parameters())
+                        }
                         null
                     } catch (notSent: ReaderSendRefused) {
                         // Refused unsent after an unreachable report: kept, and not counted as sent.
@@ -832,6 +876,7 @@ internal class LibraryFavourites(
 private fun PendingMutation.endpoint(): String = when (field) {
     MutationField.Starred -> if (value == 1) "star" else "unstar"
     MutationField.Rating -> "setRating"
+    MutationField.InLibrary -> error("a My Library change is sent through its MembershipDelivery")
 }
 
 private fun PendingMutation.parameters(): Map<String, String> = when (field) {
@@ -843,6 +888,7 @@ private fun PendingMutation.parameters(): Map<String, String> = when (field) {
         } to target.rawId,
     )
     MutationField.Rating -> mapOf("id" to target.rawId, "rating" to value.toString())
+    MutationField.InLibrary -> error("a My Library change is sent through its MembershipDelivery")
 }
 
 /**
@@ -876,6 +922,7 @@ internal class LibraryReaderSession(
      * asks for [lyrics] again does not get a fresh, closed breaker.
      */
     breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
+    myLibraryConfig: MyLibraryConfig = MyLibraryConfig(),
 ) {
     val outbox = MutationOutbox(database, cache)
     private lateinit var favouritesRef: LibraryFavourites
@@ -916,6 +963,12 @@ internal class LibraryReaderSession(
 
     /** Playlist editing (§18.6): create, rename, add, remove, reorder, delete — shown at once. */
     val playlists = PlaylistEditor(database, { reader }, formPost).also { playlistsRef = it }
+
+    /**
+     * My Library (§29.9): offered only while the account's server advertises `dulcetLibrary`; on
+     * any other server it reports [MyLibraryAvailability.Unavailable] and changes nothing.
+     */
+    val myLibrary = MyLibrary(reader, outbox.membership, favourites, outbox, config = myLibraryConfig)
 
     private val searches = mutableListOf<LibrarySearchSession>()
 
