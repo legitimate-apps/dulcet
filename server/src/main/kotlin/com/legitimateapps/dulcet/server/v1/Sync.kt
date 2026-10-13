@@ -67,15 +67,20 @@ class ApiSync(private val ctx:ServerContext) {
         // Final snapshot page still hasMore, because the changes phase must always be visited.
         return j("changes" to changes,"nextCursor" to next,"hasMore" to true,"phase" to "snapshot")
     }
-    private data class Row(val seq:Long,val type:String,val id:String,val user:String?,val op:String,val at:Long,val reason:String?,val replaced:String?)
+    private data class Row(val seq:Long,val type:String,val id:String,val user:String?,val op:String,val at:Long,val reason:String?,val replaced:String?,val sources:String?)
     private fun changes(p:Principal,types:List<String>,position:Long,limit:Int):JsonObject {
-        val rows=ctx.db.read { query("SELECT j.* FROM api_journal j WHERE j.seq>? AND NOT EXISTS (SELECT 1 FROM api_journal newer WHERE newer.seq>j.seq AND newer.type=j.type AND newer.id=j.id AND newer.user_id IS j.user_id) ORDER BY j.seq LIMIT ?",position,limit) { Row(it.long("seq"),it.string("type"),it.string("id"),it.stringOrNull("user_id"),it.string("op"),it.long("at"),it.stringOrNull("reason"),it.stringOrNull("replaced_by")) } }
+        val rows=ctx.db.read { query("SELECT j.*,v.source_ids AS visibility_sources FROM api_journal j LEFT JOIN api_journal_visibility v ON v.seq=j.seq WHERE j.seq>? AND NOT EXISTS (SELECT 1 FROM api_journal newer WHERE newer.seq>j.seq AND newer.type=j.type AND newer.id=j.id AND newer.user_id IS j.user_id) ORDER BY j.seq LIMIT ?",position,limit) { Row(it.long("seq"),it.string("type"),it.string("id"),it.stringOrNull("user_id"),it.string("op"),it.long("at"),it.stringOrNull("reason"),it.stringOrNull("replaced_by"),it.stringOrNull("visibility_sources")) } }
         val coalesced=rows.filter { it.type in types && (it.user==null || it.user==p.user.id) }.groupBy { it.type to it.id }.values.map { it.last() }.sortedBy { it.seq }
         val output=coalesced.mapNotNull { row ->
             val value=resource(p,row.type,row.id)
+            if(row.op=="delete" && value==null && row.type in setOf("artist","album","track","genre","source")) {
+                val sources=row.sources?.let { Json.parseToJsonElement(it).jsonArray.map { source->source.jsonPrimitive.content } }
+                    ?: throw ApiProblem(410,"cursor-expired","Historical source visibility cannot be established")
+                if(sources.none { ctx.access.canReadSource(p.user.id,it) }) return@mapNotNull null
+            }
             if(row.op=="upsert" && value==null) null else {
                 val fields=j("op" to if(value!=null) "upsert" else row.op,"type" to row.type,"id" to row.id,"revision" to (value?.get("revision") ?: json("r_${ctx.journal.instanceId}_${row.seq}")),"at" to iso(row.at))
-                JsonObject(fields+if(value!=null) j("resource" to value) else j("reason" to (if(row.reason=="split") "merged" else row.reason ?: "deleted"))+if(row.replaced!=null)j("replacedBy" to ctx.apiCatalog.liveReplacements(row.type,Json.parseToJsonElement(row.replaced).jsonArray.map { it.jsonPrimitive.content })) else j())
+                JsonObject(fields+if(value!=null) j("resource" to value) else j("reason" to (if(row.reason=="split") "merged" else row.reason ?: "deleted"))+if(row.replaced!=null)j("replacedBy" to ctx.apiCatalog.liveReplacements(row.type,Json.parseToJsonElement(row.replaced).jsonArray.map { it.jsonPrimitive.content }).filter { ctx.access.canReadCatalog(p.user.id,row.type,it) }) else j())
             }
         }
         val next=rows.lastOrNull()?.seq ?: ctx.journal.head()

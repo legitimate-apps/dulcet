@@ -24,14 +24,14 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             result.add("artist" to id)
         }
         if (result.isEmpty()) throw SubsonicError.missing("id")
+        if(result.any { (type,id) -> !ctx.access.canReadCatalog(call.user.id,type,id) }) throw SubsonicError.notFound()
         return result
     }
 
     fun star(call: Call, starred: Boolean): Reply {
-        val items = targets(call)
         val now = System.currentTimeMillis()
         db.write {
-            for ((type, id) in items) {
+            for ((type, id) in targets(call)) {
                 ensureAnnotation(call.user.id, type, id)
                 execute("UPDATE annotation SET starred = ? WHERE user_id = ? AND item_type = ? AND item_id = ?", if (starred) now else null, call.user.id, type, id)
             }
@@ -47,6 +47,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val rating = call.required("rating").toIntOrNull()?.takeIf { it in 0..5 } ?: throw SubsonicError(0, "Invalid rating")
             val type = catalog.kindOf(id) ?: throw SubsonicError.notFound("Item")
             db.write {
+                if(!ctx.access.canReadCatalog(call.user.id,type,id)) throw SubsonicError.notFound()
                 ensureAnnotation(call.user.id, type, id)
                 execute("UPDATE annotation SET rating = ? WHERE user_id = ? AND item_type = ? AND item_id = ?", rating, call.user.id, type, id)
             }
@@ -60,6 +61,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val client = call.param("c") ?: ""
             db.write {
                 ids.forEachIndexed { index, id ->
+                    if(catalog.kindOf(id)!=null && !ctx.access.canReadCatalog(call.user.id,"track",id)) throw SubsonicError.notFound()
                     // An id this server does not hold is accepted and dropped, as other servers do.
                     val track = single("SELECT album_id, artist_id FROM track WHERE id = ?", id) { it.string("album_id") to it.string("artist_id") }
                         ?: return@forEachIndexed
@@ -93,7 +95,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                 else if (call.user.isAdmin) playlistRows("1 = 1")
                 else playlistRows("p.owner_id = ? OR p.public = 1", call.user.id)
             }
-            ok { child("playlists") { rows.forEach { add(playlistNode(it, call.user.id)) } } }
+            ok { child("playlists") { rows.forEach { add(playlistNode(it, call.user.id,ctx)) } } }
         },
         "getPlaylist" to { call ->
             val id = call.required("id")
@@ -109,6 +111,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                 val row = db.read { playlistRows("p.id = ?", existingId).firstOrNull() } ?: throw SubsonicError.notFound("Playlist")
                 if (row.ownerId != call.user.id) throw SubsonicError.notAuthorized()
                 db.write {
+                    if(songIds.any { !ctx.access.canReadCatalog(call.user.id,"track",it) }) throw SubsonicError.notFound()
                     call.param("name")?.takeIf(String::isNotEmpty)?.let { execute("UPDATE playlist SET name = ? WHERE id = ?", it, existingId) }
                     // A replace with no songId leaves the entries alone.
                     if (songIds.isNotEmpty()) {
@@ -122,6 +125,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                 val name = call.required("name")
                 val newId = Ids.of("playlist", call.user.id, name, now.toString(), System.nanoTime().toString())
                 db.write {
+                    if(songIds.any { !ctx.access.canReadCatalog(call.user.id,"track",it) }) throw SubsonicError.notFound()
                     execute("INSERT INTO playlist(id, owner_id, name, comment, public, created, changed) VALUES (?,?,?,?,?,?,?)", newId, call.user.id, name, "", false, now, now)
                     songIds.forEachIndexed { index, songId -> execute("INSERT INTO playlist_track VALUES (?,?,?)", newId, index, songId) }
                 }
@@ -137,6 +141,8 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val add = call.params("songIdToAdd").filter(String::isNotEmpty)
             val remove = call.params("songIndexToRemove").mapNotNull { it.toIntOrNull() }.toSet()
             db.write {
+                if(call.bool("public",false) && !ctx.access.share(call.user.id)) throw SubsonicError.notAuthorized()
+                if(add.any { !ctx.access.canReadCatalog(call.user.id,"track",it) }) throw SubsonicError.notFound()
                 call.param("name")?.takeIf(String::isNotEmpty)?.let { execute("UPDATE playlist SET name = ? WHERE id = ?", it, id) }
                 call.param("comment")?.let { execute("UPDATE playlist SET comment = ? WHERE id = ?", it, id) }
                 call.param("public")?.let { execute("UPDATE playlist SET public = ? WHERE id = ?", it.equals("true", true), id) }
@@ -168,7 +174,8 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val sinceClause = if (since != null) " AND li.added > ?" else ""
             val sinceArgs = listOfNotNull(since)
             val counts = db.read {
-                query("SELECT item_type, COUNT(*) AS n FROM library_item WHERE user_id = ? GROUP BY item_type", userId) { it.string("item_type") to it.int("n") }.toMap()
+                query("SELECT item_type,item_id FROM library_item WHERE user_id=?",userId) { it.string("item_type") to it.string("item_id") }
+                    .filter { (type,id) -> ctx.access.canReadCatalog(userId,type,id) }.groupingBy { it.first }.eachCount()
             }
             ok {
                 child("dulcetLibrary") {
@@ -183,10 +190,9 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             }
         },
         "addToDulcetLibrary" to { call ->
-            val items = targets(call)
             val now = System.currentTimeMillis()
             db.write {
-                items.forEach { (type, id) -> execute("INSERT OR IGNORE INTO library_item(user_id, item_type, item_id, added) VALUES (?,?,?,?)", call.user.id, type, id, now) }
+                targets(call).forEach { (type, id) -> execute("INSERT OR IGNORE INTO library_item(user_id, item_type, item_id, added) VALUES (?,?,?,?)", call.user.id, type, id, now) }
                 markLibraryChanged(call.user.id, now)
             }
             ok()
@@ -234,12 +240,13 @@ private fun Db.Session.playlistRows(where: String, vararg args: Any?): List<Play
     )
 }
 
-private fun playlistNode(row: PlaylistRow, viewerId: String): Node = Node("playlist").apply {
+private fun playlistNode(row: PlaylistRow, viewerId: String, ctx: ServerContext): Node = Node("playlist").apply {
     this["id"] = row.id
     this["name"] = row.name
     row.comment?.takeIf(String::isNotEmpty)?.let { this["comment"] = it }
-    this["songCount"] = row.songCount
-    this["duration"] = row.duration.toInt()
+    val totals=ctx.db.read { single("SELECT COUNT(*) AS n,COALESCE(SUM(t.duration),0) AS duration FROM playlist_track pt JOIN track t ON t.id=pt.track_id WHERE pt.playlist_id=? AND ${ctx.access.catalogPredicate(viewerId,"track","t")}",row.id) { it.int("n") to it.double("duration") }!! }
+    this["songCount"] = totals.first
+    this["duration"] = totals.second.toInt()
     this["public"] = row.public
     this["owner"] = row.owner
     this["created"] = Catalog.iso(row.created)
@@ -250,5 +257,5 @@ private fun playlistNode(row: PlaylistRow, viewerId: String): Node = Node("playl
 
 private fun playlistWithEntries(ctx: ServerContext, call: Call, row: PlaylistRow): Node {
     val ids = ctx.db.read { query("SELECT track_id FROM playlist_track WHERE playlist_id = ? ORDER BY position", row.id) { it.string("track_id") } }
-    return playlistNode(row, call.user.id).apply { ctx.catalog.songsById(call.user.id, ids, "entry").forEach { add(it) } }
+    return playlistNode(row, call.user.id,ctx).apply { ctx.catalog.songsById(call.user.id, ids, "entry").forEach { add(it) } }
 }

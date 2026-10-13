@@ -32,6 +32,7 @@ class ApiMedia(private val ctx:ServerContext) {
         Files.createDirectories(artRoot)
         ctx.db.write {
             execute("CREATE TABLE IF NOT EXISTS api_artwork(id TEXT PRIMARY KEY,mime TEXT NOT NULL)")
+            execute("CREATE TABLE IF NOT EXISTS api_artwork_item(artwork_id TEXT NOT NULL REFERENCES api_artwork(id) ON DELETE CASCADE,type TEXT NOT NULL,item_id TEXT NOT NULL,PRIMARY KEY(artwork_id,type,item_id))")
             execute("CREATE TABLE IF NOT EXISTS api_artwork_grant(parent TEXT NOT NULL,user_id TEXT NOT NULL,id TEXT NOT NULL,size INTEGER NOT NULL,expires INTEGER NOT NULL,PRIMARY KEY(parent,user_id,id,size))")
         }
     }
@@ -45,6 +46,8 @@ class ApiMedia(private val ctx:ServerContext) {
             try { Files.write(tmp,image.bytes);Files.move(tmp,path,java.nio.file.StandardCopyOption.REPLACE_EXISTING,java.nio.file.StandardCopyOption.ATOMIC_MOVE) } finally { Files.deleteIfExists(tmp) }
             ctx.db.write { execute("INSERT OR IGNORE INTO api_artwork VALUES(?,?)",artId,image.contentType) }
         }
+        val type=ctx.apiCatalog.kind(id) ?: return null
+        ctx.db.write { execute("INSERT OR IGNORE INTO api_artwork_item VALUES(?,?,?)",artId,type,id) }
         return j("id" to artId)
     }
     private fun sign(bytes:ByteArray)=Mac.getInstance("HmacSHA256").run { init(SecretKeySpec(key,"HmacSHA256"));doFinal(bytes) }
@@ -69,17 +72,16 @@ class ApiMedia(private val ctx:ServerContext) {
         } catch(e:ApiProblem) {throw e} catch(_:Exception) {throw ApiProblem(403,"media-grant-expired")}
     }
     private fun source(id:String,userId:String):Triple<Path,String,JsonObject> = ctx.db.read {
-        if("1" !in ctx.apiUsers.sourceIds(userId)) throw ApiProblem(404,"not-found")
+        if(!ctx.access.canReadCatalog(userId,"track",id)) throw ApiProblem(404,"not-found")
         single("SELECT * FROM track WHERE id=?",id) { row -> Triple(row.string("path"),row.string("content_type"),j("codec" to row.string("codec"),"container" to container(row.string("suffix")),"bitrate" to row.long("bitrate")*1000,"size" to row.long("size"),"duration" to (row.double("duration")*1000).toLong(),"sampleRate" to row.intOrNull("sample_rate"),"bitDepth" to row.intOrNull("bit_depth"),"channels" to row.intOrNull("channels"))) }
     }?.let { Triple(musicFile(ctx.config.musicFolder,ctx.config.musicFolder.resolve(it.first)) ?: throw ApiProblem(404,"not-found"),it.second,it.third) } ?: throw ApiProblem(404,"not-found")
     fun install(route:Route) {
         route.get("/artwork/{artworkId}") {
             val p=call.principal(ctx,"catalog:read")
-            if("1" !in ctx.apiUsers.sourceIds(p.user.id)) throw ApiProblem(404,"not-found")
             val id=call.parameters["artworkId"]!!
             val size=call.request.queryParameters["size"]?.let { it.toIntOrNull() ?: throw ApiProblem(400,"invalid-request","Invalid artwork size") } ?: 0
             if(size!=0 && size !in 16..3000) throw ApiProblem(400,"invalid-request","Invalid artwork size")
-            serveArt(call,id,size)
+            serveArt(call,id,size,p.user.id)
         }
         route.post("/media/urls") {
             val p=call.principal(ctx);val requests=call.body()["requests"] as? JsonArray ?: throw ApiProblem(400,"invalid-request")
@@ -91,8 +93,7 @@ class ApiMedia(private val ctx:ServerContext) {
                 if(scope !in p.scopes) throw ApiProblem(403,"insufficient-scope",extra=j("requiredScopes" to listOf(scope)))
                 val size=obj["size"]?.jsonPrimitive?.intOrNull ?: 0
                 if(size!=0 && size !in 16..3000) throw ApiProblem(400,"invalid-request")
-                if("1" !in ctx.apiUsers.sourceIds(p.user.id)) throw ApiProblem(404,"not-found")
-                if(kind=="original") { if(!ctx.apiUsers.download(p.user.id)) throw ApiProblem(403,"permission-denied");source(id,p.user.id) } else if(ctx.db.read { long("SELECT COUNT(*) FROM api_artwork WHERE id=?",id) }==0L) throw ApiProblem(404,"not-found")
+                    if(kind=="original") { if(!ctx.access.download(p.user.id)) throw ApiProblem(403,"permission-denied");source(id,p.user.id) } else if(!visibleArtwork(p.user.id,id)) throw ApiProblem(404,"not-found")
                 val (token,expires)=grant(p,kind,id,size)
                 j("kind" to kind,"id" to id,"url" to "${call.origin()}/dulcet/v1/media/$token","expiresAt" to iso(expires))
             }
@@ -100,7 +101,7 @@ class ApiMedia(private val ctx:ServerContext) {
         }
         route.post("/playback/decisions") {
             val p=call.principal(ctx,"media:read");val body=call.body()
-            if(body["purpose"]?.jsonPrimitive?.contentOrNull=="download" && !ctx.apiUsers.download(p.user.id)) throw ApiProblem(403,"permission-denied")
+            if(body["purpose"]?.jsonPrimitive?.contentOrNull=="download" && !ctx.access.download(p.user.id)) throw ApiProblem(403,"permission-denied")
             val id=body["trackId"]?.jsonPrimitive?.content ?: throw ApiProblem(400,"invalid-request")
             val profile=body["profile"] as? JsonObject ?: throw ApiProblem(400,"invalid-request")
             val start=body["startMs"]?.let { it.jsonPrimitive.longOrNull ?: throw ApiProblem(400,"invalid-request") } ?: 0
@@ -119,11 +120,15 @@ class ApiMedia(private val ctx:ServerContext) {
     }
     private suspend fun serveGrant(call:ApplicationCall) {
         val value=decode(call.parameters["grant"]!!)
-        if("1" !in ctx.apiUsers.sourceIds(value["user"]!!.jsonPrimitive.content)) throw ApiProblem(403,"media-grant-expired")
-        if(value["kind"]!!.jsonPrimitive.content=="artwork") serveArt(call,value["id"]!!.jsonPrimitive.content,value["size"]!!.jsonPrimitive.int)
+        if(value["kind"]!!.jsonPrimitive.content=="artwork") serveArt(call,value["id"]!!.jsonPrimitive.content,value["size"]!!.jsonPrimitive.int,value["user"]!!.jsonPrimitive.content)
         else { val source=source(value["id"]!!.jsonPrimitive.content,value["user"]!!.jsonPrimitive.content);serveFile(call,source.first,ContentType.parse(source.second)) }
     }
-    private suspend fun serveArt(call:ApplicationCall,id:String,size:Int) {
+    private fun visibleArtwork(userId:String,id:String):Boolean = ctx.db.read {
+        query("SELECT type,item_id FROM api_artwork_item WHERE artwork_id=?",id) { it.string("type") to it.string("item_id") }
+            .any { (type,item) -> if(type=="playlist") long("SELECT COUNT(*) FROM playlist WHERE id=? AND (owner_id=? OR public=1)",item,userId)>0 else ctx.access.canReadCatalog(userId,type,item) }
+    }
+    private suspend fun serveArt(call:ApplicationCall,id:String,size:Int,userId:String) {
+        if(!visibleArtwork(userId,id)) throw ApiProblem(404,"not-found")
         val mime=ctx.db.read { string("SELECT mime FROM api_artwork WHERE id=?",id) } ?: throw ApiProblem(404,"not-found")
         val source=artRoot.resolve(id)
         if(!Files.isRegularFile(source)) throw ApiProblem(404,"not-found")

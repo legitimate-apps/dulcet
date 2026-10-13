@@ -138,9 +138,11 @@ class ApiUserData(private val ctx: ServerContext) {
             val p=call.principal(ctx,"user:write"); val id=call.parameters["playlistId"]!!; val body=call.body()
             db.write {
                 owned(id,p); checkMatch(call,id,p)
+                val requestedVisibility=if("visibility" in body) visibility(body) else null
+                if(requestedVisibility!=null) authorizePublication(p,requestedVisibility)
                 if("name" in body) execute("UPDATE playlist SET name=? WHERE id=?",playlistName(body),id)
                 if("description" in body) execute("UPDATE playlist SET comment=? WHERE id=?",body["description"]?.jsonPrimitive?.contentOrNull ?: "",id)
-                if("visibility" in body) execute("UPDATE playlist SET public=? WHERE id=?",visibility(body)=="public",id)
+                if(requestedVisibility!=null) execute("UPDATE playlist SET public=? WHERE id=?",requestedVisibility=="public",id)
                 execute("UPDATE playlist SET changed=? WHERE id=?",System.currentTimeMillis(),id)
             }
             val result=resource("playlist",id,p)!!; call.send(result,etag=tag(result))
@@ -316,9 +318,8 @@ class ApiUserData(private val ctx: ServerContext) {
         val name=playlistName(body); val ids=itemIds(body,false)
         val visibility=visibility(body); val now=System.currentTimeMillis(); val id=UUID.randomUUID().toString()
         db.write {
-            validateTracks(ids)
-            if(ids.any { ctx.apiCatalog.resource("track",it,p)==null }) throw ApiProblem(404,"not-found")
-            if(visibility=="public" && !ctx.apiUsers.share(p.user.id)) throw ApiProblem(403,"permission-denied")
+            validateTracks(ids,p)
+            authorizePublication(p,visibility)
             execute("INSERT INTO playlist(id,owner_id,name,comment,public,created,changed) VALUES (?,?,?,?,?,?,?)",id,p.user.id,name,body["description"]?.jsonPrimitive?.contentOrNull ?: "",visibility=="public",now,now)
             saveEntries(id,ids.map { Entry(UUID.randomUUID().toString(),it,now) })
         }
@@ -391,8 +392,7 @@ class ApiUserData(private val ctx: ServerContext) {
                     val current=entries(id)
                     val original=current.toList()
                     if(name=="add_to_playlist") {
-                        val ids=itemIds(args,true);validateTracks(ids)
-                        if(ids.any { ctx.apiCatalog.resource("track",it,p)==null }) throw ApiProblem(404,"not-found")
+                        val ids=itemIds(args,true);validateTracks(ids,p)
                         current.addAll(ids.map { Entry(UUID.randomUUID().toString(),it,System.currentTimeMillis()) })
                     } else {
                         val ids=args["entryIds"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet()
@@ -451,14 +451,14 @@ class ApiUserData(private val ctx: ServerContext) {
             val original=current.toList()
             val next=when(op) {
                 "replace" -> {
-                    val ids=itemIds(body,true); validateTracks(ids)
+                    val ids=itemIds(body,true); validateTracks(ids,p)
                     val remaining=ids.toMutableList(); val dropped=current.any { val i=remaining.indexOf(it.track); if(i<0) true else { remaining.removeAt(i); false } }
                     if(dropped) requireScope(p,"user:delete")
                     val pool=current.toMutableList()
                     ids.map { track -> val index=pool.indexOfFirst { it.track==track }; if(index>=0) pool.removeAt(index) else Entry(UUID.randomUUID().toString(),track,System.currentTimeMillis()) }
                 }
                 "insert" -> {
-                    val ids=itemIds(body,true); if(ids.isEmpty()) throw ApiProblem(400,"invalid-request"); validateTracks(ids)
+                    val ids=itemIds(body,true); if(ids.isEmpty()) throw ApiProblem(400,"invalid-request"); validateTracks(ids,p)
                     val before=body["beforeEntryId"]?.jsonPrimitive?.contentOrNull
                     val index=if(before==null) current.size else current.indexOfFirst { it.id==before }.takeIf { it>=0 } ?: throw ApiProblem(404,"not-found")
                     current.apply { addAll(index,ids.map { Entry(UUID.randomUUID().toString(),it,System.currentTimeMillis()) }) }
@@ -487,7 +487,13 @@ class ApiUserData(private val ctx: ServerContext) {
         val current=resource("playlist",id,p) ?: throw ApiProblem(404,"not-found")
         if(given!=tag(current)) throw ApiProblem(412,"revision-mismatch",extra=j("current" to current))
     }
-    private fun Db.Session.validateTracks(ids:List<String>) { if(ids.any { long("SELECT COUNT(*) FROM track WHERE id=?",it)==0L }) throw ApiProblem(404,"not-found") }
+    private fun Db.Session.validateTracks(ids:List<String>,p:Principal) {
+        if(ids.any { !ctx.access.canReadCatalog(p.user.id,"track",it) }) throw ApiProblem(404,"not-found")
+    }
+    /** Called within the playlist mutation transaction, using the account's current policy. */
+    private fun Db.Session.authorizePublication(p:Principal,visibility:String) {
+        if(visibility=="public" && !ctx.access.share(p.user.id)) throw ApiProblem(403,"permission-denied")
+    }
     private fun itemIds(body:JsonObject,required:Boolean):List<String> {
         val raw=body["itemIds"] ?: if(required) throw ApiProblem(400,"invalid-request") else return emptyList()
         val items=raw as? JsonArray ?: throw ApiProblem(400,"invalid-request")

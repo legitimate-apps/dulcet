@@ -23,7 +23,7 @@ class Image(val bytes: ByteArray, val contentType: String)
  * written once to a disk cache keyed by the source and the size. An item with no picture gets a
  * generated placeholder, as other OpenSubsonic servers do, so a client never shows a broken image.
  */
-class Artwork(private val db: Db, private val musicFolder: Path, private val cacheFolder: Path, private val ffmpeg: String) {
+class Artwork(private val db: Db, private val musicFolder: Path, private val cacheFolder: Path, private val ffmpeg: String, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess) {
 
     private sealed interface Source {
         data class FolderFile(val path: Path) : Source
@@ -32,20 +32,21 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
 
     /** null means the id names nothing at all (error 70); a known item without art gets a placeholder. */
     fun image(id: String, size: Int?, user: com.legitimateapps.dulcet.server.auth.User? = null): Image? {
+        if(user != null && !access.canReadArtwork(user,id)) return null
         val playlistId = if (id.startsWith("pl-")) id.removePrefix("pl-") else id.takeIf { exists("playlist", it) }
         if (playlistId != null) {
             val visible = user != null && db.read { long("SELECT COUNT(*) FROM playlist WHERE id = ? AND (owner_id = ? OR public = 1 OR ? = 1)", playlistId, user.id, user.isAdmin) > 0 }
             if (!visible) return null
         }
         val source = when {
-            id.startsWith("al-") -> albumSource(id.removePrefix("al-")) ?: if (exists("album", id.removePrefix("al-"))) null else return null
-            id.startsWith("mf-") -> trackSource(id.removePrefix("mf-")) ?: if (exists("track", id.removePrefix("mf-"))) null else return null
-            id.startsWith("ar-") -> artistSource(id.removePrefix("ar-")) ?: if (exists("artist", id.removePrefix("ar-"))) null else return null
-            id.startsWith("pl-") -> playlistSource(id.removePrefix("pl-")) ?: if (exists("playlist", id.removePrefix("pl-"))) null else return null
-            exists("album", id) -> albumSource(id)
-            exists("track", id) -> trackSource(id)
-            exists("artist", id) -> artistSource(id)
-            playlistId != null -> playlistSource(playlistId)
+            id.startsWith("al-") -> albumSource(id.removePrefix("al-"), user) ?: if (exists("album", id.removePrefix("al-"))) null else return null
+            id.startsWith("mf-") -> trackSource(id.removePrefix("mf-"), user) ?: if (exists("track", id.removePrefix("mf-"))) null else return null
+            id.startsWith("ar-") -> artistSource(id.removePrefix("ar-"), user) ?: if (exists("artist", id.removePrefix("ar-"))) null else return null
+            id.startsWith("pl-") -> playlistSource(id.removePrefix("pl-"), user!!) ?: if (exists("playlist", id.removePrefix("pl-"))) null else return null
+            exists("album", id) -> albumSource(id, user)
+            exists("track", id) -> trackSource(id, user)
+            exists("artist", id) -> artistSource(id, user)
+            playlistId != null -> playlistSource(playlistId, user!!)
             else -> return null
         }
         if (source == null) return placeholder(size)
@@ -56,31 +57,37 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
 
     private fun exists(table: String, id: String): Boolean = db.read { long("SELECT COUNT(*) FROM $table WHERE id = ?", id) > 0 }
 
-    private fun albumSource(albumId: String): Source? {
+    private fun albumSource(albumId: String, user: com.legitimateapps.dulcet.server.auth.User? = null): Source? {
         val row = db.read { single("SELECT folder_art, art_track_id FROM album WHERE id = ?", albumId) { it.stringOrNull("folder_art") to it.stringOrNull("art_track_id") } } ?: return null
-        row.first?.let { return Source.FolderFile(musicFolder.resolve(it)) }
-        row.second?.let { trackId -> trackPath(trackId)?.let { return Source.Embedded(it) } }
+        row.first?.let { art ->
+            val directory = Path.of(art).parent?.toString().orEmpty()
+            if(user == null || db.read { long("SELECT COUNT(*) FROM track t WHERE t.album_id=? AND t.parent_dir=? AND ${access.catalogPredicate(user.id,"track","t")}",albumId,directory)>0 })
+                return Source.FolderFile(musicFolder.resolve(art))
+        }
+        row.second?.let { trackId -> if(user == null || access.canReadCatalog(user.id,"track",trackId)) trackPath(trackId)?.let { return Source.Embedded(it) } }
+        if(user != null) db.read { query("SELECT t.id FROM track t WHERE t.album_id=? AND t.has_embedded_art=1 AND ${access.catalogPredicate(user.id,"track","t")} ORDER BY t.id",albumId) { it.string("id") } }
+            .firstNotNullOfOrNull { trackPath(it)?.let(Source::Embedded) }?.let { return it }
         return null
     }
 
-    private fun trackSource(trackId: String): Source? {
+    private fun trackSource(trackId: String, user: com.legitimateapps.dulcet.server.auth.User? = null): Source? {
         val row = db.read { single("SELECT path, has_embedded_art, album_id FROM track WHERE id = ?", trackId) { Triple(it.string("path"), it.bool("has_embedded_art"), it.string("album_id")) } } ?: return null
         if (row.second) return Source.Embedded(musicFolder.resolve(row.first))
-        return albumSource(row.third)
+        return albumSource(row.third,user)
     }
 
-    private fun artistSource(artistId: String): Source? {
-        val albums = db.read { query("SELECT album_id FROM album_artist WHERE artist_id = ?", artistId) { it.string("album_id") } }
+    private fun artistSource(artistId: String, user: com.legitimateapps.dulcet.server.auth.User? = null): Source? {
+        val albums = db.read { query("SELECT album_id FROM album_artist WHERE artist_id = ?", artistId) { it.string("album_id") } }.filter { user == null || access.canReadCatalog(user.id,"album",it) }
         val artistImage = db.read {
-            single("SELECT t.parent_dir FROM track t JOIN album_artist aa ON aa.album_id = t.album_id WHERE aa.artist_id = ? LIMIT 1", artistId) { it.string("parent_dir") }
+            single("SELECT t.parent_dir FROM track t JOIN album_artist aa ON aa.album_id = t.album_id WHERE aa.artist_id = ? AND ${if(user==null) "1" else access.catalogPredicate(user.id,"track","t")} ORDER BY t.id LIMIT 1", artistId) { it.string("parent_dir") }
         }?.takeIf(String::isNotEmpty)?.let { dir -> listOf("artist.jpg", "artist.png").mapNotNull { com.legitimateapps.dulcet.server.musicFile(musicFolder, musicFolder.resolve(dir).parent.resolve(it)) }.firstOrNull() }
         if (artistImage != null) return Source.FolderFile(artistImage)
-        return albums.firstNotNullOfOrNull(::albumSource)
+        return albums.firstNotNullOfOrNull { albumSource(it,user) }
     }
 
-    private fun playlistSource(playlistId: String): Source? {
+    private fun playlistSource(playlistId: String, user: com.legitimateapps.dulcet.server.auth.User): Source? {
         val tracks = db.read { query("SELECT track_id FROM playlist_track WHERE playlist_id = ? ORDER BY position LIMIT 20", playlistId) { it.string("track_id") } }
-        return tracks.firstNotNullOfOrNull(::trackSource)
+        return tracks.filter { access.canReadCatalog(user.id,"track",it) }.firstNotNullOfOrNull { trackSource(it,user) }
     }
 
     private fun trackPath(trackId: String): Path? = db.read { string("SELECT path FROM track WHERE id = ?", trackId) }?.let(musicFolder::resolve)

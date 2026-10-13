@@ -97,6 +97,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val testing = com.legitimateapps.dulcet.server.v1.TestMode(this)
     val apiAuth = com.legitimateapps.dulcet.server.v1.ApiAuth(this)
     val apiUsers = com.legitimateapps.dulcet.server.v1.ApiUsers(this)
+    val access = com.legitimateapps.dulcet.server.auth.AccountAccess(db)
     val apiCatalog = com.legitimateapps.dulcet.server.v1.ApiCatalog(this)
     val apiUserData = com.legitimateapps.dulcet.server.v1.ApiUserData(this)
     val apiMedia = com.legitimateapps.dulcet.server.v1.ApiMedia(this)
@@ -106,9 +107,9 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val apiWebhooks = com.legitimateapps.dulcet.server.v1.ApiWebhooks(this, config.webhookAllowPrivateTargets, config.webhookAllowOtherPorts)
     val apiMcp = com.legitimateapps.dulcet.server.v1.ApiMcp(this)
     val dulcetApi = com.legitimateapps.dulcet.server.v1.DulcetApi(this)
-    val catalog = Catalog(db)
+    val catalog = Catalog(db, access)
     val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe))
-    val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg)
+    val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg, access)
     val transcoder = Transcoder(config.ffmpeg)
     val transcodeParams = TranscodeParams(java.security.MessageDigest.getInstance("SHA-256").digest(key + "transcodeParams".toByteArray()))
     val lyrics = LyricsService(db, config.musicFolder, lyricsProvider ?: config.lrclibUrl?.let { LrcLibProvider(it, USER_AGENT) })
@@ -126,7 +127,9 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
 
     fun requestScan() = launchBackground { scanner.scan() }
 
-    fun handlers(): Map<String, Handler> = browseHandlers(this) + userDataHandlers(this) + mediaHandlers(this)
+    fun handlers(): Map<String, Handler> = (browseHandlers(this) + userDataHandlers(this) + mediaHandlers(this)).mapValues { (_, handler) ->
+        { call -> com.legitimateapps.dulcet.server.api.authorizeRest(this, call); handler(call) }
+    }
 
     fun restApi() = RestApi(users, handlers(), open = setOf("getOpenSubsonicExtensions"))
 }

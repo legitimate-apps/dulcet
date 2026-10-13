@@ -26,20 +26,10 @@ class ApiUsers(private val ctx: ServerContext) {
         }
     }
 
-    /** No access row means the initial unrestricted policy; an explicit empty array means no sources. */
-    fun sourceIds(userId: String): List<String> = db.read {
-        val configured = string("SELECT source_ids FROM api_user_access WHERE user_id=?", userId)
-        if (configured == null) query("SELECT CAST(id AS TEXT) AS id FROM music_folder ORDER BY id") { it.string("id") }
-        else Json.parseToJsonElement(configured).jsonArray.map { it.jsonPrimitive.content }
-    }
-
-    fun permissions(userId: String): JsonObject = db.read {
-        val configured = string("SELECT permissions FROM api_user_access WHERE user_id=?", userId)
-            ?.let { Json.parseToJsonElement(it).jsonObject } ?: JsonObject(emptyMap())
-        JsonObject(j("download" to true, "share" to true) + configured)
-    }
-    fun download(userId: String): Boolean = permissions(userId)["download"]!!.jsonPrimitive.boolean
-    fun share(userId: String): Boolean = permissions(userId)["share"]!!.jsonPrimitive.boolean
+    fun sourceIds(userId: String): List<String> = ctx.access.sourceIds(userId)
+    fun permissions(userId: String): JsonObject = ctx.access.permissions(userId)
+    fun download(userId: String): Boolean = ctx.access.download(userId)
+    fun share(userId: String): Boolean = ctx.access.share(userId)
 
     fun install(route: Route) = with(route) {
         get("/users") {

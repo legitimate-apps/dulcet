@@ -78,6 +78,16 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
         val g=grant(this,p.tokenId) ?: return@read false
         active(this,g) && (p.credentialId==null || long("SELECT COUNT(*) FROM api_credential WHERE id=? AND grant_id=? AND kind IN ('access','personal') AND expires>?",p.credentialId,p.tokenId,clock())==1L)
     }
+    /** Live consumers cannot retain scopes removed by refresh, or outlive their parent grant. */
+    fun currentScopes(tokenId: String): Set<String>? = db.read {
+        grant(this,tokenId)?.takeIf { active(this,it) }?.scopes
+    }
+    fun currentPrincipal(p: Principal): Principal? = db.read {
+        val g=grant(this,p.tokenId) ?: return@read null
+        if(!active(this,g) || (p.credentialId!=null && long("SELECT COUNT(*) FROM api_credential WHERE id=? AND grant_id=? AND kind IN ('access','personal') AND expires>?",p.credentialId,p.tokenId,clock())!=1L)) return@read null
+        val user=ctx.users.byId(g.userId) ?: return@read null
+        p.copy(user=user,scopes=p.scopes.intersect(g.scopes))
+    }
     fun authenticate(header: String?): Principal? {
         if (header == null || !header.startsWith("Bearer ", ignoreCase=true)) return null
         val secret = header.substring(7)
@@ -316,6 +326,11 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
         return "${local.scheme}://${local.serverHost}${if(local.serverPort in setOf(80,443)) "" else ":${local.serverPort}"}"
     }
     private fun cookie(call:ApplicationCall)=call.request.cookies["dulcet_consent"]
+    private fun validConsentCookie(call:ApplicationCall,storedHash:String?):Boolean {
+        val expected=storedHash ?: return false
+        val supplied=cookie(call) ?: return false
+        return MessageDigest.isEqual(expected.toByteArray(),sha(supplied).toByteArray())
+    }
     private fun setCookie(call:ApplicationCall,value:String) { call.response.cookies.append(Cookie("dulcet_consent",value,path="/",maxAge=900,httpOnly=true,secure=issuer(call).startsWith("https://"),extensions=mapOf("SameSite" to "Strict"))) }
     private fun html(value:String)=value.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;")
     private fun form(client:ClientIdentity,scopes:Set<String>,hidden:Map<String,String>,device:Boolean=false):String="""<!doctype html><html lang="en"><meta charset="utf-8"><title>Dulcet sign in</title><h1>Sign in to Dulcet</h1><p>${html(client.name)}${if(client.verified) " (Verified app)" else " (Unverified app)"}</p><p>Requested scopes: ${html(scopes.sorted().joinToString(" "))}</p>${hidden["redirect"]?.let { "<p>Code will go to ${html(it)}</p>" } ?: ""}<form method="post" action="${if(device) "/device" else "/oauth/authorize"}">${hidden.filterKeys { it!="redirect" }.map { "<input type=\"hidden\" name=\"${html(it.key)}\" value=\"${html(it.value)}\">" }.joinToString("")}<label>Username <input name="username" autocomplete="username" required></label><label>Password <input type="password" name="password" autocomplete="current-password" required></label><button name="approve" value="yes">Sign in and approve</button><button name="approve" value="no">Cancel</button></form></html>"""
@@ -358,7 +373,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             val f=call.receiveParameters(); val rid=f["request"] ?: throw OAuthFailure("invalid_request")
             val pending=db.read { authorization(this,rid) } ?: throw OAuthFailure("invalid_request")
             limited(call,pending.clientId)
-            if(pending.expires<=clock() || pending.used || pending.browserHash!=cookie(call)?.let(::sha)) throw OAuthFailure("invalid_request")
+            if(pending.expires<=clock() || pending.used || !validConsentCookie(call,pending.browserHash)) throw OAuthFailure("invalid_request")
             val suffix="state=${encode(pending.state!!)}&iss=${encode(issuer(call))}"
             if(f["approve"]!="yes") { db.write { execute("DELETE FROM api_authorization WHERE id=?",rid) };call.respondRedirect("${pending.redirect}${if(pending.redirect!!.contains('?')) "&" else "?"}error=access_denied&$suffix");return@oauth }
             limitedUser(call,(f["username"] ?: "").lowercase())
@@ -440,7 +455,7 @@ class ApiAuth(private val ctx: ServerContext, private val clock: () -> Long = Sy
             val f=call.receiveParameters();limited(call,"device-approval")
             val code=f["user_code"] ?: throw OAuthFailure("invalid_request")
             val a=db.read { single("SELECT id FROM api_authorization WHERE user_code=?",code) { authorization(this,it.string("id"))!! } } ?: throw OAuthFailure("access_denied")
-            if(a.expires<=clock() || a.attempts>=5 || a.used || a.browserHash!=cookie(call)?.let(::sha)) throw OAuthFailure("access_denied")
+            if(a.expires<=clock() || a.attempts>=5 || a.used || !validConsentCookie(call,a.browserHash)) throw OAuthFailure("access_denied")
             limitedUser(call,(f["username"] ?: "").lowercase())
             val user=(ctx.users.authenticateDulcet(f["username"] ?: "",f["password"] ?: "") as? AuthOutcome.Ok)?.user
             if(f["approve"]!="yes") { db.write { execute("UPDATE api_authorization SET attempts=5 WHERE id=?",a.id) };throw OAuthFailure("access_denied") }

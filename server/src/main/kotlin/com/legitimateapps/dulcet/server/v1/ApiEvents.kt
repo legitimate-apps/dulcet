@@ -59,7 +59,7 @@ class ApiEvents(private val ctx: ServerContext, private val clock: () -> Long = 
     }
     fun onlineAny(userId:String,deviceId:String):Boolean = connections.any { it.principal.user.id==userId && it.device==deviceId && ctx.apiAuth.isActive(it.principal) }
     fun online(userId: String, deviceId: String): Boolean = connections.any {
-        it.principal.user.id == userId && it.device == deviceId && "command" in it.types && ctx.apiAuth.isActive(it.principal)
+        it.principal.user.id == userId && it.device == deviceId && "command" in it.types && ctx.apiAuth.currentPrincipal(it.principal)?.let { live -> "user:read" in live.scopes } == true
     }
     fun publish(userId: String?, type: String, data: JsonObject, scopes: Set<String>, deviceId: String? = null) {
         ctx.db.write {
@@ -131,7 +131,7 @@ class ApiEvents(private val ctx: ServerContext, private val clock: () -> Long = 
         }
     }
     private fun visible(connection:Connection,e:Event):Boolean {
-        val p=connection.principal
+        val p=ctx.apiAuth.currentPrincipal(connection.principal) ?: return false
         if(e.type !in connection.types || !p.scopes.containsAll(e.scopes)) return false
         if(e.userId!=null && e.userId!=p.user.id) return false
         if(e.deviceId!=null && e.deviceId!=connection.device) return false
@@ -190,8 +190,10 @@ class ApiEvents(private val ctx: ServerContext, private val clock: () -> Long = 
             try {
                 call.respondTextWriter(ContentType.Text.EventStream) {
                     suspend fun emit(e:Event) {
+                        val live=ctx.apiAuth.currentPrincipal(p)
+                        if(e.type!="revoked" && (live==null || e.type !in allowed(live) || !live.scopes.containsAll(e.scopes))) return
                         if(e.id.startsWith("ev_${ctx.journal.instanceId}_")) write("id: ${e.id}\n")
-                        write("event: ${e.type}\ndata: ${data(p,e)}\n\n");flush()
+                        write("event: ${e.type}\ndata: ${data(live ?: p,e)}\n\n");flush()
                     }
                     if(gap) {
                         if("changes" in requested) emit(Event("ev_gap","", "changes",j(),emptySet()))
@@ -211,8 +213,9 @@ class ApiEvents(private val ctx: ServerContext, private val clock: () -> Long = 
                             }
                             if(long("SELECT COUNT(*) FROM now_playing WHERE at<=?",clock()-120000)>0) execute("DELETE FROM now_playing WHERE at<=?",clock()-120000)
                         }
-                        if(!ctx.apiAuth.isActive(p)) {
-                            emit(Event("ev_revoked",p.user.id,"revoked",j("reason" to "Token revoked or expired"),emptySet()));break
+                        val live=ctx.apiAuth.currentPrincipal(p)
+                        if(live==null || live.scopes.none { it in setOf("catalog:read","user:read") }) {
+                            emit(Event("ev_revoked",p.user.id,"revoked",j("reason" to "Token revoked, expired or no longer permitted to read events"),emptySet()));break
                         }
                         val received=withTimeoutOrNull(1000) { channel.receiveCatching() }
                         if(received!=null) { if(received.isClosed) break; val e=received.getOrThrow(); if(ctx.apiAuth.isActive(p) && visible(connection,e)) emit(e) }

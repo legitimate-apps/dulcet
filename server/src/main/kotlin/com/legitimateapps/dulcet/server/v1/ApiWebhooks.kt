@@ -111,7 +111,8 @@ class ApiWebhooks(
 ) {
     private val db = ctx.db
     private val vault = PasswordVault.fromDataFolder(ctx.config.dataFolder)
-    private val inFlight = ConcurrentHashMap<String,String>()
+    private data class Flight(val url:String,val event:String)
+    private val inFlight = ConcurrentHashMap<String,Flight>()
     private val deliveryLock = Any()
     private data class Hook(val id:String,val user:String,val grant:String,val url:String,val scopes:Set<String>,val events:Set<String>,val description:String?,val active:Boolean,val created:Long,val last:Long?,val failures:Int,val reason:String?,val secret:ByteArray)
     private data class Delivery(val id:String,val hook:String,val event:String,val body:String,val created:Long,val attempts:Int)
@@ -145,7 +146,7 @@ class ApiWebhooks(
         }
         // A revoked grant's trigger deletes hooks in that transaction. Close any connection before
         // that revocation commits, rather than waiting for the delivery coroutine to finish.
-        db.beforeCommit { inFlight.forEach { (id,url) -> if(!permitted(id)) transport.cancel(url) } }
+        db.beforeCommit { inFlight.forEach { (id,flight) -> if(!permitted(id,flight.event)) transport.cancel(flight.url) } }
     }
     private fun hook(s:Db.Session,id:String):Hook? = s.single("SELECT * FROM api_webhook WHERE id=?",id) { r -> Hook(r.string("id"),r.string("user_id"),r.string("grant_id"),r.string("url"),r.string("scopes").split(' ').toSet(),Json.parseToJsonElement(r.string("events")).jsonArray.map { it.jsonPrimitive.content }.toSet(),r.stringOrNull("description"),r.bool("active"),r.long("created"),r.longOrNull("last_delivery"),r.int("failures"),r.stringOrNull("disabled_reason"),r.bytes("secret")!!) }
     private fun owned(p:Principal,id:String):Hook = db.read { hook(this,id)?.takeIf { it.user == p.user.id && ctx.apiAuth.isActive(it.grant) } } ?: throw ApiProblem(404,"not-found")
@@ -171,7 +172,7 @@ class ApiWebhooks(
     fun list(p:Principal):JsonObject = j("items" to db.read { query("SELECT id FROM api_webhook WHERE user_id=? ORDER BY created,id",p.user.id) { it.string("id") }.mapNotNull { hook(this,it) }.filter { ctx.apiAuth.isActive(it.grant) }.map(::resource) })
     fun get(p:Principal,id:String):JsonObject = resource(owned(p,id))
     fun update(p:Principal,id:String,body:JsonObject):JsonObject {
-        val h=owned(p,id);val subscribed=events(body,h.scopes.intersect(p.scopes),false) ?: h.events
+        val h=owned(p,id);val subscribed=events(body,currentScopes(h).intersect(p.scopes),false) ?: h.events
         val active=body["active"]?.let { (it as? JsonPrimitive)?.booleanOrNull ?: throw ApiProblem(400,"invalid-request") } ?: h.active
         val desc=if(body.containsKey("description")) description(body) else h.description
         val reason=if(active) null else if(body.containsKey("active")) "admin" else h.reason
@@ -185,8 +186,8 @@ class ApiWebhooks(
     fun enqueue(type:String,userId:String?,data:JsonObject,eventKey:String?=null) {
         val scope=eventScopes[type] ?: return
         db.write {
-            query("SELECT id FROM api_webhook WHERE active=1") { it.string("id") }.mapNotNull { hook(this,it) }.filter { h -> scope in h.scopes && (type in h.events || "*" in h.events) && (userId == null || h.user == userId) && ctx.apiAuth.isActive(h.grant) && (type != "catalog.changed" || ctx.apiUsers.sourceIds(h.user).isNotEmpty()) }.forEach { h ->
-                val visibleData=if(type == "catalog.changed") j("cursor" to ctx.journal.cursor(h.user,scopeTypes(h.scopes)),"types" to (data["types"] ?: json(emptyList<String>()))) else data
+            query("SELECT id FROM api_webhook WHERE active=1") { it.string("id") }.mapNotNull { hook(this,it) }.filter { h -> scope in currentScopes(h) && (type in h.events || "*" in h.events) && (userId == null || h.user == userId) && ctx.apiAuth.isActive(h.grant) && (type != "catalog.changed" || ctx.apiUsers.sourceIds(h.user).isNotEmpty()) }.forEach { h ->
+                val visibleData=if(type == "catalog.changed") j("cursor" to ctx.journal.cursor(h.user,scopeTypes(currentScopes(h))),"types" to (data["types"] ?: json(emptyList<String>()))) else data
                 enqueue(this,h,type,visibleData,eventKey)
             }
         }
@@ -197,7 +198,8 @@ class ApiWebhooks(
         s.execute("INSERT OR IGNORE INTO api_webhook_delivery(id,hook_id,event,body,event_key,created,next_attempt) VALUES(?,?,?,?,?,?,?)",id,h.id,type,body,key,clock(),clock())
         return id
     }
-    private fun permitted(id:String)=db.read { hook(this,id)?.let { it.active && ctx.apiAuth.isActive(it.grant) } ?: false }
+    private fun currentScopes(h:Hook):Set<String> = h.scopes.intersect(ctx.apiAuth.currentScopes(h.grant) ?: emptySet())
+    private fun permitted(id:String,event:String)=db.read { hook(this,id)?.let { it.active && eventScopes[event] in currentScopes(it) } ?: false }
     fun signature(secret:String,id:String,timestamp:Long,body:ByteArray):String {
         val mac=Mac.getInstance("HmacSHA256");mac.init(SecretKeySpec(Base64.getDecoder().decode(secret.removePrefix("whsec_")),"HmacSHA256"));mac.update("$id.$timestamp.".toByteArray(StandardCharsets.UTF_8))
         return "v1,"+Base64.getEncoder().encodeToString(mac.doFinal(body))
@@ -210,9 +212,9 @@ class ApiWebhooks(
     private fun attempt(d:Delivery):JsonObject {
         val h=db.read { hook(this,d.hook) } ?: return j("id" to d.id,"event" to d.event,"attemptedAt" to iso(clock()),"responseStatus" to null,"error" to "grant-revoked").also { value -> db.write { cacheRequest(this,d.id,value) } }
         val attempted=clock();val timestamp=attempted/1000;val bytes=d.body.toByteArray(StandardCharsets.UTF_8)
-        val result=if(!permitted(h.id)) WebhookResult(null,"grant-revoked") else {
-            inFlight[h.id]=h.url
-            try { transport.send(h.url,bytes,mapOf("webhook-id" to d.id,"webhook-timestamp" to timestamp.toString(),"webhook-signature" to signature(vault.open(h.secret),d.id,timestamp,bytes))) { permitted(h.id) } } catch (_: Exception) { WebhookResult(null,"delivery-failed") } finally { inFlight.remove(h.id) }
+        val result=if(!permitted(h.id,d.event)) WebhookResult(null,"grant-revoked") else {
+            inFlight[h.id]=Flight(h.url,d.event)
+            try { transport.send(h.url,bytes,mapOf("webhook-id" to d.id,"webhook-timestamp" to timestamp.toString(),"webhook-signature" to signature(vault.open(h.secret),d.id,timestamp,bytes))) { permitted(h.id,d.event) } } catch (_: Exception) { WebhookResult(null,"delivery-failed") } finally { inFlight.remove(h.id) }
         }
         val value=j("id" to d.id,"event" to d.event,"attemptedAt" to iso(attempted),"responseStatus" to result.status,"error" to result.error)
         db.write {
@@ -222,6 +224,7 @@ class ApiWebhooks(
             val current=hook(this,h.id) ?: return@write
             if(!ctx.apiAuth.isActive(current.grant)) { execute("DELETE FROM api_webhook WHERE id=?",h.id);return@write }
             if(!current.active) { execute("DELETE FROM api_webhook_delivery WHERE hook_id=?",h.id);return@write }
+            if(eventScopes[d.event] !in currentScopes(current)) { execute("DELETE FROM api_webhook_delivery WHERE id=?",d.id);return@write }
             val ok=result.status?.let { it in 200..299 } == true && result.error == null
             execute("UPDATE api_webhook SET last_delivery=?,failures=CASE WHEN ? THEN 0 ELSE failures+1 END WHERE id=?",attempted,ok,h.id)
             if(ok) execute("DELETE FROM api_webhook_delivery WHERE id=?",d.id)
@@ -271,9 +274,9 @@ class ApiWebhooks(
     /** Run from the server's IO coroutine; no background thread survives application shutdown. */
     fun maintenance() = synchronized(deliveryLock) {
         val dead=db.read { query("SELECT id FROM api_webhook") { it.string("id") }.filter { id -> hook(this,id)?.let { !ctx.apiAuth.isActive(it.grant) } ?: true } }
-        dead.forEach { id -> inFlight[id]?.let(transport::cancel) }
+        dead.forEach { id -> inFlight[id]?.url?.let(transport::cancel) }
         db.write { dead.forEach { execute("DELETE FROM api_webhook WHERE id=?",it) } }
-        inFlight.forEach { (id,url) -> if(!permitted(id)) transport.cancel(url) }
+        inFlight.forEach { (id,flight) -> if(!permitted(id,flight.event)) transport.cancel(flight.url) }
         val due=db.read { query("SELECT d.* FROM api_webhook_delivery d JOIN api_webhook h ON h.id=d.hook_id WHERE h.active=1 AND d.next_attempt<=? ORDER BY d.next_attempt LIMIT 20",clock(),map=::delivery) }
         due.forEach(::attempt)
     }
