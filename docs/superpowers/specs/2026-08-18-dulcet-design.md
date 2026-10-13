@@ -13373,7 +13373,7 @@ them.
 - Every music, image and sidecar path resolves inside the real music root, both at scan and read
   time. Links escaping the root are skipped; a root-level track never searches above the root for art.
 - Rescans are incremental: only files whose size, mtime or sidecar changed are probed again.
-- An unreadable or missing root/subfolder, or a scan that would remove every known track, refuses
+- An unreadable or missing root/subfolder, or a scan that would leave no usable tracks, refuses
   the scan, keeps the catalog and scan clock, and reports the refusal. `force` does not bypass this.
 - `lastScan` is the clients' equality-only scan clock (TRAPS 19). The periodic check
   (`--rescan-interval`) writes nothing, and leaves `lastScan` alone, when no file, sidecar or folder

@@ -80,9 +80,11 @@ class Scanner(
         }
         val present = files.associateBy { it.relative }
         val removed = existing.keys.filter { it !in present }
+        // Migration seeds old ids without fingerprints; fill them before an unchanged file moves.
+        val missingFingerprints = db.read { query("SELECT path FROM track_identity WHERE fingerprint IS NULL") { it.string("path") }.toSet() }
         val changed = files.filter { file ->
             val old = existing[file.relative]
-            old == null || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar
+            old == null || file.relative in missingFingerprints || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar
         }
         val unchanged = files.size - changed.size
         val artStamp = folderArt.toSortedMap().entries.joinToString("\n").hashCode().toString()
@@ -119,6 +121,10 @@ class Scanner(
             pool.shutdown()
         }
         val failed = failures.get()
+        if (existing.isNotEmpty() && removed.size == existing.size && probed.isEmpty()) {
+            log.warn("scan refused: no usable music files found; catalog retained")
+            return ScanResult(0, 0, 0, unchanged, failed, "No usable music files found; catalog retained")
+        }
         progress.addAndGet(unchanged)
         val now = clock()
         db.write {
@@ -143,7 +149,10 @@ class Scanner(
                 val stored = string("SELECT track_id FROM track_identity WHERE path = ?", track.path)
                 val moved = query("SELECT path, track_id FROM track_identity WHERE fingerprint = ?", fingerprint) { it.string("path") to it.string("track_id") }
                     .filter { it.first !in present && it.second !in claimed }.map { it.second }.distinct().singleOrNull()
-                var id = previous?.id ?: stored ?: moved ?: com.legitimateapps.dulcet.server.Ids.of("track-path", track.path)
+                val legacyCandidate = track.candidateId()
+                val legacy = query("SELECT path FROM track_identity WHERE track_id = ? AND fingerprint IS NULL", legacyCandidate) { it.string("path") }
+                    .takeIf { paths -> paths.isNotEmpty() && paths.none { it in present } && legacyCandidate !in claimed }?.let { legacyCandidate }
+                var id = previous?.id ?: stored ?: moved ?: legacy ?: com.legitimateapps.dulcet.server.Ids.of("track-path", track.path)
                 val holder = claimed[id]
                 if (holder != null && holder != track.path) id = com.legitimateapps.dulcet.server.Ids.of("track", id, track.path)
                 claimed[id] = track.path

@@ -139,6 +139,38 @@ class ScannerTest {
         assertEquals(stamp, ctx.lastScanMillis())
     }
 
+    @Test fun legacyMigrationFingerprintsUnchangedFilesBeforeAMove() {
+        val file = music.resolve("legacy.flac")
+        Fixtures.track(file)
+        ctx.scanner.scan()
+        val user = ctx.users.create("legacy", "pw", false)
+        ctx.db.write {
+            execute("UPDATE track SET id = 'legacy-id'")
+            execute("UPDATE track_artist SET track_id = 'legacy-id'")
+            execute("UPDATE track_genre SET track_id = 'legacy-id'")
+            execute("INSERT INTO annotation VALUES (?,'song','legacy-id',1,4,3,1)", user.id)
+            execute("DROP TABLE track_identity")
+            execute("PRAGMA user_version = 1")
+        }
+        com.legitimateapps.dulcet.server.db.Schema.migrate(ctx.db)
+        ctx.scanner.scan(force = false)
+        Files.move(file, music.resolve("renamed.flac"))
+        ctx.scanner.scan()
+        assertEquals("legacy-id", ctx.db.read { string("SELECT id FROM track") })
+        assertEquals(4L, ctx.db.read { long("SELECT rating FROM annotation WHERE item_id = (SELECT id FROM track)") })
+    }
+
+    @Test fun failedNewFilesCannotCauseTotalCatalogRemoval() {
+        Fixtures.track(music.resolve("song.flac"))
+        ctx.scanner.scan()
+        val stamp = ctx.lastScanMillis()
+        Files.delete(music.resolve("song.flac"))
+        Files.writeString(music.resolve("broken.mp3"), "not music")
+        ctx.scanner.scan()
+        assertEquals(1L, ctx.db.read { long("SELECT COUNT(*) FROM track") })
+        assertEquals(stamp, ctx.lastScanMillis())
+    }
+
     private data class ScanResultCounts(val added: Int, val updated: Int, val removed: Int, val unchanged: Int)
     private fun counts(result: com.legitimateapps.dulcet.server.scan.ScanResult) = ScanResultCounts(result.added, result.updated, result.removed, result.unchanged)
 }
