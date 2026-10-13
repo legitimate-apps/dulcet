@@ -95,8 +95,8 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
     // Reconstruct from credentials actually saved by the successful production submission.
     let restoredConnector = ControlledAccountConnector()
     let restored = makeStore(restoredConnector, credentials: credentials)
-    #expect(restored.snapshot.state == .accountSavedDisconnected)
-    #expect(restoredConnector.requests.isEmpty)
+    #expect(restored.snapshot.accountConnection == .connecting)
+    #expect(restoredConnector.requests == [request])
 
     // The oracle is written out per failure kind, deliberately not derived from `kind.family`:
     // derived from production, it would move with a broken production mapping and still agree.
@@ -1256,7 +1256,7 @@ func keepingAccountAfterCleanupFailurePreservesPersistedCredential(cleanupTimesO
     let relaunched = DulcetAccountDataSource(
         connector: ControlledAccountConnector(), credentialStore: credentials
     )
-    #expect(relaunched.currentSnapshot.state == .accountSavedDisconnected)
+    #expect(relaunched.currentSnapshot.accountConnection == .connecting)
 }
 
 @Test @MainActor
@@ -1661,7 +1661,8 @@ func unentitledKeychainWriteFailsClosedWithoutLegacyFallback() throws {
 #endif
 }
 
-@Test @MainActor
+// Keep the published test identity while reversing its expectation with the contract.
+@Test("Saved credentials reconnect without a tap") @MainActor
 func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     let persisted = DulcetAccountConnectRequest(
         serverURL: "https://music.example.invalid",
@@ -1679,20 +1680,20 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )
     let store = DulcetPresentationStore(source: source)
 
-    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .connecting)
     #expect(store.snapshot.accountForm == persisted)
     #expect(!store.snapshot.accountConnected)
-    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
-    #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
-    #expect(connector.requests.isEmpty)
+    #expect(store.snapshot.accountConnection == .connecting)
+
+    #expect(connector.requests == [persisted])
     #expect(libraryBrowser.requests.isEmpty)
 
     store.selectDestination(.library)
 
-    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .connecting)
     #expect(store.snapshot.selectedDestination == .library)
-    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
-    #expect(connector.requests.isEmpty)
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(connector.requests == [persisted])
     #expect(libraryBrowser.requests.isEmpty)
     #expect(DulcetStrings.reconnectToServer("music.example.invalid") == "Reconnect to music.example.invalid")
     #expect(DulcetStrings.savedAccountDisconnectedBody.localizedCaseInsensitiveContains("saved"))
@@ -1706,9 +1707,7 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )))
 
     #expect(credentials.saved == [persisted])
-    // Reconnect was pressed on the library surface, so it lands in the library rather than on the
-    // account pane. The CONF-10b guarantee is the one asserted above -- that neither the connector
-    // nor the browser was touched before the person chose to reconnect -- and it is unchanged.
+    // The manual fallback joined the launch negotiation; success keeps Library selected.
     #expect(store.snapshot.selectedDestination == .library)
     #expect(store.snapshot.state == .libraryLoading)
     #expect(libraryBrowser.requests.count == 1)
@@ -1772,7 +1771,7 @@ func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     #expect(account?.allowLocalHTTP == true)
     #expect(!downloads.configuredBeforeStatusHandler,
             "a state the reconciliation publishes must reach the presentation")
-    #expect(connector.requests.isEmpty, "reconciling downloads is not a connection")
+    #expect(connector.requests.count == 1, "downloads reconcile while the saved account reconnects")
 }
 
 /// Saved playback knows the local account while network playback remains unconfigured.
@@ -4006,16 +4005,15 @@ func accessGrantedAfterASavedAccountsLibraryReplacedTheRefusalStillConnects() {
         credentialStore: MemoryCredentialStore(persisted: saved),
         localNetworkAccess: probe
     ))
-    #expect(store.snapshot.state == .accountSavedDisconnected, "the experiment needs a saved account")
+    #expect(store.snapshot.accountConnection == .connecting, "the saved account reconnects at launch")
     store.navigate(to: .settings)
     store.submitAccountConnection()
     connector.complete(.failed(accountFailure(.transportUnreachable)))
     probe.answer(.denied)
     #expect(shownFailureKind(store) == .localNetworkAccessDenied)
     store.navigate(to: .library)
-    // The condition under test: the refusal is no longer what the status shows.
-    #expect(shownFailureKind(store) == nil)
-    #expect(store.snapshot.accountConnection == .saved(serverName: "10.0.0.20:4533"))
+    // Navigation preserves the refusal until the grant retries in place.
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied)
 
     probe.answer(.notDenied)
     #expect(connector.requests.count == 2, "the grant retried the connection")

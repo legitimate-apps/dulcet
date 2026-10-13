@@ -265,8 +265,8 @@ for marker in (
         errors.append(f"proxy evidence boundary is missing {marker!r}")
 
 for marker in (
-    "**Relaunch decision — explicit reconnect (every platform; first decided for macOS Phase 1):**",
-    "a cold launch into a saved account is not a return to the foreground of a connected session",
+    "**Relaunch decision — a saved account reconnects on its own (every platform):**",
+    "A saved account requests a reconnect at launch, on a return to the foreground and when the network comes back.",
     "one Keychain generic-password value",
     "generated local UUID",
     "data-protection Keychain",
@@ -285,7 +285,7 @@ for marker in (
     "through a committed receipt",
     "never by making the dispatch-only job a required PR status",
     "it evidences CONF-09b on macOS",
-    "performs **no network request until the person chooses Connect**",
+    "No tap is needed and no UI waits for the server.",
     "credential-persistence error surface",
 ):
     if marker not in normalized_authentication:

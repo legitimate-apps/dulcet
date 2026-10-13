@@ -222,9 +222,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // An earlier test on this simulator may have left its account saved. Sign it out the way a
         // person does, so idle below is the launch of an app with no account.
         let reconnectInLibrary = app.buttons["dulcet.reader.reconnect"].firstMatch
-        if reconnectInLibrary.waitForExistence(timeout: 8) {
+        guard openConnection(in: app, compact: compact) else { return }
+        if app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 1)
+            || element(labelPrefix: "Reconnect to", in: app).exists {
             print("DULCET ACCOUNT STATES precondition=saved-account action=sign-out")
-            reconnectInLibrary.tap()
             guard awaitSignOut(in: app, compact: compact), signOut(in: app) else { return }
             app.terminate()
             launchInInteractionScope(app)
@@ -424,7 +425,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         app.launchArguments = [
             "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", server.url,
+            "-dulcet-debug-account-server-url", proxy.url,
             "-dulcet-debug-account-username", server.username,
             "-dulcet-debug-account-password", server.password,
         ]
@@ -435,26 +436,36 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         print("DULCET ACCOUNT STATE reached=connected label=\(connected.label.debugDescription)")
         tourPhotograph("connection-connected")
 
-        // 10. Saved and disconnected: a relaunch opens the saved account's library, sending nothing
-        //    until Reconnect, and Connection names the saved server.
+        // 10. A fresh process reconnects from its saved credentials without a tap.
         app.terminate()
         app.launchArguments = []
         launchInInteractionScope(app)
-        guard reconnectInLibrary.waitForExistence(timeout: 20) else {
-            XCTFail("A relaunch with a saved account must open its library with Reconnect: " + app.debugDescription)
-            return
-        }
-        guard openConnection(in: app, compact: compact) else { return }
-        let savedServer = element(labelPrefix: "Reconnect to", in: app)
-        guard reveal(savedServer, in: app), savedServer.waitForExistence(timeout: 10),
-              reveal(primary, in: app),
-              waitForLabel(containing: "Reconnect", of: primary, timeout: 5) else {
-            XCTFail("Connection must name the saved server and offer Reconnect: " + app.debugDescription)
-            return
-        }
-        XCTAssertFalse(app.buttons["Sign Out"].exists, "A saved account is not connected until Reconnect")
-        print("DULCET ACCOUNT STATE reached=saved-disconnected label=\(savedServer.label.debugDescription)")
+        guard awaitSignOut(in: app, compact: compact) else { return }
+        XCTAssertTrue(connected.waitForExistence(timeout: 20), "Saved launch must connect without a tap")
+        print("DULCET ACCOUNT STATE reached=saved-auto-connected")
+        // An unreachable saved launch remains on its library and says what happened once.
+        let connectedShot = XCTAttachment(screenshot: app.screenshot())
+        connectedShot.name = "saved-launch-auto-connected"; connectedShot.lifetime = .keepAlways; add(connectedShot)
+        XCTAssertNotNil(proxy.control("POST", "state=on", path: "/__dulcet/outage"))
+        setLocalFixtureServer(running: false)
+        defer { setLocalFixtureServer(running: true) }
+        defer { _ = proxy.control("POST", "state=off", path: "/__dulcet/outage") }
+        app.terminate()
+        launchInInteractionScope(app)
+        XCTAssertTrue(reconnectInLibrary.waitForExistence(timeout: 20), "Offline library keeps manual Reconnect")
+        XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.exists)
         tourPhotograph("connection-saved-disconnected")
+        let observations = proxy.control("GET", "", path: "/__dulcet/outage")
+        let dropped = observations?["dropped"] as? [String: Int] ?? [:]
+        XCTAssertGreaterThan((dropped["ping"] ?? 0) + (dropped["getOpenSubsonicExtensions"] ?? 0), 0,
+            "The saved launch actually tried the unreachable server")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "saved-launch-offline-library"; shot.lifetime = .keepAlways; add(shot)
+        setLocalFixtureServer(running: true)
+        XCTAssertNotNil(proxy.control("POST", "state=off", path: "/__dulcet/outage"))
+        guard awaitSignOut(in: app, compact: compact) else { return }
+        XCTAssertTrue(connected.waitForExistence(timeout: 60), "Transient backoff must recover without a tap")
+        print("DULCET ACCOUNT STATE reached=saved-offline-recovered")
 
         // 11. Credential persistence: the active-account pointer names no Keychain item.
         app.terminate()
@@ -481,8 +492,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         launchInInteractionScope(app)
-        XCTAssertTrue(reconnectInLibrary.waitForExistence(timeout: 20),
-                      "The saved account must still open after the planted launch: " + app.debugDescription)
+        guard awaitSignOut(in: app, compact: compact) else { return }
+        XCTAssertTrue(connected.waitForExistence(timeout: 20),
+                      "The saved account must reconnect after the planted launch: " + app.debugDescription)
         print("DULCET ACCOUNT STATES PASS destination=\(compact ? "compact" : "regular")")
     }
 
@@ -713,12 +725,25 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return DisposableServer(url: url, username: username, password: password)
     }
 
+    /// Optional local-run process control: CI uses the proxy outage; a local proof can additionally
+    /// stop its owned disposable Navidrome and assert that its listener really refused connections.
+    private func setLocalFixtureServer(running: Bool) {
+        guard let url = ProcessInfo.processInfo.environment["DULCET_AUTORC_SERVER_CONTROL_URL"] else { return }
+        let components = URLComponents(string: url)
+        guard components?.host == "127.0.0.1", components?.scheme == "http" else {
+            XCTFail("The fixture process control must be loopback"); return
+        }
+        let result = FaultProxy(url: url).control("POST", "", path: running ? "/start" : "/stop")
+        XCTAssertEqual(result?[running ? "serverRunning" : "serverStopped"] as? Bool, true)
+        print("DULCET SAVED LAUNCH fixture-process=\(running ? "running" : "stopped-and-refused")")
+    }
+
     private struct FaultProxy {
         let url: String
 
         /// One request to the proxy's server-error control, answered synchronously: its JSON, or nil.
-        func control(_ method: String, _ query: String) -> [String: Any]? {
-            guard let target = URL(string: url + "/__dulcet/subsonic-error" + (query.isEmpty ? "" : "?" + query)) else {
+        func control(_ method: String, _ query: String, path: String = "/__dulcet/subsonic-error") -> [String: Any]? {
+            guard let target = URL(string: url + path + (query.isEmpty ? "" : "?" + query)) else {
                 return nil
             }
             var request = URLRequest(url: target)

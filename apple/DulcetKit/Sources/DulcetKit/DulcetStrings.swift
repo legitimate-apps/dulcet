@@ -80,7 +80,7 @@ enum DulcetStrings {
     static let connectedEmptyBody = text("library.empty.connected.body", "The connected server returned no artists or albums.")
     static let connectedEmptyFootnote = text("library.empty.connected.footnote", "Dulcet reads the server again whenever you open Library.")
     static let savedAccountDisconnectedBody = text("library.savedAccount.disconnected.body", "This server account is saved, but Dulcet has not connected during this launch.")
-    static let savedAccountDisconnectedFootnote = text("library.savedAccount.disconnected.footnote", "Dulcet will contact the server only after you choose Reconnect.")
+    static let savedAccountDisconnectedFootnote = text("library.savedAccount.disconnected.footnote", "Dulcet reconnects automatically when the server is reachable.")
     static let libraryLoadingTitle = text("library.loading.title", "Reading your library…")
     static let libraryLoadingBody = text("library.loading.body", "Dulcet is fetching artists and albums from the connected server. Track lists are read when you open an album.")
     static let libraryErrorTitle = text("library.error.title", "The library could not be loaded")
@@ -147,7 +147,7 @@ enum DulcetStrings {
     static let connectingBody = text("account.connect.progress.body", "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.")
     static let cancel = text("action.cancel", "Cancel")
     static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
-    static let savedAccountReconnectBody = text("account.connect.saved.body", "This account is saved. Dulcet remains disconnected until you choose Reconnect.")
+    static let savedAccountReconnectBody = text("account.connect.saved.body", "This account is saved. Dulcet reconnects automatically when the server is reachable.")
     static let tvTextEntryHint = text("account.connect.tv.textEntryHint", "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.")
     static let signOut = text("account.remove.action", "Sign Out")
     static let signOutConfirmationTitle = text("account.remove.confirm.title", "Sign out of this server?")
@@ -510,7 +510,7 @@ enum DulcetStrings {
     static func readerDeviceOnlyBody(_ serverName: String) -> String {
         formatted(
             "reader.deviceOnly.body",
-            "Dulcet will contact %@ only after you choose Reconnect.",
+            "Dulcet reconnects to %@ automatically when it is reachable.",
             serverName
         )
     }

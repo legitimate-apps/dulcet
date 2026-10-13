@@ -168,8 +168,8 @@ public protocol DulcetLibrarySessionProviding: AnyObject {
 public enum DulcetLibraryReaderMode: Sendable, Hashable {
     /// No account: nothing to read.
     case none
-    /// An account is saved but not connected in this launch. The reader paints what this device
-    /// has seen and sends nothing: the person has not chosen Reconnect yet (CONF-10b).
+    /// Saved credentials are being negotiated. The reader paints the device library;
+    /// successful account negotiation authorizes its reconnect (CONF-10b).
     case deviceOnly
     /// Connected: the reader follows reachability and the foreground.
     case connected
@@ -251,6 +251,9 @@ public final class DulcetLibrarySession {
     public private(set) var notice: DulcetLibraryNotice?
     /// Playlist editing for the current reader, when it can edit playlists (§18.6).
     public private(set) var playlists: DulcetPlaylistEditor?
+    /// Negotiation and lifecycle reports for the saved account, before the reader may send.
+    @ObservationIgnored public var onSavedReconnectRequested: (@MainActor () -> Void)?
+    @ObservationIgnored public var onConnectionEnvironmentChanged: (@MainActor (Bool, Bool) -> Void)?
     /// Receives the playable tracks of every screen publication, for queue restoration.
     @ObservationIgnored public var onTracksSeen: (@MainActor ([DulcetTrack]) -> Void)?
 
@@ -277,6 +280,11 @@ public final class DulcetLibrarySession {
 
     /// Whether this app reads its library through a reader at all.
     public var isAvailable: Bool { factory != nil }
+    public var isForeground: Bool { foreground }
+    /// The account banner owns this message; shelves retain their independent list errors.
+    public var ownsConnectionMessage: Bool {
+        mode == .deviceOnly || connectionFailure != nil
+    }
 
     /// Whether the reader may read the server now, as far as this session knows: connected, and
     /// not kept offline by a failed reconnect or by the network.
@@ -294,7 +302,7 @@ public final class DulcetLibrarySession {
             if requested == .connected, mode != .connected {
                 mode = .connected
                 connectionFailure = nil
-                startReachability()
+                // Reachability is already running for the saved account.
                 // Reachable while offline requests the reconnect: flush, epoch, then the screens.
                 reader.setOnline(true)
                 reconnect()
@@ -358,7 +366,7 @@ public final class DulcetLibrarySession {
         let made = factory.makeReader(account: account, foreground: foreground)
         if requested == .deviceOnly {
             // Before any screen subscribes: the reader starts connected, and a window opened
-            // before this call could read the server the person has not chosen to contact.
+            // before this call could read before saved-account negotiation succeeded.
             made.setOnline(false)
         }
         reader = made
@@ -387,8 +395,8 @@ public final class DulcetLibrarySession {
         let carried = carriedPlaylistQuestions?.account == account ? carriedPlaylistQuestions?.questions ?? [] : []
         carriedPlaylistQuestions = nil
         playlists = (made as? any DulcetPlaylistEditing).map { DulcetPlaylistEditor(editing: $0, session: self, carried: carried) }
+        startReachability()
         if requested == .connected {
-            startReachability()
             made.connect { [weak self] connection in
                 self?.receive(connection)
             }
@@ -479,17 +487,21 @@ public final class DulcetLibrarySession {
         guard foreground != self.foreground else { return }
         self.foreground = foreground
         reader?.setForeground(foreground)
-        // A return to the foreground reconnects -- only for an account the person connected.
-        if foreground, mode == .connected {
+        onConnectionEnvironmentChanged?(foreground, lastReachable != false)
+        if foreground {
             reconnect()
         }
     }
 
     /// "Try again" on any screen: the reconnect, which re-reads every visible screen and makes any
-    /// extend they owe -- never a screen's own refresh (§16.14). For an account not connected in
-    /// this launch it does nothing: that "Try again" is the account's Reconnect. A reader whose
+    /// extend they owe -- never a screen's own refresh (§16.14). A saved account requests its
+    /// negotiation first; a running negotiation is joined. A reader whose
     /// setup failed has nothing to reconnect: it is replaced by a new one, which connects.
     public func reconnect() {
+        if mode == .deviceOnly {
+            onSavedReconnectRequested?()
+            return
+        }
         guard mode == .connected, let reader else { return }
         if readerSetupFailed {
             retrySetup()
@@ -504,7 +516,7 @@ public final class DulcetLibrarySession {
         guard let reachability else { return }
         releaseHeldUnreachable()
         reachability.start { [weak self] reachable, constrained in
-            guard let self, self.mode == .connected, let reader = self.reader else { return }
+            guard let self, self.mode != .none, let reader = self.reader else { return }
             reader.setNetworkConstrained(constrained)
             self.receiveReachability(reachable, reader: reader)
         }
@@ -535,7 +547,12 @@ public final class DulcetLibrarySession {
             }
             reachabilityLog(regained ? "reachable; the reader is told and reconnects" : "reachable")
             lastReachable = true
-            reader.setOnline(true)
+            onConnectionEnvironmentChanged?(foreground, true)
+            if mode == .deviceOnly {
+                if regained { onSavedReconnectRequested?() }
+            } else {
+                reader.setOnline(true)
+            }
             return
         }
         guard lastReachable != false, heldUnreachable == nil else { return }
@@ -544,10 +561,11 @@ public final class DulcetLibrarySession {
         let timer = delays.schedule(after: unreachableGrace) { [weak self] in
             guard let self, let held = self.heldUnreachable else { return }
             self.heldUnreachable = nil
-            guard self.mode == .connected, self.readerGeneration == generation, let reader = self.reader else { return }
+            guard self.mode != .none, self.readerGeneration == generation, let reader = self.reader else { return }
             self.reachabilityLog(
                 "unreachable for \(Self.milliseconds(since: held.since)) ms; the reader is told and goes offline")
             self.lastReachable = false
+            self.onConnectionEnvironmentChanged?(self.foreground, false)
             reader.setOnline(false)
         }
         heldUnreachable = (timer, ContinuousClock.now)

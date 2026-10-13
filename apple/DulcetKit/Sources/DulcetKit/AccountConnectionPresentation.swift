@@ -549,6 +549,12 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private var accountRemovalWatchdog: Task<Void, Never>?
     private var accountRemovalID: UUID?
     private var libraryRefreshOperation: (any DulcetLibraryRefreshOperation)?
+    private let reconnectDelays: any DulcetDelayScheduling
+    private var reconnectRetry: (any DulcetLibraryReaderCancellable)?
+    private var reconnectRetryDelay: Duration = .seconds(2)
+    private var reconnectForeground = true
+    private var reconnectReachable = true
+    private var savedReconnectEnabled = false
     private var generation = 0
     private let localNetworkAccess: (any DulcetLocalNetworkAccessProbing)?
     /// Watching for local-network access to be granted after a connection it blocked.
@@ -620,10 +626,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         providerInstanceIDFactory: @escaping @MainActor () -> String = { UUID().uuidString },
         playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault,
         localNetworkAccess: (any DulcetLocalNetworkAccessProbing)? = nil,
-        librarySession: DulcetLibrarySession? = nil
+        librarySession: DulcetLibrarySession? = nil,
+        reconnectDelays: any DulcetDelayScheduling = DulcetTaskDelayScheduler()
     ) {
+        self.reconnectDelays = reconnectDelays
         self.connector = connector
         self.librarySession = librarySession
+        reconnectForeground = librarySession?.isForeground ?? true
         self.localNetworkAccess = localNetworkAccess
         self.playbackStartNavigation = playbackStartNavigation
         latestPlaybackPresentation = playbackController?.currentPresentation ?? .unavailable
@@ -647,8 +656,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 let serverName = Self.savedServerName(for: restoredRequest.serverURL)
                 savedServerName = serverName
                 if librarySession?.isAvailable == true, providerInstanceID != nil {
-                    // The app opens straight into the library this device has seen; Reconnect
-                    // is offered there, and nothing is sent until it is chosen (CONF-10b).
+                    // Paint the device library immediately while the saved account reconnects.
                     currentSnapshot = Self.snapshot(
                         state: .libraryBrowse,
                         destination: .library,
@@ -698,8 +706,17 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             ))
         }
         if let librarySession, let providerInstanceID, let restored = restoredForReader {
-            // The saved account's library paints at once from what this device has seen, and
-            // the library sends nothing until the person chooses Reconnect (CONF-10b).
+            // Wire the saved account's reconnect to the same foreground and network reports
+            // as its reader. Device-only remains a usable presentation during negotiation.
+            librarySession.onSavedReconnectRequested = { [weak self] in self?.requestSavedReconnect() }
+            librarySession.onConnectionEnvironmentChanged = { [weak self] foreground, reachable in
+                guard let self else { return }
+                if foreground && !self.reconnectForeground { self.reconnectRetryDelay = .seconds(2) }
+                self.reconnectForeground = foreground
+                self.reconnectReachable = reachable
+                if !foreground || !reachable { self.cancelReconnectRetry() }
+            }
+            // The device library opens before any network work starts.
             librarySession.open(
                 account: Self.readerAccount(
                     request: restored,
@@ -736,6 +753,35 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 allowLocalHTTP: restored.allowLocalHTTP,
                 credentialGeneration: credentialStore?.credentialGeneration ?? 0
             ))
+        }
+        if restoredForReader != nil {
+            savedReconnectEnabled = true
+            requestSavedReconnect()
+        }
+    }
+
+    private func cancelReconnectRetry() {
+        reconnectRetry?.cancel()
+        reconnectRetry = nil
+    }
+
+    private func requestSavedReconnect() {
+        guard savedReconnectEnabled, reconnectForeground, reconnectReachable,
+              accountRemovalStatus == .idle,
+              !currentSnapshot.accountConnection.isConnected,
+              currentSnapshot.accountConnection != .connecting else { return }
+        cancelReconnectRetry()
+        submit(currentSnapshot.accountForm, inPlace: true)
+    }
+
+    private func retrySavedReconnect(after failure: DulcetAccountFailurePresentation) {
+        guard savedReconnectEnabled, reconnectForeground, reconnectReachable,
+              let floor = failure.automaticRetryFloor else { return }
+        cancelReconnectRetry()
+        let wait = max(reconnectRetryDelay, min(floor, .seconds(300)))
+        reconnectRetryDelay = min(reconnectRetryDelay * 2, .seconds(60))
+        reconnectRetry = reconnectDelays.schedule(after: wait) { [weak self] in
+            self?.requestSavedReconnect()
         }
     }
 
@@ -864,6 +910,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case let .editAccountForm(form):
             accountFormEdited(form)
         case let .submitAccountConnection(request):
+            if currentSnapshot.accountConnection == .connecting, request == currentSnapshot.accountForm {
+                return // A manual reconnect joins the negotiation already running.
+            }
+            cancelReconnectRetry()
+            if savedServerName != nil { savedReconnectEnabled = true }
             localNetworkRetryUsed = false
             // Reconnect pressed on a library or search screen the reader is already drawing
             // connects where the person is: the screens keep their rows and go live in place.
@@ -872,6 +923,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         case .cancelAccountConnection:
             cancelActiveSubmission()
         case .removeAccount:
+            savedReconnectEnabled = false
+            cancelReconnectRetry()
             removeAccount()
         case .dismissAccountRemovalFailure:
             dismissAccountRemovalFailure()
@@ -882,7 +935,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     }
 
     private func cancelActiveSubmission() {
-        guard currentSnapshot.state == .accountConnecting else { return }
+        guard currentSnapshot.accountConnection == .connecting else { return }
+        cancelReconnectRetry()
         cancelLocalNetworkWatch()
         generation += 1
         let operation = activeOperation
@@ -891,8 +945,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
         publishSavedAccountOrIdle(form: currentSnapshot.accountForm)
     }
 
-    /// Connects with `request`. `inPlace` is a connection nobody asked to watch -- the automatic
-    /// retry after local-network access was granted while the person was somewhere else -- so it
+    /// Connects with `request`. `inPlace` is a saved-account launch, a lifecycle retry, or a
+    /// local-network grant: it
     /// never moves them, wherever they go before it lands: the account status says it is
     /// connecting (Connection shows that, with Cancel, if they go there), and the outcome is
     /// recorded on whatever surface they are on. That is decided here, when the retry is made,
@@ -920,7 +974,9 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             publish(state: .accountConnecting, form: request, status: .connecting)
         }
 
+        var answered = false
         let operation = connector.connect(request) { [weak self] outcome in
+            answered = true
             guard let self, self.generation == submissionGeneration else { return }
             self.activeOperation = nil
             if inPlace {
@@ -991,9 +1047,10 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     form: request,
                     status: .failed(failure)
                 )
+                self.retrySavedReconnect(after: failure)
             }
         }
-        if generation == submissionGeneration,
+        if !answered, generation == submissionGeneration,
            inPlace || currentSnapshot.state == .accountConnecting {
             activeOperation = operation
         }
@@ -1021,6 +1078,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                     savedServerName = account.serverName
                 }
                 providerInstanceID = instanceID
+                reconnectRetryDelay = .seconds(2)
+                cancelReconnectRetry()
                 configurePlayback(account: account, request: request)
                 openConnectedReader(account: account, request: request)
                 publishInPlace(status: .connected(account), form: request)
@@ -1044,9 +1103,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 )
             }
         case let .failed(failure) where failure.kind == .transportCancelled:
-            break
+            publishInPlace(status: .saved(serverName: savedServerName ?? ""), form: request)
+        case let .failed(failure) where localNetworkAccess != nil && !localNetworkRetryUsed
+            && (failure.kind == .transportUnreachable || failure.kind == .transportTimeout):
+            resolveLocalNetworkAccess(after: failure, request: request, generation: generation)
         case let .failed(failure):
             publishInPlace(status: .failed(failure), form: request)
+            retrySavedReconnect(after: failure)
         }
     }
 
@@ -1101,6 +1164,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 // Privacy was never the obstacle: the original failure stands.
                 self.endLocalNetworkWatch()
                 self.publishLocalNetworkAnswer(failure, request: request)
+                self.retrySavedReconnect(after: failure)
             case .notDenied:
                 // Access was granted after it blocked the connection, so retry it once, as the
                 // person would have to. This watch is still live, so the refusal it reported
@@ -1149,6 +1213,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// them. The account status stops promising a connection that will no longer be made, and
     /// the edit is kept.
     private func accountFormEdited(_ form: DulcetAccountConnectRequest) {
+        if savedReconnectEnabled, !currentSnapshot.accountConnection.isConnected,
+           form != currentSnapshot.accountForm {
+            // Editing a saved account starts a draft. No automatic completion may overwrite it.
+            savedReconnectEnabled = false
+            cancelReconnectRetry()
+            cancelLocalNetworkWatch()
+            generation += 1
+            let operation = activeOperation
+            activeOperation = nil
+            operation?.cancel()
+            publishInPlace(status: savedServerName.map { .saved(serverName: $0) } ?? .idle, form: form)
+            return
+        }
         guard let refused = localNetworkRefusedRequest, form != refused else { return }
         cancelLocalNetworkWatch()
         publishInPlace(status: savedServerName.map { .saved(serverName: $0) } ?? .idle, form: form)
@@ -2415,9 +2492,10 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
     /// connection to it is running where the person is, the retry after a local-network grant,
     /// which the status goes on saying until it lands, so Connection still shows it with Cancel.
     private func savedAccountStatus(serverName: String) -> DulcetAccountConnectionStatus {
-        activeOperation != nil && currentSnapshot.accountConnection == .connecting
-            ? .connecting
-            : .saved(serverName: serverName)
+        switch currentSnapshot.accountConnection {
+        case .connecting, .failed: currentSnapshot.accountConnection
+        default: .saved(serverName: serverName)
+        }
     }
 
     private func publishSavedAccountOrIdle(form: DulcetAccountConnectRequest) {

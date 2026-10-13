@@ -35,7 +35,10 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
             ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_BASE_URL"],
             "apple-ci must supply the live disposable conformance fixture URL"
         )
-        guard baseURL == "http://127.0.0.1:4533",
+        guard let components = URLComponents(string: baseURL), components.scheme == "http",
+              components.host == "127.0.0.1", components.port != nil,
+              components.path.isEmpty, components.query == nil, components.user == nil,
+              components.password == nil,
               ProcessInfo.processInfo.environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true" else {
             XCTFail("Library sync requires the local disposable fixture")
             throw LibrarySyncTestError.invalidFixture
@@ -185,17 +188,16 @@ final class DulcetLibrarySyncAppTests: XCTestCase {
             credentialStore: offlineCredentials,
             libraryBrowser: reopenedLibrary
         ))
-        XCTAssertEqual(reopenedStore.snapshot.state, .accountSavedDisconnected)
+        XCTAssertEqual(reopenedStore.snapshot.accountConnection, .connecting)
         reopenedStore.selectDestination(.library)
 
         XCTAssertEqual(reopenedStore.snapshot.state, .libraryBrowse)
         XCTAssertFalse(reopenedStore.snapshot.accountConnected)
-        XCTAssertTrue(offlineConnector.requests.isEmpty)
+        XCTAssertEqual(offlineConnector.requests, [offlineRequest])
         XCTAssertEqual(reopenedLibrary.startedSyncCount, 0)
         XCTAssertEqual(reopenedLibrary.completedSyncGenerations, [])
         XCTAssertEqual(reopenedLibrary.displayedCommittedGenerations, [2])
-        // A saved-account reopen reads the committed library only: no server is contacted, so it
-        // publishes once and there is no preview at all.
+        // The pending reconnect does not block the committed library: it publishes once with no preview.
         XCTAssertEqual(reopenedLibrary.publicationOrder, ["committed"])
         XCTAssertEqual(reopenedLibrary.deliveredPreviewCount, 0)
         assertDisplayedLibrary(reopenedStore.snapshot, equals: secondCommitted.library)

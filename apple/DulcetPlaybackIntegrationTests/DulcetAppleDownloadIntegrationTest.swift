@@ -172,14 +172,14 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await proveSavedLaunchRecovery(.changedCredentialGeneration)
     }
 
-    /// An intact completed download is the control: saved launch must remain entirely local.
-    func savedLaunchWithAnIntactDownloadSendsNoRequestsBeforeReconnect() async throws {
+    /// An intact download requires no recovery request while launch negotiation is running.
+    func savedLaunchWithAnIntactDownloadMakesNoDownloadRecoveryRequests() async throws {
         try await proveSavedLaunchRecovery(.intact)
     }
 
     /// A new Download is outside §13.1's recovery exception, even after the saved controller
     /// has reconciled and could issue a stream immediately if presentation allowed the action.
-    func savedLaunchDownloadTapSendsNoRequestsBeforeReconnect() async throws {
+    func savedLaunchDownloadTapWaitsForNegotiation() async throws {
         let context = try makeContext()
         defer { context.tearDown() }
         let browseBaseline = try await downloadProxyRequests(baseURL: context.baseURL, since: 0).total
@@ -219,7 +219,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         try await waitUntil(timeout: .seconds(10), failureMessage: "saved downloads did not reconcile") {
             reconciled
         }
-        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
         XCTAssertTrue(source.downloadsEnabled)
         XCTAssertEqual(replacement.status(for: track.id), .notDownloaded)
 
@@ -227,10 +227,10 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
 
         try await Task.sleep(for: .seconds(3))
         let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: browseRequests.total)
-        XCTAssertEqual(observed.entries.count, 0, "a new Download must wait for Reconnect")
+        XCTAssertEqual(observed.entries.count, 0, "a new Download must wait for successful negotiation")
         XCTAssertEqual(replacement.status(for: track.id), .notDownloaded, "the tap must not enqueue a transfer")
-        XCTAssertEqual(connector.requestCount, 0)
-        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        XCTAssertEqual(connector.requestCount, 1, "saved launch reconnects without permitting a new stream yet")
+        XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
         XCTAssertTrue(try regularFiles(in: context.downloadRoot).isEmpty)
     }
 
@@ -290,7 +290,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             downloadController: replacement
         )
         defer { _ = source.currentSnapshot }
-        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
         try await waitUntil(timeout: .seconds(60), failureMessage: "saved launch did not recover the download") {
             replacement.status(for: track.id) == .downloaded
         }
@@ -301,8 +301,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // A duplicate recovery can arrive after promotion; count only after that work settles.
         try await Task.sleep(for: .seconds(3))
         let observed = try await downloadProxyRequests(baseURL: context.baseURL, since: baseline)
-        XCTAssertEqual(connector.requestCount, 0, "saved launch must never invoke Connect")
-        XCTAssertEqual(source.currentSnapshot.state, .accountSavedDisconnected)
+        XCTAssertEqual(connector.requestCount, 1, "saved launch reconnects independently of download recovery")
+        XCTAssertEqual(source.currentSnapshot.accountConnection, .connecting)
         if recovery == .intact {
             XCTAssertEqual(observed.entries.count, 0, "an intact download has no recovery read to make")
         } else {
@@ -775,7 +775,6 @@ private final class DownloadRecoveryConnector: DulcetAccountConnecting {
         completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void
     ) -> any DulcetAccountConnectOperation {
         requestCount += 1
-        XCTFail("saved launch unexpectedly invoked Connect")
         return DownloadRecoveryConnectOperation()
     }
 }

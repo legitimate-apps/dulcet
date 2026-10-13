@@ -4,6 +4,9 @@ import Foundation
 import ImageIO
 import Network
 import Observation
+#if os(iOS) || os(tvOS)
+import UIKit
+#endif
 
 /// Shared production account composition for every native Apple shell.
 @MainActor
@@ -83,6 +86,14 @@ enum DulcetAppleProduction {
     }
     #endif
 
+    private static var initialForeground: Bool {
+        #if os(iOS) || os(tvOS)
+        UIApplication.shared.applicationState != .background
+        #else
+        true
+        #endif
+    }
+
     /// The one database every production component opens, so the reader sees what the
     /// downloads write.
     private static var databaseName: String {
@@ -132,7 +143,8 @@ enum DulcetAppleProduction {
                         databaseName: databaseName,
                         readsDownloads: downloads != nil
                     ),
-                    reachability: DulcetNetworkReachability()
+                    reachability: DulcetNetworkReachability(),
+                    foreground: initialForeground
                 )
             )
         )
@@ -880,7 +892,14 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                 invalidServerURLIsInternationalized:
                     error.invalidServerURLIsInternationalized
             )
-            completion(.failed(DulcetAccountErrorPresenter.presentation(for: context)))
+            let presentation = DulcetAccountErrorPresenter.presentation(for: context)
+            completion(.failed(DulcetAccountFailurePresentation(
+                kind: presentation.kind, serverName: presentation.serverName,
+                title: presentation.title, message: presentation.message,
+                recovery: presentation.recovery, targetHost: presentation.targetHost,
+                automaticRetryFloor: outcome.automaticRetryFloorMilliseconds >= 0
+                    ? .milliseconds(outcome.automaticRetryFloorMilliseconds) : nil
+            )))
         }
         return DulcetCoreAccountOperation(operation: operation)
     }

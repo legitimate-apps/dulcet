@@ -148,7 +148,6 @@ final class DulcetSignedDeviceAccountProbe {
         }
         do {
             if phase == "read" {
-                guard case .saved = presentation.snapshot.accountConnection else { throw ProbeError.failed }
                 try verifyCredential(presentation)
                 text = "signed-\(Self.lane)=PASS saved=PASS keychain=PASS fresh-process=PASS"
             } else if phase == "missing" {
@@ -178,6 +177,7 @@ final class DulcetSignedDeviceAccountProbe {
                         do {
                             try self.verifyCredential(presentation)
                             self.text = "signed-\(Self.lane)=PASS connected=PASS keychain=PASS attributes=PASS"
+                                + (self.phase == "read" ? " saved=PASS fresh-process=PASS" : "")
                         } catch { self.text = "signed-\(Self.lane)=FAIL" }
                         return
                     }

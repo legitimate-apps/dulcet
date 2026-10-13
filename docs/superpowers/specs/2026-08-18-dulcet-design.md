@@ -2529,7 +2529,7 @@ through Ktor Darwin's `configureSession` hook.
 | key invalidation (lock screen removed, keystore reset) | detected on read; the account enters a re-auth state and cached library data is retained | same |
 | logout | credential deleted before any other cleanup (§14.7) | same |
 
-**Relaunch decision — explicit reconnect (every platform; first decided for macOS Phase 1):** in the signed application, after a
+**Relaunch decision — a saved account reconnects on its own (every platform):** in the signed application, after a
 successful account negotiation, the complete connection request is intended to be encoded into one
 Keychain generic-password value under
 `service = "${BUNDLE_PREFIX}"` and an `account` value that is a generated local UUID. The UUID alone
@@ -2539,37 +2539,32 @@ used as a Keychain index. Every `SecItemAdd`, `SecItemUpdate`, `SecItemCopyMatch
 `kSecUseDataProtectionKeychain = true`; on macOS the legacy file-based Keychain does not preserve
 the declared accessibility attribute. The source requests disabled iCloud Keychain synchronization
 and `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; both properties of the real signed item are
-**ASSUMED** until the entitled control below reads them back. On relaunch Dulcet reads the item and
-prefills the secure account form, but performs **no network request until the person chooses
-Connect**. That policy is not a licence to present the app as unconfigured: a restored credential
-enters `accountSavedDisconnected` with a `saved(serverName:)` status, so the library surface offers
-to reconnect to the named server and the connectivity indicator reads disconnected rather than
-absent. Rendering a saved account as no account is the defect revision 78 corrected.
+**ASSUMED** until the entitled control below reads them back. On relaunch Dulcet reads the item,
+prefills the secure account form and shows the device's library immediately. In the background it
+starts the same account negotiation and in-place reconnect that Reconnect starts (§16.14): outbox
+flush, epoch reading and revalidation. No tap is needed and no UI waits for the server.
 
-The same rule holds on every platform, whatever its store. **Saved-and-not-connected sends nothing on
-the person's behalf until they choose Reconnect or Connect:** no library read, no cover art, no
-reconnect on reachability or on a return to the foreground, no playback re-resolve or metadata fill,
-no scrobble or outbox drain, no favourite, rating or lyrics read — on every entry point, TV Now
-Playing included. What the device already holds may show: the restored queue may show from the
-device, paused; a downloaded track plays from the device; Play on a track that needs the server says
-it needs Reconnect and offers it, rather than sending. Reconnect (or Connect on the form) then
-reconnects in place (§16.14), and the outbox drains after it, as it does for a connected session.
-Android reads its Keystore-sealed record, opens the library for the saved account and says it is
-saved and not connected; its playback service, the phone's player and the TV's player (whose own
-library session is gated the same way) hold every request until that choice, and a Reconnect chosen
-in any screen host — library, search, player — connects them all. **One exception:** downloads the
-person explicitly queued earlier continue in the background, as Apple's background transfer session
-continues them through the OS. Android's download worker continues only rows the person queued,
-including the one song read it needs to file a queued track, and its reconciliation at launch reads
-only the device's own state (the work queue and the database). On Apple, a saved launch configures
-and reconciles downloads with the saved credentials, then schedules queued or interrupted rows
-before Reconnect. This includes re-fetching a previously complete or stale download whose file is
-missing, and re-issuing a row whose credential generation changed, even if its file still exists.
-These recovery reads for downloads the person previously requested are also part of the exception;
-nothing else in downloads contacts the server before Reconnect. The foreground and reachability
-rules of §16.11 and §16.14, the play retries of §15.3 and the relaunch re-resolve of §18.10 apply to a session connected in this process;
-a cold launch into a saved account is not a return to the foreground of a connected session (§28,
-2026-10-07). A missing, malformed, or unreadable active item enters the credential-persistence error
+The same rule holds on every platform, whatever its store. A saved account requests a reconnect at
+launch, on a return to the foreground and when the network comes back. A running attempt is joined;
+reachability reports request reconnects and never declare a successful connection (§16.14). Until
+negotiation succeeds, the library, downloads and restored queue remain usable from the device.
+Downloaded tracks play locally; tracks needing the server retain the existing offline recovery
+surface. Manual Reconnect remains a fallback, joining an attempt in flight or restarting one that
+ended. Each request has the existing 30-second limits (§11); nothing waits on the main thread.
+Transient failures retry only in the foreground while the network is reported reachable, using
+§16.14's monotonic 2-second backoff doubling to 60 seconds and capped `Retry-After` floor. The account
+negotiation uses that same transient classification before authorizing the reader's server reads.
+Authentication, TLS/trust, protocol and downgrade failures never retry on a timer: they retain the
+existing error/re-auth surface with words. One offline/connecting message per screen states that
+Dulcet reconnects automatically when the server is reachable; shelves do not repeat its Reconnect.
+
+Credential storage, sign-out, query-string privacy, the two clocks and the background-download
+exception are unchanged. Downloads previously requested continue independently of a connection;
+Apple reconciles and schedules queued/interrupted rows at saved launch, including complete/stale
+rows whose file is missing or whose credential generation changed. Android's worker continues only
+requested rows, including the song read needed to file a queued track, and launch reconciliation
+reads local state. Plays and other outboxes drain after the reconnect permits sends (§15.3, §18.6),
+and playback restoration follows §18.10 without waiting to paint the restored queue. A missing, malformed, or unreadable active item enters the credential-persistence error
 surface instead of silently attempting a connection or discarding the condition, and says that
 the saved account could not be opened, not that a save failed: the save copy describes an account
 the server just accepted, which a launch-time read has not. The storage API's
@@ -3213,8 +3208,7 @@ emitted at most once per session.
 
 Unsubmitted completed plays go to `scrobble_outbox` with the session's wall-clock start time, retried
 with exponential backoff **by the process's own timer while it runs**, and also on reachability and on
-foreground — all of it for an account connected in this process, or once the person chooses Connect or
-Reconnect; a launch into a saved account keeps its plays in the outbox and sends none until then
+foreground — for a connected session or a saved account whose automatic reconnect permits sends
 (§13.1). The timer is the floor, not the other two: an app that stays in the foreground on a
 reachable server, with no event of either kind to come, still sends again. The wait after a failed
 send is the backoff — 1 s doubling to 256 s, counted per failed attempt of the play — or, after a 429,
@@ -3988,7 +3982,7 @@ under an unchanged epoch.
 **Freshness policy, precisely:**
 
 1. **Epoch reads** happen on connect, on every return to the foreground of a session connected in
-   this process (a launch into a saved account reads nothing until Reconnect, §13.1), on reconnect (§16.14), and
+   this process or restored from storage (§13.1), on reconnect (§16.14), and
    every **5 minutes** while a library screen is visible and the app is in the foreground (ASSUMED
    interval — a `getScanStatus` is a few milliseconds; tune from measurement, never raise it to
    hide a cost). Nothing reads the epoch in the background — neither this cadence nor a
@@ -4413,8 +4407,8 @@ it online and goes on to step 3. A platform report that the server is unreachabl
 tells it (after the grace below), takes the reader offline at once and cancels a reconnect in flight; a report that it is reachable, while offline,
 *requests* a reconnect rather than marking the reader online. A reconnect already running is joined,
 so two never run the steps at once. So a shell reports reachability on every change and reconnects on
-foreground — for a session connected in this process; a launch into a saved account does neither until
-the person chooses Reconnect (§13.1) — in either order or only one of them, and for a reader coming back from offline nothing is
+foreground — for a connected session or a saved account (§13.1), in either order or only one of
+them. A saved launch requests the same reconnect in the background. For a reader coming back from offline nothing is
 read before the flush. **That holds for the offline-to-online transition only** (corrected in place,
 item 29): a foreground reconnect of a reader that is already online leaves it online throughout, its
 screens and searches keep reading, and a read can go out before the flush's send — a change made while
@@ -4511,9 +4505,9 @@ itself is retried by itself:
   `offline` again.
 
 A return to the foreground while the reader is offline and the platform reports the server reachable
-starts a fresh reconnect at once, the wait reset, whatever ended the last one — for a session connected
-in this process, or after the person chooses Connect or Reconnect. A launch into a saved account is not
-such a return: it reconnects only when the person chooses to (§13.1).
+starts a fresh reconnect at once, the wait reset, whatever ended the last one — for a connected
+session or a saved account. A saved launch requests this reconnect in the background while painting
+the device library at once (§13.1).
 
 **"Try again" calls reconnect, never a screen's refresh.** A screen's `refresh()` does nothing while
 the reader is offline, because there is nothing it may send. A "Try again" offered for a screen that
@@ -5956,7 +5950,7 @@ with its shuffle order and repeat mode, the current entry and its saved position
 the "playing from" label, and the **paused** state — playback never auto-starts on launch. **Playback
 plans are never restored**; they are re-resolved, because a stale plan may carry expired credentials or
 a stale transcode decision. The re-resolve, and any metadata read for the restored entries, waits for
-the person to choose Connect or Reconnect when the launch is into a saved account (§13.1): until then
+the saved account's automatic negotiation to succeed (§13.1): until then
 the queue shows from the device, paused, a downloaded current track plays from the device, and Play on
 one that needs the server says it needs Reconnect.
 
@@ -6401,7 +6395,7 @@ gap; it needs no Docker and no fixture-fidelity argument.
 | CONF-09b | every declared distinct account-connect render state the account-connect path can originate is reached through the app's own transitions, including idle, in-progress, saved/disconnected, connected, each domain-error family the path originates (input, security, transport, authentication, protocol, server), and credential-persistence-error states; a declared state the path never originates (the capability error, §18.12) is named, not reached |
 | CONF-09c | every closed account-error presentation kind has actionable copy; TLS, internationalized-host, and cross-origin redirect remedies retain their decided specifics |
 | CONF-10a | when the platform-secure credential facility is unavailable to the caller, the write returns a typed failure, leaves no active-account pointer, and does not fall back to weaker storage; platform-specific secure-item properties require their own evidence |
-| CONF-10b | a relaunch into persisted credentials sends no network request (library, artwork, playback, plays, or a new Download) until an explicit Connect or Reconnect, except to continue downloads the person previously requested; on Apple this includes scheduling queued or interrupted rows and recovery reads for previously Complete/Stale downloads whose file is missing or whose credential generation changed, even if the file exists (§13.1); where a form is shown, the credentials prefill it |
+| CONF-10b | a relaunch into persisted credentials shows the device library immediately and reconnects in the background without a tap; unreachable keeps the library usable with bounded transient backoff; foreground/network restoration request reconnect and join an in-flight attempt; auth/trust failures stop timer retries; credentials still prefill the form and requested downloads continue independently (§13.1) |
 | CONF-10c | an explicitly configured HTTP forward proxy returns 407 Basic while a matching ambient credential is retrievable; account connect emits `Auth.UnsupportedAuthenticationChallenge` and no `Proxy-Authorization` reaches the fixture |
 | CONF-10e | an app-hosted simulator test saves through `DulcetKeychainCredentialStore`, requires the save-produced active-account marker, and reads the exact data-protection-Keychain item's attributes with an accessibility-unconstrained, synchronizable-any query; a deliberately wrong-accessibility control must be observed before the production item is required to report `AfterFirstUnlockThisDeviceOnly` and non-synchronizable storage; this observes stored values only, not enforcement or device-equivalent semantics |
 | CONF-11 | `/rest/stream` success returns binary with a plausible content type and correct signature bytes |
@@ -7784,6 +7778,21 @@ contended host: the largest gap increases on iPhone and decreases on iPad. This 
 main-thread delivery, not GPU rendering. Gesture
 completion is verified, but a reduction in rendering hitches is not established by these runs.
 
+**2026-10-12 — a saved account reconnects on its own**
+A saved account paints the device library immediately and starts its account negotiation and
+§16.14 reconnect in the background. Returning to the foreground and network restoration request it
+too; manual Reconnect joins an attempt in flight. Transient failures use the existing bounded
+backoff and capped `Retry-After`; auth/trust/protocol failures have no timer loop and retain the
+existing error/re-auth words. One offline/connecting message per screen replaces copy promising
+contact only after a tap. §13.1, §15.3, §16.11, §16.14, §18.10 and CONF-10b are corrected in place.
+Storage, sign-out, background downloads, query privacy and both clocks do not change.
+**OBSERVED (source audit):** Apple restores a credential into device-only mode at cold launch;
+no production reachability or foreground path downgrades a connected account to saved-disconnected.
+**ASSUMED:** the reported screen followed process termination/relaunch; a screenshot alone cannot
+establish the earlier process's lifecycle. Signed Keychain relaunch proofs must now wait for
+connected without tapping Reconnect; their existing receipts evidence the earlier proof only.
+New automatic-reconnect signed evidence requires a signed rerun.
+
 **2026-10-12 — Apple account forms show local-HTTP consent only for an HTTP address.**
 The iOS, iPadOS, macOS and tvOS account forms show the existing consent control and warning only
 when the trimmed address begins with `http://`, case-insensitively. Hiding it leaves the user's
@@ -8021,6 +8030,8 @@ Defects the proofs found, each with a test that fails without its fix:
 The Mac proof launches a copy of the app re-identified with a bundle identifier of its own. A second
 app under the installed bundle identifier was refused by Launch Services with `-3000`
 (**OBSERVED**), and would share its background session (**ASSUMED**).
+
+**Superseded relaunch policy:** the 2026-10-12 §28 entry and §13.1 now require automatic saved-account reconnect. The observations below describe the earlier explicit-reconnect implementation.
 
 **2026-10-07 — Android opens a saved account without contacting its server until Reconnect
 (§13.1, CONF-10b), reports a proxy's 407 as an unsupported challenge (CONF-10c), says every account
@@ -11923,6 +11934,8 @@ became locally reproducible.
 
 **Revision 78 (2026-08-27)** — §13.6 specified the relaunch *policy* and left its *presentation*
 unspecified, so a configured account rendered as no account.
+
+**Superseded relaunch policy:** the 2026-10-12 §28 entry and §13.1 now require automatic saved-account reconnect. The observations below describe the earlier explicit-reconnect implementation.
 
 1. Explicit reconnect is unchanged and remains the decision: a restored credential prefills the form
    and Dulcet issues **no network request until the person chooses Reconnect**. CONF-10b is

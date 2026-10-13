@@ -7,7 +7,7 @@ import XCTest
 
 /// CONF-09b on the Mac: every declared account-connect render state, reached through the
 /// transitions the app makes, rendered by the production root view in a window of the hosted app,
-/// and read back from that window's accessibility tree. Nothing is injected: every outcome is the
+/// and read back from that window's accessibility tree. No connector outcome is injected: every outcome is the
 /// production connector's answer, or the credential store's.
 ///
 /// Part 1 is the shipping composition, `DulcetMacProduction.makePresentationStore()`, with the
@@ -220,7 +220,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         let connectedWindow = AccountStatesWindow(store: first)
         defer { connectedWindow.close() }
         XCTAssertEqual(first.snapshot.state, .accountConnectIdle)
-        enter(server.baseURL, password: server.password, into: first)
+        enter(proxy.url, password: server.password, into: first)
         try connectedWindow.press(
             try await connectedWindow.element(identifiedBy: "dulcet.account-connect.primary-action"), named: "Connect"
         )
@@ -239,26 +239,53 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
             firstSession.close { continuation.resume() }
         }
 
-        // 12. Saved and disconnected: what a relaunch builds over the saved account.
-        XCTAssertNotNil(try credentials.load(), "The connected account must be saved")
+        // 12. Saved relaunch reconnects without a UI action.
+        XCTAssertNotNil(try credentials.load())
         let (second, secondSession) = makeStore()
         let savedWindow = AccountStatesWindow(store: second)
         defer { savedWindow.close() }
-        XCTAssertEqual(second.selectedDestination, .library, "A saved account opens into its library")
-        _ = try await savedWindow.element(identifiedBy: "dulcet.reader.reconnect")
-        second.selectDestination(.settings)
-        XCTAssertEqual(second.snapshot.state, .accountSavedDisconnected)
-        let savedLine = try await savedWindow.element(described: "Reconnect to") {
-            (savedWindow.label($0) ?? "").hasPrefix("Reconnect to")
+        XCTAssertEqual(second.selectedDestination, .library)
+        try await waitUntil(timeout: .seconds(30), "saved launch must reconnect without a tap") {
+            second.snapshot.accountConnected
         }
-        let reconnect = try await savedWindow.element(identifiedBy: "dulcet.account-connect.primary-action")
-        XCTAssertEqual(savedWindow.label(reconnect), "Reconnect")
-        XCTAssertNil(savedWindow.firstElement(labelled: "Sign Out"), "A saved account is not connected until Reconnect")
-        XCTAssertFalse(second.snapshot.accountConnected)
-        print("DULCET MAC ACCOUNT STATE reached=saved-disconnected label=\(savedWindow.label(savedLine)?.debugDescription ?? "nil")")
+        savedWindow.attachImage(named: "saved-launch-auto-connected")
+        second.selectDestination(.settings)
+        _ = try await savedWindow.element(labelled: "Sign Out")
         savedWindow.close()
         await withCheckedContinuation { continuation in
             secondSession.close { continuation.resume() }
+        }
+        // 13. Unreachable saved relaunch keeps its library; a real ping meets the outage.
+        try await proxy.setOutage(true)
+        defer { proxy.disarmOutage() }
+        let (offline, offlineSession) = makeStore()
+        let offlineWindow = AccountStatesWindow(store: offline)
+        defer { offlineWindow.close() }
+        _ = try await offlineWindow.element(identifiedBy: "dulcet.reader.reconnect")
+        XCTAssertTrue(offlineSession.isForeground, "The visible hosted window supplies a foreground scene")
+        XCTAssertEqual(offline.selectedDestination, .library)
+        XCTAssertFalse(offline.snapshot.accountConnected)
+        let outageDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while try await proxy.droppedNegotiations() == 0, ContinuousClock.now < outageDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let dropped = try await proxy.droppedNegotiations()
+        XCTAssertGreaterThan(dropped, 0, "saved launch actually tried negotiation with the unreachable server")
+        offlineWindow.attachImage(named: "saved-launch-offline-library")
+        try await proxy.setOutage(false)
+        var reported: DulcetAccountConnectionStatus?
+        // A dropped negotiation may consume its bounded 30-second request timeout before the
+        // two-second retry. Allow both, rather than ending at the first request's boundary.
+        try await waitUntil(timeout: .seconds(60), "saved launch must retry and recover without a tap") {
+            if reported != offline.snapshot.accountConnection {
+                reported = offline.snapshot.accountConnection
+                print("DULCET MAC SAVED RECOVERY status=\(String(describing: reported))")
+            }
+            return offline.snapshot.accountConnected
+        }
+        offlineWindow.close()
+        await withCheckedContinuation { continuation in
+            offlineSession.close { continuation.resume() }
         }
         print("DULCET MAC ACCOUNT STATES PASS")
     }
@@ -320,8 +347,25 @@ private struct AccountStatesFaultProxy {
         _ = done.wait(timeout: .now() + 5)
     }
 
-    private func control(_ method: String, _ query: String) async throws -> (Data, Int) {
-        var request = URLRequest(url: URL(string: url + "/__dulcet/subsonic-error" + (query.isEmpty ? "" : "?" + query))!)
+    func setOutage(_ on: Bool) async throws {
+        let (_, status) = try await control("POST", "state=\(on ? "on" : "off")", path: "/__dulcet/outage")
+        XCTAssertEqual(status, 200)
+    }
+    func droppedNegotiations() async throws -> Int {
+        let (data, _) = try await control("GET", "", path: "/__dulcet/outage")
+        let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let counts = body?["dropped"] as? [String: Int] ?? [:]
+        return (counts["ping"] ?? 0) + (counts["getOpenSubsonicExtensions"] ?? 0)
+    }
+    func disarmOutage() {
+        var request = URLRequest(url: URL(string: url + "/__dulcet/outage?state=off")!)
+        request.httpMethod = "POST"
+        let done = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: request) { _, _, _ in done.signal() }.resume()
+        _ = done.wait(timeout: .now() + 5)
+    }
+    private func control(_ method: String, _ query: String, path: String = "/__dulcet/subsonic-error") async throws -> (Data, Int) {
+        var request = URLRequest(url: URL(string: url + path + (query.isEmpty ? "" : "?" + query))!)
         request.httpMethod = method
         let (data, response) = try await URLSession.shared.data(for: request)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
@@ -337,7 +381,11 @@ private final class AccountStatesWindow {
 
     init(store: DulcetPresentationStore) {
         self.store = store
-        let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        // This NSHostingView has no SwiftUI Scene to supply its lifecycle. The visible test
+        // window is foreground; otherwise the environment defaults to background and tells the
+        // shipping root to suspend retries despite the window being on screen.
+        let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store)
+            .environment(\.scenePhase, .active))
         hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         hostingView = hosting
         window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable],
@@ -348,6 +396,16 @@ private final class AccountStatesWindow {
     }
 
     func close() { window.orderOut(nil) }
+
+    func attachImage(named name: String) {
+        guard let rep = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) else { return }
+        hostingView.cacheDisplay(in: hostingView.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return }
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        XCTContext.runActivity(named: name) { $0.add(attachment) }
+    }
 
     func element(identifiedBy identifier: String) async throws -> Any {
         try await element(described: identifier) { self.identifier($0) == identifier }

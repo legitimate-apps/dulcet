@@ -432,6 +432,11 @@ func owedAndOfflineContentSaysHowOldItIsAndWhy() {
     #expect(DulcetReaderCopy.freshnessLine(.loading) == nil)
     let unknownAge = DulcetReaderCopy.freshnessLine(.cached(.offline, asOf: nil), now: now)
     #expect(unknownAge?.contains(DulcetStrings.readerSeenUnknownAge) == true)
+    let ageBelowAccountMessage = DulcetReaderCopy.freshnessLine(
+        .cached(.offline, asOf: now.addingTimeInterval(-10)), now: now, includesReason: false
+    )
+    #expect(ageBelowAccountMessage?.contains(DulcetStrings.readerJustNow) == true)
+    #expect(ageBelowAccountMessage?.contains(DulcetStrings.readerReasonOffline) == false)
     #expect(DulcetReaderCopy.unavailableLine(.notCachedOffline, subject: .album) == DulcetStrings.readerUnavailableAlbum)
 }
 
@@ -494,7 +499,7 @@ func aSavedAccountIsReadFromTheDeviceBeforeAnyScreenSubscribes() throws {
     #expect(!reader.events.contains("connect"))
     #expect(!reader.events.contains("reconnect"), "Try Again on a saved account is Reconnect, not a read")
     #expect(!reader.events.contains("setOnline(true)"))
-    #expect(reachability.started == 0, "reachability is not forwarded before the person reconnects")
+    #expect(reachability.started == 1, "the saved account watches for network restoration")
 }
 
 @Test @MainActor
@@ -1117,9 +1122,11 @@ private func readerModeStore(
     connector: ReaderTestConnector = ReaderTestConnector(),
     browser: ForbiddenLibraryBrowser = ForbiddenLibraryBrowser(),
     serverSearch: ForbiddenServerSearch? = nil,
-    credentials: ReaderTestCredentials? = nil
+    credentials: ReaderTestCredentials? = nil,
+    reachability: ManualReachability? = nil,
+    delays: ManualDelays = ManualDelays()
 ) -> (DulcetPresentationStore, DulcetLibrarySession, ReaderTestCredentials) {
-    let session = DulcetLibrarySession(factory: factory)
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
     let store = credentials ?? ReaderTestCredentials(persisted: persisted, providerInstanceID: providerInstanceID)
     let presentation = DulcetPresentationStore(source: DulcetAccountDataSource(
         connector: connector,
@@ -1127,13 +1134,14 @@ private func readerModeStore(
         libraryBrowser: browser,
         serverSearch: serverSearch,
         providerInstanceIDFactory: { "provider-new" },
-        librarySession: session
+        librarySession: session,
+        reconnectDelays: delays
     ))
     return (presentation, session, store)
 }
 
 @Test @MainActor
-func theAppOpensStraightIntoTheLibraryItHasSeenAndSendsNothing() throws {
+func theAppOpensTheDeviceLibraryWhileTheSavedAccountReconnects() throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()
     let browser = ForbiddenLibraryBrowser()
@@ -1156,7 +1164,7 @@ func theAppOpensStraightIntoTheLibraryItHasSeenAndSendsNothing() throws {
     store.navigate(to: .search)
     store.navigate(to: .library)
     #expect(store.snapshot.state == .libraryBrowse, "the reader's library, not the Reconnect wall")
-    #expect(connector.requests.isEmpty, "CONF-10b: nothing is sent until Reconnect")
+    #expect(connector.requests == [saved], "CONF-10b: saved launch reconnects without a tap")
     #expect(browser.browses == 0, "the library sync is not a UI path in reader mode")
 }
 
@@ -1875,4 +1883,127 @@ func aViewThatReadsIsOnlineRedrawsWhenOnlyTheNetworkChanges() throws {
     reachability.report(reachable: true)
     #expect(session.isOnline)
     #expect(regained.heard, "and again when the network came back")
+}
+
+
+/// Launch negotiation is shared by automatic and manual triggers. Its transient backoff never
+/// reads on a tight loop, and it stops in the background or on loss of the network.
+@Test @MainActor
+func savedAutomaticReconnectJoinsBacksOffAndRespondsToLifecycle() throws {
+    let factory = RecordingReaderFactory()
+    let connector = ReaderTestConnector()
+    let delays = ManualDelays()
+    let reachability = ManualReachability()
+    let saved = DulcetAccountConnectRequest(serverURL: readerAccount.normalizedServerURL,
+        username: readerAccount.username, password: readerAccount.password, allowLocalHTTP: false)
+    let (store, session, _) = readerModeStore(persisted: saved,
+        providerInstanceID: "provider-reader", factory: factory, connector: connector,
+        reachability: reachability, delays: delays)
+    #expect(store.selectedDestination == .library)
+    #expect(session.mode == .deviceOnly)
+    #expect(connector.requests.count == 1)
+    store.submitAccountConnection()
+    session.setForeground(false)
+    session.setForeground(true)
+    #expect(connector.requests.count == 1, "manual and foreground join the launch attempt")
+    func fail(_ kind: DulcetAccountFailureKind, floor: Duration? = .zero) {
+        connector.complete(.failed(DulcetAccountFailurePresentation(kind: kind,
+            serverName: "Music", title: "Offline", message: "Offline", recovery: "Reconnect",
+            automaticRetryFloor: floor)))
+    }
+    fail(.transportUnreachable)
+    #expect(store.selectedDestination == .library, "failure never takes away the library")
+    delays.advance(by: .milliseconds(1999))
+    #expect(connector.requests.count == 1)
+    delays.advance(by: .milliseconds(1))
+    #expect(connector.requests.count == 2)
+    fail(.transportTimeout)
+    delays.advance(by: .seconds(3))
+    #expect(connector.requests.count == 2)
+    delays.advance(by: .seconds(1))
+    #expect(connector.requests.count == 3, "the next backoff doubled to four seconds")
+    fail(.knownServerError, floor: .seconds(400))
+    delays.advance(by: .seconds(299))
+    #expect(connector.requests.count == 3)
+    delays.advance(by: .seconds(1))
+    #expect(connector.requests.count == 4, "Retry-After is capped at five minutes")
+    fail(.transportUnreachable)
+    session.setForeground(false)
+    delays.advance(by: .seconds(60))
+    #expect(connector.requests.count == 4, "background cancels the timer")
+    session.setForeground(true)
+    #expect(connector.requests.count == 5)
+    fail(.transportUnreachable)
+    delays.advance(by: .milliseconds(1999))
+    #expect(connector.requests.count == 5)
+    delays.advance(by: .milliseconds(1))
+    #expect(connector.requests.count == 6, "foreground return reset the backoff to two seconds")
+    reachability.report(reachable: false)
+    delays.advance(by: .seconds(5)) // the shared handoff grace expires while negotiation is running
+    fail(.transportUnreachable)
+    delays.advance(by: .seconds(60))
+    #expect(connector.requests.count == 6, "unreachable suppresses the timer")
+    reachability.report(reachable: true)
+    #expect(connector.requests.count == 7)
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+        normalizedServerURL: saved.serverURL)))
+    #expect(store.snapshot.accountConnected)
+    #expect(session.mode == .connected)
+    #expect(factory.made.count == 1, "the same reader keeps its device rows")
+}
+
+@Test @MainActor
+func savedAutomaticReconnectAuthAndTrustFailuresHaveNoTimer() throws {
+    for kind in [DulcetAccountFailureKind.invalidCredentials, .tlsUntrusted,
+                 .notASubsonicServer, .redirectRejected] {
+        let connector = ReaderTestConnector()
+        let delays = ManualDelays()
+        let saved = DulcetAccountConnectRequest(serverURL: readerAccount.normalizedServerURL,
+            username: readerAccount.username, password: readerAccount.password, allowLocalHTTP: false)
+        let (store, _, _) = readerModeStore(persisted: saved,
+            providerInstanceID: "provider-reader", factory: RecordingReaderFactory(),
+            connector: connector, delays: delays)
+        connector.complete(.failed(DulcetAccountFailurePresentation(kind: kind,
+            serverName: "Music", title: "Cannot connect", message: "Fix the account", recovery: "Reconnect")))
+        delays.advance(by: .seconds(3600))
+        #expect(connector.requests.count == 1, "auth/trust/protocol failures never retry on a timer")
+        store.selectDestination(.settings)
+        guard case let .failed(failure) = store.snapshot.accountConnection else {
+            Issue.record("Connection must retain the failure"); continue
+        }
+        #expect(failure.kind == kind)
+        store.submitAccountConnection()
+        #expect(connector.requests.count == 2, "manual recovery remains available")
+    }
+}
+
+
+@Test @MainActor
+func editingASavedAccountPausesAutomaticRetriesAndRejectsLateCompletion() {
+    let connector = ReaderTestConnector()
+    let delays = ManualDelays()
+    let saved = DulcetAccountConnectRequest(serverURL: readerAccount.normalizedServerURL,
+        username: readerAccount.username, password: readerAccount.password, allowLocalHTTP: false)
+    let (store, session, _) = readerModeStore(persisted: saved,
+        providerInstanceID: "provider-reader", factory: RecordingReaderFactory(),
+        connector: connector, delays: delays)
+    store.selectDestination(.settings)
+    store.accountPassword = "new-draft-password"
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+        normalizedServerURL: saved.serverURL)))
+    #expect(!store.snapshot.accountConnected, "superseded negotiation cannot authorize the reader")
+    #expect(store.accountPassword == "new-draft-password")
+    session.setForeground(false); session.setForeground(true)
+    delays.advance(by: .seconds(3600))
+    #expect(connector.requests.count == 1, "a draft waits for manual submission")
+    store.submitAccountConnection()
+    #expect(connector.requests.last?.password == "new-draft-password")
+    connector.complete(.failed(DulcetAccountFailurePresentation(kind: .transportUnreachable,
+        serverName: "Music", title: "Offline", message: "Offline", recovery: "Reconnect",
+        automaticRetryFloor: .zero)))
+    delays.advance(by: .seconds(2))
+    #expect(connector.requests.count == 3, "manual saved-account failure keeps transient retries")
+    store.accountPassword = "another-draft"
+    delays.advance(by: .seconds(60))
+    #expect(connector.requests.count == 3, "editing cancels any pending or active attempt")
 }

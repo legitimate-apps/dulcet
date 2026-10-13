@@ -99,6 +99,7 @@ private struct DulcetLibrarySessionChrome: ViewModifier {
             .dulcetPlaylistSheets(store: store)
             // Foreground is "not in the background": an inactive app -- another window in
             // front, a system sheet -- still shows its library and keeps it current (§16.14).
+            .onAppear { store.librarySession?.setForeground(scenePhase != .background) }
             .onChange(of: scenePhase) { _, phase in
                 store.librarySession?.setForeground(phase != .background)
             }

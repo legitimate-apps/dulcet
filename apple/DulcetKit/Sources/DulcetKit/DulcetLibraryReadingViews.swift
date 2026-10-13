@@ -8,6 +8,17 @@ import SwiftUI
 // comes from `DulcetReaderCopy`, so no two screens word the same state differently. "Try Again"
 // is always the reconnect, never a screen's own re-read (§16.14).
 
+private struct DulcetAccountMessageShownKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var dulcetAccountMessageShown: Bool {
+        get { self[DulcetAccountMessageShownKey.self] }
+        set { self[DulcetAccountMessageShownKey.self] = newValue }
+    }
+}
+
 // MARK: - A screen's window
 
 /// Opens a window for `query` while on screen and hands it to `content`.
@@ -61,6 +72,7 @@ func dulcetReaderRetry(_ store: DulcetPresentationStore) {
 /// this device. Nothing at all for live, complete content.
 struct DulcetReaderStatusView: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.dulcetAccountMessageShown) private var accountMessageShown
     let window: DulcetLibraryWindow?
 
     var body: some View {
@@ -85,14 +97,16 @@ struct DulcetReaderStatusView: View {
 
     private func lines(_ window: DulcetLibraryWindow) -> [String] {
         [
-            DulcetReaderCopy.freshnessLine(window.freshness),
+            DulcetReaderCopy.freshnessLine(window.freshness,
+                includesReason: !accountMessageShown),
             DulcetReaderCopy.coverageLine(window),
             DulcetReaderCopy.orderLine(window),
         ].compactMap { $0 }
     }
 
     private func offersRetry(_ window: DulcetLibraryWindow) -> Bool {
-        guard window.freshness.offersRetry else { return false }
+        guard !accountMessageShown,
+              window.freshness.offersRetry else { return false }
         // Offline with the network down there is nothing to retry until it returns.
         if case .cached(.offline, _) = window.freshness,
            store.librarySession?.mode == .connected,
@@ -127,6 +141,7 @@ struct DulcetReaderRetryButton: View {
 
 /// What a screen shows instead of content it does not have -- never a spinner (§16.14).
 struct DulcetReaderUnavailableView: View {
+    @Environment(\.dulcetAccountMessageShown) private var accountMessageShown
     let reason: DulcetReaderUnavailableReason
     let subject: DulcetReaderCopy.Subject
 
@@ -142,7 +157,7 @@ struct DulcetReaderUnavailableView: View {
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .dulcetForeground(.primaryTextOnWindow)
-            if reason != .gone {
+            if reason != .gone, !accountMessageShown {
                 DulcetReaderRetryButton()
             }
         }
@@ -1255,6 +1270,7 @@ struct DulcetReaderHomeView: View {
                 }
             }
         }
+        .environment(\.dulcetAccountMessageShown, store.librarySession?.ownsConnectionMessage == true)
     }
 }
 
@@ -1314,6 +1330,7 @@ struct DulcetReaderRecentlyAddedGrid: View {
 struct DulcetReaderShelf: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.dulcetAccountMessageShown) private var accountMessageShown
     let row: DulcetHomeRow
     let width: CGFloat
 
@@ -1339,7 +1356,8 @@ struct DulcetReaderShelf: View {
                             .font(.footnote)
                             .dulcetForeground(.secondaryTextOnWindow)
                             .lineLimit(nil)
-                    } else if let line = DulcetReaderCopy.freshnessLine(window.freshness) {
+                    } else if let line = DulcetReaderCopy.freshnessLine(window.freshness,
+                        includesReason: !accountMessageShown) {
                         Text(line)
                             .font(.footnote)
                             .dulcetForeground(.secondaryTextOnWindow)

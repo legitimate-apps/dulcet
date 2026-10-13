@@ -211,7 +211,7 @@ public protocol DulcetPlaybackControlling: AnyObject {
         _ handler: @escaping @MainActor (DulcetPlaybackPresentation) -> Void
     )
     func configure(account: DulcetPlaybackAccount)
-    /// Configures local playback and durable plays, holding every server request until Reconnect.
+    /// Configures local playback and durable plays, holding server requests until account negotiation succeeds.
     func configureOffline(account: DulcetPlaybackAccount)
     func restorePersistedQueue(
         with tracks: [DulcetTrack],

@@ -19,7 +19,10 @@ public class AppleAccountConnectOutcome internal constructor(
     public val error: DomainError?,
     public val errorKind: AppleAccountErrorKind?,
     public val errorPresentation: AppleAccountErrorPresentation?,
-)
+) {
+    /** Same transient classification and capped Retry-After as the reader reconnect. */
+    public val automaticRetryFloorMilliseconds: Long = error?.automaticRetryFloorMillis() ?: -1
+}
 
 /** Localizable presentation inputs derived exhaustively from the closed domain-error hierarchy. */
 public class AppleAccountErrorPresentation internal constructor(
