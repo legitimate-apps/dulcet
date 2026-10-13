@@ -44,10 +44,13 @@ class ApiMedia(private val ctx:ServerContext) {
         if(!Files.exists(path)) {
             val tmp=Files.createTempFile(artRoot,"art-",".tmp")
             try { Files.write(tmp,image.bytes);Files.move(tmp,path,java.nio.file.StandardCopyOption.REPLACE_EXISTING,java.nio.file.StandardCopyOption.ATOMIC_MOVE) } finally { Files.deleteIfExists(tmp) }
-            ctx.db.write { execute("INSERT OR IGNORE INTO api_artwork VALUES(?,?)",artId,image.contentType) }
         }
         val type=ctx.apiCatalog.kind(id) ?: return null
-        ctx.db.write { execute("INSERT OR IGNORE INTO api_artwork_item VALUES(?,?,?)",artId,type,id) }
+        ctx.db.write {
+            // Cache files can outlive a rolled-back transaction; restore their database metadata.
+            execute("INSERT OR IGNORE INTO api_artwork VALUES(?,?)",artId,image.contentType)
+            execute("INSERT OR IGNORE INTO api_artwork_item VALUES(?,?,?)",artId,type,id)
+        }
         return j("id" to artId)
     }
     private fun sign(bytes:ByteArray)=Mac.getInstance("HmacSHA256").run { init(SecretKeySpec(key,"HmacSHA256"));doFinal(bytes) }

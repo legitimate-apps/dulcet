@@ -49,12 +49,15 @@ class ApiTestingTest {
         assertEquals(HttpStatusCode.OK,client.get("/dulcet/v1/me") { bearerAuth(ta) }.status)
         assertEquals(21600L,ctx.testing.mediaTtlSeconds);assertEquals(90L*24*60*60*1000,ctx.journal.retentionMillis)
         // A Testing TTL changes expiry without changing the signed artwork URL on every read.
-        ctx.db.write { execute("INSERT INTO api_artwork(id,mime) VALUES('test-art','image/jpeg')") }
+        Fixtures.track(ctx.config.musicFolder.resolve("artwork/song.flac"))
+        ctx.scanner.scan()
         ctx.testing.replace(j("artworkUrlTtlSeconds" to 60))
         val artToken=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read"))
+        val trackId=ctx.db.read { string("SELECT id FROM track LIMIT 1")!! }
+        val artId=ctx.apiMedia.artworkRef(trackId,ctx.apiAuth.authenticate("Bearer $artToken")!!)!!["id"]!!.jsonPrimitive.content
         suspend fun artwork()=client.post("/dulcet/v1/media/urls") {
             bearerAuth(artToken);contentType(ContentType.Application.Json)
-            setBody(j("requests" to listOf(j("kind" to "artwork","id" to "test-art","size" to 100))).toString())
+            setBody(j("requests" to listOf(j("kind" to "artwork","id" to artId,"size" to 100))).toString())
         }.obj()["urls"]!!.jsonArray.first().jsonObject["url"]
         val artworkUrl=artwork()
         Thread.sleep(10) // Exercise a different issuance millisecond while the saved grant is active.
