@@ -1643,18 +1643,30 @@ struct DulcetReaderTrackListPage: View {
         .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
     }
 
-    /// Play, Shuffle and the heart in one row while their labels fit on one line each; otherwise
-    /// -- at the accessibility text sizes on a phone -- stacked, Play and Shuffle full width. A
-    /// row squeezed narrower than its labels wraps them a letter per line into buttons taller
-    /// than the screen, which push the tracks out of reach.
+    /// Keep the heart beside the playback actions at ordinary text sizes. An extra action row
+    /// pushes the last tracks against the player, leaving too little room to lift a track out
+    /// of its native context-menu preview before the touch reaches the queue drop target.
+    /// Accessibility sizes give playback the full width and place the heart below it.
+    @ViewBuilder
     private func headerActions(_ window: DulcetLibraryWindow, item: DulcetReaderItem?) -> some View {
-        VStack(spacing: DulcetSpacing.xs) {
-            DulcetEqualWidthActions {
-                playButton(window, fills: true)
-            } secondary: {
-                shuffleButton(window, fills: true)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: DulcetSpacing.xs) {
+                playbackActions(window)
+                favouriteButton(item, window: window)
             }
-            favouriteButton(item, window: window)
+        } else {
+            HStack(spacing: DulcetSpacing.xs) {
+                playbackActions(window)
+                favouriteButton(item, window: window).fixedSize()
+            }
+        }
+    }
+
+    private func playbackActions(_ window: DulcetLibraryWindow) -> some View {
+        DulcetEqualWidthActions {
+            playButton(window, fills: true)
+        } secondary: {
+            shuffleButton(window, fills: true)
         }
     }
 
