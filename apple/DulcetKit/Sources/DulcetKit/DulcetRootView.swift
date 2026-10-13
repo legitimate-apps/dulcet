@@ -576,6 +576,12 @@ private struct DulcetCompactShell: View {
 /// switched away from and back, or a split view's detail rebuilt for another destination, shows
 /// the pages it was left on.
 struct DulcetDestinationStack: View {
+    // A split-view column keeps navigation state while its destination changes. Both the reader
+    // and snapshot stacks use one element type so SwiftUI can compare their paths safely.
+    private enum StackRoute: Hashable {
+        case reader(DulcetReaderRoute)
+        case library(DulcetLibraryRoute)
+    }
     @Bindable var store: DulcetPresentationStore
     var tab: DulcetSidebarDestination?
     /// Where this stack shows the now-playing bar, if it shows one. It is applied to the root and
@@ -607,28 +613,33 @@ struct DulcetDestinationStack: View {
             DulcetReaderCollectionRoot(destination: destination)
                 .allowsHitTesting(showing)
                 .modifier(bar(drawsNotices: showing && store.readerPath.isEmpty))
-                .navigationDestination(for: DulcetReaderRoute.self) { route in
-                    DulcetReaderRouteView(route: route)
-                        .environment(\.dulcetReaderPage, route)
-                        .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
+                .navigationDestination(for: StackRoute.self) { path in
+                    if case let .reader(route) = path {
+                        DulcetReaderRouteView(route: route)
+                            .environment(\.dulcetReaderPage, route)
+                            .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
+                    }
                 }
         }
         .id(destination)
     }
 
-    private var readerPath: Binding<[DulcetReaderRoute]> {
-        Binding(
-            get: { showing ? store.readerPath : [] },
+    private var readerPath: Binding<[StackRoute]> {
+        let stackDestination = destination
+        return Binding(
+            get: { stackDestination == store.selectedDestination ? store.readerPath.map(StackRoute.reader) : [] },
             set: { path in
-                // The back button and the edge swipe pop; pushes go through the store.
-                guard store.selectedDestination == destination else { return }
-                store.popReader(to: path)
+                // A departing Library stack must not pop the page after Search takes its place.
+                guard store.selectedDestination == stackDestination else { return }
+                let routes: [DulcetReaderRoute] = path.compactMap { if case let .reader(route) = $0 { route } else { nil } }
+                guard routes.count == path.count else { return }
+                store.popReader(to: routes)
             }
         )
     }
 
     private var snapshotStack: some View {
-        NavigationStack(path: libraryPath) {
+        NavigationStack(path: snapshotPath) {
             Group {
                 if let displayed = displayedSnapshot {
                     // One branch whether showing or retained, so the grid keeps its identity --
@@ -644,9 +655,11 @@ struct DulcetDestinationStack: View {
                 }
             }
             .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.isEmpty))
-            .navigationDestination(for: DulcetLibraryRoute.self) { route in
-                DulcetLibraryRouteView(store: store, route: route)
-                    .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
+            .navigationDestination(for: StackRoute.self) { path in
+                if case let .library(route) = path {
+                    DulcetLibraryRouteView(store: store, route: route)
+                        .modifier(bar(drawsNotices: showing && libraryPath.wrappedValue.last == route))
+                }
             }
         }
         // A different destination is a different stack: switching from an open album to Search
@@ -678,6 +691,18 @@ struct DulcetDestinationStack: View {
             isSuppressed: store.selectedDestination == .nowPlaying,
             drawsNotices: drawsNotices,
             onOpen: onOpenPlayer
+        )
+    }
+
+    private var snapshotPath: Binding<[StackRoute]> {
+        let path = libraryPath
+        return Binding(
+            get: { path.wrappedValue.map(StackRoute.library) },
+            set: { updated in
+                let routes: [DulcetLibraryRoute] = updated.compactMap { if case let .library(route) = $0 { route } else { nil } }
+                guard routes.count == updated.count else { return }
+                path.wrappedValue = routes
+            }
         )
     }
 
