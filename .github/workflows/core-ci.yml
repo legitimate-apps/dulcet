@@ -103,6 +103,13 @@ jobs:
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
           :android:tv:testDebugUnitTest
+      # Dulcet Server (spec §29) is a plain JVM module: its scanner, /rest, auth, lyrics and importer
+      # tests need no SDK or emulator, so they ride this runner's Gradle setup.
+      - name: Test Dulcet Server
+        run: >-
+          ./gradlew --no-daemon
+          --max-workers=2
+          :server:test
       - name: Upload Android app evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
