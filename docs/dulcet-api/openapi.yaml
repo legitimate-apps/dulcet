@@ -1,0 +1,4381 @@
+openapi: 3.1.0
+info:
+  title: Dulcet API
+  version: 1.0.0
+  summary: An open, resource-oriented HTTPS + JSON standard for music servers and clients.
+  description: |
+    Dulcet API v1 is a public standard for talking to a personal or shared music server: browsing a
+    catalog, streaming, per-user state (favourites, ratings, plays, playlists, My Library), syncing
+    through a per-user change feed, live events, signed webhooks and an MCP endpoint for AI agents.
+
+    This document is the single source of truth for the contract. The human guide is
+    `docs/dulcet-api/README.md`; a compact guide for language models is `docs/dulcet-api/llms.txt`.
+
+    Rules every client and server follows (README "Principles" and "Evolution"):
+
+    - **Header-only authentication.** A token is sent as `Authorization: Bearer <token>` and never in
+      a URL. The only URLs that grant access are short-lived signed media URLs, which reach one
+      resource and nothing else.
+    - **Ignore what you do not know.** Clients ignore unknown fields. Enumerated string values are
+      open: a client maps a value it does not recognise to a neutral default and keeps working.
+    - **v1 is additive only.** Nothing documented here is removed or changes meaning within v1.
+    - **Ids are opaque strings**, unique across every resource type on a server, never reused, and
+      stable across retags and file moves.
+    - **Errors are RFC 9457 problem details** (`application/problem+json`) with a stable `type` URN.
+    - **Collections page by cursor**, never by offset.
+    - **Durations are integer milliseconds; timestamps are RFC 3339 in UTC; bitrates are bits per
+      second.**
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    name: Dulcet project
+    url: https://github.com/legitimate-apps/dulcet
+
+servers:
+  - url: https://{host}/dulcet/v1
+    description: |
+      Any Dulcet API server. The base URL is discovered from `/.well-known/dulcet`; `/dulcet/v1` is
+      the path every conforming server uses for v1.
+    variables:
+      host:
+        default: music.example.com
+        description: The server's host and optional port.
+
+security:
+  - oauth2: []
+  - personalToken: []
+
+tags:
+  - name: Discovery
+    description: Finding a server's API versions, capabilities and authorization server.
+  - name: Auth
+    description: OAuth 2.1 endpoints. Their real locations come from the authorization server metadata.
+  - name: Account
+    description: The signed-in user, their tokens and their authorized apps.
+  - name: Catalog
+    description: Artists, albums, tracks, genres and libraries, as the server holds them (Browse).
+  - name: Media
+    description: Artwork, playback decisions and short-lived signed media URLs.
+  - name: Search
+    description: Full-text search across the catalog or My Library.
+  - name: My Library
+    description: The user's personal collection, separate from the whole catalog.
+  - name: User state
+    description: Favourites and ratings, and a batch endpoint for offline outboxes.
+  - name: Plays
+    description: Play history, play submission (scrobbling) and now playing.
+  - name: Playlists
+    description: Ordered, user-owned lists of tracks.
+  - name: Queues
+    description: Play queues saved per device and resumable from any other device.
+  - name: Sync
+    description: The per-user change feed.
+  - name: Events
+    description: Server-Sent Events for live changes.
+  - name: Webhooks
+    description: Signed HTTP callbacks for integrations.
+  - name: Admin
+    description: Users, scans and server administration.
+  - name: AI
+    description: The Model Context Protocol endpoint.
+
+paths:
+  /.well-known/dulcet:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    get:
+      tags: [Discovery]
+      operationId: getDiscovery
+      summary: Discover the API versions and endpoints a server offers
+      description: |
+        The first request a client makes. Needs no authentication. A server that does not answer it
+        with this document does not speak Dulcet API; a Dulcet app then falls back to OpenSubsonic.
+      security: []
+      responses:
+        '200':
+          description: The discovery document.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Discovery'
+              example:
+                standard: dulcet
+                apis:
+                  - version: '1'
+                    baseUrl: https://music.example.com/dulcet/v1
+                    status: current
+                server:
+                  name: Dulcet Server
+                  version: 0.2.0
+                  instanceId: srv_9f2c41d0
+                authorizationServer: https://music.example.com
+                openapi: https://music.example.com/dulcet/v1/openapi.yaml
+                mcp: https://music.example.com/dulcet/v1/mcp
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /capabilities:
+    get:
+      tags: [Discovery]
+      operationId: getCapabilities
+      summary: List the capabilities, limits and minor API version this server supports
+      description: |
+        Authentication is optional. Without a token the server answers with what any client may know
+        (API version, auth flows, public capabilities). With a token it also reports what that user
+        may do, so a client can show or hide features without trial requests.
+      security:
+        - {}
+        - oauth2: []
+        - personalToken: []
+      responses:
+        '200':
+          description: Capabilities.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+              example:
+                apiVersion: '1.0'
+                server:
+                  name: Dulcet Server
+                  version: 0.2.0
+                  instanceId: srv_9f2c41d0
+                capabilities:
+                  dulcet.sync: {versions: [1]}
+                  dulcet.events: {versions: [1]}
+                  dulcet.webhooks: {versions: [1]}
+                  dulcet.transcoding: {versions: [1]}
+                  dulcet.lyrics: {versions: [1]}
+                  dulcet.queues: {versions: [1]}
+                  dulcet.mcp: {versions: [1]}
+                  dulcet.admin: {versions: [1]}
+                  org.example.radio: {versions: [2]}
+                limits:
+                  maxPageSize: 500
+                  maxBatchSize: 500
+                  syncRetentionDays: 90
+                  mediaUrlTtlSeconds: 21600
+                auth:
+                  flows: [authorization_code, device_code, refresh_token, personal_token]
+                  scopes: [library:read, media:read, user:read, user:write, plays:write, account, admin, offline_access]
+                permissions:
+                  scopes: [library:read, media:read, user:read, user:write, plays:write]
+                  download: true
+                  admin: false
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /openapi.yaml:
+    get:
+      tags: [Discovery]
+      operationId: getOpenApiDocument
+      summary: Fetch this OpenAPI document as the server implements it
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document, including any vendor extensions the server adds.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /.well-known/oauth-authorization-server:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    get:
+      tags: [Auth]
+      operationId: getAuthorizationServerMetadata
+      summary: OAuth 2.0 authorization server metadata (RFC 8414)
+      description: |
+        Names the authorize, token, device authorization, revocation and registration endpoints.
+        Clients must read endpoint locations from here, never assume the paths below.
+      security: []
+      responses:
+        '200':
+          description: Authorization server metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizationServerMetadata'
+              example:
+                issuer: https://music.example.com
+                authorization_endpoint: https://music.example.com/oauth/authorize
+                token_endpoint: https://music.example.com/oauth/token
+                device_authorization_endpoint: https://music.example.com/oauth/device_authorization
+                revocation_endpoint: https://music.example.com/oauth/revoke
+                registration_endpoint: https://music.example.com/oauth/register
+                grant_types_supported: [authorization_code, refresh_token, 'urn:ietf:params:oauth:grant-type:device_code']
+                response_types_supported: [code]
+                code_challenge_methods_supported: [S256]
+                token_endpoint_auth_methods_supported: [none]
+                client_id_metadata_document_supported: true
+                scopes_supported: [library:read, media:read, user:read, user:write, plays:write, account, admin, offline_access]
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /.well-known/oauth-protected-resource:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    get:
+      tags: [Auth]
+      operationId: getProtectedResourceMetadata
+      summary: OAuth 2.0 protected resource metadata (RFC 9728)
+      description: Lets MCP clients and other generic OAuth clients find the authorization server.
+      security: []
+      responses:
+        '200':
+          description: Protected resource metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtectedResourceMetadata'
+              example:
+                resource: https://music.example.com/dulcet/v1
+                authorization_servers: [https://music.example.com]
+                bearer_methods_supported: [header]
+                scopes_supported: [library:read, media:read, user:read, user:write, plays:write, account, admin, offline_access]
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /oauth/authorize:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    get:
+      tags: [Auth]
+      operationId: authorize
+      summary: Start an authorization code flow with PKCE (browser redirect)
+      description: |
+        Opened in a browser or system authentication session, never called by a client's HTTP stack.
+        The server signs the user in on its own page, shows the client's name and requested scopes,
+        and redirects to `redirect_uri` with `code` and `state`. Only `S256` PKCE is accepted. The
+        location comes from metadata; this path is the reference server's.
+      security: []
+      parameters:
+        - {name: response_type, in: query, required: true, schema: {type: string, const: code}}
+        - {name: client_id, in: query, required: true, schema: {type: string}, description: 'A client id metadata document URL, or an id from dynamic registration.'}
+        - {name: redirect_uri, in: query, required: true, schema: {type: string, format: uri}}
+        - {name: scope, in: query, required: true, schema: {type: string}, example: 'library:read media:read user:read user:write plays:write offline_access'}
+        - {name: state, in: query, required: true, schema: {type: string}}
+        - {name: code_challenge, in: query, required: true, schema: {type: string}}
+        - {name: code_challenge_method, in: query, required: true, schema: {type: string, const: S256}}
+        - {name: resource, in: query, required: false, schema: {type: string, format: uri}, description: RFC 8707 resource indicator; the API base URL.}
+      responses:
+        '200':
+          description: The server's own sign-in and consent page.
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect back to the client with `code` and `state`, or with `error`.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /oauth/token:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    post:
+      tags: [Auth]
+      operationId: requestToken
+      summary: Exchange a code, device code or refresh token for tokens
+      description: |
+        Standard OAuth 2.1 token endpoint. Errors use the OAuth error format (RFC 6749 §5.2), not
+        problem details, so stock OAuth libraries work. Refresh tokens rotate: each use returns a new
+        refresh token and invalidates the old one; replaying a used refresh token revokes the whole
+        grant.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+            example:
+              grant_type: authorization_code
+              code: SplxlOBeZQQYbYS6WxSbIA
+              redirect_uri: com.example.player:/oauth/callback
+              client_id: https://player.example.org/oauth/client.json
+              code_verifier: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+      responses:
+        '200':
+          description: Tokens.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                access_token: dulcet_at_3kTq9LZb0mR2vX7yN4pW8cJ1
+                token_type: Bearer
+                expires_in: 3600
+                refresh_token: dulcet_rt_Hq2nV8sK5tY1zB6xM3fR9dL0
+                scope: library:read media:read user:read user:write plays:write offline_access
+        '400':
+          description: An OAuth error, such as `invalid_grant`, `authorization_pending` or `slow_down`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+              example:
+                error: authorization_pending
+                error_description: The user has not finished signing in yet.
+
+  /oauth/device_authorization:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    post:
+      tags: [Auth]
+      operationId: requestDeviceAuthorization
+      summary: Start a device authorization grant (RFC 8628) for TVs and CLIs
+      description: |
+        The device shows `user_code` and `verification_uri` (and may render
+        `verification_uri_complete` as a QR code), then polls the token endpoint with
+        `grant_type=urn:ietf:params:oauth:grant-type:device_code` no faster than `interval` seconds.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DeviceAuthorizationRequest'
+            example:
+              client_id: https://tv.example.org/oauth/client.json
+              scope: library:read media:read user:read plays:write offline_access
+      responses:
+        '200':
+          description: Device codes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceAuthorizationResponse'
+              example:
+                device_code: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
+                user_code: WDJB-MJHT
+                verification_uri: https://music.example.com/device
+                verification_uri_complete: https://music.example.com/device?user_code=WDJB-MJHT
+                expires_in: 900
+                interval: 5
+        '400':
+          description: An OAuth error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+
+  /oauth/revoke:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    post:
+      tags: [Auth]
+      operationId: revokeToken
+      summary: Revoke an access or refresh token (RFC 7009)
+      description: Revoking a refresh token revokes its whole grant, including every access token and signed media URL issued from it.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RevocationRequest'
+            example:
+              token: dulcet_rt_Hq2nV8sK5tY1zB6xM3fR9dL0
+              token_type_hint: refresh_token
+              client_id: https://player.example.org/oauth/client.json
+      responses:
+        '200':
+          description: Revoked, or the token was already invalid.
+        '400':
+          description: An OAuth error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+
+  /oauth/register:
+    servers:
+      - url: https://{host}
+        variables:
+          host:
+            default: music.example.com
+    post:
+      tags: [Auth]
+      operationId: registerClient
+      summary: Register a public client dynamically (RFC 7591)
+      description: |
+        For clients that cannot publish a client id metadata document. Servers may require an admin
+        to approve registrations, or turn this endpoint off; the metadata says whether it exists.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientRegistrationRequest'
+            example:
+              client_name: Example Player
+              redirect_uris: ['http://127.0.0.1/callback']
+              grant_types: [authorization_code, refresh_token]
+              token_endpoint_auth_method: none
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRegistrationResponse'
+              example:
+                client_id: cli_5d1a7e
+                client_name: Example Player
+                redirect_uris: ['http://127.0.0.1/callback']
+                grant_types: [authorization_code, refresh_token]
+                token_endpoint_auth_method: none
+        '400':
+          description: An OAuth registration error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+
+  /me:
+    get:
+      tags: [Account]
+      operationId: getMe
+      summary: Get the signed-in user
+      security:
+        - oauth2: []
+        - personalToken: []
+      responses:
+        '200':
+          description: The user behind the token, with the scopes that token holds.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+              example:
+                id: usr_01
+                username: robin
+                displayName: Robin
+                roles: []
+                permissions: {download: true, share: true}
+                libraryIds: [lib_main]
+                createdAt: '2026-10-01T09:00:00Z'
+                token:
+                  id: tok_7a
+                  kind: oauth
+                  scopes: [library:read, media:read, user:read, user:write, plays:write, offline_access]
+                  clientName: Dulcet
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me/tokens:
+    get:
+      tags: [Account]
+      operationId: listTokens
+      summary: List the user's personal access tokens and authorized app sessions
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Tokens. Secrets are never returned after creation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPage'
+              example:
+                items:
+                  - id: tok_7a
+                    kind: oauth
+                    name: Dulcet on iPhone
+                    clientName: Dulcet
+                    scopes: [library:read, media:read, user:read, user:write, plays:write, offline_access]
+                    createdAt: '2026-10-02T08:00:00Z'
+                    lastUsedAt: '2026-10-12T07:55:00Z'
+                    expiresAt: null
+                    hint: dulcet_rt_Hq2n
+                nextCursor: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Account]
+      operationId: createPersonalToken
+      summary: Create a scoped personal access token for a script or integration
+      description: The secret is returned once, in this response. A token can never hold a scope the user's role does not allow.
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonalTokenCreate'
+            example:
+              name: Home Assistant now-playing
+              scopes: [user:read]
+              expiresInDays: 365
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalTokenCreated'
+              example:
+                id: tok_9c
+                kind: personal
+                name: Home Assistant now-playing
+                scopes: [user:read]
+                createdAt: '2026-10-12T10:00:00Z'
+                lastUsedAt: null
+                expiresAt: '2027-10-12T10:00:00Z'
+                hint: dulcet_pat_Xw3
+                secret: dulcet_pat_Xw3e8Rk1Lq0Zt5Nv2Bc7Hy4M
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+
+  /me/tokens/{tokenId}:
+    delete:
+      tags: [Account]
+      operationId: revokeTokenById
+      summary: Revoke a personal access token or sign an app session out
+      description: Takes effect at once, for the token and for every signed media URL issued under it.
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204':
+          description: Revoked, or already gone.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/export:
+    get:
+      tags: [Account]
+      operationId: exportUserData
+      summary: Export everything the server holds about the user
+      description: |
+        Streams the user's favourites, ratings, My Library, playlists, queues and full play history
+        as JSON Lines, one record per line, each with a `kind` field. Catalog items carry their
+        external ids (MusicBrainz, ISRC) so another server can match them. Portability is part of
+        the standard: every Core server implements this.
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      responses:
+        '200':
+          description: The export.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+              example: |
+                {"kind":"header","standard":"dulcet","apiVersion":"1.0","exportedAt":"2026-10-12T10:00:00Z","userId":"usr_01"}
+                {"kind":"favorite","itemId":"trk_4f1","itemType":"track","favoritedAt":"2026-09-30T20:11:00Z","externalIds":{"isrc":"USXXX2600001"}}
+                {"kind":"play","id":"7c0e4a52-1f8b-4f8e-9a51-2e0c35a5b0d1","trackId":"trk_4f1","startedAt":"2026-10-11T18:00:00Z","listenedMs":201000}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /libraries:
+    get:
+      tags: [Catalog]
+      operationId: listLibraries
+      summary: List the music libraries (top-level folders) the user can see
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      responses:
+        '200':
+          description: Libraries.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryPage'
+              example:
+                items:
+                  - {id: lib_main, type: library, name: Music, trackCount: 12840}
+                nextCursor: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /artists:
+    get:
+      tags: [Catalog]
+      operationId: listArtists
+      summary: List artists
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/Ids'
+        - name: role
+          in: query
+          description: 'Only artists credited in this role. Known values: `albumArtist` (default), `artist`, `composer`. Open set.'
+          schema: {type: string, default: albumArtist}
+        - name: sort
+          in: query
+          description: 'Known values: `name`, `-addedAt`, `-playCount`, `-lastPlayedAt`, `-libraryAddedAt`. A leading `-` sorts descending.'
+          schema: {type: string, default: name}
+      responses:
+        '200':
+          description: A page of artists.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistPage'
+              example:
+                items:
+                  - id: art_2b
+                    type: artist
+                    name: Example Quartet
+                    sortName: Example Quartet
+                    albumCount: 3
+                    trackCount: 31
+                    artwork: {id: img_a81c}
+                    externalIds: {musicbrainzArtistId: 5b11f4ce-a62d-471e-81fc-a69a8278c7da}
+                    userState: {favoritedAt: null, rating: null, playCount: 12, lastPlayedAt: '2026-10-11T18:00:00Z', libraryAddedAt: '2026-09-01T12:00:00Z'}
+                    revision: r_10443
+                nextCursor: c_YXJ0XzJi
+                total: 412
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /artists/{artistId}:
+    get:
+      tags: [Catalog]
+      operationId: getArtist
+      summary: Get an artist
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/ArtistId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The artist.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artist'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '308':
+          $ref: '#/components/responses/Replaced'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /artists/{artistId}/albums:
+    get:
+      tags: [Catalog]
+      operationId: listArtistAlbums
+      summary: List an artist's albums
+      description: Albums where the artist is an album artist, then (with `role=artist`) albums the artist appears on.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/ArtistId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Scope'
+        - name: role
+          in: query
+          description: 'Known values: `albumArtist` (default), `artist` (appears on), `composer`.'
+          schema: {type: string, default: albumArtist}
+        - name: sort
+          in: query
+          description: 'Known values: `-releaseDate` (default), `releaseDate`, `title`.'
+          schema: {type: string, default: '-releaseDate'}
+      responses:
+        '200':
+          description: A page of albums.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /albums:
+    get:
+      tags: [Catalog]
+      operationId: listAlbums
+      summary: List albums
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/Ids'
+        - name: genreId
+          in: query
+          schema: {type: string}
+        - name: year
+          in: query
+          description: A release year, or an inclusive range `1990..1999`.
+          schema: {type: string}
+          example: 1990..1999
+        - name: sort
+          in: query
+          description: 'Known values: `title` (default), `artist`, `-addedAt`, `-releaseDate`, `releaseDate`, `-playCount`, `-lastPlayedAt`, `-libraryAddedAt`, `-favoritedAt`, `random`. `random` pages a per-cursor shuffle.'
+          schema: {type: string, default: title}
+      responses:
+        '200':
+          description: A page of albums.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumPage'
+              example:
+                items:
+                  - id: alb_7d
+                    type: album
+                    title: Night Lines
+                    sortTitle: Night Lines
+                    credits:
+                      - {artist: {id: art_2b, name: Example Quartet}, role: albumArtist, creditedAs: Example Quartet}
+                    artistDisplay: Example Quartet
+                    releaseDate: '2024-03-15'
+                    releaseTypes: [album]
+                    isCompilation: false
+                    genres: [{id: gen_jazz, name: Jazz}]
+                    trackCount: 9
+                    durationMs: 2563000
+                    artwork: {id: img_a81c, width: 1400, height: 1400}
+                    externalIds: {musicbrainzReleaseId: 0f1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d}
+                    addedAt: '2026-09-01T12:00:00Z'
+                    userState: {favoritedAt: null, rating: 8, playCount: 4, lastPlayedAt: '2026-10-11T18:00:00Z', libraryAddedAt: '2026-09-01T12:00:00Z'}
+                    revision: r_10440
+                nextCursor: c_TmlnaHQgTGluZXM
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /albums/{albumId}:
+    get:
+      tags: [Catalog]
+      operationId: getAlbum
+      summary: Get an album with its discs and tracks
+      description: An album always includes every track, in disc and track order. Albums are bounded, so they are not paged.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/AlbumId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The album.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumDetail'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '308':
+          $ref: '#/components/responses/Replaced'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tracks:
+    get:
+      tags: [Catalog]
+      operationId: listTracks
+      summary: List tracks
+      description: Use `ids` to fetch up to `limits.maxBatchSize` known tracks in one request.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/Ids'
+        - name: albumId
+          in: query
+          schema: {type: string}
+        - name: artistId
+          in: query
+          schema: {type: string}
+        - name: genreId
+          in: query
+          schema: {type: string}
+        - name: sort
+          in: query
+          description: 'Known values: `title` (default), `artist`, `album`, `-addedAt`, `-playCount`, `-lastPlayedAt`, `-libraryAddedAt`, `-favoritedAt`, `random`.'
+          schema: {type: string, default: title}
+      responses:
+        '200':
+          description: A page of tracks.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /tracks/{trackId}:
+    get:
+      tags: [Catalog]
+      operationId: getTrack
+      summary: Get a track
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/TrackId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The track.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Track'
+              example:
+                id: trk_4f1
+                type: track
+                title: Blue Hour
+                sortTitle: Blue Hour
+                album: {id: alb_7d, title: Night Lines}
+                credits:
+                  - {artist: {id: art_2b, name: Example Quartet}, role: artist, creditedAs: Example Quartet}
+                  - {artist: {id: art_9e, name: A. Composer}, role: composer, creditedAs: A. Composer}
+                artistDisplay: Example Quartet
+                discNumber: 1
+                trackNumber: 3
+                durationMs: 284000
+                genres: [{id: gen_jazz, name: Jazz}]
+                releaseDate: '2024-03-15'
+                audio: {codec: flac, container: flac, bitrate: 912000, sampleRate: 44100, bitDepth: 16, channels: 2, sizeBytes: 32374000, lossless: true}
+                loudness: {trackGainDb: -6.2, trackPeak: 0.98, albumGainDb: -5.9, albumPeak: 0.99}
+                lyrics: {available: true, synced: true}
+                artwork: {id: img_a81c}
+                externalIds: {musicbrainzRecordingId: 2a7e9b3c-1d4f-4e6a-9b8c-7d6e5f4a3b2c, isrc: USXXX2600001}
+                addedAt: '2026-09-01T12:00:00Z'
+                userState: {favoritedAt: '2026-09-30T20:11:00Z', rating: 10, playCount: 7, lastPlayedAt: '2026-10-11T18:00:00Z', libraryAddedAt: null}
+                revision: r_10431
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '308':
+          $ref: '#/components/responses/Replaced'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tracks/{trackId}/lyrics:
+    get:
+      tags: [Catalog]
+      operationId: getTrackLyrics
+      summary: Get a track's lyrics, synced where available
+      description: |
+        Returns every lyrics document the server has for the track: the main lyrics and any
+        translations or pronunciations, each in a BCP 47 language. Lines may carry start and end
+        times; words may carry their own timing. An empty `documents` list means the server has no
+        lyrics, which is an answer, not an error.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/TrackId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Lyrics.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lyrics'
+              example:
+                trackId: trk_4f1
+                documents:
+                  - kind: main
+                    language: en
+                    synced: true
+                    offsetMs: 0
+                    source: sidecar
+                    lines:
+                      - startMs: 12500
+                        endMs: 16100
+                        text: Under the blue hour
+                        words:
+                          - {startMs: 12500, endMs: 13000, text: Under}
+                          - {startMs: 13000, endMs: 13300, text: the}
+                          - {startMs: 13300, endMs: 13900, text: blue}
+                          - {startMs: 13900, endMs: 16100, text: hour}
+                      - startMs: 16100
+                        text: we keep the lights low
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /genres:
+    get:
+      tags: [Catalog]
+      operationId: listGenres
+      summary: List genres
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Scope'
+      responses:
+        '200':
+          description: A page of genres.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenrePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /search:
+    get:
+      tags: [Search]
+      operationId: search
+      summary: Search artists, albums, tracks and playlists
+      description: |
+        Matching and ranking are the server's choice; results come back best match first. Each type
+        pages on its own cursor: to see more tracks, repeat the request with `types=track` and that
+        type's `nextCursor`.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 500}
+          example: blue hour
+        - name: types
+          in: query
+          description: 'Comma-separated. Known values: `artist`, `album`, `track`, `playlist`. Default: all.'
+          schema: {type: string}
+          example: album,track
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/Cursor'
+        - name: limit
+          in: query
+          description: Results per type.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Results, grouped by type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /artwork/{artworkId}:
+    get:
+      tags: [Media]
+      operationId: getArtwork
+      summary: Fetch an image, resized
+      description: |
+        Artwork ids identify image content, so a response never changes for a given id and size and
+        is served with `Cache-Control: immutable`. When a track's art changes, the track gets a new
+        artwork id. For a context that cannot send headers (lock screen, car, web `<img>`), get a
+        signed URL from `POST /media/urls`.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - name: artworkId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: size
+          in: query
+          description: Longest edge in pixels. The server may round up to a size it caches.
+          schema: {type: integer, minimum: 16, maximum: 3000}
+        - name: format
+          in: query
+          description: 'Preferred format. Known values: `jpeg`, `png`, `webp`, `avif`. The server may answer another.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: Image bytes.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            image/*:
+              schema:
+                type: string
+                contentMediaType: image/*
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /playback/decisions:
+    post:
+      tags: [Media]
+      operationId: createPlaybackDecision
+      summary: Ask the server how to play or download a track on this device
+      description: |
+        The client declares what it can play and its constraints; the server decides between the
+        original file and a transcode and answers with a plan holding a short-lived signed URL that
+        a native player (AVPlayer, ExoPlayer) opens with no headers. Asking for a plan records
+        nothing: a play is recorded only by `POST /me/plays`.
+      security:
+        - oauth2: [media:read]
+        - personalToken: [media:read]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackRequest'
+            example:
+              trackId: trk_4f1
+              purpose: stream
+              startMs: 0
+              profile:
+                name: Example Player on iPhone
+                maxBitrate: 320000
+                network: cellular
+                directPlay:
+                  - {container: mp4, codec: aac}
+                  - {container: mp4, codec: alac}
+                  - {container: flac, codec: flac, maxSampleRate: 96000, maxBitDepth: 24}
+                  - {container: mp3, codec: mp3}
+                transcodeTargets:
+                  - {container: mp4, codec: aac}
+                  - {container: mp3, codec: mp3}
+      responses:
+        '200':
+          description: The plan.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackPlan'
+              example:
+                trackId: trk_4f1
+                mode: transcode
+                reasons: [bitrateAboveLimit]
+                url: https://music.example.com/dulcet/v1/media/mg_Q2xvdWQtbGluZXMuNGYxLnRyYW5zY29kZQ
+                expiresAt: '2026-10-12T16:00:00Z'
+                mimeType: audio/mp4
+                container: mp4
+                codec: aac
+                bitrate: 256000
+                sampleRate: 44100
+                channels: 2
+                startMs: 0
+                durationMs: 284000
+                contentLength: 9088000
+                lengthExact: false
+                byteRanges: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /media/urls:
+    post:
+      tags: [Media]
+      operationId: createMediaUrls
+      summary: Get short-lived signed URLs for artwork or original-file downloads
+      description: |
+        Batch-signs URLs for contexts that cannot send an `Authorization` header. Streams come from
+        `POST /playback/decisions`, which also chooses the format. An `original` download requires the
+        user's `download` permission.
+      security:
+        - oauth2: [media:read]
+        - personalToken: [media:read]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MediaUrlRequest'
+            example:
+              requests:
+                - {kind: artwork, id: img_a81c, size: 600}
+                - {kind: original, id: trk_4f1}
+      responses:
+        '200':
+          description: One signed URL per request, in request order.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUrls'
+              example:
+                urls:
+                  - {kind: artwork, id: img_a81c, url: 'https://music.example.com/dulcet/v1/media/mg_aW1nX2E4MWMuNjAw', expiresAt: '2026-10-12T16:00:00Z'}
+                  - {kind: original, id: trk_4f1, url: 'https://music.example.com/dulcet/v1/media/mg_dHJrXzRmMS5vcmln', expiresAt: '2026-10-12T16:00:00Z'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /media/{grant}:
+    get:
+      tags: [Media]
+      operationId: getMedia
+      summary: Fetch media bytes through a signed URL
+      description: |
+        Needs no header: the opaque `grant` path segment authorizes exactly one resource for one
+        user until it expires. Supports `Range` (206, and 416 when unsatisfiable). Expiry is checked
+        when a request starts; a response already flowing is not cut off. A grant dies early when the
+        token it was issued under is revoked. Servers and proxies log this path as `/media/***`.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Grant'
+        - name: Range
+          in: header
+          schema: {type: string}
+          example: bytes=0-
+      responses:
+        '200':
+          description: The whole body.
+          headers:
+            Accept-Ranges:
+              schema: {type: string, const: bytes}
+            Content-Length:
+              schema: {type: integer}
+          content:
+            audio/*:
+              schema: {type: string, contentMediaType: audio/*}
+            image/*:
+              schema: {type: string, contentMediaType: image/*}
+        '206':
+          description: Part of the body.
+          headers:
+            Content-Range:
+              schema: {type: string}
+          content:
+            audio/*:
+              schema: {type: string, contentMediaType: audio/*}
+        '403':
+          $ref: '#/components/responses/MediaGrantInvalid'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '416':
+          description: The range cannot be satisfied.
+          headers:
+            Content-Range:
+              schema: {type: string}
+    head:
+      tags: [Media]
+      operationId: headMedia
+      summary: Read media headers through a signed URL
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Grant'
+      responses:
+        '200':
+          description: Headers only.
+        '403':
+          $ref: '#/components/responses/MediaGrantInvalid'
+
+  /me/library:
+    get:
+      tags: [My Library]
+      operationId: listMyLibrary
+      summary: List the user's My Library members, newest addition first
+      description: |
+        Direct members only, each with its `libraryAddedAt`. To browse My Library the way the catalog
+        is browsed (albums by title, for example), use the catalog lists with `scope=library`.
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: types
+          in: query
+          description: 'Comma-separated. Known values: `artist`, `album`, `track`. Default: all.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: A page of members, with whole-library counts.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryMemberPage'
+              example:
+                items:
+                  - {item: {id: alb_7d, type: album, title: Night Lines}, libraryAddedAt: '2026-09-01T12:00:00Z'}
+                nextCursor: null
+                counts: {artist: 1, album: 2, track: 14}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/library/{itemId}:
+    put:
+      tags: [My Library]
+      operationId: addToMyLibrary
+      summary: Add an artist, album or track to My Library
+      description: |
+        Idempotent. Adding a member keeps its original `libraryAddedAt`. Membership is per item:
+        adding an album does not add its tracks, and adding a track does not add its album.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '200':
+          description: The item's state for this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [My Library]
+      operationId: removeFromMyLibrary
+      summary: Remove an item from My Library
+      description: Idempotent. Removing a non-member, or an id the catalog no longer holds, succeeds.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '204':
+          description: Not a member.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/favorites:
+    get:
+      tags: [User state]
+      operationId: listFavorites
+      summary: List favourites, newest first
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: types
+          in: query
+          description: 'Comma-separated. Known values: `artist`, `album`, `track`, `playlist`.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: A page of favourites.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FavoritePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/favorites/{itemId}:
+    put:
+      tags: [User state]
+      operationId: addFavorite
+      summary: Mark an item as a favourite
+      description: Idempotent; an existing favourite keeps its original `favoritedAt`.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '200':
+          description: The item's state for this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [User state]
+      operationId: removeFavorite
+      summary: Remove a favourite
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '204':
+          description: Not a favourite.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/ratings/{itemId}:
+    put:
+      tags: [User state]
+      operationId: setRating
+      summary: Rate an item from 1 to 10
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingSet'
+            example:
+              rating: 8
+      responses:
+        '200':
+          description: The item's state for this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [User state]
+      operationId: clearRating
+      summary: Clear a rating
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '204':
+          description: Unrated.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/batch:
+    post:
+      tags: [User state]
+      operationId: applyUserStateBatch
+      summary: Apply many favourite, rating and My Library changes in one request
+      description: |
+        For flushing an offline outbox. Operations apply in order and each reports its own result;
+        one failure does not undo the others. A repeat with the same `Idempotency-Key` returns the
+        first response.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserStateBatch'
+            example:
+              operations:
+                - {op: favorite, itemId: trk_4f1}
+                - {op: rate, itemId: alb_7d, rating: 8}
+                - {op: libraryAdd, itemId: alb_7d}
+                - {op: libraryRemove, itemId: trk_gone}
+      responses:
+        '200':
+          description: One result per operation, in order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserStateBatchResult'
+              example:
+                results:
+                  - {status: 200}
+                  - {status: 200}
+                  - {status: 200}
+                  - {status: 204}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+
+  /me/plays:
+    get:
+      tags: [Plays]
+      operationId: listPlays
+      summary: List the user's play history, newest first
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: since
+          in: query
+          description: Only plays that started at or after this time.
+          schema: {type: string, format: date-time}
+        - name: trackId
+          in: query
+          schema: {type: string}
+      responses:
+        '200':
+          description: A page of plays.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlayPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Plays]
+      operationId: submitPlays
+      summary: Record finished plays (scrobble), singly or as an offline batch
+      description: |
+        Each play carries a client-generated UUID `id`. The server records a given id once, ever:
+        resubmitting it (after a lost response, from an offline queue) answers `duplicate` and counts
+        nothing again. That makes delivery at-least-once and recording exactly-once. The client
+        decides when a listen counts (its threshold over progressing media time) and submits only
+        those; the server may still ignore a play it judges invalid, and says so per play. A play of
+        an id the catalog does not hold is answered `unknownTrack` and not stored.
+      security:
+        - oauth2: [plays:write]
+        - personalToken: [plays:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaySubmission'
+            example:
+              plays:
+                - id: 7c0e4a52-1f8b-4f8e-9a51-2e0c35a5b0d1
+                  trackId: trk_4f1
+                  startedAt: '2026-10-11T18:00:00Z'
+                  listenedMs: 201000
+                  completed: false
+                  deviceId: dev_iphone_3c
+                  context: {type: album, id: alb_7d}
+                  offline: false
+      responses:
+        '200':
+          description: One result per play, in order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaySubmissionResult'
+              example:
+                results:
+                  - {id: 7c0e4a52-1f8b-4f8e-9a51-2e0c35a5b0d1, status: recorded}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /me/now-playing:
+    put:
+      tags: [Plays]
+      operationId: setNowPlaying
+      summary: Report what this device is playing now
+      description: |
+        A heartbeat, not a play: it never changes play counts. Send it on start, pause, seek and track
+        change, and at least every `ttlSeconds / 2` while playing. The entry expires on its own.
+      security:
+        - oauth2: [plays:write]
+        - personalToken: [plays:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NowPlayingReport'
+            example:
+              deviceId: dev_iphone_3c
+              deviceName: Robin's iPhone
+              trackId: trk_4f1
+              state: playing
+              positionMs: 64000
+              ttlSeconds: 120
+      responses:
+        '200':
+          description: The stored entry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NowPlaying'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Plays]
+      operationId: clearNowPlaying
+      summary: Stop reporting now playing for a device
+      security:
+        - oauth2: [plays:write]
+        - personalToken: [plays:write]
+      parameters:
+        - name: deviceId
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '204':
+          description: Cleared.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /now-playing:
+    get:
+      tags: [Plays]
+      operationId: listNowPlaying
+      summary: List what is playing now, on the user's devices and those shared with them
+      description: A user sees their own devices, plus other users who share now playing; an admin sees everyone.
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      responses:
+        '200':
+          description: Active entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NowPlaying'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /playlists:
+    get:
+      tags: [Playlists]
+      operationId: listPlaylists
+      summary: List playlists the user owns or can see
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: owner
+          in: query
+          description: '`me` for the user''s own, or a user id.'
+          schema: {type: string}
+        - name: sort
+          in: query
+          description: 'Known values: `name` (default), `-updatedAt`, `-createdAt`.'
+          schema: {type: string, default: name}
+      responses:
+        '200':
+          description: A page of playlists.
+          headers:
+            Dulcet-Sync-Cursor:
+              $ref: '#/components/headers/SyncCursor'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Playlists]
+      operationId: createPlaylist
+      summary: Create a playlist, optionally with tracks
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistCreate'
+            example:
+              name: Late night
+              description: Quiet ones.
+              visibility: private
+              trackIds: [trk_4f1, trk_51a]
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+
+  /playlists/{playlistId}:
+    get:
+      tags: [Playlists]
+      operationId: getPlaylist
+      summary: Get a playlist's details (items are paged separately)
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The playlist.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+              example:
+                id: pl_3e
+                type: playlist
+                name: Late night
+                description: Quiet ones.
+                owner: {id: usr_01, name: Robin}
+                visibility: private
+                readOnly: false
+                itemCount: 2
+                durationMs: 512000
+                createdAt: '2026-10-12T10:00:00Z'
+                updatedAt: '2026-10-12T10:00:00Z'
+                revision: r_10450
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Playlists]
+      operationId: updatePlaylist
+      summary: Rename a playlist or change its description or visibility
+      description: JSON Merge Patch (RFC 7396). Omitted fields are unchanged; `description` set to null clears it.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/PlaylistUpdate'
+            example:
+              name: Late night (2026)
+      responses:
+        '200':
+          description: Updated.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+    delete:
+      tags: [Playlists]
+      operationId: deletePlaylist
+      summary: Delete a playlist
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Deleted, or already gone.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+
+  /playlists/{playlistId}/items:
+    get:
+      tags: [Playlists]
+      operationId: listPlaylistItems
+      summary: List a playlist's entries in order
+      description: Each entry has its own `entryId`, so the same track can appear twice and still be moved or removed exactly.
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of entries, with the playlist revision they were read at.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistItemPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    put:
+      tags: [Playlists]
+      operationId: replacePlaylistItems
+      summary: Replace every entry of a playlist
+      description: Requires `If-Match` with the playlist's current revision, so one device cannot silently overwrite another's edit.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistItemsReplace'
+            example:
+              trackIds: [trk_51a, trk_4f1]
+      responses:
+        '200':
+          description: The playlist after the change.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+    post:
+      tags: [Playlists]
+      operationId: insertPlaylistItems
+      summary: Insert tracks into a playlist
+      description: Appends by default, or inserts before `beforeEntryId`. `If-Match` is optional because an insert cannot lose another device's edit.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistItemsInsert'
+            example:
+              trackIds: [trk_77c]
+      responses:
+        '200':
+          description: The playlist after the change.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+
+  /playlists/{playlistId}/items/{entryId}:
+    patch:
+      tags: [Playlists]
+      operationId: movePlaylistItem
+      summary: Move one entry
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/EntryId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/PlaylistItemMove'
+            example:
+              beforeEntryId: ent_01
+      responses:
+        '200':
+          description: The playlist after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+    delete:
+      tags: [Playlists]
+      operationId: removePlaylistItem
+      summary: Remove one entry
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - $ref: '#/components/parameters/EntryId'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Removed, or already gone.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+
+  /me/queues:
+    get:
+      tags: [Queues]
+      operationId: listQueues
+      summary: List the user's saved play queues, most recently updated first
+      description: Each device saves its own queue. To continue on this device what another was playing, read that queue and play it here.
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      responses:
+        '200':
+          description: Queues, without their entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/QueueSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /me/queues/{queueId}:
+    get:
+      tags: [Queues]
+      operationId: getQueue
+      summary: Get a saved queue with its entries
+      security:
+        - oauth2: [user:read]
+        - personalToken: [user:read]
+      parameters:
+        - $ref: '#/components/parameters/QueueId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The queue.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queue'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Queues]
+      operationId: saveQueue
+      summary: Save a device's queue
+      description: |
+        Creates or replaces the queue. Send `If-Match` with the revision last read to avoid
+        overwriting a newer save from another client on the same queue; omit it to create.
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/QueueId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSave'
+            example:
+              deviceName: Robin's iPhone
+              entries:
+                - {entryId: q1, trackId: trk_4f1}
+                - {entryId: q2, trackId: trk_51a}
+              currentEntryId: q1
+              positionMs: 64000
+              shuffle: false
+              repeat: off
+      responses:
+        '200':
+          description: Saved.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+    delete:
+      tags: [Queues]
+      operationId: deleteQueue
+      summary: Delete a saved queue
+      security:
+        - oauth2: [user:write]
+        - personalToken: [user:write]
+      parameters:
+        - $ref: '#/components/parameters/QueueId'
+      responses:
+        '204':
+          description: Deleted, or already gone.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /sync/changes:
+    get:
+      tags: [Sync]
+      operationId: listChanges
+      summary: Read the user's change feed
+      description: |
+        The one sync mechanism (README "Sync"). Three ways in:
+
+        - `start=now` returns no changes and a cursor at the current position. A client that reads
+          live and caches what it saw (a reader) starts here, then applies later changes to what it
+          holds and ignores the rest.
+        - `start=snapshot` begins a full snapshot: every visible entity as an `upsert`, in pages,
+          then the changes made while the snapshot ran. A client that keeps a whole copy starts here.
+        - `cursor=...` continues from a cursor returned by any earlier call, or by the
+          `Dulcet-Sync-Cursor` header of any read.
+
+        Follow `nextCursor` while `hasMore` is true. When it is false the client is caught up, and
+        `nextCursor` is the cursor to store. A cursor older than the server's retention window, or
+        from a different server incarnation (a restore from backup), answers `410` with problem type
+        `urn:dulcet:problem:cursor-expired`: discard derived state and start again.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - name: cursor
+          in: query
+          schema: {type: string}
+        - name: start
+          in: query
+          description: 'Only without `cursor`. Known values: `now`, `snapshot`.'
+          schema: {type: string}
+        - name: types
+          in: query
+          description: |
+            Comma-separated entity types to include; default all the token may read. A cursor stays
+            valid for any `types` value. Known values: `artist`, `album`, `track`, `genre`, `library`,
+            `itemState`, `playlist`, `play`, `queue`.
+          schema: {type: string}
+          example: itemState,playlist
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 500}
+      responses:
+        '200':
+          description: A page of changes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangePage'
+              example:
+                changes:
+                  - op: upsert
+                    type: itemState
+                    id: trk_4f1
+                    revision: r_10452
+                    at: '2026-10-12T10:02:00Z'
+                    resource: {itemId: trk_4f1, itemType: track, favoritedAt: '2026-10-12T10:02:00Z', rating: 10, playCount: 7, lastPlayedAt: '2026-10-11T18:00:00Z', libraryAddedAt: null, revision: r_10452}
+                  - op: delete
+                    type: track
+                    id: trk_0aa
+                    revision: r_10453
+                    at: '2026-10-12T10:05:00Z'
+                  - op: delete
+                    type: album
+                    id: alb_dup
+                    revision: r_10454
+                    at: '2026-10-12T10:05:00Z'
+                    replacedBy: alb_7d
+                nextCursor: sc_AQAAAAAAKNY
+                hasMore: false
+                phase: changes
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/CursorExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /events:
+    get:
+      tags: [Events]
+      operationId: streamEvents
+      summary: Open a Server-Sent Events stream of live changes
+      description: |
+        `text/event-stream` with the token in the `Authorization` header (browsers use a fetch-based
+        reader, since `EventSource` cannot send headers). Event types: `changes` (the feed advanced;
+        pull `/sync/changes`), `nowPlaying`, `queue`, `scan`, `revoked` and `heartbeat`. Events are
+        hints, not data of record: the change feed is the truth. Reconnect with `Last-Event-ID` to
+        resume; a gap the server cannot replay is reported as a `changes` event, which a client
+        answers by pulling the feed.
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - name: types
+          in: query
+          description: Comma-separated event types; default all the token may read.
+          schema: {type: string}
+        - name: Last-Event-ID
+          in: header
+          schema: {type: string}
+      responses:
+        '200':
+          description: An open event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                id: ev_10452
+                event: changes
+                data: {"cursor":"sc_AQAAAAAAKNY","types":["itemState"]}
+
+                id: ev_10453
+                event: nowPlaying
+                data: {"userId":"usr_01","deviceId":"dev_iphone_3c","trackId":"trk_4f1","state":"playing","positionMs":64000}
+
+                event: heartbeat
+                data: {}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      summary: List the user's webhooks
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      responses:
+        '200':
+          description: Webhooks. Secrets are never returned after creation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Webhook'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Webhooks]
+      operationId: createWebhook
+      summary: Subscribe a URL to events
+      description: |
+        Deliveries follow the Standard Webhooks signing scheme: headers `webhook-id`,
+        `webhook-timestamp` and `webhook-signature` (HMAC-SHA256 over `id.timestamp.body` with the
+        secret returned here, once). Receivers reject timestamps more than five minutes off. The
+        server retries failures with backoff for about a day, then disables the hook and says why.
+        HTTPS targets only, and no private-network targets unless an admin allows them.
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+            example:
+              url: https://hooks.example.net/dulcet
+              events: [play.recorded, nowPlaying.changed]
+              description: Listening stats
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+
+  /webhooks/{webhookId}:
+    get:
+      tags: [Webhooks]
+      operationId: getWebhook
+      summary: Get a webhook and its delivery health
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      responses:
+        '200':
+          description: The webhook.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Webhooks]
+      operationId: updateWebhook
+      summary: Change a webhook's events or re-enable it
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/WebhookUpdate'
+            example:
+              active: true
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhook
+      summary: Delete a webhook
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /webhooks/{webhookId}/test:
+    post:
+      tags: [Webhooks]
+      operationId: testWebhook
+      summary: Send a signed `ping` delivery now
+      security:
+        - oauth2: [account]
+        - personalToken: [account]
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      responses:
+        '200':
+          description: The delivery attempt and the receiver's status code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDelivery'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users:
+    get:
+      tags: [Admin]
+      operationId: listUsers
+      summary: List users
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Admin]
+      operationId: createUser
+      summary: Create a user
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+            example:
+              username: sam
+              displayName: Sam
+              password: correct horse battery staple
+              roles: []
+              permissions: {download: true, share: false}
+              libraryIds: [lib_main]
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+
+  /users/{userId}:
+    get:
+      tags: [Admin]
+      operationId: getUser
+      summary: Get a user
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Admin]
+      operationId: updateUser
+      summary: Change a user's roles, permissions, libraries or password
+      description: Changing a password or removing a role revokes the user's existing tokens that depended on it.
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+            example:
+              permissions: {download: false}
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Admin]
+      operationId: deleteUser
+      summary: Delete a user and everything they own
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /admin/scans:
+    get:
+      tags: [Admin]
+      operationId: listScans
+      summary: List recent library scans, newest first
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      responses:
+        '200':
+          description: Scans.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Scan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Admin]
+      operationId: startScan
+      summary: Start a library scan
+      description: Answers 202 with the scan. If a scan is already running, answers 202 with that scan.
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanStart'
+            example:
+              kind: quick
+      responses:
+        '202':
+          description: Accepted.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/scans/{scanId}:
+    get:
+      tags: [Admin]
+      operationId: getScan
+      summary: Get a scan's progress
+      security:
+        - oauth2: [admin]
+        - personalToken: [admin]
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The scan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+              example:
+                id: scan_88
+                kind: quick
+                state: running
+                startedAt: '2026-10-12T10:00:00Z'
+                finishedAt: null
+                counts: {added: 12, updated: 3, removed: 0}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /mcp:
+    post:
+      tags: [AI]
+      operationId: mcpMessage
+      summary: Model Context Protocol endpoint (Streamable HTTP transport)
+      description: |
+        A JSON-RPC 2.0 message from an MCP client. Authorization follows the MCP authorization
+        specification with this server's OAuth 2.1 authorization server, found through
+        `/.well-known/oauth-protected-resource`. The tool list depends on the token's scopes: read
+        tools need `library:read` or `user:read`; write tools need `user:write` and are never listed
+        without it. No tool deletes anything, administers the server, or reaches outside the user's
+        own data. Tool contracts are in README "AI and MCP".
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - name: Mcp-Session-Id
+          in: header
+          schema: {type: string}
+        - name: MCP-Protocol-Version
+          in: header
+          schema: {type: string}
+          example: '2025-11-25'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcMessage'
+            example:
+              jsonrpc: '2.0'
+              id: 1
+              method: tools/call
+              params:
+                name: search_catalog
+                arguments: {query: blue hour, types: [track]}
+      responses:
+        '200':
+          description: A JSON-RPC response, or an SSE stream of messages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcMessage'
+            text/event-stream:
+              schema:
+                type: string
+        '202':
+          description: Accepted (for notifications and responses sent by the client).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      tags: [AI]
+      operationId: mcpStream
+      summary: Open the MCP server-to-client SSE stream
+      security:
+        - oauth2: [library:read]
+        - personalToken: [library:read]
+      parameters:
+        - name: Mcp-Session-Id
+          in: header
+          schema: {type: string}
+      responses:
+        '200':
+          description: An SSE stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          description: The server offers no standalone stream.
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: |
+        OAuth 2.1. Public clients use the authorization code flow with S256 PKCE, or the device
+        authorization grant (RFC 8628) on TVs and command lines. Access tokens are short-lived
+        (an hour is typical); refresh tokens rotate on every use and need `offline_access`.
+        Endpoint locations come from `/.well-known/oauth-authorization-server`.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://music.example.com/oauth/authorize
+          tokenUrl: https://music.example.com/oauth/token
+          refreshUrl: https://music.example.com/oauth/token
+          scopes:
+            library:read: Browse and search the catalog, read lyrics and fetch artwork.
+            media:read: Stream and download audio through playback decisions and signed URLs.
+            user:read: Read the user's favourites, ratings, My Library, playlists, queues and play history.
+            user:write: Change the user's favourites, ratings, My Library, playlists and queues.
+            plays:write: Record plays and report now playing. Nothing else.
+            account: Manage the user's personal access tokens, app sessions and webhooks.
+            admin: Manage users, scans and server settings. Only granted to admins.
+            offline_access: Receive a refresh token.
+    personalToken:
+      type: http
+      scheme: bearer
+      description: |
+        A personal access token created with `POST /me/tokens`, sent as `Authorization: Bearer`.
+        Tokens start with `dulcet_pat_`, access tokens with `dulcet_at_` and refresh tokens with
+        `dulcet_rt_`, so secret scanners can find a leaked one. The required scopes listed on each
+        operation apply to personal tokens too.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: An opaque cursor from a previous page's `nextCursor`. Omit for the first page.
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      description: Page size. The server may return fewer items than asked, even zero, and still have more.
+      schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+    Scope:
+      name: scope
+      in: query
+      description: |
+        `all` (default) is everything the user can see (Browse). `library` is My Library: items that
+        are members, plus artists and albums that contain a member. `favorites` is favourites.
+        Open set.
+      schema: {type: string, default: all}
+    LibraryId:
+      name: libraryId
+      in: query
+      description: Only items in this library (top-level folder). Repeatable.
+      schema: {type: string}
+    Ids:
+      name: ids
+      in: query
+      description: Comma-separated ids to fetch, at most `limits.maxBatchSize`. Unknown ids are left out of the result.
+      schema: {type: string}
+    ArtistId:
+      name: artistId
+      in: path
+      required: true
+      schema: {type: string}
+    AlbumId:
+      name: albumId
+      in: path
+      required: true
+      schema: {type: string}
+    TrackId:
+      name: trackId
+      in: path
+      required: true
+      schema: {type: string}
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      description: Any artist, album, track or (for favourites) playlist id. Ids are unique across types, so the type is implied.
+      schema: {type: string}
+    PlaylistId:
+      name: playlistId
+      in: path
+      required: true
+      schema: {type: string}
+    EntryId:
+      name: entryId
+      in: path
+      required: true
+      schema: {type: string}
+    QueueId:
+      name: queueId
+      in: path
+      required: true
+      description: Chosen by the client; normally its stable device id.
+      schema: {type: string, maxLength: 128}
+    WebhookId:
+      name: webhookId
+      in: path
+      required: true
+      schema: {type: string}
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: {type: string}
+    Grant:
+      name: grant
+      in: path
+      required: true
+      description: An opaque, signed, expiring grant. Never log it.
+      schema: {type: string}
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: An ETag from an earlier response. A match answers 304 with no body.
+      schema: {type: string}
+    IfMatch:
+      name: If-Match
+      in: header
+      description: The revision ETag last read. A mismatch answers 412 with the current state.
+      schema: {type: string}
+    IfMatchRequired:
+      name: If-Match
+      in: header
+      required: true
+      description: The revision ETag last read. Absent answers 428; a mismatch answers 412.
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: |
+        A client-generated unique string (a UUID) that makes a POST safe to retry. The server keeps
+        each key with a fingerprint of its request for at least 24 hours. A repeat returns the first
+        response; the same key with a different request answers 422 `idempotency-key-reused`.
+      schema: {type: string, maxLength: 255}
+
+  headers:
+    ETag:
+      description: The representation's version; quote-wrapped, strong.
+      schema: {type: string}
+      example: '"r_10431"'
+    SyncCursor:
+      description: |
+        The change-feed position this response was read at. A client that caches the response can
+        bring it up to date by reading `/sync/changes` from this cursor.
+      schema: {type: string}
+      example: sc_AQAAAAAAKNY
+    Location:
+      description: The new resource's URL.
+      schema: {type: string, format: uri-reference}
+    CacheControl:
+      description: Caching directives.
+      schema: {type: string}
+      example: public, max-age=31536000, immutable
+    NoStore:
+      description: The response holds a secret or a signed URL and must not be cached.
+      schema: {type: string, const: no-store}
+    RetryAfter:
+      description: Seconds to wait before retrying (RFC 9110 §10.2.3).
+      schema: {type: integer, minimum: 0}
+
+  responses:
+    NotModified:
+      description: The representation has not changed since the ETag sent.
+      headers:
+        ETag:
+          $ref: '#/components/headers/ETag'
+    Replaced:
+      description: |
+        The id was merged into another. `Location` points at the surviving resource; the change feed
+        carries a tombstone with `replacedBy`. Clients rewrite stored references.
+      headers:
+        Location:
+          $ref: '#/components/headers/Location'
+    BadRequest:
+      description: The request is malformed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:invalid-request
+            title: The request is not valid.
+            status: 400
+            detail: limit must be between 1 and 500.
+            errors:
+              - {pointer: '#/limit', detail: must be between 1 and 500}
+    Unauthorized:
+      description: No valid token. The `WWW-Authenticate` header names the scheme and, for OAuth clients, the resource metadata.
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+          example: Bearer resource_metadata="https://music.example.com/.well-known/oauth-protected-resource"
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:unauthenticated
+            title: A valid token is required.
+            status: 401
+    Forbidden:
+      description: The token lacks a scope, or the user lacks a permission.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:insufficient-scope
+            title: The token does not hold the required scope.
+            status: 403
+            requiredScopes: [user:write]
+    NotFound:
+      description: No such resource, or the user cannot see it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:not-found
+            title: Not found.
+            status: 404
+    Conflict:
+      description: The request conflicts with the current state.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:conflict
+            title: The resource changed while this list was being read.
+            status: 409
+    PreconditionFailed:
+      description: '`If-Match` did not match. The body carries the current representation in `current`.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:revision-mismatch
+            title: The resource was changed by someone else.
+            status: 412
+            currentRevision: r_10460
+    PreconditionRequired:
+      description: This write requires `If-Match`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:precondition-required
+            title: Send If-Match with the revision you last read.
+            status: 428
+    UnprocessableContent:
+      description: The request is well-formed but cannot be applied (for example an unknown track id in a playlist, or a reused idempotency key).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:unknown-item
+            title: An id in the request is not in the catalog.
+            status: 422
+            errors:
+              - {pointer: '#/trackIds/1', detail: trk_zzz is not in the catalog}
+    TooManyRequests:
+      description: Rate limited. Wait `Retry-After` seconds.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:rate-limited
+            title: Too many requests.
+            status: 429
+    CursorExpired:
+      description: The sync cursor is too old or from another server incarnation. Resync from `start=snapshot` or `start=now`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:cursor-expired
+            title: This sync cursor can no longer be served.
+            status: 410
+            detail: The server keeps 90 days of changes. Start a new sync.
+    MediaGrantInvalid:
+      description: The signed URL expired, was revoked or was tampered with. Ask for a new one.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:dulcet:problem:media-grant-expired
+            title: This media URL has expired.
+            status: 403
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details. `type` is a stable URN that clients switch on; `title` and `detail` are for people and may be localised.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          description: |
+            Known values: `urn:dulcet:problem:` + `invalid-request`, `unauthenticated`,
+            `insufficient-scope`, `permission-denied`, `not-found`, `conflict`, `revision-mismatch`,
+            `precondition-required`, `unknown-item`, `idempotency-key-reused`, `rate-limited`,
+            `cursor-expired`, `media-grant-expired`, `unsupported-media`, `server-error`,
+            `unavailable`. Open set; treat an unknown type by its `status`.
+          examples: ['urn:dulcet:problem:not-found']
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string}
+        instance:
+          type: string
+          description: An id for this occurrence, which the server's own logs also carry.
+        errors:
+          type: array
+          description: Per-field problems, each pointing into the request.
+          items:
+            type: object
+            required: [detail]
+            properties:
+              pointer: {type: string, description: 'A JSON Pointer into the request body, or `#/<name>` for a parameter.'}
+              detail: {type: string}
+        requiredScopes:
+          type: array
+          items: {type: string}
+        currentRevision: {type: string}
+        current:
+          description: The current representation, on a 412.
+          type: object
+
+    Extensions:
+      type: object
+      description: Vendor data, keyed by a reverse-DNS capability name the server advertises. Clients ignore keys they do not know.
+      additionalProperties: true
+      examples:
+        - org.example.moods: {energy: 0.42}
+
+    Discovery:
+      type: object
+      required: [standard, apis, server]
+      properties:
+        standard:
+          type: string
+          const: dulcet
+        apis:
+          type: array
+          items:
+            type: object
+            required: [version, baseUrl, status]
+            properties:
+              version: {type: string, description: The major version.}
+              baseUrl: {type: string, format: uri}
+              status: {type: string, description: 'Known values: `current`, `deprecated`, `preview`.'}
+              sunsetAt: {type: [string, 'null'], format: date-time}
+        server:
+          $ref: '#/components/schemas/ServerInfo'
+        authorizationServer: {type: string, format: uri, description: The OAuth issuer; append `/.well-known/oauth-authorization-server`.}
+        openapi: {type: string, format: uri}
+        mcp: {type: [string, 'null'], format: uri}
+        opensubsonic:
+          type: [string, 'null']
+          format: uri
+          description: Where this server also serves OpenSubsonic `/rest`, if it does.
+
+    ServerInfo:
+      type: object
+      required: [name, version, instanceId]
+      properties:
+        name: {type: string}
+        version: {type: string}
+        instanceId:
+          type: string
+          description: Changes when the server's database is replaced or restored, which also invalidates sync cursors.
+
+    Capabilities:
+      type: object
+      required: [apiVersion, server, capabilities, limits, auth]
+      properties:
+        apiVersion:
+          type: string
+          description: '`1.<minor>`. Minor versions only add.'
+          pattern: '^1\.[0-9]+$'
+        server:
+          $ref: '#/components/schemas/ServerInfo'
+        capabilities:
+          type: object
+          description: |
+            Capability name to descriptor. Core names start with `dulcet.`; vendor names are
+            reverse-DNS (`org.example.radio`). Clients act only on names and versions they know.
+          additionalProperties:
+            $ref: '#/components/schemas/Capability'
+        limits:
+          type: object
+          required: [maxPageSize, maxBatchSize, syncRetentionDays, mediaUrlTtlSeconds]
+          properties:
+            maxPageSize: {type: integer}
+            maxBatchSize: {type: integer}
+            syncRetentionDays: {type: integer, minimum: 30}
+            mediaUrlTtlSeconds: {type: integer, minimum: 3600}
+        auth:
+          type: object
+          required: [flows, scopes]
+          properties:
+            flows:
+              type: array
+              description: 'Known values: `authorization_code`, `device_code`, `refresh_token`, `personal_token`.'
+              items: {type: string}
+            scopes:
+              type: array
+              items: {type: string}
+        permissions:
+          type: object
+          description: Present only with a token. What this token and user may do.
+          properties:
+            scopes:
+              type: array
+              items: {type: string}
+            download: {type: boolean}
+            share: {type: boolean}
+            admin: {type: boolean}
+
+    Capability:
+      type: object
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items: {type: integer, minimum: 1}
+      additionalProperties: true
+
+    AuthorizationServerMetadata:
+      type: object
+      required: [issuer, authorization_endpoint, token_endpoint, response_types_supported]
+      properties:
+        issuer: {type: string, format: uri}
+        authorization_endpoint: {type: string, format: uri}
+        token_endpoint: {type: string, format: uri}
+        device_authorization_endpoint: {type: string, format: uri}
+        revocation_endpoint: {type: string, format: uri}
+        registration_endpoint: {type: string, format: uri}
+        grant_types_supported:
+          type: array
+          items: {type: string}
+        response_types_supported:
+          type: array
+          items: {type: string}
+        code_challenge_methods_supported:
+          type: array
+          items: {type: string}
+        token_endpoint_auth_methods_supported:
+          type: array
+          items: {type: string}
+        client_id_metadata_document_supported: {type: boolean}
+        scopes_supported:
+          type: array
+          items: {type: string}
+      additionalProperties: true
+
+    ProtectedResourceMetadata:
+      type: object
+      required: [resource, authorization_servers]
+      properties:
+        resource: {type: string, format: uri}
+        authorization_servers:
+          type: array
+          items: {type: string, format: uri}
+        bearer_methods_supported:
+          type: array
+          items: {type: string}
+        scopes_supported:
+          type: array
+          items: {type: string}
+      additionalProperties: true
+
+    TokenRequest:
+      type: object
+      required: [grant_type, client_id]
+      properties:
+        grant_type:
+          type: string
+          description: '`authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`.'
+        client_id: {type: string}
+        code: {type: string}
+        redirect_uri: {type: string}
+        code_verifier: {type: string}
+        refresh_token: {type: string}
+        device_code: {type: string}
+        scope: {type: string, description: 'On refresh, an equal or narrower scope.'}
+        resource: {type: string, format: uri}
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token: {type: string}
+        token_type: {type: string, const: Bearer}
+        expires_in: {type: integer}
+        refresh_token: {type: string}
+        scope: {type: string}
+
+    OAuthError:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+        error_description: {type: string}
+
+    DeviceAuthorizationRequest:
+      type: object
+      required: [client_id]
+      properties:
+        client_id: {type: string}
+        scope: {type: string}
+
+    DeviceAuthorizationResponse:
+      type: object
+      required: [device_code, user_code, verification_uri, expires_in]
+      properties:
+        device_code: {type: string}
+        user_code: {type: string}
+        verification_uri: {type: string, format: uri}
+        verification_uri_complete: {type: string, format: uri}
+        expires_in: {type: integer}
+        interval: {type: integer, default: 5}
+
+    RevocationRequest:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string}
+        token_type_hint: {type: string}
+        client_id: {type: string}
+
+    ClientRegistrationRequest:
+      type: object
+      required: [client_name, redirect_uris]
+      properties:
+        client_name: {type: string}
+        client_uri: {type: string, format: uri}
+        logo_uri: {type: string, format: uri}
+        redirect_uris:
+          type: array
+          items: {type: string}
+        grant_types:
+          type: array
+          items: {type: string}
+        token_endpoint_auth_method: {type: string, const: none}
+      additionalProperties: true
+
+    ClientRegistrationResponse:
+      allOf:
+        - $ref: '#/components/schemas/ClientRegistrationRequest'
+        - type: object
+          required: [client_id]
+          properties:
+            client_id: {type: string}
+
+    User:
+      type: object
+      required: [id, username, roles, permissions, libraryIds, createdAt]
+      properties:
+        id: {type: string}
+        username: {type: string}
+        displayName: {type: string}
+        roles:
+          type: array
+          description: 'Known values: `admin`.'
+          items: {type: string}
+        permissions:
+          $ref: '#/components/schemas/UserPermissions'
+        libraryIds:
+          type: array
+          items: {type: string}
+        createdAt: {type: string, format: date-time}
+        extensions:
+          $ref: '#/components/schemas/Extensions'
+
+    UserPermissions:
+      type: object
+      properties:
+        download: {type: boolean, description: May download original files.}
+        share: {type: boolean, description: May make playlists visible to others and share now playing.}
+      additionalProperties: {type: boolean}
+
+    Me:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: object
+              required: [id, kind, scopes]
+              properties:
+                id: {type: string}
+                kind: {type: string, description: 'Known values: `oauth`, `personal`.'}
+                scopes:
+                  type: array
+                  items: {type: string}
+                clientName: {type: string}
+
+    UserCreate:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string, minLength: 1, maxLength: 64}
+        displayName: {type: string}
+        password: {type: string, minLength: 8, writeOnly: true}
+        roles:
+          type: array
+          items: {type: string}
+        permissions:
+          $ref: '#/components/schemas/UserPermissions'
+        libraryIds:
+          type: array
+          items: {type: string}
+
+    UserUpdate:
+      type: object
+      properties:
+        displayName: {type: string}
+        password: {type: string, minLength: 8, writeOnly: true}
+        roles:
+          type: array
+          items: {type: string}
+        permissions:
+          $ref: '#/components/schemas/UserPermissions'
+        libraryIds:
+          type: array
+          items: {type: string}
+
+    UserPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+
+    Token:
+      type: object
+      required: [id, kind, name, scopes, createdAt]
+      properties:
+        id: {type: string}
+        kind: {type: string, description: 'Known values: `personal`, `oauth`.'}
+        name: {type: string}
+        clientName: {type: string}
+        scopes:
+          type: array
+          items: {type: string}
+        createdAt: {type: string, format: date-time}
+        lastUsedAt: {type: [string, 'null'], format: date-time}
+        expiresAt: {type: [string, 'null'], format: date-time}
+        hint: {type: string, description: 'The first characters of the secret, to recognise it.'}
+
+    TokenPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Token'
+
+    PersonalTokenCreate:
+      type: object
+      required: [name, scopes]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        scopes:
+          type: array
+          minItems: 1
+          items: {type: string}
+        expiresInDays: {type: [integer, 'null'], minimum: 1, description: Null for no expiry.}
+
+    PersonalTokenCreated:
+      allOf:
+        - $ref: '#/components/schemas/Token'
+        - type: object
+          required: [secret]
+          properties:
+            secret: {type: string, description: Shown once. Store it like a password.}
+
+    PageInfo:
+      type: object
+      required: [nextCursor]
+      properties:
+        nextCursor:
+          type: [string, 'null']
+          description: Null on the last page. Opaque; never parse or build one.
+        total:
+          type: integer
+          description: The collection's size when this page was read, when the server can count cheaply. May be absent.
+
+    ItemRef:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+        type: {type: string, description: 'Known values: `artist`, `album`, `track`, `playlist`.'}
+        name: {type: string, description: An artist's name or a playlist's name.}
+        title: {type: string, description: An album's or track's title.}
+
+    ArtistRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+
+    UserRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+
+    AlbumRef:
+      type: object
+      required: [id, title]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        artwork:
+          $ref: '#/components/schemas/Artwork'
+
+    Artwork:
+      type: object
+      required: [id]
+      description: An image. Fetch with `GET /artwork/{id}` or a signed URL.
+      properties:
+        id: {type: string}
+        width: {type: integer}
+        height: {type: integer}
+        color: {type: string, description: 'A dominant colour as `#rrggbb`, for placeholders.', pattern: '^#[0-9a-fA-F]{6}$'}
+
+    ExternalIds:
+      type: object
+      description: Identifiers in public registries, so items can be matched across servers and services.
+      properties:
+        musicbrainzArtistId: {type: string, format: uuid}
+        musicbrainzReleaseId: {type: string, format: uuid}
+        musicbrainzReleaseGroupId: {type: string, format: uuid}
+        musicbrainzRecordingId: {type: string, format: uuid}
+        musicbrainzTrackId: {type: string, format: uuid}
+        isrc: {type: string}
+        barcode: {type: string}
+      additionalProperties: {type: string}
+
+    Credit:
+      type: object
+      required: [artist, role]
+      properties:
+        artist:
+          $ref: '#/components/schemas/ArtistRef'
+        role:
+          type: string
+          description: 'Known values: `artist`, `albumArtist`, `featured`, `composer`, `lyricist`, `producer`, `remixer`, `conductor`, `performer`, `arranger`. Open set.'
+        creditedAs: {type: string, description: 'The name exactly as tagged, when it differs from the artist''s name.'}
+
+    Genre:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        type: {type: string, const: genre}
+        name: {type: string}
+        albumCount: {type: integer}
+        trackCount: {type: integer}
+
+    Library:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        type: {type: string, const: library}
+        name: {type: string}
+        trackCount: {type: integer}
+
+    UserState:
+      type: object
+      description: The requesting user's state for an item. Present on every catalog read; absent from catalog entries in the change feed, where it travels as `itemState`.
+      required: [favoritedAt, rating, playCount, lastPlayedAt, libraryAddedAt]
+      properties:
+        favoritedAt: {type: [string, 'null'], format: date-time}
+        rating: {type: [integer, 'null'], minimum: 1, maximum: 10, description: 1 to 10. A five-star client shows half stars or maps n stars to 2n.}
+        playCount: {type: integer, minimum: 0}
+        lastPlayedAt: {type: [string, 'null'], format: date-time}
+        libraryAddedAt: {type: [string, 'null'], format: date-time, description: When the item became a direct My Library member; null if it is not one.}
+
+    ItemState:
+      allOf:
+        - type: object
+          required: [itemId, itemType, revision]
+          properties:
+            itemId: {type: string}
+            itemType: {type: string, description: 'Known values: `artist`, `album`, `track`, `playlist`.'}
+            revision: {type: string}
+        - $ref: '#/components/schemas/UserState'
+
+    Artist:
+      type: object
+      required: [id, type, name, revision]
+      properties:
+        id: {type: string}
+        type: {type: string, const: artist}
+        name: {type: string}
+        sortName: {type: string}
+        albumCount: {type: integer}
+        trackCount: {type: integer}
+        artwork:
+          $ref: '#/components/schemas/Artwork'
+        externalIds:
+          $ref: '#/components/schemas/ExternalIds'
+        userState:
+          $ref: '#/components/schemas/UserState'
+        revision: {type: string}
+        extensions:
+          $ref: '#/components/schemas/Extensions'
+
+    ArtistPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Artist'
+
+    Album:
+      type: object
+      required: [id, type, title, credits, artistDisplay, trackCount, durationMs, revision]
+      properties:
+        id: {type: string}
+        type: {type: string, const: album}
+        title: {type: string}
+        sortTitle: {type: string}
+        edition: {type: string, description: 'An edition or version name, such as "Deluxe".'}
+        credits:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credit'
+        artistDisplay: {type: string, description: 'The artist line to show, as tagged.'}
+        releaseDate:
+          type: string
+          description: A partial date, `YYYY`, `YYYY-MM` or `YYYY-MM-DD`.
+          pattern: '^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$'
+        originalReleaseDate:
+          type: string
+          pattern: '^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$'
+        releaseTypes:
+          type: array
+          description: 'Known values: `album`, `ep`, `single`, `compilation`, `live`, `soundtrack`, `remix`, `demo`. Open set.'
+          items: {type: string}
+        isCompilation: {type: boolean}
+        genres:
+          type: array
+          items:
+            $ref: '#/components/schemas/Genre'
+        label: {type: string}
+        trackCount: {type: integer}
+        discCount: {type: integer}
+        durationMs: {type: integer}
+        artwork:
+          $ref: '#/components/schemas/Artwork'
+        externalIds:
+          $ref: '#/components/schemas/ExternalIds'
+        addedAt: {type: string, format: date-time}
+        userState:
+          $ref: '#/components/schemas/UserState'
+        revision: {type: string}
+        extensions:
+          $ref: '#/components/schemas/Extensions'
+
+    AlbumDetail:
+      allOf:
+        - $ref: '#/components/schemas/Album'
+        - type: object
+          required: [discs]
+          properties:
+            discs:
+              type: array
+              items:
+                type: object
+                required: [number, tracks]
+                properties:
+                  number: {type: integer}
+                  title: {type: string}
+                  tracks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Track'
+
+    AlbumPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Album'
+
+    AudioInfo:
+      type: object
+      properties:
+        codec: {type: string, description: 'Known values: `flac`, `alac`, `aac`, `mp3`, `opus`, `vorbis`, `wav`, `aiff`, `wavpack`, `ape`. Open set.'}
+        container: {type: string}
+        bitrate: {type: integer, description: 'Bits per second of the audio stream, without embedded pictures or padding.'}
+        sampleRate: {type: integer}
+        bitDepth: {type: integer}
+        channels: {type: integer}
+        sizeBytes: {type: integer}
+        lossless: {type: boolean}
+
+    Loudness:
+      type: object
+      description: ReplayGain-style values.
+      properties:
+        trackGainDb: {type: number}
+        trackPeak: {type: number}
+        albumGainDb: {type: number}
+        albumPeak: {type: number}
+
+    Track:
+      type: object
+      required: [id, type, title, album, credits, artistDisplay, durationMs, revision]
+      properties:
+        id: {type: string}
+        type: {type: string, const: track}
+        title: {type: string}
+        sortTitle: {type: string}
+        album:
+          $ref: '#/components/schemas/AlbumRef'
+        credits:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credit'
+        artistDisplay: {type: string}
+        discNumber: {type: integer}
+        trackNumber: {type: integer}
+        durationMs: {type: integer}
+        genres:
+          type: array
+          items:
+            $ref: '#/components/schemas/Genre'
+        releaseDate:
+          type: string
+          pattern: '^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$'
+        explicit: {type: [boolean, 'null']}
+        bpm: {type: number}
+        audio:
+          $ref: '#/components/schemas/AudioInfo'
+        loudness:
+          $ref: '#/components/schemas/Loudness'
+        lyrics:
+          type: object
+          properties:
+            available: {type: boolean}
+            synced: {type: boolean}
+        artwork:
+          $ref: '#/components/schemas/Artwork'
+        externalIds:
+          $ref: '#/components/schemas/ExternalIds'
+        addedAt: {type: string, format: date-time}
+        userState:
+          $ref: '#/components/schemas/UserState'
+        revision: {type: string}
+        extensions:
+          $ref: '#/components/schemas/Extensions'
+
+    TrackPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Track'
+
+    GenrePage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Genre'
+
+    LibraryPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Library'
+
+    Lyrics:
+      type: object
+      required: [trackId, documents]
+      properties:
+        trackId: {type: string}
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/LyricsDocument'
+
+    LyricsDocument:
+      type: object
+      required: [kind, synced, lines]
+      properties:
+        kind: {type: string, description: 'Known values: `main`, `translation`, `pronunciation`. Open set.'}
+        language: {type: string, description: A BCP 47 tag; `und` when unknown.}
+        synced: {type: boolean}
+        offsetMs: {type: integer, default: 0, description: Already applied to every time below; informational.}
+        source: {type: string, description: 'Known values: `embedded`, `sidecar`, `provider`. Open set.'}
+        provider: {type: string, description: 'When `source` is `provider`, its name, for attribution.'}
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/LyricsLine'
+
+    LyricsLine:
+      type: object
+      required: [text]
+      properties:
+        startMs: {type: integer, description: Absent on unsynced lyrics.}
+        endMs: {type: integer}
+        text: {type: string}
+        voice: {type: string, description: 'A singer or part label, for duets and backing vocals.'}
+        words:
+          type: array
+          description: Word or syllable timing, when the source has it.
+          items:
+            type: object
+            required: [startMs, text]
+            properties:
+              startMs: {type: integer}
+              endMs: {type: integer}
+              text: {type: string}
+
+    SearchResults:
+      type: object
+      properties:
+        artists:
+          $ref: '#/components/schemas/ArtistPage'
+        albums:
+          $ref: '#/components/schemas/AlbumPage'
+        tracks:
+          $ref: '#/components/schemas/TrackPage'
+        playlists:
+          $ref: '#/components/schemas/PlaylistPage'
+
+    DeviceProfile:
+      type: object
+      required: [directPlay]
+      properties:
+        name: {type: string}
+        maxBitrate: {type: integer, description: Bits per second; the ceiling for whatever the server sends.}
+        network: {type: string, description: 'Known values: `wifi`, `cellular`, `ethernet`, `unknown`.'}
+        directPlay:
+          type: array
+          description: Formats the device plays as-is.
+          items:
+            $ref: '#/components/schemas/FormatSupport'
+        transcodeTargets:
+          type: array
+          description: Formats the device accepts from a transcode, in order of preference.
+          items:
+            $ref: '#/components/schemas/FormatSupport'
+
+    FormatSupport:
+      type: object
+      required: [container, codec]
+      properties:
+        container: {type: string}
+        codec: {type: string}
+        maxSampleRate: {type: integer}
+        maxBitDepth: {type: integer}
+        maxChannels: {type: integer}
+
+    PlaybackRequest:
+      type: object
+      required: [trackId, profile]
+      properties:
+        trackId: {type: string}
+        purpose: {type: string, description: '`stream` (default) or `download`.', default: stream}
+        startMs: {type: integer, minimum: 0, default: 0, description: Start a transcode here. Direct files seek by byte range instead.}
+        profile:
+          $ref: '#/components/schemas/DeviceProfile'
+
+    PlaybackPlan:
+      type: object
+      required: [trackId, mode, url, expiresAt, mimeType, container, codec, durationMs, lengthExact, byteRanges]
+      properties:
+        trackId: {type: string}
+        mode: {type: string, description: '`direct` (the original file) or `transcode`. Open set.'}
+        reasons:
+          type: array
+          description: 'Why a transcode was chosen. Known values: `containerNotSupported`, `codecNotSupported`, `bitrateAboveLimit`, `sampleRateAboveLimit`, `bitDepthAboveLimit`, `channelsAboveLimit`, `startOffset`.'
+          items: {type: string}
+        url: {type: string, format: uri, description: A signed URL. Open it with no headers. Never log it.}
+        expiresAt: {type: string, format: date-time}
+        mimeType: {type: string}
+        container: {type: string}
+        codec: {type: string}
+        bitrate: {type: integer}
+        sampleRate: {type: integer}
+        bitDepth: {type: integer}
+        channels: {type: integer}
+        startMs: {type: integer}
+        durationMs: {type: integer}
+        contentLength: {type: [integer, 'null'], description: Bytes; an estimate unless `lengthExact`.}
+        lengthExact: {type: boolean}
+        byteRanges: {type: boolean, description: Whether the URL serves byte ranges now.}
+
+    MediaUrlRequest:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [kind, id]
+            properties:
+              kind: {type: string, description: '`artwork` (an artwork id) or `original` (a track id; the unaltered file).'}
+              id: {type: string}
+              size: {type: integer, description: 'For artwork, the longest edge in pixels.'}
+
+    MediaUrls:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: array
+          items:
+            type: object
+            required: [kind, id, url, expiresAt]
+            properties:
+              kind: {type: string}
+              id: {type: string}
+              url: {type: string, format: uri}
+              expiresAt: {type: string, format: date-time}
+
+    LibraryMemberPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items, counts]
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                required: [item, libraryAddedAt]
+                properties:
+                  item:
+                    $ref: '#/components/schemas/ItemRef'
+                  libraryAddedAt: {type: string, format: date-time}
+            counts:
+              type: object
+              description: Whole-library totals for the user, whatever the page or filter.
+              properties:
+                artist: {type: integer}
+                album: {type: integer}
+                track: {type: integer}
+
+    FavoritePage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                required: [item, favoritedAt]
+                properties:
+                  item:
+                    $ref: '#/components/schemas/ItemRef'
+                  favoritedAt: {type: string, format: date-time}
+
+    RatingSet:
+      type: object
+      required: [rating]
+      properties:
+        rating: {type: integer, minimum: 1, maximum: 10}
+
+    UserStateBatch:
+      type: object
+      required: [operations]
+      properties:
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [op, itemId]
+            properties:
+              op: {type: string, enum: [favorite, unfavorite, rate, unrate, libraryAdd, libraryRemove]}
+              itemId: {type: string}
+              rating: {type: integer, minimum: 1, maximum: 10}
+
+    UserStateBatchResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [status]
+            properties:
+              status: {type: integer, description: The HTTP status the single-item endpoint would have answered.}
+              problem:
+                $ref: '#/components/schemas/Problem'
+
+    Play:
+      type: object
+      required: [id, trackId, startedAt, listenedMs]
+      properties:
+        id: {type: string, format: uuid, description: Generated by the client when the listen begins. The server records each id once.}
+        trackId: {type: string}
+        startedAt: {type: string, format: date-time, description: Wall-clock time the listen began.}
+        listenedMs: {type: integer, minimum: 0, description: 'Progressing media time actually played, excluding pauses, buffering and skipped-over spans.'}
+        completed: {type: boolean, description: Whether playback reached the end of the track.}
+        deviceId: {type: string}
+        client: {type: string, description: 'The client''s name and version, such as "Dulcet/1.4".'}
+        context:
+          type: object
+          description: Where the play came from.
+          properties:
+            type: {type: string, description: 'Known values: `album`, `artist`, `playlist`, `search`, `library`, `queue`, `radio`.'}
+            id: {type: string}
+        offline: {type: boolean, description: Played without a connection and submitted later.}
+        recordedAt: {type: string, format: date-time, readOnly: true}
+
+    PlayPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Play'
+
+    PlaySubmission:
+      type: object
+      required: [plays]
+      properties:
+        plays:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/Play'
+
+    PlaySubmissionResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [id, status]
+            properties:
+              id: {type: string}
+              status: {type: string, description: 'Known values: `recorded`, `duplicate`, `unknownTrack`, `ignored`. Only `recorded` changed a count.'}
+              detail: {type: string}
+
+    NowPlayingReport:
+      type: object
+      required: [deviceId, trackId, state, positionMs]
+      properties:
+        deviceId: {type: string}
+        deviceName: {type: string}
+        trackId: {type: string}
+        state: {type: string, description: 'Known values: `playing`, `paused`, `buffering`.'}
+        positionMs: {type: integer, minimum: 0}
+        ttlSeconds: {type: integer, minimum: 30, maximum: 600, default: 120}
+
+    NowPlaying:
+      allOf:
+        - $ref: '#/components/schemas/NowPlayingReport'
+        - type: object
+          required: [userId, updatedAt, expiresAt]
+          properties:
+            userId: {type: string}
+            userName: {type: string}
+            track:
+              $ref: '#/components/schemas/Track'
+            updatedAt: {type: string, format: date-time}
+            expiresAt: {type: string, format: date-time}
+
+    PlaylistCreate:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        description: {type: string}
+        visibility: {type: string, description: '`private` (default) or `public` (every user of this server can read it).', default: private}
+        trackIds:
+          type: array
+          maxItems: 10000
+          items: {type: string}
+
+    PlaylistUpdate:
+      type: object
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        description: {type: [string, 'null']}
+        visibility: {type: string}
+
+    Playlist:
+      type: object
+      required: [id, type, name, owner, visibility, readOnly, itemCount, revision]
+      properties:
+        id: {type: string}
+        type: {type: string, const: playlist}
+        name: {type: string}
+        description: {type: string}
+        owner:
+          $ref: '#/components/schemas/UserRef'
+        visibility: {type: string, description: 'Known values: `private`, `public`.'}
+        readOnly: {type: boolean, description: True when the requesting user cannot edit it.}
+        itemCount: {type: integer}
+        durationMs: {type: integer}
+        artwork:
+          $ref: '#/components/schemas/Artwork'
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        revision: {type: string, description: Changes on every edit to the playlist or its entries; send it as `If-Match`.}
+        extensions:
+          $ref: '#/components/schemas/Extensions'
+
+    PlaylistPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Playlist'
+
+    PlaylistItem:
+      type: object
+      required: [entryId, position, track]
+      properties:
+        entryId: {type: string}
+        position: {type: integer, minimum: 0}
+        track:
+          $ref: '#/components/schemas/Track'
+        addedAt: {type: string, format: date-time}
+
+    PlaylistItemPage:
+      allOf:
+        - $ref: '#/components/schemas/PageInfo'
+        - type: object
+          required: [items, revision]
+          properties:
+            revision:
+              type: string
+              description: The playlist revision every page of this walk was read at. If the playlist changes mid-walk, the next page answers 409 and the walk restarts.
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/PlaylistItem'
+
+    PlaylistItemsReplace:
+      type: object
+      required: [trackIds]
+      properties:
+        trackIds:
+          type: array
+          maxItems: 10000
+          items: {type: string}
+
+    PlaylistItemsInsert:
+      type: object
+      required: [trackIds]
+      properties:
+        trackIds:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: {type: string}
+        beforeEntryId: {type: [string, 'null'], description: Insert before this entry; null or absent appends.}
+
+    PlaylistItemMove:
+      type: object
+      properties:
+        beforeEntryId: {type: [string, 'null'], description: Move before this entry; null moves to the end.}
+
+    QueueEntry:
+      type: object
+      required: [entryId, trackId]
+      properties:
+        entryId: {type: string, description: 'Chosen by the client, unique within the queue.'}
+        trackId: {type: string}
+        track:
+          $ref: '#/components/schemas/Track'
+
+    QueueSave:
+      type: object
+      required: [entries]
+      properties:
+        deviceName: {type: string}
+        entries:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/QueueEntry'
+        currentEntryId: {type: [string, 'null']}
+        positionMs: {type: integer, minimum: 0, default: 0}
+        shuffle: {type: boolean, default: false}
+        repeat: {type: string, description: 'Known values: `off`, `all`, `one`.', default: 'off'}
+
+    QueueSummary:
+      type: object
+      required: [id, entryCount, updatedAt, revision]
+      properties:
+        id: {type: string}
+        deviceName: {type: string}
+        entryCount: {type: integer}
+        currentTrack:
+          $ref: '#/components/schemas/Track'
+        positionMs: {type: integer}
+        updatedAt: {type: string, format: date-time}
+        revision: {type: string}
+
+    Queue:
+      allOf:
+        - $ref: '#/components/schemas/QueueSave'
+        - type: object
+          required: [id, updatedAt, revision]
+          properties:
+            id: {type: string}
+            updatedAt: {type: string, format: date-time}
+            updatedBy: {type: string, description: The client that saved it last.}
+            revision: {type: string}
+
+    Change:
+      type: object
+      required: [op, type, id, revision, at]
+      properties:
+        op: {type: string, description: '`upsert` (the entity now looks like `resource`) or `delete` (a tombstone). Open set; skip an op you do not know.'}
+        type: {type: string, description: 'Known values: `artist`, `album`, `track`, `genre`, `library`, `itemState`, `playlist`, `play`, `queue`. Open set; skip a type you do not know.'}
+        id: {type: string, description: 'The entity''s id. For `itemState`, the item''s id.'}
+        revision: {type: string, description: Matches the entity's `revision` and ETag after this change.}
+        at: {type: string, format: date-time}
+        resource:
+          type: object
+          description: On `upsert`, the entity's current representation, shaped as its own endpoint returns it (catalog entities without `userState`). A server may coalesce several changes to one entity into its latest state.
+        replacedBy: {type: string, description: 'On `delete`, the id this entity was merged into, if any.'}
+
+    ChangePage:
+      type: object
+      required: [changes, nextCursor, hasMore, phase]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Change'
+        nextCursor: {type: string, description: Always present. Store it once `hasMore` is false.}
+        hasMore: {type: boolean}
+        phase: {type: string, description: '`snapshot` while a snapshot is being delivered, then `changes`.'}
+
+    Webhook:
+      type: object
+      required: [id, url, events, active, createdAt]
+      properties:
+        id: {type: string}
+        url: {type: string, format: uri}
+        events:
+          type: array
+          description: 'Known values: `play.recorded`, `nowPlaying.changed`, `itemState.changed`, `playlist.changed`, `library.changed`, `scan.completed`, `ping`. `*` for all the creator may read.'
+          items: {type: string}
+        description: {type: string}
+        active: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        lastDeliveryAt: {type: [string, 'null'], format: date-time}
+        consecutiveFailures: {type: integer}
+        disabledReason: {type: [string, 'null']}
+
+    WebhookCreate:
+      type: object
+      required: [url, events]
+      properties:
+        url: {type: string, format: uri}
+        events:
+          type: array
+          minItems: 1
+          items: {type: string}
+        description: {type: string}
+
+    WebhookUpdate:
+      type: object
+      properties:
+        events:
+          type: array
+          items: {type: string}
+        description: {type: string}
+        active: {type: boolean}
+
+    WebhookCreated:
+      allOf:
+        - $ref: '#/components/schemas/Webhook'
+        - type: object
+          required: [secret]
+          properties:
+            secret: {type: string, description: '`whsec_` plus base64. Shown once.'}
+
+    WebhookDelivery:
+      type: object
+      required: [id, event, attemptedAt]
+      properties:
+        id: {type: string}
+        event: {type: string}
+        attemptedAt: {type: string, format: date-time}
+        responseStatus: {type: [integer, 'null']}
+        error: {type: [string, 'null']}
+
+    Scan:
+      type: object
+      required: [id, kind, state]
+      properties:
+        id: {type: string}
+        kind: {type: string, description: '`quick` (changed files only) or `full`.'}
+        state: {type: string, description: 'Known values: `queued`, `running`, `completed`, `failed`.'}
+        startedAt: {type: [string, 'null'], format: date-time}
+        finishedAt: {type: [string, 'null'], format: date-time}
+        counts:
+          type: object
+          properties:
+            added: {type: integer}
+            updated: {type: integer}
+            removed: {type: integer}
+        error: {type: string}
+
+    ScanStart:
+      type: object
+      properties:
+        kind: {type: string, default: quick}
+
+    JsonRpcMessage:
+      type: object
+      required: [jsonrpc]
+      properties:
+        jsonrpc: {type: string, const: '2.0'}
+        id: {type: [string, integer]}
+        method: {type: string}
+        params: {type: object}
+        result: {type: object}
+        error:
+          type: object
+          properties:
+            code: {type: integer}
+            message: {type: string}
