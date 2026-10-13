@@ -241,21 +241,24 @@ struct DulcetAccountConnectionView: View {
     private var connectionForm: some View {
         Group {
             credentialRow(DulcetStrings.serverAddress) {
-                TextField("", text: $store.accountServerURL, prompt: Text(DulcetStrings.serverAddressPlaceholder))
+                TextField(DulcetStrings.serverAddress, text: $store.accountServerURL, prompt: Text(DulcetStrings.serverAddressPlaceholder))
+                    .labelsHidden()
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityLabel(DulcetStrings.serverAddress)
                     .accessibilityIdentifier("dulcet.account-connect.server-address")
                     .focused($focusedControl, equals: .serverAddress)
             }
             credentialRow(DulcetStrings.username) {
-                TextField("", text: $store.accountUsername)
+                TextField(DulcetStrings.username, text: $store.accountUsername)
+                    .labelsHidden()
                     .dulcetCredentialInput(.username)
                     .accessibilityLabel(DulcetStrings.username)
                     .accessibilityIdentifier("dulcet.account-connect.username")
                     .focused($focusedControl, equals: .username)
             }
             credentialRow(DulcetStrings.password) {
-                SecureField("", text: $store.accountPassword)
+                SecureField(DulcetStrings.password, text: $store.accountPassword)
+                    .labelsHidden()
                     .dulcetCredentialInput(.password)
                     .accessibilityLabel(DulcetStrings.password)
                     .accessibilityIdentifier("dulcet.account-connect.password")
@@ -330,7 +333,7 @@ struct DulcetAccountConnectionView: View {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.username)
                     .font(.headline)
-                TextField("", text: $store.accountUsername)
+                TextField(DulcetStrings.username, text: $store.accountUsername)
                     .dulcetTVTextField(focused: focusedControl == .username)
                     .dulcetCredentialInput(.username)
                     .submitLabel(.next)
@@ -343,7 +346,7 @@ struct DulcetAccountConnectionView: View {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.password)
                     .font(.headline)
-                SecureField("", text: $store.accountPassword)
+                SecureField(DulcetStrings.password, text: $store.accountPassword)
                     .dulcetTVTextField(focused: focusedControl == .password)
                     .dulcetCredentialInput(.password)
                     .submitLabel(.next)
