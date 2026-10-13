@@ -7844,6 +7844,14 @@ establish the earlier process's lifecycle. Signed Keychain relaunch proofs must 
 connected without tapping Reconnect; their existing receipts evidence the earlier proof only.
 New automatic-reconnect signed evidence requires a signed rerun.
 
+**2026-10-12 — My Library on Dulcet Server**
+The apps now offer My Library on a server that advertises `dulcetLibrary` v1, and only there
+(§29.9). The core detects the extension per account, keeps a per-account read model refreshed by a
+clock probe, a totals-checked `since` read or a stable full read, reads the `dulcetInLibrary` flag
+on ordinary responses, and sends adds and removes through the favourites outbox. On every other
+server nothing changes. Wire calls sit behind one transport seam, so another protocol can be added
+without changing the rest.
+
 **2026-10-12 — Dulcet Server retains identity through retags and refuses destructive scans.**
 §29.2 now records persistent track identity, existing-id migration, fingerprint-based moves, and
 catalog retention when the music root is unavailable or suddenly empty. §29.6 records import
@@ -13490,3 +13498,74 @@ OpenSubsonic server as that user.
 Dulcet Server is a second target for the `:core-conformance` JVM suites. The suites run against it
 with the same seeded corpus and users as the disposable Navidrome. Results and the reasons for each
 difference are recorded in `docs/dulcet-server/README.md`.
+
+### 29.9 My Library in the apps
+
+The client side of `dulcetLibrary` v1. Code: `core/.../MyLibrary.kt` (detection, refresh, read
+model, presentation), the favourites outbox (`MutationField.InLibrary`), `AppleMyLibraryClient` and
+`AndroidMyLibrary`. Tests: `MyLibraryTest`, against an in-process server that follows the wire
+contract.
+
+**Offered only where advertised.** The core asks `getOpenSubsonicExtensions` once per connection
+(and again after every successful reconnect) and keeps the answer per account. A server that does
+not advertise `dulcetLibrary` v1, or answers the call with an error (a Subsonic server without
+OpenSubsonic), makes My Library `unavailable`: nothing is paged, the `dulcetInLibrary` flag is not
+read, and the apps show Browse exactly as before. A server advertising only a later version is
+treated as not advertising one this client implements. `CapabilitySet.dulcetLibraryVersion()`
+gives the same answer from a negotiated capability set.
+
+**One seam for the wire.** Detection, paging and add/remove go through `MyLibraryTransport`.
+`OpenSubsonicMyLibraryTransport` is the only implementation; another protocol can replace it
+without touching the read model, the outbox or the presentation.
+
+**Read model.** Two tables per account (`my_library_state`, `my_library_item`), in the account's
+seen-cache namespace, so a rebind to another user purges them and sign-out removes them with the
+rest of the account's data (§14.7); the launch sweep counts them. Items keep a member flag, a local
+rank and the seen-cache issue sequence of what last wrote them, so an older read never overwrites a
+newer read or acknowledgement. Member items are exempt from seen-cache eviction. Lists paint from
+the device, offline included.
+
+**Refresh.** The reader traps hold (TRAPS 18–19): there is no change token, `changed` is compared
+for equality only, offset paging is not a snapshot, and `lastScan` is never read for user state.
+
+1. Probe with `size=1`. If `changed` equals the clock of the last complete read, nothing changed.
+2. Otherwise, if a complete read is held, read additions with `since` = held clock − 60 s. Accept
+   it only if, for every kind, the held members plus the listed ones number exactly the server's
+   total: the server's set contains what was added since and is contained in held ∪ added, so equal
+   sizes make them equal. Any removal fails the check.
+3. Otherwise read everything, all three kinds per page, until every kind's list ends. The read is
+   one state only if `changed` and the three totals are the same on its first and last page; then
+   members it did not list, written before it began, stop being members. If the library changes
+   under three reads in a row, the device keeps what it had, adds nothing as complete, and says
+   `unsettled`.
+
+Every listed element is also written to the seen-cache, so the lists have titles and artwork.
+
+**The flag on ordinary responses.** On an advertising server, every live artist, album or track
+object carries `dulcetInLibrary` when it is a member. Its presence makes the item a member; its
+absence demotes an item the device holds as a member, but never creates a "not a member" row on its
+own. Both are ordered by issue sequence like any cache write.
+
+**Writes.** Add and remove are `MutationField.InLibrary` (1 or 0) in the favourites outbox, so they
+inherit its guarantees (§18.6): shown at once, durable across relaunch, compacted per item, sent at
+least once (both calls are set-to-value and idempotent), adopted on acknowledgement, and rolled
+back on a permanent failure. Error 70 (unknown id) is a refusal. A change made before detection
+waits; once the server is known not to advertise the extension the change is refused with
+`CapabilityUnsupported(MyLibrary)`. Outcomes use the favourite outcome stream with field
+`inLibrary`. Removing an album also removes its member songs.
+
+**Presentation.** Albums are the explicit members plus the albums of member songs; artists are the
+explicit members plus the artists of member albums and songs; songs are the explicit members. An
+album is `added` when it is a member, `partial` when only some of its songs are, `notAdded` when a
+complete read says neither, and `unknown` before any complete read or flag. Items the device has no
+details for count toward membership but are left out of the lists until a read brings them. Sorts:
+newest added (by local rank; a pending add is newest) and alphabetical (case-folded, then id).
+
+**Limits, ASSUMED until the server says otherwise.** The wire carries no added time, and each list
+is ordered within its kind only. Ranks from one full read are aligned from the newest of each kind,
+so an album shown only for its songs is placed among explicitly added albums by position, not by
+time; additions made on this device or read by a later `since` read are ordered exactly. An
+`added` time on each element would make this exact. A library member the catalog no longer holds
+counts in the server's totals but is never listed, so step 2 always falls back to a full read for
+that user. A scan that changes the catalog during a full read can shift offsets without moving
+`changed`; the totals check then does not detect it.
