@@ -26,7 +26,16 @@ method = source[start:end].replace("private func", "func", 1)
 
 collaborators = r'''
 import Foundation
-struct CGVector { let dx: Double; let dy: Double }
+import CoreGraphics
+@MainActor final class XCUIApplication {
+    @MainActor struct Query { var firstMatch: XCUIElement { XCUIElement("") } }
+    var windows: Query { Query() }
+    var keyboards: Query { Query() }
+    var debugDescription: String { "input protocol collaborator" }
+    func coordinate(withNormalizedOffset point: CGVector) -> XCUIElement.Coordinate {
+        fatalError("This control exercises normal entry, not tour scrolling")
+    }
+}
 struct Modifiers: OptionSet {
     let rawValue: Int
     static let command = Self(rawValue: 1)
@@ -35,6 +44,9 @@ enum XCUIKeyboardKey: String { case delete = "\u{7f}" }
 func XCTFail(_ message: String) { fatalError(message) }
 @MainActor
 final class XCUIElement {
+    var frame: CGRect { CGRect(x: 0, y: 0, width: 320, height: 640) }
+    var isHittable: Bool { true }
+    var exists: Bool { true }
     var text: String
     let secure: Bool
     let placeholderValue: String? = "Credential"
@@ -55,6 +67,9 @@ final class XCUIElement {
     @MainActor struct Coordinate {
         let field: XCUIElement
         let point: CGVector
+        func press(forDuration: Double, thenDragTo: Coordinate) {
+            fatalError("This control exercises normal entry, not tour scrolling")
+        }
         func tap() {
             field.focused = true
             // The field shows 20 characters; a trailing-edge tap on wider text lands under the tap.
@@ -92,7 +107,11 @@ final class XCUIElement {
     }
 }
 @MainActor
-struct Proof {
+final class Proof {
+    var tourFilledValues: [String: String] = [:]
+    func tourPhotograph(_ screen: String) {
+        fatalError("This control exercises normal entry, not tour photographs")
+    }
 '''
 controls = r'''
 }
@@ -120,6 +139,11 @@ struct Controls {
     }
 }
 '''
+# Current source carries the application for tour-only geometry. Older --source-ref controls
+# retain their original signature; both execute the same credential replacement assertions.
+if "app: XCUIApplication" in method:
+    controls = controls.replace("name: name, secure: secure)", "name: name, secure: secure, app: XCUIApplication())")
+
 with tempfile.TemporaryDirectory(prefix="dulcet-account-text-entry-") as directory:
     swift = Path(directory) / "control.swift"
     binary = Path(directory) / "control"
