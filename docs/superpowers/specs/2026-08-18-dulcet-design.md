@@ -13356,12 +13356,19 @@ them.
   - Embedded artwork and embedded lyrics, per language.
   - Folder images, such as `cover.jpg` (for a disc subfolder, the album folder's image is used),
     and `.lrc`/`.txt` sidecars.
-- Ids are opaque and derived from content:
+- Ids are opaque. Track identity is independent of editable tags:
   - An album's id comes from its MusicBrainz release id, or from its album artist plus title.
-  - A track's id comes from its recording id, or from album, disc, track and title, with the path
-    as a tiebreak.
-  - So a rescan, or a file moved and restored, keeps ids, and stars, plays and playlists survive.
+  - Existing track ids migrate unchanged into a persistent identity table. A retag at the same
+    relative path keeps its id; new tracks start with a path-derived id. A unique file-content
+    fingerprint recovers the id after a move, and saved path identities recover it after restoration.
+  - Stars, ratings, plays, playlist entries, lyrics caches and My Library membership retain that
+    identity. When a retag completely replaces an album or album-artist group with one new group,
+    its user data is merged into that group. Ambiguous splits retain the old data for restoration.
+- Every music, image and sidecar path resolves inside the real music root, both at scan and read
+  time. Links escaping the root are skipped; a root-level track never searches above the root for art.
 - Rescans are incremental: only files whose size, mtime or sidecar changed are probed again.
+- An unreadable or missing root/subfolder, or a scan that would remove every known track, refuses
+  the scan, keeps the catalog and scan clock, and reports the refusal. `force` does not bypass this.
 - `lastScan` is the clients' equality-only scan clock (TRAPS 19). The periodic check
   (`--rescan-interval`) writes nothing, and leaves `lastScan` alone, when no file, sidecar or folder
   image changed. A forced scan (at start or `startScan`) always advances it.

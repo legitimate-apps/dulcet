@@ -92,6 +92,53 @@ class ScannerTest {
         assertEquals(2000L, lyrics.single().lines.single().startMillis)
     }
 
+    @Test fun retagKeepsExistingIdsAndAllUserData() {
+        val file = music.resolve("song.flac")
+        Fixtures.track(file, tags = mapOf("title" to "Typo", "album" to "Old"))
+        ctx.scanner.scan()
+        val user = ctx.users.create("reader", "pw", false)
+        val id = ctx.db.read { string("SELECT id FROM track")!! }
+        val album = ctx.db.read { string("SELECT id FROM album")!! }
+        ctx.db.write {
+            for ((type, item) in listOf("song" to id, "album" to album)) {
+                execute("INSERT INTO annotation VALUES (?,?,?,123,4,7,456)", user.id, type, item)
+                execute("INSERT INTO library_item VALUES (?,?,?,123)", user.id, type, item)
+            }
+            execute("INSERT INTO playlist VALUES ('pl',?,'Mine','',0,1,1)", user.id)
+            execute("INSERT INTO playlist_track VALUES ('pl',0,?)", id)
+            execute("INSERT INTO lyrics_cache VALUES (?,'test','found',NULL,'cached',1)", id)
+        }
+        Fixtures.track(file, tags = mapOf("title" to "Corrected", "album" to "New"))
+        Files.setLastModifiedTime(file, FileTime.fromMillis(System.currentTimeMillis() + 5000))
+        ctx.scanner.scan()
+        assertEquals(id, ctx.db.read { string("SELECT id FROM track") })
+        val newAlbum = ctx.db.read { string("SELECT id FROM album")!! }
+        ctx.db.read {
+            for ((type, item) in listOf("song" to id, "album" to newAlbum)) {
+                assertEquals(4L, long("SELECT rating FROM annotation WHERE item_type = ? AND item_id = ?", type, item))
+                assertEquals(7L, long("SELECT play_count FROM annotation WHERE item_type = ? AND item_id = ?", type, item))
+                assertEquals(123L, long("SELECT starred FROM annotation WHERE item_type = ? AND item_id = ?", type, item))
+                assertEquals(1L, long("SELECT COUNT(*) FROM library_item WHERE item_type = ? AND item_id = ?", type, item))
+            }
+            assertEquals(id, string("SELECT track_id FROM playlist_track"))
+            assertEquals("cached", string("SELECT plain FROM lyrics_cache WHERE track_id = ?", id))
+        }
+    }
+
+    @Test fun missingAndSuddenlyEmptyRootsKeepCatalogAndScanClock() {
+        Fixtures.track(music.resolve("song.flac"))
+        ctx.scanner.scan()
+        val stamp = ctx.lastScanMillis()
+        Files.move(music, root.resolve("unmounted"))
+        ctx.scanner.scan()
+        assertEquals(1L, ctx.db.read { long("SELECT COUNT(*) FROM track") })
+        assertEquals(stamp, ctx.lastScanMillis())
+        Files.createDirectory(music)
+        ctx.scanner.scan(force = false)
+        assertEquals(1L, ctx.db.read { long("SELECT COUNT(*) FROM track") })
+        assertEquals(stamp, ctx.lastScanMillis())
+    }
+
     private data class ScanResultCounts(val added: Int, val updated: Int, val removed: Int, val unchanged: Int)
     private fun counts(result: com.legitimateapps.dulcet.server.scan.ScanResult) = ScanResultCounts(result.added, result.updated, result.removed, result.unchanged)
 }

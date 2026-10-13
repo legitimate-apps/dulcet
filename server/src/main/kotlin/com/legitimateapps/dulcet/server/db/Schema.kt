@@ -185,6 +185,11 @@ object Schema {
             PRIMARY KEY (user_id, client)
         );
         """.trimIndent(),
+        """
+        CREATE TABLE track_identity (path TEXT PRIMARY KEY, track_id TEXT NOT NULL, fingerprint TEXT);
+        INSERT INTO track_identity(path, track_id) SELECT path, id FROM track;
+        CREATE INDEX track_identity_fingerprint ON track_identity(fingerprint);
+        """.trimIndent(),
     )
 
     fun migrate(db: Db) {

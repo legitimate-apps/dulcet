@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.isDirectory
 import kotlin.io.path.name
 
-data class ScanResult(val added: Int, val updated: Int, val removed: Int, val unchanged: Int, val failed: Int)
+data class ScanResult(val added: Int, val updated: Int, val removed: Int, val unchanged: Int, val failed: Int, val refused: String? = null)
 
 /**
  * Walks the music folder and keeps the catalog in step with it. A file is probed only when it is
@@ -35,8 +35,8 @@ class Scanner(
     val isScanning: Boolean get() = running.get()
     val scannedCount: Int get() = progress.get()
 
-    /** Runs a scan unless one is running, in which case the running one rescans once it ends. */
     /**
+     * Runs a scan unless one is running, in which case the running one rescans once it ends.
      * [force] false is the periodic check: it writes nothing, and leaves `lastScan` where it is,
      * when no file, sidecar or folder image changed, because `lastScan` is the clients' scan clock.
      */
@@ -49,7 +49,10 @@ class Scanner(
             var result: ScanResult
             do {
                 rescanRequested = false
-                result = scanOnce(force)
+                result = try { scanOnce(force) } catch (error: java.io.IOException) {
+                    log.warn("scan refused: music folder could not be read; catalog retained")
+                    ScanResult(0, 0, 0, 0, 1, "Music folder could not be read; catalog retained")
+                }
             } while (rescanRequested)
             return result
         } finally {
@@ -60,7 +63,7 @@ class Scanner(
     private fun scanOnce(force: Boolean): ScanResult {
         progress.set(0)
         val started = clock()
-        val root = musicFolder.toAbsolutePath().normalize()
+        val root = musicFolder.toRealPath()
         val files = ArrayList<FileEntry>()
         val folderArt = HashMap<String, String>()
         walk(root, root, files, folderArt)
@@ -70,6 +73,10 @@ class Scanner(
             query("SELECT id, path, mtime, size, lyrics_sidecar, created FROM track") { row ->
                 row.string("path") to Existing(row.string("id"), row.long("mtime"), row.long("size"), row.stringOrNull("lyrics_sidecar"), row.long("created"))
             }.toMap()
+        }
+        if (files.isEmpty() && existing.isNotEmpty()) {
+            log.warn("scan refused: no music files found; catalog retained")
+            return ScanResult(0, 0, 0, 0, 1, "No music files found; catalog retained")
         }
         val present = files.associateBy { it.relative }
         val removed = existing.keys.filter { it !in present }
@@ -85,11 +92,19 @@ class Scanner(
         // ffprobe is a process per file; a few in parallel keep a first scan short.
         val pool = java.util.concurrent.Executors.newFixedThreadPool(PROBE_THREADS)
         val failures = java.util.concurrent.atomic.AtomicInteger(0)
+        val fingerprints = java.util.concurrent.ConcurrentHashMap<String, String>()
         val probed = try {
             changed.map { file ->
                 pool.submit<TrackInfo?> {
                     try {
                         val tags = probe.probe(com.legitimateapps.dulcet.server.musicFile(root, root.resolve(file.relative)) ?: error("File outside music folder or missing"))
+                        val source = com.legitimateapps.dulcet.server.musicFile(root, root.resolve(file.relative)) ?: error("Missing file")
+                        val digest = java.security.MessageDigest.getInstance("SHA-256")
+                        Files.newInputStream(source).use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
+                        }
+                        fingerprints[file.relative] = digest.digest().joinToString("") { "%02x".format(it) }
                         TrackInfo.from(file.relative, file.parent, file.name, file.mtime, file.size, tags, file.sidecar)
                     } catch (error: Exception) {
                         failures.incrementAndGet()
@@ -107,6 +122,7 @@ class Scanner(
         progress.addAndGet(unchanged)
         val now = clock()
         db.write {
+            val oldGroups = query("SELECT id, album_id, album_artist_id FROM track") { Triple(it.string("id"), it.string("album_id"), it.string("album_artist_id")) }
             removed.forEach { path ->
                 val id = existing.getValue(path).id
                 execute("DELETE FROM track WHERE path = ?", path)
@@ -123,13 +139,26 @@ class Scanner(
                     execute("DELETE FROM track_genre WHERE track_id = ?", previous.id)
                     claimed.remove(previous.id)
                 }
-                var id = track.candidateId()
+                val fingerprint = fingerprints.getValue(track.path)
+                val stored = string("SELECT track_id FROM track_identity WHERE path = ?", track.path)
+                val moved = query("SELECT path, track_id FROM track_identity WHERE fingerprint = ?", fingerprint) { it.string("path") to it.string("track_id") }
+                    .filter { it.first !in present && it.second !in claimed }.map { it.second }.distinct().singleOrNull()
+                var id = previous?.id ?: stored ?: moved ?: com.legitimateapps.dulcet.server.Ids.of("track-path", track.path)
                 val holder = claimed[id]
                 if (holder != null && holder != track.path) id = com.legitimateapps.dulcet.server.Ids.of("track", id, track.path)
                 claimed[id] = track.path
                 insertTrack(id, track, created = previous?.created ?: now, updated = now)
+                execute("INSERT INTO track_identity VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET track_id = excluded.track_id, fingerprint = excluded.fingerprint", track.path, id, fingerprint)
             }
             regroup(folderArt)
+            for ((type, column, table) in listOf(Triple("album", "album_id", "album"), Triple("artist", "album_artist_id", "artist"))) {
+                val groups = oldGroups.groupBy { if (type == "album") it.second else it.third }
+                for ((oldId, members) in groups) {
+                    if (long("SELECT COUNT(*) FROM $table WHERE id = ?", oldId) > 0) continue
+                    val replacements = members.mapNotNull { string("SELECT $column FROM track WHERE id = ?", it.first) }.distinct()
+                    if (replacements.size == 1) remapUserItem(type, oldId, replacements.single())
+                }
+            }
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_art_stamp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", artStamp)
@@ -139,15 +168,23 @@ class Scanner(
         return result
     }
 
+    private fun Db.Session.remapUserItem(type: String, old: String, replacement: String) {
+        execute("""INSERT INTO annotation SELECT user_id, item_type, ?, starred, rating, play_count, played FROM annotation
+            WHERE item_type = ? AND item_id = ?
+            ON CONFLICT(user_id,item_type,item_id) DO UPDATE SET
+            starred = COALESCE(annotation.starred, excluded.starred),
+            rating = CASE WHEN annotation.rating > 0 THEN annotation.rating ELSE excluded.rating END,
+            play_count = MAX(annotation.play_count, excluded.play_count),
+            played = MAX(COALESCE(annotation.played,0), COALESCE(excluded.played,0))""", replacement, type, old)
+        execute("INSERT OR IGNORE INTO library_item SELECT user_id, item_type, ?, added FROM library_item WHERE item_type = ? AND item_id = ?", replacement, type, old)
+        execute("DELETE FROM annotation WHERE item_type = ? AND item_id = ?", type, old)
+        execute("DELETE FROM library_item WHERE item_type = ? AND item_id = ?", type, old)
+    }
+
     private data class FileEntry(val relative: String, val parent: String, val name: String, val mtime: Long, val size: Long, val sidecar: String?)
 
     private fun walk(root: Path, directory: Path, files: MutableList<FileEntry>, folderArt: MutableMap<String, String>) {
-        val children = try {
-            Files.list(directory).use { stream -> stream.toList() }
-        } catch (error: Exception) {
-            log.warn("could not list a folder: {}", error.message)
-            return
-        }
+        val children = Files.list(directory).use { stream -> stream.toList() }
         val relativeDir = root.relativize(directory).toString().replace('\\', '/')
         val names = children.filter { com.legitimateapps.dulcet.server.musicFile(root, it) != null }.associateBy { it.name.lowercase() }
         ART_NAMES.firstNotNullOfOrNull { names[it] }?.let { folderArt[relativeDir] = it.name }
