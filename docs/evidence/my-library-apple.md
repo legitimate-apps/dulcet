@@ -11,10 +11,30 @@ OBSERVED on the final product tree: `swift test --no-parallel` in `apple/DulcetK
 All 27 argument-free Python gates invoked by `apple-ci` passed; the host-pressure live control
 passed on retry with four samples. XcodeGen regeneration and its self-test passed.
 
-The native Mac and iPhone app/UI test targets compiled. Mac app inspection showed an online
-account, Library, Browse, the five Library sections and the empty state. Its UI test reached Browse
-and the fixture album, then paused at a system dialog. No complete platform runtime pass or
-screenshot matrix is claimed by this checkpoint.
+OBSERVED on 2026-10-13 against the real local Dulcet Server and disposable Navidrome:
+
+| Platform | Membership / persistence / offline replay | Navidrome fallback | Visual variants |
+| --- | --- | --- | --- |
+| iPhone 17 Pro simulator | PASS (74.610 seconds) | PASS (10.664 seconds) | PASS; default, dark, largest text |
+| iPad Pro 13-inch (M5) simulator | PASS (67.618 seconds) | PASS (10.117 seconds) | PASS; default, dark, largest text |
+| Apple TV 4K (3rd generation), 1080p simulator | PASS (74.614 seconds), including remote press and hold | PASS (6.655 seconds) | PASS; default, dark, largest text |
+| Mac | Pending: system notification dialog; runtime skipped at the operator's direction | Pending | Pending |
+
+Each behavior case observes Add in Browse, the album in Library, a saved-account relaunch,
+Remove, an offline Add, the pending write surviving an offline relaunch, and real-server membership
+after reconnect. Independent direct server reads distinguish pending local state from a completed
+server write. iPhone and iPad each passed all three cases in their final full runs. TV's first run
+failed the test helper's post-relaunch focus navigation; after correcting focus on context-menu
+cells and the horizontal fallback from a section with no downward neighbor, the affected behavior
+case passed. Its visual and fallback cases passed separately. No full TV bundle pass is claimed.
+
+The corrected visual runs use DEBUG-only light/dark launch flags at the SwiftUI root; the original
+`AppleInterfaceStyle` launch argument did not change the simulator's appearance. The actual JPEGs
+were inspected to confirm dark rendering. Nine compressed app JPEGs per platform are retained
+outside the repository, with Library, Browse and album Add captures in the three variants.
+The additional iPhone largest-text visibility case passed (21.375 seconds); it scrolls the album
+to keep Add above the tab bar, asserts the visible button bounds, and replaces that capture.
+Native app/UI targets compiled on all Apple platforms; Mac runtime remains unproven.
 
 ## Runtime suite
 
@@ -27,7 +47,7 @@ server state. A separate disposable Navidrome is the positive catalog control fo
 The TV variant also uses the remote's press and hold context menu.
 
 The visual test attaches compressed JPEGs of Library, Browse and an album with Add in light,
-dark and the largest Dynamic Type setting. Only app images belong in the committed proof.
+dark and the largest Dynamic Type setting. The local proof retains these images outside the repository; no screenshots are committed.
 
 ### Fixture setup
 
@@ -55,6 +75,12 @@ The Mac scheme uses its dedicated proof host; runtime automation still requires 
 XCTest authorization.
 
 ## Limits
+
+Visual inspection found that the catalog root under Browse still displays its legacy Library title.
+At the largest iPhone text setting, the existing catalog section icons crowd the multiline labels;
+the iPad sidebar also wraps narrow labels. The passing interaction cases do not claim these layouts
+are polished. The iPhone album capture is scrolled to show Add at the largest size.
+
 
 The unsigned Mac fixture uses the existing DEBUG disk credential store under a per-test UUID.
 Its relaunch proves durable My Library and outbox behavior with that account store; it does not

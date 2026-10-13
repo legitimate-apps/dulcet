@@ -49,7 +49,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(tile.waitForExistence(timeout: 30))
         focus(tile)
         XCUIRemote.shared.press(.select, forDuration: 1.5)
-        let contextAdd = app.buttons["Add to Library"].firstMatch
+        let contextAdd = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
         XCTAssertTrue(contextAdd.waitForExistence(timeout: 10), "Remote press and hold offers membership")
         activate(contextAdd)
         try select("library")
@@ -137,13 +137,45 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
             XCTAssertTrue(add.waitForExistence(timeout: 30))
             XCTAssertEqual(add.label, "Add to Library")
-            try capture("Album-Add-\(variant)")
+            try captureAlbumAdd("Album-Add-\(variant)", button: add)
         }
     }
 
     @MainActor
+    func testAlbumAddRemainsVisibleAtLargestTextOnIPhone() throws {
+#if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("Compact iPhone capture correction") }
+        continueAfterFailure = false
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        try removeAlbum(album.id)
+        try launch(variant: "largest-text")
+        try select("browse")
+        try openAlbum(album.title)
+        let add = app.buttons["dulcet.membership.album.\(album.id)"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        XCTAssertEqual(add.label, "Add to Library")
+        try captureAlbumAdd("Album-Add-largest-text", button: add)
+#else
+        throw XCTSkip("Compact iPhone capture correction")
+#endif
+    }
+
+    @MainActor private func captureAlbumAdd(_ name: String, button: XCUIElement) throws {
+#if os(iOS)
+        for _ in 0..<5 {
+            if button.isHittable && button.frame.maxY < app.frame.maxY - 100 { break }
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(button.isHittable)
+        XCTAssertLessThan(button.frame.maxY, app.frame.maxY - 100, "The Add action must be above the tab bar in the capture")
+#endif
+        try capture(name)
+    }
+
+    @MainActor
     private func launch(connect: Bool = true, server: String? = nil, username: String? = nil, password: String? = nil, variant: String = "light") throws {
-        var launchArguments = ["-AppleInterfaceStyle", variant == "dark" ? "Dark" : "Light"]
+        var launchArguments = [variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if variant == "largest-text" { launchArguments += ["-dulcet-debug-largest-text"] }
         if connect {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
@@ -237,7 +269,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
         focus(element)
-        if element.hasFocus { XCUIRemote.shared.press(.select) }
+        if isFocused(element) { XCUIRemote.shared.press(.select) }
 #elseif os(macOS)
         element.click()
 #else
@@ -245,12 +277,27 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
 #if os(tvOS)
+    private func isFocused(_ target: XCUIElement) -> Bool {
+        if target.hasFocus { return true }
+        // tvOS context-menu actions sit inside a focused cell rather than holding focus themselves.
+        let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        return cell.exists && cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+    }
     private func focus(_ target: XCUIElement) {
+        var previousFrame: CGRect?
         for _ in 0..<40 {
-            if target.hasFocus { return }
-            let current = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            if isFocused(target) { return }
+            let focusedCell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            let current = focusedCell.exists ? focusedCell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
             guard current.exists else { XCUIRemote.shared.press(.down); continue }
             let a = current.frame, b = target.frame
+            if previousFrame == a && abs(a.midX - b.midX) > 20 {
+                // A narrow first-column tile can have no Down neighbor from a wider section bar.
+                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+                previousFrame = nil
+                continue
+            }
+            previousFrame = a
             if abs(a.midY - b.midY) > max(20, min(a.height, b.height) / 2) {
                 XCUIRemote.shared.press(b.midY > a.midY ? .down : .up)
             } else {

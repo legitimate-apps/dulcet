@@ -27,6 +27,15 @@ public struct DulcetRootView: View {
         return preferredTextSize
     }
 
+    private var proofColorScheme: ColorScheme? {
+#if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-dulcet-debug-dark-mode") { return .dark }
+        if arguments.contains("-dulcet-debug-light-mode") { return .light }
+#endif
+        return nil
+    }
+
     public var body: some View {
 #if os(macOS)
         Group {
@@ -55,6 +64,7 @@ public struct DulcetRootView: View {
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
+        .preferredColorScheme(proofColorScheme)
         .environment(\.dynamicTypeSize, proofTextSize)
         .environment(store)
         .frame(minWidth: 900, minHeight: 600)
@@ -69,6 +79,7 @@ public struct DulcetRootView: View {
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
+        .preferredColorScheme(proofColorScheme)
         .environment(\.dynamicTypeSize, proofTextSize)
         .environment(store)
         .tint(.dulcetAccent)
@@ -90,6 +101,7 @@ public struct DulcetRootView: View {
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
+        .preferredColorScheme(proofColorScheme)
         .environment(\.dynamicTypeSize, proofTextSize)
         .environment(store)
         .tint(.dulcetAccent)
