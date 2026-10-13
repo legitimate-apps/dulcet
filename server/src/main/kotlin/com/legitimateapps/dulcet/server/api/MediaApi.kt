@@ -40,7 +40,7 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
                 it.intOrNull("bitrate") ?: 0, it.stringOrNull("codec"), it.intOrNull("channels"), it.intOrNull("sample_rate"), it.intOrNull("bit_depth"),
             )
         }
-    }?.takeIf { Files.isRegularFile(it.path) }
+    }?.let { media -> com.legitimateapps.dulcet.server.musicFile(ctx.config.musicFolder, media.path)?.let { media.copy(path = it) } }
 
     val cacheRoot = ctx.config.dataFolder.resolve("cache").resolve("transcode")
 

@@ -192,7 +192,7 @@ class LyricsService(
     private fun local(row: TrackRow): List<LyricsText> {
         val result = ArrayList<LyricsText>()
         row.sidecar?.let { relative ->
-            val file = musicFolder.resolve(relative)
+            val file = com.legitimateapps.dulcet.server.musicFile(musicFolder, musicFolder.resolve(relative)) ?: return@let
             val text = runCatching { Files.readString(file) }.getOrNull()
             if (text != null) {
                 val parsed = if (relative.lowercase().endsWith(".txt")) Lrc.parse(text, "xxx", "sidecar")?.let { it.copy(synced = false, lines = it.lines.map { line -> line.copy(startMillis = null) }) }

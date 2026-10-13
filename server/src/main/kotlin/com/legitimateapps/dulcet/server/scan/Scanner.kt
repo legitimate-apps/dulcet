@@ -89,7 +89,7 @@ class Scanner(
             changed.map { file ->
                 pool.submit<TrackInfo?> {
                     try {
-                        val tags = probe.probe(root.resolve(file.relative))
+                        val tags = probe.probe(com.legitimateapps.dulcet.server.musicFile(root, root.resolve(file.relative)) ?: error("File outside music folder or missing"))
                         TrackInfo.from(file.relative, file.parent, file.name, file.mtime, file.size, tags, file.sidecar)
                     } catch (error: Exception) {
                         failures.incrementAndGet()
@@ -149,7 +149,7 @@ class Scanner(
             return
         }
         val relativeDir = root.relativize(directory).toString().replace('\\', '/')
-        val names = children.associateBy { it.name.lowercase() }
+        val names = children.filter { com.legitimateapps.dulcet.server.musicFile(root, it) != null }.associateBy { it.name.lowercase() }
         ART_NAMES.firstNotNullOfOrNull { names[it] }?.let { folderArt[relativeDir] = it.name }
             ?: run { folderArt.putIfAbsent(relativeDir, "") }
         for (child in children.sortedBy { it.name }) {
@@ -161,7 +161,7 @@ class Scanner(
             val suffix = child.name.substringAfterLast('.', "").lowercase()
             if (suffix !in TrackInfo.AUDIO_SUFFIXES) continue
             val attributes = try {
-                Files.readAttributes(child, java.nio.file.attribute.BasicFileAttributes::class.java)
+                Files.readAttributes(com.legitimateapps.dulcet.server.musicFile(root, child) ?: continue, java.nio.file.attribute.BasicFileAttributes::class.java)
             } catch (_: Exception) {
                 continue
             }

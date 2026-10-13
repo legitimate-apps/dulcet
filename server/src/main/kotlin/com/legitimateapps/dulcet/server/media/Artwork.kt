@@ -67,7 +67,7 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
         val albums = db.read { query("SELECT album_id FROM album_artist WHERE artist_id = ?", artistId) { it.string("album_id") } }
         val artistImage = db.read {
             single("SELECT t.parent_dir FROM track t JOIN album_artist aa ON aa.album_id = t.album_id WHERE aa.artist_id = ? LIMIT 1", artistId) { it.string("parent_dir") }
-        }?.let { dir -> listOf("artist.jpg", "artist.png").map { musicFolder.resolve(dir).parent?.resolve(it) }.firstOrNull { it != null && Files.isRegularFile(it) } }
+        }?.takeIf(String::isNotEmpty)?.let { dir -> listOf("artist.jpg", "artist.png").mapNotNull { com.legitimateapps.dulcet.server.musicFile(musicFolder, musicFolder.resolve(dir).parent.resolve(it)) }.firstOrNull() }
         if (artistImage != null) return Source.FolderFile(artistImage)
         return albums.firstNotNullOfOrNull(::albumSource)
     }
@@ -80,8 +80,8 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
     private fun trackPath(trackId: String): Path? = db.read { string("SELECT path FROM track WHERE id = ?", trackId) }?.let(musicFolder::resolve)
 
     private fun load(source: Source): Image? = when (source) {
-        is Source.FolderFile -> Files.readAllBytes(source.path).let { Image(it, sniff(it)) }
-        is Source.Embedded -> extractEmbedded(source.path)?.let { Image(it, sniff(it)) }
+        is Source.FolderFile -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(Files::readAllBytes)?.let { Image(it, sniff(it)) }
+        is Source.Embedded -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(::extractEmbedded)?.let { Image(it, sniff(it)) }
     }
 
     private fun extractEmbedded(file: Path): ByteArray? {
