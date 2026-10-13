@@ -51,6 +51,29 @@ class Probe(private val ffprobe: String) {
         return parse(output, file)
     }
 
+    /** Compressed audio packet hashes exclude editable tags, artwork and container placement. */
+    fun fingerprint(file: Path, sampleRate: Int?, channels: Int?): String {
+        val command = listOf(ffprobe,"-v","error","-hide_banner") + com.legitimateapps.dulcet.server.media.AUDIO_INPUT_ARGS +
+            listOf("-select_streams","a:0","-show_packets","-show_data_hash","sha256","-show_entries","packet=data_hash","-of","csv=p=0",file.toAbsolutePath().toString())
+        val process=ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val timeout=java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+        val deadline=timeout.schedule({ process.destroyForcibly() },120,TimeUnit.SECONDS)
+        try {
+            val digest=java.security.MessageDigest.getInstance("SHA-256")
+            var count=0
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    // ffprobe can emit packet side-data columns too; hash only the actual payload digest.
+                    Regex("SHA256:[0-9a-fA-F]{64}").find(line)?.value?.let { hash ->
+                        digest.update(hash.lowercase().toByteArray()); count++
+                    }
+                }
+            }
+            if(process.waitFor()!=0 || count == 0) throw FfprobeException("Could not fingerprint audio packets")
+            return "packet-sha256:$sampleRate:$channels:" + digest.digest().joinToString("") { "%02x".format(it) }
+        } finally { deadline.cancel(false); timeout.shutdown(); process.destroy() }
+    }
+
     fun parse(output: String, file: Path? = null): ProbedTags {
         val root = json.parseToJsonElement(output) as? JsonObject ?: throw FfprobeException("ffprobe printed no object")
         val format = root["format"] as? JsonObject ?: throw FfprobeException("ffprobe printed no format")

@@ -31,6 +31,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
 const val SERVER_VERSION = "0.1.0"
@@ -48,6 +51,10 @@ data class Config(
     val musicFolderName: String = "Music",
     val scanOnStart: Boolean = true,
     val watchSeconds: Long = 0,
+    val publicUrl: String? = null,
+    val testMode: Boolean = false,
+    val webhookAllowPrivateTargets: Boolean = false,
+    val webhookAllowOtherPorts: Boolean = false,
 ) {
     companion object {
         fun load(args: Map<String, String>, env: Map<String, String> = System.getenv()): Config {
@@ -65,6 +72,13 @@ data class Config(
                 musicFolderName = value("music-folder-name", "Music")!!,
                 scanOnStart = value("scan-on-start", "true") != "false",
                 watchSeconds = value("rescan-interval", "0")!!.toLong(),
+                testMode = value("test-mode", "false")=="true",
+                webhookAllowPrivateTargets = value("webhook-allow-private-targets", "false")=="true",
+                webhookAllowOtherPorts = value("webhook-allow-other-ports", "false")=="true",
+                publicUrl = value("public-url")?.trimEnd('/')?.also { url ->
+                    val uri = java.net.URI(url)
+                    require(uri.scheme in setOf("https", "http") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null && uri.path.isNullOrEmpty()) { "public-url must be an origin" }
+                },
             )
         }
     }
@@ -73,7 +87,25 @@ data class Config(
 /** Everything a handler needs, built once per process (and once per test). */
 class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitimateapps.dulcet.server.lyrics.LyricsProvider? = null) {
     private val key: ByteArray = PasswordVault.keyFromDataFolder(config.dataFolder)
+    init {
+        db.write {
+            execute("INSERT INTO music_folder(id,name,path) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,path=excluded.path WHERE name!=excluded.name OR path!=excluded.path", config.musicFolderName, config.musicFolder.toString())
+        }
+    }
     val users = Users(db, PasswordVault(key))
+    val journal = com.legitimateapps.dulcet.server.v1.Journal(db, config.dataFolder)
+    val testing = com.legitimateapps.dulcet.server.v1.TestMode(this)
+    val apiAuth = com.legitimateapps.dulcet.server.v1.ApiAuth(this)
+    val apiUsers = com.legitimateapps.dulcet.server.v1.ApiUsers(this)
+    val apiCatalog = com.legitimateapps.dulcet.server.v1.ApiCatalog(this)
+    val apiUserData = com.legitimateapps.dulcet.server.v1.ApiUserData(this)
+    val apiMedia = com.legitimateapps.dulcet.server.v1.ApiMedia(this)
+    val apiEvents = com.legitimateapps.dulcet.server.v1.ApiEvents(this)
+    val apiQueue = com.legitimateapps.dulcet.server.v1.ApiQueue(this)
+    val apiSync = com.legitimateapps.dulcet.server.v1.ApiSync(this)
+    val apiWebhooks = com.legitimateapps.dulcet.server.v1.ApiWebhooks(this, config.webhookAllowPrivateTargets, config.webhookAllowOtherPorts)
+    val apiMcp = com.legitimateapps.dulcet.server.v1.ApiMcp(this)
+    val dulcetApi = com.legitimateapps.dulcet.server.v1.DulcetApi(this)
     val catalog = Catalog(db)
     val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe))
     val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg)
@@ -100,10 +132,25 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
 }
 
 fun Application.dulcetModule(ctx: ServerContext) {
+    ctx.testing.markServed()
+    launch(kotlinx.coroutines.Dispatchers.IO) {
+        while(isActive) {
+            delay(1000)
+            runCatching { ctx.apiWebhooks.maintenance() }.onFailure { log.warn("webhook maintenance failed") }
+        }
+    }
+    launch {
+        while (isActive) {
+            delay(60_000)
+            ctx.apiAuth.maintenance()
+            ctx.journal.prune()
+        }
+    }
     val api = ctx.restApi()
     routing {
         get("/") { call.respondText("Dulcet Server $SERVER_VERSION\n", ContentType.Text.Plain) }
         api.install(this)
+        ctx.dulcetApi.install(this)
     }
 }
 
@@ -165,6 +212,11 @@ private fun userCommand(ctx: ServerContext, args: List<String>, options: Map<Str
             println("user $name ready")
         }
         "list" -> ctx.users.all().forEach { println("${it.name}${if (it.isAdmin) " (admin)" else ""}") }
+        "token" -> {
+            val user = ctx.users.find(args.getOrNull(1) ?: error("user token <name> [--scopes=scope,scope]")) ?: error("Unknown user")
+            val scopes = options["scopes"]?.split(',')?.toSet() ?: com.legitimateapps.dulcet.server.v1.API_SCOPES.filter { it != "admin" || user.isAdmin }.toSet()
+            println(ctx.apiAuth.bootstrapPersonal(user, scopes))
+        }
         else -> error("user add <name> <password> [--admin] | user list")
     }
 }

@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet.server.auth
 
-import com.legitimateapps.dulcet.server.Ids
 import com.legitimateapps.dulcet.server.db.Db
 import java.nio.file.Files
 import java.nio.file.Path
@@ -15,7 +14,8 @@ data class User(val id: String, val name: String, val isAdmin: Boolean)
 
 /**
  * Subsonic token authentication (`t = md5(password + s)`) needs the plain password on the server,
- * so passwords are stored encrypted (AES-GCM) under a key kept in the data folder, never hashed.
+ * so its passwords remain encrypted (AES-GCM) under a key kept in the data folder.
+ * Dulcet API login uses a separate slow hash and never opens this recoverable copy.
  * The key file is created once with owner-only permissions.
  */
 class PasswordVault(private val key: ByteArray) {
@@ -59,16 +59,40 @@ sealed interface AuthOutcome {
 }
 
 class Users(private val db: Db, private val vault: PasswordVault, private val clock: () -> Long = System::currentTimeMillis) {
+    init {
+        db.write {
+            if (query("PRAGMA table_info(user)") { it.string("name") }.none { it == "password_hash" }) execute("ALTER TABLE user ADD COLUMN password_hash TEXT")
+            query("SELECT id,password_enc FROM user WHERE password_hash IS NULL") { it.string("id") to it.bytes("password_enc")!! }.forEach { (id, sealed) ->
+                execute("UPDATE user SET password_hash=? WHERE id=?", SlowHash.hash(vault.open(sealed)), id)
+            }
+        }
+    }
+
+    /** Header/browser Dulcet authentication never decrypts the OpenSubsonic password. */
+    fun authenticateDulcet(name: String, password: String): AuthOutcome {
+        val encoded = db.read { string("SELECT password_hash FROM user WHERE name=?", name) }
+        val verifier = encoded ?: DUMMY_HASH
+        val valid = SlowHash.verify(password, verifier)
+        return if (valid && encoded != null) AuthOutcome.Ok(find(name)!!) else AuthOutcome.WrongCredentials
+    }
+
     fun create(name: String, password: String, isAdmin: Boolean): User {
         require(name.isNotBlank()) { "user name is empty" }
         require(password.isNotEmpty()) { "password is empty" }
-        val id = Ids.of("user", name.lowercase(), clock().toString())
-        db.write { execute("INSERT INTO user(id, name, password_enc, is_admin, created) VALUES (?,?,?,?,?)", id, name, vault.seal(password), isAdmin, clock()) }
+        val id = java.util.UUID.randomUUID().toString()
+        db.write { execute("INSERT INTO user(id, name, password_enc, password_hash, is_admin, created) VALUES (?,?,?,?,?,?)", id, name, vault.seal(password), SlowHash.hash(password), isAdmin, clock()) }
         return User(id, name, isAdmin)
     }
 
     fun setPassword(name: String, password: String): Boolean =
-        db.write { execute("UPDATE user SET password_enc = ? WHERE name = ?", vault.seal(password), name) } > 0
+        db.write {
+            val changed = execute("UPDATE user SET password_enc = ?, password_hash = ? WHERE name = ?", vault.seal(password), SlowHash.hash(password), name)
+            if (changed > 0 && long("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='api_grant'") > 0) {
+                execute("UPDATE api_grant SET revoked=1 WHERE user_id=(SELECT id FROM user WHERE name=?)", name)
+                execute("DELETE FROM api_authorization WHERE user_id=(SELECT id FROM user WHERE name=?)", name)
+            }
+            changed
+        } > 0
 
     fun find(name: String): User? = db.read {
         single("SELECT id, name, is_admin FROM user WHERE name = ?", name) { User(it.string("id"), it.string("name"), it.bool("is_admin")) }
@@ -98,6 +122,7 @@ class Users(private val db: Db, private val vault: PasswordVault, private val cl
         db.read { single("SELECT password_enc FROM user WHERE name = ?", name) { it.bytes("password_enc") } }?.let(vault::open)
 
     companion object {
+        private val DUMMY_HASH by lazy { SlowHash.hash("invalid-user-dummy-password") }
         fun md5Hex(value: String): String =
             MessageDigest.getInstance("MD5").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 

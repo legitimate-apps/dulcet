@@ -1,7 +1,7 @@
 # Dulcet Server
 
-Dulcet's own OpenSubsonic music server. The full design is in spec §29. The My Library extension
-is described in [`dulcet-library-extension.md`](dulcet-library-extension.md).
+Dulcet's own music server serves OpenSubsonic and Dulcet API v1. The design is in spec §§29–30.
+The My Library extension is described in [`dulcet-library-extension.md`](dulcet-library-extension.md).
 
 ## Run it
 
@@ -34,6 +34,10 @@ Each setting can be given as `--name=value` or in the environment as `DULCET_NAM
 | `lrclib-url` | `https://lrclib.net` | LRCLIB endpoint. |
 | `rescan-interval` | `0` (off) | Seconds between quiet change checks. |
 | `scan-on-start` | `true` | Scan once at start. |
+| `public-url` | request origin | Public server origin, such as `https://music.example`, for OAuth metadata, redirects and media URLs behind a proxy. |
+| `webhook-allow-private-targets` | `false` | Allow private and loopback HTTPS webhook targets; link-local and metadata addresses remain refused. |
+| `webhook-allow-other-ports` | `false` | Allow HTTPS webhook target ports other than 443. |
+| `test-mode` | `false` | Enable the Testing profile on a disposable data directory. Data previously served without test mode refuse this setting. |
 
 ### Commands
 
@@ -58,6 +62,32 @@ The data folder must support POSIX owner-only file permissions for creating `sec
 `user add <name>` prompts for a password on a terminal, or reads `DULCET_USER_PASSWORD`.
 The import command reads `DULCET_IMPORT_PASSWORD`. Prefer those paths over password arguments,
 which appear in process listings and shell history.
+
+## Dulcet API v1
+
+The server serves `/dulcet/v1` alongside `/rest`, using the same catalog database and ids.
+Discovery is at `/.well-known/dulcet`; the [API contract](../dulcet-api/README.md) defines the
+resources, scopes and wire formats. Catalog and user-state reads and writes, the change feed,
+shared queues and devices, SSE events, signed webhooks and the MCP endpoint are available.
+MCP uses `/dulcet/v1/mcp` and the same scopes as the HTTP API.
+
+Clients authenticate through OAuth with PKCE, the device flow, or personal tokens. Dulcet API
+credentials go only in the `Authorization: Bearer` header. Signed media and artwork paths carry
+short-lived grants so a player can request bytes directly, including ranges.
+
+To mint a personal token for an existing user:
+
+```sh
+server/build/install/dulcet-server/bin/dulcet-server user token USER \
+  --data=DIR --scopes=catalog:read,media:read,user:read
+```
+
+The command prints the secret once. Choose only the scopes the client needs; write and removal
+scopes are separate. Back up the entire data folder, including its keys and API timeline files.
+
+The [conformance instructions](../dulcet-api/CONFORMANCE.md) describe the profiles. Testing hooks
+require `--test-mode=true` at startup and an admin token; they cannot enable test mode remotely.
+Their overrides live in memory and reset on restart. Normal deployments leave test mode disabled.
 
 ## Bundled FFmpeg
 
