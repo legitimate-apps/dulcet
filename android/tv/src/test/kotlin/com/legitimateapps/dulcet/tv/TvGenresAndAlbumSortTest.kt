@@ -70,6 +70,10 @@ class TvGenresAndAlbumSortTest {
         compose.waitForIdle()
         // The library's default focus is unchanged: its first card takes the remote from the bar.
         await("the first home card to take focus") { focused("library.home.0.item.0") }
+        // Removing the connecting notice can leave the lazy home scrolled to its first card.
+        // Reach the sections as a remote does before requesting a particular section's focus.
+        repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
+        assertTrue(exists("library.view.albums"), "UP makes the section controls available")
     }
 
     @Test fun genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay() {

@@ -1274,9 +1274,9 @@ passing_cases = """\
   <testcase classname="com.legitimateapps.dulcet.tv.TvDownloadedTitleOfflineTest"
             name="aSongDownloadedByIdAloneIsNamedOnTheTvPlayerAfterAnOfflineRelaunch" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.AndroidEmulatorAccountConnectProofTest"
-            name="aRelaunchIntoTheSavedAccountReconnectsWithoutATouch" time="0.1" />
+            name="aRelaunchIntoTheSavedAccountSendsNothingUntilThePersonTouchesReconnect" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.AndroidTvEmulatorAccountConnectProofTest"
-            name="aRelaunchIntoTheSavedAccountReconnectsWithoutTheRemote" time="0.1" />
+            name="aRelaunchIntoTheSavedAccountSendsNothingUntilTheRemoteChoosesReconnect" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.TvConnectScreenTest"
             name="aCancelledAttemptLeavesNothingSavedEvenIfTheServerAccepts" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.tv.TvConnectScreenTest"

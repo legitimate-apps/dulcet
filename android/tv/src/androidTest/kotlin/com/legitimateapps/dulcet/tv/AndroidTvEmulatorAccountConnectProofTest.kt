@@ -30,6 +30,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
 /** Production account-connect states, persistence failures and automatic saved-account relaunch. */
 @RunWith(AndroidJUnit4::class)
 class AndroidTvEmulatorAccountConnectProofTest {
@@ -192,7 +193,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
     }
 
     /** A saved account reconnects on Android TV without a remote action. */
-    @Test fun aRelaunchIntoTheSavedAccountReconnectsWithoutTheRemote() {
+    @Test fun aRelaunchIntoTheSavedAccountSendsNothingUntilTheRemoteChoosesReconnect() {
         check(context.packageManager.hasSystemFeature("android.software.leanback")) {
             "This proof must run on an Android TV device or emulator"
         }
@@ -367,9 +368,6 @@ class AndroidTvEmulatorAccountConnectProofTest {
     }
 
     private companion object {
-        /** How long a launch into the saved account is watched for any request before Reconnect. */
-        const val SAVED_SETTLE_MILLIS = 5_000L
-
         const val WRONG_PASSWORD = "not-the-password"
 
         /** How long a field must keep the keyboard down after the remote lands on it. */

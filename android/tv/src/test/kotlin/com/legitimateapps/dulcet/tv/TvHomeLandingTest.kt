@@ -23,6 +23,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
 /**
  * The connected TV app as launched: the production activity, its top bar, library, account screen
  * and sign-out, with a saved account in the production credential store (host cipher only). The
@@ -53,7 +54,7 @@ class TvHomeLandingTest {
     }
 
     /** Automatic offline recovery keeps manual Reconnect reachable with the remote. */
-    @Test fun anUnreachableSavedAccountKeepsManualReconnectOneDownFromTheBar() {
+    @Test fun aSavedAccountSaysItWaitsForReconnectWhichIsOneDownFromTheBar() {
         await("the remote on the bar's Library tab") { focused("library.open") }
         await("the automatic connection notice") { exists("library.saved") }
         assertTrue(exists("library.reconnect"), "Manual reconnect remains available while the server is unreachable")

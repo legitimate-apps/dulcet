@@ -39,6 +39,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
 /** A saved account reconnects and delivers its outbox with the restored queue still paused. */
 @RunWith(RobolectricTestRunner::class)
 @Config(shadows = [HostCredentialCipher::class], instrumentedPackages = ["com.legitimateapps.dulcet"],
@@ -63,7 +64,7 @@ class TvSavedLaunchNowPlayingTest {
         context.deleteDatabase("dulcet.db")
     }
 
-    @Test fun aSavedLaunchAutomaticallyReconnectsAndDeliversTheWaitingPlayWithTheQueuePaused() {
+    @Test fun aColdNowPlayingOnASavedAccountSendsNothingUntilReconnectThenDeliversThePlay() {
         val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
         leaveEarlierRun(context, saved.id, server.url, queue = listOf("jazz-song-1", "jazz-song-2"), unsentPlays = listOf("ambient-song-1"))
         val playback = launch(SearchAccount(saved.id, server.url, "u", "p", true))

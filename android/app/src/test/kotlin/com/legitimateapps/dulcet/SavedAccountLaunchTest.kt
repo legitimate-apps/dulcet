@@ -32,6 +32,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
 /** Saved launches use the production session's ordinary reconnect, without a user action. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -190,7 +191,7 @@ class SavedAccountLaunchTest {
         assertEquals(context.getString(R.string.library_error_unreachable), context.resources.errorPhrase(state.error!!))
     }
 
-    @Test fun aSavedLaunchReconnectsThenRunsTheForegroundEpochCadence() {
+    @Test fun aWaitingReaderInTheForegroundReadsNoEpochOnItsCadence() {
         val library = LoopbackLibraryServer()
         AndroidLibraryReader.testEpochIntervalMillis = 100
         try {

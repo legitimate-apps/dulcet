@@ -131,7 +131,9 @@ class TvPlaylistCreateInDoubtSessionTest {
         await("the question put off") { !exists("playlists.question") }
         assertEquals(1, server.requests("createPlaylist").size, "Decide later sends nothing")
         back()
-        await("Back on the library") { exists("library.view.playlists") }
+        await("Back on the library with its restored focus") { focused("library.home.0.item.0") }
+        // Wait for route focus restoration, then bring the section controls into view with the remote.
+        repeat(3) { if (!exists("library.view.playlists")) keyAt(focusedTag(), Key.DirectionUp) }
         focus("library.view.playlists")
         keyAt("library.view.playlists", Key.DirectionCenter)
         await("the playlist in the grid") { cardWithText("library.playlists.item.", NAME) != null }

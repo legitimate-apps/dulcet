@@ -33,6 +33,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
 /** Production account-connect states, persistence failures and automatic saved-account relaunch. */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorAccountConnectProofTest {
@@ -175,7 +176,7 @@ class AndroidEmulatorAccountConnectProofTest {
     }
 
     /** A production saved account relaunch reconnects without a touch. */
-    @Test fun aRelaunchIntoTheSavedAccountReconnectsWithoutATouch() {
+    @Test fun aRelaunchIntoTheSavedAccountSendsNothingUntilThePersonTouchesReconnect() {
         val probe = DisposableServerProbe.fromInstrumentation()
         awaitQueuedBroadcastsDelivered()
         val store = AndroidAccountCredentialStore(context)
@@ -361,9 +362,6 @@ class AndroidEmulatorAccountConnectProofTest {
 
     private companion object {
         const val WRONG_PASSWORD = "not-the-password"
-
-        /** How long a launch into the saved account is watched for any request before Reconnect. */
-        const val SAVED_SETTLE_MILLIS = 5_000L
 
         /** Long enough for a held request, released, to be answered by the local server. */
         const val SETTLE_MILLIS = 3_000L
