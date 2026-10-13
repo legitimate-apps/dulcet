@@ -41,9 +41,12 @@ class PasswordVault(private val key: ByteArray) {
             val file = dataFolder.resolve("secret.key")
             if (!Files.exists(file)) {
                 Files.createDirectories(dataFolder)
+                if (!Files.getFileStore(dataFolder).supportsFileAttributeView("posix")) {
+                    throw UnsupportedOperationException("Data folder must support owner-only POSIX key permissions")
+                }
                 val key = ByteArray(32).also(SecureRandom()::nextBytes)
+                Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))
                 Files.write(file, key)
-                runCatching { Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------")) }
             }
             return Files.readAllBytes(file)
         }

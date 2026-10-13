@@ -63,6 +63,7 @@ sealed interface Reply {
 typealias Handler = suspend (Call) -> Reply
 
 object Envelope {
+    val JSONP_CALLBACK = Regex("[A-Za-z_$][A-Za-z0-9_$.]*")
     const val API_VERSION = "1.16.1"
     const val NAMESPACE = "http://subsonic.org/restapi"
 
@@ -92,7 +93,7 @@ object Envelope {
             ContentType.parse("application/json; charset=utf-8"),
         )
         Format.JSONP -> TextContent(
-            "${callback ?: "callback"}(" + kotlinx.serialization.json.JsonObject(mapOf("subsonic-response" to node.toJson())) + ");",
+            "${callback?.takeIf { JSONP_CALLBACK.matches(it) } ?: "callback"}(" + kotlinx.serialization.json.JsonObject(mapOf("subsonic-response" to node.toJson())) + ");",
             ContentType.parse("application/javascript; charset=utf-8"),
         )
     }
@@ -105,6 +106,16 @@ object Envelope {
  */
 class RestApi(private val users: Users, private val handlers: Map<String, Handler>, private val open: Set<String>) {
     private val log = LoggerFactory.getLogger(RestApi::class.java)
+    private val failures = LinkedHashMap<String, Pair<Int, Long>>()
+    private fun blocked(peer: String): Boolean = synchronized(failures) {
+        val entry = failures[peer] ?: return@synchronized false
+        if (System.nanoTime() - entry.second >= 60_000_000_000L) { failures.remove(peer); false } else entry.first >= 10
+    }
+    private fun recordFailure(peer: String) = synchronized(failures) {
+        if (failures.size >= 4096 && peer !in failures) failures.remove(failures.keys.first())
+        val prior = failures[peer]?.takeIf { System.nanoTime() - it.second < 60_000_000_000L }
+        failures[peer] = ((prior?.first ?: 0) + 1) to (prior?.second ?: System.nanoTime())
+    }
 
     fun install(route: Route) {
         route.route("/rest/{method}") {
@@ -137,13 +148,17 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
             else -> Format.XML
         }
         val callback = merged["callback"]?.firstOrNull()
+        if (format == Format.JSONP && callback != null && !Envelope.JSONP_CALLBACK.matches(callback)) {
+            call.respond(Envelope.render(Envelope.error(10, "Invalid JSONP callback"), Format.JSON, null))
+            return
+        }
         val handler = handlers[method]
         if (handler == null) {
             call.respondText("404 page not found\n", ContentType.Text.Plain, HttpStatusCode.NotFound)
             return
         }
         val reply: Node = try {
-            val user = if (method in open) anonymous else authenticate(merged)
+            val user = if (method in open) anonymous else authenticate(merged, call.request.local.remoteHost)
             when (val result = handler(Call(call, method, merged, format, callback, user, body))) {
                 is Reply.Envelope -> result.node
                 Reply.Handled -> return
@@ -160,7 +175,7 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
         call.respond(Envelope.render(reply, format, callback))
     }
 
-    private fun authenticate(parameters: Map<String, List<String>>): User {
+    private fun authenticate(parameters: Map<String, List<String>>, peer: String): User {
         fun one(name: String) = parameters[name]?.firstOrNull()
         if (one("apiKey") != null) throw SubsonicError(42, "Authentication mechanism not supported")
         val name = one("u")?.takeIf(String::isNotEmpty) ?: throw SubsonicError.missing("u")
@@ -169,6 +184,7 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
         val token = one("t")
         val salt = one("s")
         val password = one("p")
+        if (blocked(peer)) throw SubsonicError.wrongCredentials
         val outcome = when {
             token != null && salt != null -> users.authenticateToken(name, token, salt)
             password != null -> users.authenticatePassword(name, password)
@@ -176,7 +192,7 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
         }
         return when (outcome) {
             is AuthOutcome.Ok -> outcome.user
-            AuthOutcome.WrongCredentials -> throw SubsonicError.wrongCredentials
+            AuthOutcome.WrongCredentials -> { recordFailure(peer); throw SubsonicError.wrongCredentials }
         }
     }
 

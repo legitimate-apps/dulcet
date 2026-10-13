@@ -160,7 +160,7 @@ private fun userCommand(ctx: ServerContext, args: List<String>, options: Map<Str
     when (args.firstOrNull()) {
         "add" -> {
             val name = args.getOrNull(1) ?: error("user add <name> <password>")
-            val password = args.getOrNull(2) ?: error("user add <name> <password>")
+            val password = args.getOrNull(2) ?: System.getenv("DULCET_USER_PASSWORD") ?: System.console()?.readPassword("Password: ")?.concatToString() ?: error("Set DULCET_USER_PASSWORD or supply the password interactively")
             if (ctx.users.find(name) != null) ctx.users.setPassword(name, password) else ctx.users.create(name, password, options["admin"] == "true")
             println("user $name ready")
         }

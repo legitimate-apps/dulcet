@@ -7,7 +7,7 @@ is described in [`dulcet-library-extension.md`](dulcet-library-extension.md).
 
 ```sh
 ./gradlew :server:installDist
-server/build/install/dulcet-server/bin/dulcet-server user add admin 'change-me' --admin --music=DIR --data=DIR
+server/build/install/dulcet-server/bin/dulcet-server user add admin --admin --music=DIR --data=DIR
 server/build/install/dulcet-server/bin/dulcet-server serve --music=DIR --data=DIR    # port 4533
 ```
 
@@ -47,6 +47,29 @@ also works). It copies that user's stars, ratings, play counts and playlists int
 user. Use `--dry-run` first: it prints how many songs matched by path, by MusicBrainz id and by
 tags, and changes nothing.
 
+Put the listener behind a TLS reverse proxy before exposing it to a network: OpenSubsonic sends
+credentials in query parameters. Disable access logs containing query strings at the proxy too.
+Failed authentication is limited to ten attempts per connection IP per minute; deployments behind
+one proxy should also configure per-client limits at that proxy. The server uses the socket peer,
+not untrusted forwarded headers.
+
+The data folder must support POSIX owner-only file permissions for creating `secret.key`.
+
+`user add <name>` prompts for a password on a terminal, or reads `DULCET_USER_PASSWORD`.
+The import command reads `DULCET_IMPORT_PASSWORD`. Prefer those paths over password arguments,
+which appear in process listings and shell history.
+
+## Bundled FFmpeg
+
+Dulcet Server is Apache-2.0. The Docker image also distributes Alpine's FFmpeg executables as
+separate programs. Alpine 3.20 lists that package as GPL-2.0-or-later AND LGPL-2.1-or-later; those
+licenses apply to FFmpeg and its libraries, independently of Dulcet's license.
+See the [Alpine package and exact build revision](https://pkgs.alpinelinux.org/package/v3.20/community/aarch64/ffmpeg),
+the [Alpine build recipe and patches](https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.20-stable/community/ffmpeg),
+and [FFmpeg source releases](https://ffmpeg.org/releases/) for the corresponding sources.
+A published image should retain its installed package versions and make the matching source,
+patches and license notices available with that image.
+
 ## Conformance against the client's suites
 
 Dulcet Server runs as a second target for `:core-conformance:jvmTest`. It uses the same corpus and
@@ -76,7 +99,7 @@ The five failures and why each stands:
 |---|---|
 | CONF-05 envelope fields | It expects `type: "navidrome"`. Dulcet Server reports `dulcet`, and every other envelope field matches. By design. |
 | CONF-02 extension set | It records Navidrome's exact extension set, including `indexBasedQueue` and `playbackReport`. The client uses neither (it never calls `playbackReport`, TRAPS 7). Dulcet Server advertises only what it implements, plus `dulcetLibrary`. By design. |
-| CONF-74 purge "always" | It expects a removed track's old id to stop resolving once the file is restored. Dulcet Server derives ids from content, so a restored file gets its old id back, and its stars, plays and playlist entries come back with it. By design. |
+| CONF-74 purge "always" | It expects a removed track's old id to stop resolving once the file is restored. Dulcet Server persists path identities and content fingerprints, so a restored file gets its old id back, and its stars, plays and playlist entries come back with it. By design. |
 | CONF-74 server default | This test needs a second server instance (`DULCET_CONFORMANCE_PURGE_DEFAULT_BASE_URL`), and that was not provided. Environmental. |
 | StallDiagnostics local auth failure | It checks that the base URL is on port 4533, the CI port. This run used port 4633. Environmental. |
 
