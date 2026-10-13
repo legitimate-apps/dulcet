@@ -6,12 +6,11 @@ import com.legitimateapps.dulcet.server.auth.User
 import com.legitimateapps.dulcet.server.auth.Users
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.Parameters
 import io.ktor.http.content.TextContent
 import io.ktor.server.request.contentType
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.httpMethod
-import io.ktor.server.request.receiveParameters
+import io.ktor.server.request.queryString
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
@@ -116,12 +115,20 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
     private suspend fun dispatch(call: ApplicationCall) {
         val method = call.parameters["method"].orEmpty().removeSuffix(".view")
         val merged = LinkedHashMap<String, MutableList<String>>()
-        fun merge(parameters: Parameters) = parameters.entries().forEach { (key, values) -> merged.getOrPut(key) { ArrayList() }.addAll(values) }
-        merge(call.request.queryParameters)
+        // Parsed here rather than by Ktor, whose parsers keep only the first 1000 parameters: a
+        // playlist replace sends one songId per entry.
+        fun merge(encoded: String) = encoded.split('&').forEach { pair ->
+            if (pair.isEmpty()) return@forEach
+            val eq = pair.indexOf('=')
+            fun decode(text: String) = runCatching { java.net.URLDecoder.decode(text, Charsets.UTF_8) }.getOrDefault(text)
+            val key = decode(if (eq < 0) pair else pair.substring(0, eq))
+            merged.getOrPut(key) { ArrayList() }.add(if (eq < 0) "" else decode(pair.substring(eq + 1)))
+        }
+        merge(call.request.queryString())
         var body: String? = null
         if (call.request.httpMethod == HttpMethod.Post) {
             val type = call.request.contentType()
-            if (type.match(ContentType.Application.FormUrlEncoded)) merge(call.receiveParameters())
+            if (type.match(ContentType.Application.FormUrlEncoded)) merge(call.receiveText())
             else body = call.receiveText()
         }
         val format = when (merged["f"]?.firstOrNull()) {

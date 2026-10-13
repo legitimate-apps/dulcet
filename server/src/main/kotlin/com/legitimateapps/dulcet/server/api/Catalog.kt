@@ -230,6 +230,10 @@ class Catalog(private val db: Db) {
         }
     }
 
+    fun countAlbums(userId: String, where: String, args: List<Any?>): Long = db.read {
+        long("SELECT COUNT(*) FROM ($albumSelect WHERE $where)", userId, userId, *args.toTypedArray())
+    }
+
     fun album(userId: String, id: String): Node? = albums(userId, "al.id = ?", listOf(id)).firstOrNull()
 
     // ---- artists -----------------------------------------------------------------------------

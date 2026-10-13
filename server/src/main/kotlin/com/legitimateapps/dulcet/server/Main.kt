@@ -84,7 +84,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     /** Advertised by getOpenSubsonicExtensions. */
     val extensions: Map<String, List<Int>> = linkedMapOf(
         "formPost" to listOf(1),
-        "songLyrics" to listOf(1),
+        "songLyrics" to listOf(1, 2),
         "transcodeOffset" to listOf(1),
         "transcoding" to listOf(1),
         "dulcetLibrary" to listOf(1),
@@ -148,7 +148,7 @@ private fun serve(ctx: ServerContext) {
         Thread({
             while (true) {
                 Thread.sleep(ctx.config.watchSeconds * 1000)
-                runCatching { ctx.scanner.scan() }.onFailure { log.warn("periodic scan failed: {}", it.toString()) }
+                runCatching { ctx.scanner.scan(force = false) }.onFailure { log.warn("periodic scan failed: {}", it.toString()) }
             }
         }, "rescan").apply { isDaemon = true }.start()
     }

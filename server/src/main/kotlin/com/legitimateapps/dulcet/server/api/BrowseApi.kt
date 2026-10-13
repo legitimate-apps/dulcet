@@ -241,7 +241,8 @@ private fun albumList(ctx: ServerContext, call: Call, container: String, legacy:
         }
         else -> throw SubsonicError(0, "Invalid list type: $type")
     }
-    val albums = ctx.catalog.albums(call.user.id, where, args, order, size, offset, elementName = if (legacy) "album" else "album", legacyChild = legacy)
+    val albums = ctx.catalog.albums(call.user.id, where, args, order, size, offset, elementName = "album", legacyChild = legacy)
+    call.ktor.response.headers.append("X-Total-Count", ctx.catalog.countAlbums(call.user.id, where, args).toString())
     return ok { child(container) { albums.forEach { add(it) } } }
 }
 

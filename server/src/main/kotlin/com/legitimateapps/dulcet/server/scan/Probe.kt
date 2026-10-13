@@ -49,10 +49,10 @@ class Probe(private val ffprobe: String) {
             throw FfprobeException("ffprobe timed out")
         }
         if (process.exitValue() != 0) throw FfprobeException("ffprobe failed: ${errors.take(300)}")
-        return parse(output)
+        return parse(output, file)
     }
 
-    fun parse(output: String): ProbedTags {
+    fun parse(output: String, file: Path? = null): ProbedTags {
         val root = json.parseToJsonElement(output) as? JsonObject ?: throw FfprobeException("ffprobe printed no object")
         val format = root["format"] as? JsonObject ?: throw FfprobeException("ffprobe printed no format")
         val streams = (root["streams"] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
@@ -76,7 +76,11 @@ class Probe(private val ffprobe: String) {
             }
         }
         val duration = format.str("duration")?.toDoubleOrNull() ?: audio.str("duration")?.toDoubleOrNull() ?: 0.0
-        val bitRate = (format.str("bit_rate")?.toLongOrNull() ?: audio.str("bit_rate")?.toLongOrNull() ?: 0L) / 1000
+        // The audio stream's rate when ffprobe knows it. FLAC streams carry none, and the container
+        // rate counts metadata (pictures, padding), so for FLAC count only the audio frames.
+        val streamBits = audio.str("bit_rate")?.toLongOrNull()
+            ?: file?.let(::flacAudioBytes)?.takeIf { duration > 0 }?.let { (it * 8 / duration).toLong() }
+        val bitRate = (streamBits ?: format.str("bit_rate")?.toLongOrNull() ?: 0L) / 1000
         return ProbedTags(
             formatName = format.str("format_name") ?: "",
             duration = duration,
@@ -105,3 +109,19 @@ class Probe(private val ffprobe: String) {
         }
     }
 }
+
+/** Bytes after a FLAC file's metadata blocks, or null when the file is not FLAC. */
+internal fun flacAudioBytes(file: Path): Long? = runCatching {
+    java.io.RandomAccessFile(file.toFile(), "r").use { input ->
+        val magic = ByteArray(4)
+        input.readFully(magic)
+        if (String(magic, Charsets.ISO_8859_1) != "fLaC") return null
+        while (true) {
+            val header = input.readInt()
+            val last = header ushr 31 == 1
+            input.seek(input.filePointer + (header and 0xFFFFFF))
+            if (last) break
+        }
+        input.length() - input.filePointer
+    }
+}.getOrNull()

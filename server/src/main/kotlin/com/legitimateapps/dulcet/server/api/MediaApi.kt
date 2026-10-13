@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonObject
 import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 
 private data class Media(val id: String, val path: Path, val suffix: String, val contentType: String, val bitrate: Int, val codec: String?, val channels: Int?, val sampleRate: Int?, val bitDepth: Int?)
 
@@ -41,9 +42,40 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
         }
     }?.takeIf { Files.isRegularFile(it.path) }
 
+    val cacheRoot = ctx.config.dataFolder.resolve("cache").resolve("transcode")
+
+    /**
+     * A transcode from the start is cached once complete, so a repeat request is served from disk
+     * with an exact length and byte ranges. A first request that asks for a range waits for the
+     * whole transcode; one without a range streams live while the cache file is written beside it.
+     */
     suspend fun transcode(call: Call, media: Media, format: OutputFormat, bitrate: Int, channels: Int?, offset: Int) {
-        val process = withContext(Dispatchers.IO) { ctx.transcoder.start(media.path, format, bitrate, channels, offset) }
-        call.ktor.respond(ProcessContent(process, ContentType.parse(format.contentType)))
+        val type = ContentType.parse(format.contentType)
+        if (offset > 0) {
+            val process = withContext(Dispatchers.IO) { ctx.transcoder.start(media.path, format, bitrate, channels, offset) }
+            call.ktor.respond(ProcessContent(process, type, null, null))
+            return
+        }
+        val stamp = "${media.path}|${withContext(Dispatchers.IO) { Files.getLastModifiedTime(media.path).toMillis() }}|${format.name}|$bitrate|${channels ?: 0}"
+        val key = java.security.MessageDigest.getInstance("SHA-256").digest(stamp.toByteArray()).take(16).joinToString("") { "%02x".format(it) }
+        val cached = cacheRoot.resolve(key.take(2)).resolve("$key.${format.suffix}")
+        if (!Files.isRegularFile(cached) && call.ktor.request.headers[HttpHeaders.Range] != null) {
+            withContext(Dispatchers.IO) {
+                Files.createDirectories(cached.parent)
+                val temporary = Files.createTempFile(cached.parent, key, ".part")
+                val process = ctx.transcoder.start(media.path, format, bitrate, channels, 0)
+                Files.newOutputStream(temporary).use { out -> process.inputStream.copyTo(out) }
+                if (process.waitFor() == 0) Files.move(temporary, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                else Files.deleteIfExists(temporary)
+            }
+        }
+        if (Files.isRegularFile(cached)) {
+            serveFile(call, cached, type)
+            return
+        }
+        val process = withContext(Dispatchers.IO) { ctx.transcoder.start(media.path, format, bitrate, channels, 0) }
+        withContext(Dispatchers.IO) { Files.createDirectories(cached.parent) }
+        call.ktor.respond(ProcessContent(process, type, withContext(Dispatchers.IO) { Files.createTempFile(cached.parent, key, ".part") }, cached))
     }
 
     return mapOf(
@@ -60,7 +92,7 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
                 else -> null
             }
             if (target == null || (target.suffix.equals(media.suffix, true) && maxBitRate == 0 && offset == 0)) {
-                serveFile(call, media)
+                serveFile(call, media.path, ContentType.parse(media.contentType))
             } else {
                 val bitrate = if (maxBitRate > 0) maxBitRate else defaultBitrate(target)
                 transcode(call, media, target, bitrate, null, offset)
@@ -69,7 +101,7 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
         },
         "download" to { call ->
             val media = media(call.required("id")) ?: throw SubsonicError.notFound("Song")
-            serveFile(call, media, attachment = true)
+            serveFile(call, media.path, ContentType.parse(media.contentType), attachment = true)
             Reply.Handled
         },
         "getCoverArt" to { call ->
@@ -95,18 +127,17 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
                 call.ktor.respondText("missing required parameter", status = HttpStatusCode.BadRequest)
                 return@stream Reply.Handled
             }
-            val decoded = ctx.transcodeParams.decode(token)
-            if (decoded == null || decoded.trackId != mediaId) {
-                call.ktor.respondText("invalid transcodeParams", status = HttpStatusCode.BadRequest)
-                return@stream Reply.Handled
-            }
             val media = media(mediaId)
             if (media == null) {
-                call.ktor.respondText("not found", status = HttpStatusCode.NotFound)
+                call.ktor.respondText("Not Found\n", status = HttpStatusCode.NotFound)
                 return@stream Reply.Handled
             }
-            val offset = call.int("offset", 0)
-            if (decoded.format.suffix == "raw") serveFile(call, media) else transcode(call, media, decoded.format, decoded.bitrateKbps, decoded.channels, offset)
+            val decoded = ctx.transcodeParams.decode(token)
+            if (decoded == null || decoded.trackId != mediaId) {
+                call.ktor.respondText("Bad Request\n", status = HttpStatusCode.BadRequest)
+                return@stream Reply.Handled
+            }
+            transcode(call, media, decoded.format, decoded.bitrateKbps, decoded.channels, call.int("offset", 0))
             Reply.Handled
         },
         "getLyricsBySongId" to { call ->
@@ -152,6 +183,7 @@ private fun defaultBitrate(format: OutputFormat): Int = when (format.codec) {
 private fun structured(text: LyricsText, artist: String, title: String): Node = Node("structuredLyrics").apply {
     this["displayArtist"] = artist
     this["displayTitle"] = title
+    this["kind"] = "main"
     this["lang"] = text.language
     this["synced"] = text.synced
     if (text.synced && text.offsetMillis != 0L) this["offset"] = text.offsetMillis
@@ -169,8 +201,9 @@ private fun decide(ctx: ServerContext, media: Media, profile: JsonObject): Node 
     fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
     val sourceContainer = containerOf(media.suffix)
     val sourceCodec = (media.codec ?: media.suffix).lowercase()
-    val maxBitrate = profile.int("maxAudioBitrate")?.takeIf { it > 0 }
-    val maxTranscodeBitrate = profile.int("maxTranscodingAudioBitrate")?.takeIf { it > 0 }
+    // The profile's bitrates are bits per second (OpenSubsonic transcoding); the catalog's are kbps.
+    val maxBitrate = profile.int("maxAudioBitrate")?.takeIf { it > 0 }?.let { it / 1000 }
+    val maxTranscodeBitrate = profile.int("maxTranscodingAudioBitrate")?.takeIf { it > 0 }?.let { it / 1000 }
     val reasons = ArrayList<String>()
     val direct = (profile["directPlayProfiles"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
     var canDirect = false
@@ -241,22 +274,21 @@ private fun containerOf(suffix: String): String = when (suffix.lowercase()) {
 }
 
 /** Serves a file with single-range support: 200 with the whole file, 206 for a range, 416 when unsatisfiable. */
-private suspend fun serveFile(call: Call, media: Media, attachment: Boolean = false) {
-    val length = withContext(Dispatchers.IO) { Files.size(media.path) }
+private suspend fun serveFile(call: Call, path: Path, type: ContentType, attachment: Boolean = false) {
+    val length = withContext(Dispatchers.IO) { Files.size(path) }
     val range = call.ktor.request.headers[HttpHeaders.Range]?.let { parseRange(it, length) }
-    val type = ContentType.parse(media.contentType)
     val extra = ArrayList<Pair<String, String>>()
     extra.add(HttpHeaders.AcceptRanges to "bytes")
-    if (attachment) extra.add(HttpHeaders.ContentDisposition to "attachment; filename=\"${media.path.fileName.toString().replace("\"", "")}\"")
+    if (attachment) extra.add(HttpHeaders.ContentDisposition to "attachment; filename=\"${path.fileName.toString().replace("\"", "")}\"")
     when {
-        range == null -> call.ktor.respond(FileContent(media.path, 0, length, type, HttpStatusCode.OK, extra))
+        range == null -> call.ktor.respond(FileContent(path, 0, length, type, HttpStatusCode.OK, extra))
         range.first < 0 -> {
             call.ktor.response.headers.append(HttpHeaders.ContentRange, "bytes */$length")
             call.ktor.respond(HttpStatusCode.RequestedRangeNotSatisfiable, "")
         }
         else -> {
             extra.add(HttpHeaders.ContentRange to "bytes ${range.first}-${range.last}/$length")
-            call.ktor.respond(FileContent(media.path, range.first, range.last - range.first + 1, type, HttpStatusCode.PartialContent, extra))
+            call.ktor.respond(FileContent(path, range.first, range.last - range.first + 1, type, HttpStatusCode.PartialContent, extra))
         }
     }
 }
@@ -310,9 +342,17 @@ private class FileContent(
     }
 }
 
-private class ProcessContent(private val process: Process, override val contentType: ContentType) : OutgoingContent.WriteChannelContent() {
+/** Streams a transcode as it is produced; with [temporary]/[cached] it also keeps a copy, kept only when ffmpeg finished cleanly. */
+private class ProcessContent(
+    private val process: Process,
+    override val contentType: ContentType,
+    private val temporary: Path?,
+    private val cached: Path?,
+) : OutgoingContent.WriteChannelContent() {
     override val status: HttpStatusCode = HttpStatusCode.OK
     override suspend fun writeTo(channel: ByteWriteChannel) {
+        var complete = false
+        val copy = temporary?.let { Files.newOutputStream(it) }
         try {
             withContext(Dispatchers.IO) {
                 val input = process.inputStream
@@ -320,12 +360,19 @@ private class ProcessContent(private val process: Process, override val contentT
                 while (true) {
                     val read = input.read(buffer)
                     if (read < 0) break
+                    copy?.write(buffer, 0, read)
                     channel.writeFully(buffer, 0, read)
                     channel.flush()
                 }
+                complete = process.waitFor() == 0
             }
         } finally {
             process.destroy()
+            copy?.close()
+            if (temporary != null) {
+                if (complete && cached != null) runCatching { Files.move(temporary, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE) }
+                Files.deleteIfExists(temporary)
+            }
         }
     }
 }

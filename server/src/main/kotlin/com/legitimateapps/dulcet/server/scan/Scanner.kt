@@ -36,7 +36,11 @@ class Scanner(
     val scannedCount: Int get() = progress.get()
 
     /** Runs a scan unless one is running, in which case the running one rescans once it ends. */
-    fun scan(): ScanResult? {
+    /**
+     * [force] false is the periodic check: it writes nothing, and leaves `lastScan` where it is,
+     * when no file, sidecar or folder image changed, because `lastScan` is the clients' scan clock.
+     */
+    fun scan(force: Boolean = true): ScanResult? {
         if (!running.compareAndSet(false, true)) {
             rescanRequested = true
             return null
@@ -45,7 +49,7 @@ class Scanner(
             var result: ScanResult
             do {
                 rescanRequested = false
-                result = scanOnce()
+                result = scanOnce(force)
             } while (rescanRequested)
             return result
         } finally {
@@ -53,7 +57,7 @@ class Scanner(
         }
     }
 
-    private fun scanOnce(): ScanResult {
+    private fun scanOnce(force: Boolean): ScanResult {
         progress.set(0)
         val started = clock()
         val root = musicFolder.toAbsolutePath().normalize()
@@ -74,18 +78,32 @@ class Scanner(
             old == null || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar
         }
         val unchanged = files.size - changed.size
-        val probed = ArrayList<TrackInfo>()
-        var failed = 0
-        for (file in changed) {
-            try {
-                val tags = probe.probe(root.resolve(file.relative))
-                probed.add(TrackInfo.from(file.relative, file.parent, file.name, file.mtime, file.size, tags, file.sidecar))
-            } catch (error: Exception) {
-                failed++
-                log.warn("could not read tags of a file ({}): {}", file.name, error.message)
-            }
-            progress.incrementAndGet()
+        val artStamp = folderArt.toSortedMap().entries.joinToString("\n").hashCode().toString()
+        if (!force && changed.isEmpty() && removed.isEmpty() && db.read { string("SELECT value FROM meta WHERE key = 'folder_art_stamp'") } == artStamp) {
+            return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
         }
+        // ffprobe is a process per file; a few in parallel keep a first scan short.
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(PROBE_THREADS)
+        val failures = java.util.concurrent.atomic.AtomicInteger(0)
+        val probed = try {
+            changed.map { file ->
+                pool.submit<TrackInfo?> {
+                    try {
+                        val tags = probe.probe(root.resolve(file.relative))
+                        TrackInfo.from(file.relative, file.parent, file.name, file.mtime, file.size, tags, file.sidecar)
+                    } catch (error: Exception) {
+                        failures.incrementAndGet()
+                        log.warn("could not read tags of a file ({}): {}", file.name, error.message)
+                        null
+                    } finally {
+                        progress.incrementAndGet()
+                    }
+                }
+            }.mapNotNull { it.get() }
+        } finally {
+            pool.shutdown()
+        }
+        val failed = failures.get()
         progress.addAndGet(unchanged)
         val now = clock()
         db.write {
@@ -114,6 +132,7 @@ class Scanner(
             regroup(folderArt)
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
+            execute("INSERT INTO meta(key, value) VALUES('folder_art_stamp', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", artStamp)
         }
         val result = ScanResult(added = probed.count { existing[it.path] == null }, updated = probed.count { existing[it.path] != null }, removed = removed.size, unchanged = unchanged, failed = failed)
         log.info("scan finished in {} ms: {}", clock() - started, result)
@@ -247,6 +266,7 @@ class Scanner(
     }
 
     companion object {
+        private val PROBE_THREADS = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
         val ART_NAMES = listOf("cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.jpeg", "folder.png", "front.jpg", "front.jpeg", "front.png", "album.jpg", "album.png", "albumart.jpg", "albumart.png")
         val LYRICS_SIDECARS = listOf("lrc", "txt")
     }

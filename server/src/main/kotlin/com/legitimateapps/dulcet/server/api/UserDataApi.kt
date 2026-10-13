@@ -60,8 +60,9 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val client = call.param("c") ?: ""
             db.write {
                 ids.forEachIndexed { index, id ->
+                    // An id this server does not hold is accepted and dropped, as other servers do.
                     val track = single("SELECT album_id, artist_id FROM track WHERE id = ?", id) { it.string("album_id") to it.string("artist_id") }
-                        ?: throw SubsonicError.notFound("Song")
+                        ?: return@forEachIndexed
                     if (submission) {
                         val at = times.getOrNull(index) ?: now
                         for ((type, itemId) in listOf("song" to id, "album" to track.first, "artist" to track.second)) {
@@ -88,9 +89,11 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             }
             val rows = db.read {
                 if (owner != null) playlistRows("p.owner_id = ?", owner.id)
+                // An admin sees every user's playlists, read-only unless they own them.
+                else if (call.user.isAdmin) playlistRows("1 = 1")
                 else playlistRows("p.owner_id = ? OR p.public = 1", call.user.id)
             }
-            ok { child("playlists") { rows.forEach { add(playlistNode(it)) } } }
+            ok { child("playlists") { rows.forEach { add(playlistNode(it, call.user.id)) } } }
         },
         "getPlaylist" to { call ->
             val id = call.required("id")
@@ -106,9 +109,12 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                 val row = db.read { playlistRows("p.id = ?", existingId).firstOrNull() } ?: throw SubsonicError.notFound("Playlist")
                 if (row.ownerId != call.user.id) throw SubsonicError.notAuthorized()
                 db.write {
-                    call.param("name")?.let { execute("UPDATE playlist SET name = ? WHERE id = ?", it, existingId) }
-                    execute("DELETE FROM playlist_track WHERE playlist_id = ?", existingId)
-                    songIds.forEachIndexed { index, songId -> execute("INSERT INTO playlist_track VALUES (?,?,?)", existingId, index, songId) }
+                    call.param("name")?.takeIf(String::isNotEmpty)?.let { execute("UPDATE playlist SET name = ? WHERE id = ?", it, existingId) }
+                    // A replace with no songId leaves the entries alone.
+                    if (songIds.isNotEmpty()) {
+                        execute("DELETE FROM playlist_track WHERE playlist_id = ?", existingId)
+                        songIds.forEachIndexed { index, songId -> execute("INSERT INTO playlist_track VALUES (?,?,?)", existingId, index, songId) }
+                    }
                     execute("UPDATE playlist SET changed = ? WHERE id = ?", now, existingId)
                 }
                 existingId
@@ -131,7 +137,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val add = call.params("songIdToAdd").filter(String::isNotEmpty)
             val remove = call.params("songIndexToRemove").mapNotNull { it.toIntOrNull() }.toSet()
             db.write {
-                call.param("name")?.let { execute("UPDATE playlist SET name = ? WHERE id = ?", it, id) }
+                call.param("name")?.takeIf(String::isNotEmpty)?.let { execute("UPDATE playlist SET name = ? WHERE id = ?", it, id) }
                 call.param("comment")?.let { execute("UPDATE playlist SET comment = ? WHERE id = ?", it, id) }
                 call.param("public")?.let { execute("UPDATE playlist SET public = ? WHERE id = ?", it.equals("true", true), id) }
                 if (add.isNotEmpty() || remove.isNotEmpty()) {
@@ -228,10 +234,10 @@ private fun Db.Session.playlistRows(where: String, vararg args: Any?): List<Play
     )
 }
 
-private fun playlistNode(row: PlaylistRow): Node = Node("playlist").apply {
+private fun playlistNode(row: PlaylistRow, viewerId: String): Node = Node("playlist").apply {
     this["id"] = row.id
     this["name"] = row.name
-    this["comment"] = row.comment ?: ""
+    row.comment?.takeIf(String::isNotEmpty)?.let { this["comment"] = it }
     this["songCount"] = row.songCount
     this["duration"] = row.duration.toInt()
     this["public"] = row.public
@@ -239,9 +245,10 @@ private fun playlistNode(row: PlaylistRow): Node = Node("playlist").apply {
     this["created"] = Catalog.iso(row.created)
     this["changed"] = Catalog.iso(row.changed)
     this["coverArt"] = "pl-${row.id}"
+    this["readonly"] = row.ownerId != viewerId
 }
 
 private fun playlistWithEntries(ctx: ServerContext, call: Call, row: PlaylistRow): Node {
     val ids = ctx.db.read { query("SELECT track_id FROM playlist_track WHERE playlist_id = ? ORDER BY position", row.id) { it.string("track_id") } }
-    return playlistNode(row).apply { ctx.catalog.songsById(call.user.id, ids, "entry").forEach { add(it) } }
+    return playlistNode(row, call.user.id).apply { ctx.catalog.songsById(call.user.id, ids, "entry").forEach { add(it) } }
 }
