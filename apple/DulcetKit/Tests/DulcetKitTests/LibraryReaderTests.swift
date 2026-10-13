@@ -1889,6 +1889,35 @@ func aViewThatReadsIsOnlineRedrawsWhenOnlyTheNetworkChanges() throws {
 /// Launch negotiation is shared by automatic and manual triggers. Its transient backoff never
 /// reads on a tight loop, and it stops in the background or on loss of the network.
 @Test @MainActor
+func savedAutomaticReconnectKeepsTheOfflinePresentationWithoutAReader() {
+    let connector = ReaderTestConnector()
+    let delays = ManualDelays()
+    let saved = DulcetAccountConnectRequest(serverURL: readerAccount.normalizedServerURL,
+        username: readerAccount.username, password: readerAccount.password, allowLocalHTTP: false)
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: ReaderTestCredentials(persisted: saved, providerInstanceID: "provider-reader"),
+        reconnectDelays: delays
+    ))
+    #expect(connector.requests == [saved])
+    connector.complete(.failed(DulcetAccountFailurePresentation(kind: .transportUnreachable,
+        serverName: "Music", title: "Offline", message: "Offline", recovery: "Reconnect",
+        automaticRetryFloor: .zero)))
+    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(!store.snapshot.accountConnected)
+    delays.advance(by: .milliseconds(1999))
+    #expect(connector.requests.count == 1)
+    delays.advance(by: .milliseconds(1))
+    #expect(connector.requests.count == 2, "the offline presentation still schedules backoff")
+    connector.complete(.failed(DulcetAccountFailurePresentation(kind: .invalidCredentials,
+        serverName: "Music", title: "Sign in", message: "Sign in", recovery: "Reconnect")))
+    #expect(store.snapshot.state == .accountErrorAuthentication)
+    delays.advance(by: .seconds(3600))
+    #expect(connector.requests.count == 2, "authentication still requires recovery")
+}
+
+@Test @MainActor
 func savedAutomaticReconnectJoinsBacksOffAndRespondsToLifecycle() throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()

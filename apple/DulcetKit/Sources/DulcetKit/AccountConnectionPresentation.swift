@@ -774,7 +774,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
               !currentSnapshot.accountConnection.isConnected,
               currentSnapshot.accountConnection != .connecting else { return }
         cancelReconnectRetry()
-        submit(currentSnapshot.accountForm, inPlace: true)
+        submit(currentSnapshot.accountForm, inPlace: true, automatic: true)
     }
 
     private func retrySavedReconnect(after failure: DulcetAccountFailurePresentation) {
@@ -954,7 +954,11 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// connecting (Connection shows that, with Cancel, if they go there), and the outcome is
     /// recorded on whatever surface they are on. That is decided here, when the retry is made,
     /// and not re-decided from where the person happens to be when it completes.
-    private func submit(_ request: DulcetAccountConnectRequest, inPlace: Bool = false) {
+    private func submit(
+        _ request: DulcetAccountConnectRequest,
+        inPlace: Bool = false,
+        automatic: Bool = false
+    ) {
         cancelLibraryBrowse()
         cancelLibraryRefresh()
         // Whatever is held describes the connection being replaced, so it stops being an answer
@@ -983,7 +987,7 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             guard let self, self.generation == submissionGeneration else { return }
             self.activeOperation = nil
             if inPlace {
-                self.completeInPlace(outcome, request: request)
+                self.completeInPlace(outcome, request: request, automatic: automatic)
                 return
             }
             switch outcome {
@@ -1065,7 +1069,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// that is where they are.
     private func completeInPlace(
         _ outcome: DulcetAccountConnectOutcome,
-        request: DulcetAccountConnectRequest
+        request: DulcetAccountConnectRequest,
+        automatic: Bool
     ) {
         switch outcome {
         case let .connected(account):
@@ -1109,11 +1114,23 @@ public final class DulcetAccountDataSource: DulcetDataSource {
             publishInPlace(status: .saved(serverName: savedServerName ?? ""), form: request)
         case let .failed(failure) where localNetworkAccess != nil && !localNetworkRetryUsed
             && (failure.kind == .transportUnreachable || failure.kind == .transportTimeout):
-            resolveLocalNetworkAccess(after: failure, request: request, generation: generation)
+            resolveLocalNetworkAccess(after: failure, request: request, generation: generation, automatic: automatic)
         case let .failed(failure):
-            publishInPlace(status: .failed(failure), form: request)
+            publishInPlace(status: reconnectFailureStatus(failure, automatic: automatic), form: request)
             retrySavedReconnect(after: failure)
         }
+    }
+
+    /// An automatic transient failure leaves the saved account's one offline presentation.
+    /// The retry keeps the failure's timing policy; manual and terminal failures keep their words.
+    private func reconnectFailureStatus(
+        _ failure: DulcetAccountFailurePresentation,
+        automatic: Bool
+    ) -> DulcetAccountConnectionStatus {
+        if automatic, failure.automaticRetryFloor != nil, let savedServerName {
+            return .saved(serverName: savedServerName)
+        }
+        return .failed(failure)
     }
 
     /// Republishes the surface that is showing with a new account status, moving nothing. On
@@ -1142,7 +1159,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     private func resolveLocalNetworkAccess(
         after failure: DulcetAccountFailurePresentation,
         request: DulcetAccountConnectRequest,
-        generation submissionGeneration: Int
+        generation submissionGeneration: Int,
+        automatic: Bool = false
     ) {
         guard let localNetworkAccess else { return }
         var answered = false
@@ -1161,12 +1179,13 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                         kind: .localNetworkAccessDenied,
                         serverName: failure.serverName
                     )),
-                    request: request
+                    request: request,
+                    automatic: automatic
                 )
             case .notDenied where !answered:
                 // Privacy was never the obstacle: the original failure stands.
                 self.endLocalNetworkWatch()
-                self.publishLocalNetworkAnswer(failure, request: request)
+                self.publishLocalNetworkAnswer(failure, request: request, automatic: automatic)
                 self.retrySavedReconnect(after: failure)
             case .notDenied:
                 // Access was granted after it blocked the connection, so retry it once, as the
@@ -1184,7 +1203,8 @@ public final class DulcetAccountDataSource: DulcetDataSource {
                 self.localNetworkRetryUsed = true
                 self.submit(
                     request,
-                    inPlace: self.currentSnapshot.selectedDestination != .settings
+                    inPlace: automatic || self.currentSnapshot.selectedDestination != .settings,
+                    automatic: automatic
                 )
             }
         }
@@ -1196,17 +1216,19 @@ public final class DulcetAccountDataSource: DulcetDataSource {
     /// Connection shows it when they come to it.
     private func publishLocalNetworkAnswer(
         _ answer: DulcetAccountFailurePresentation,
-        request: DulcetAccountConnectRequest
+        request: DulcetAccountConnectRequest,
+        automatic: Bool = false
     ) {
+        let status = reconnectFailureStatus(answer, automatic: automatic)
         guard currentSnapshot.selectedDestination == .settings else {
-            publishInPlace(status: .failed(answer), form: request)
+            publishInPlace(status: status, form: request)
             return
         }
         publish(
-            state: answer.kind.family.presentationState,
+            state: status.accountPresentationState,
             destination: .settings,
             form: request,
-            status: .failed(answer)
+            status: status
         )
     }
 
