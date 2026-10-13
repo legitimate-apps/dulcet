@@ -6,9 +6,15 @@ optimistic membership, durable pending writes and their reconnect replay.
 
 ## Evidence status
 
-Product source and the native Mac UI target compiled. The scoped Swift presentation tests passed
-in the initial implementation. Final full Swift and platform runtime results will be recorded below.
-No platform runtime pass or screenshot matrix is claimed by this checkpoint.
+OBSERVED on the final product tree: `swift test --no-parallel` in `apple/DulcetKit` passed
+299 tests across 10 suites, including capability/navigation and current-account membership tests.
+All 27 argument-free Python gates invoked by `apple-ci` passed; the host-pressure live control
+passed on retry with four samples. XcodeGen regeneration and its self-test passed.
+
+The native Mac and iPhone app/UI test targets compiled. Mac app inspection showed an online
+account, Library, Browse, the five Library sections and the empty state. Its UI test reached Browse
+and the fixture album, then paused at a system dialog. No complete platform runtime pass or
+screenshot matrix is claimed by this checkpoint.
 
 ## Runtime suite
 
