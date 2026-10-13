@@ -79,6 +79,25 @@ struct SystemNowPlayingTests {
         )
     }
 
+    @Test
+    func anOnTrackSampleRestoresAnEvictedSystemEntryWithAllMetadata() throws {
+        let clock = ManualUptime()
+        let controls = DulcetPlatformSystemMediaControls(uptime: { clock.now })
+        let center = MPNowPlayingInfoCenter.default()
+        defer { controls.clear() }
+        controls.publish(state(artwork: try pngData(width: 8, height: 8)))
+        // Model the system losing its entry while the engine continues progressing. A sample
+        // exactly on the extrapolated timeline must still restore the complete entry.
+        center.nowPlayingInfo = nil
+        clock.now = 1
+        controls.updateTransport(sessionID: .init("session"), position: 11, rate: 1, isPlaying: true)
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtist] as? String == "Artist")
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] != nil)
+        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 11)
+    }
+
     private func pngData(width: Int, height: Int) throws -> Data {
         let context = try #require(CGContext(
             data: nil,

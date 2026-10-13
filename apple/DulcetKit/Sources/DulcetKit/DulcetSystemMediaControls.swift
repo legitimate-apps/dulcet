@@ -107,6 +107,7 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     private var transportAnchor: TransportAnchor?
     private var decodedArtwork: (data: Data, artwork: MPMediaItemArtwork)?
     private var targets: [(MPRemoteCommand, Any)] = []
+    private var targetSessionID: DulcetPlaybackSessionID?
     private let uptime: @Sendable () -> TimeInterval
 
     private struct TransportAnchor {
@@ -188,7 +189,9 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
         // The system extrapolates elapsed time from the last write and its rate, so rewriting
         // the dictionary on every 0.5 s sample is redundant work for every observer of the
         // Now Playing centre. Write when the transport changed or the extrapolation drifted.
-        if let anchor = transportAnchor,
+        let informationIsCurrent = nowPlayingCenter.nowPlayingInfo?[MPNowPlayingInfoPropertyExternalContentIdentifier]
+            as? String == sessionID.rawValue
+        if informationIsCurrent, let anchor = transportAnchor,
            anchor.sessionID == sessionID,
            anchor.isPlaying == isPlaying,
            anchor.rate == effectiveRate,
@@ -205,11 +208,10 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
             uptime: now
         )
         lock.unlock()
-        var information = nowPlayingCenter.nowPlayingInfo ?? nowPlayingInfo(for: updated)
-        information[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
-        information[MPNowPlayingInfoPropertyPlaybackRate] = effectiveRate
-        information[MPNowPlayingInfoPropertyDefaultPlaybackRate] = rate > 0 ? rate : 1
-        nowPlayingCenter.nowPlayingInfo = information
+        // Rebuild from the retained state: a lost/overwritten entry must recover title,
+        // duration and artwork as well as transport, even on an on-track sample.
+        applyCommandAvailability(updated)
+        nowPlayingCenter.nowPlayingInfo = nowPlayingInfo(for: updated)
         nowPlayingCenter.playbackState = isPlaying ? .playing : .paused
     }
 
@@ -225,7 +227,9 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     }
 
     private func installTargets(for sessionID: DulcetPlaybackSessionID) {
+        guard targetSessionID != sessionID else { return }
         removeTargets()
+        targetSessionID = sessionID
         addTarget(commandCenter.playCommand, sessionID: sessionID) { sessionID, _ in .play(sessionID: sessionID) }
         addTarget(commandCenter.pauseCommand, sessionID: sessionID) { sessionID, _ in .pause(sessionID: sessionID) }
         addTarget(commandCenter.togglePlayPauseCommand, sessionID: sessionID) { sessionID, _ in
@@ -269,6 +273,7 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     private func removeTargets() {
         targets.forEach { command, target in command.removeTarget(target) }
         targets.removeAll()
+        targetSessionID = nil
     }
 
     private func applyCommandAvailability(_ state: DulcetSystemNowPlayingState?) {
@@ -301,9 +306,10 @@ public final class DulcetPlatformSystemMediaControls: DulcetSystemMediaControlli
     private func nowPlayingInfo(for state: DulcetSystemNowPlayingState) -> [String: Any] {
         var information: [String: Any] = [
             MPMediaItemPropertyTitle: state.metadata.title,
+            MPNowPlayingInfoPropertyExternalContentIdentifier: state.sessionID.rawValue,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: state.position,
-            MPNowPlayingInfoPropertyPlaybackRate: state.isPlaying ? state.rate : 0,
-            MPNowPlayingInfoPropertyDefaultPlaybackRate: state.rate,
+            MPNowPlayingInfoPropertyPlaybackRate: state.isPlaying ? state.rate : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: state.rate > 0 ? state.rate : 1.0,
         ]
         if let artist = state.metadata.artist { information[MPMediaItemPropertyArtist] = artist }
         if let album = state.metadata.albumTitle { information[MPMediaItemPropertyAlbumTitle] = album }

@@ -157,6 +157,16 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    func reportCurrentItemDurationForTesting(
+        _ duration: TimeInterval,
+        seekability: DulcetPlaybackSeekability
+    ) {
+        performOnQueueSynchronously { [self] in
+            guard let current else { return }
+            updateDuration(current, duration: duration, seekability: seekability)
+        }
+    }
+
     /// Drive natural end-of-item on the non-AVFoundation test path.
     ///
     /// This calls exactly the `itemEnded` the `.AVPlayerItemDidPlayToEndTime` observer calls, so a
@@ -241,9 +251,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         var applied = false
         performOnQueueSynchronously { [self] in
             guard let current, current.plan.playbackSessionID == sessionID else { return }
-            remoteCommandCapabilities = capabilities
-            if current.readyEmitted { publishNowPlaying(current) }
             applied = true
+            guard remoteCommandCapabilities != capabilities else { return }
+            remoteCommandCapabilities = capabilities
+            publishNowPlaying(current)
         }
         return applied
     }
@@ -255,7 +266,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             guard current?.plan.playbackSessionID == sessionID ||
                 preloaded?.plan.playbackSessionID == sessionID else { return }
             artworkBySession[sessionID] = imageData
-            if let current, current.plan.playbackSessionID == sessionID, current.readyEmitted {
+            if let current, current.plan.playbackSessionID == sessionID {
                 publishNowPlaying(current)
             }
         }
@@ -420,6 +431,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             }
         }
         emit(.preparing(attemptID: plan.attemptID))
+        // Publish after activation, without waiting for stream readiness or artwork. Cold
+        // transcodes and restored queues can spend time preparing an otherwise valid track.
+        publishNowPlaying(context)
         if wasPlaying {
             requestStartupPlayback(context)
             player.playImmediately(atRate: desiredRate)
@@ -646,6 +660,12 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 self?.enqueue { $0.durationChanged(context) }
             }
         )
+        context.observers.append(
+            context.item.observe(\.seekableTimeRanges, options: [.new]) { [weak self, weak context] _, _ in
+                guard let context else { return }
+                self?.enqueue { $0.durationChanged(context) }
+            }
+        )
         let center = NotificationCenter.default
         notificationObservers.append(
             center.addObserver(
@@ -722,9 +742,27 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func durationChanged(_ context: PlayerItemContext) {
         guard isActive(context), let duration = finiteSeconds(context.item.duration) else { return }
-        guard context.duration == nil || abs((context.duration ?? 0) - duration) > 0.001 else { return }
+        updateDuration(context, duration: duration, seekability: seekability(context))
+    }
+
+    private func updateDuration(
+        _ context: PlayerItemContext,
+        duration: TimeInterval,
+        seekability: DulcetPlaybackSeekability
+    ) {
+        guard isActive(context), duration.isFinite, duration > 0 else { return }
+        let durationChanged = context.duration == nil || abs((context.duration ?? 0) - duration) > 0.001
+        let seekabilityChanged = context.seekability != seekability
+        guard durationChanged || seekabilityChanged else { return }
         context.duration = duration
-        emit(.durationChanged(attemptID: context.plan.attemptID, duration: duration))
+        context.seekability = seekability
+        if durationChanged { emit(.durationChanged(attemptID: context.plan.attemptID, duration: duration)) }
+        if seekabilityChanged, context.readyEmitted {
+            // The core routes remote seeks from its observation, not command-center flags.
+            // Resync the existing attempt without sending another Ready or resetting progress.
+            emit(.observationResynced(attemptID: context.plan.attemptID, snapshot: context.snapshot()))
+        }
+        if current === context, context.readyEmitted { publishNowPlaying(context) }
     }
 
     private func itemEnded(_ context: PlayerItemContext) {
@@ -861,6 +899,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         case .waitingToPlayAtSpecifiedRate:
             beginBuffering(current)
         case .playing:
+            // Claim the entry again when the player actually starts, after any activation /
+            // readiness timing window, rather than relying on its first metadata write.
+            publishNowPlaying(current)
             if current.buffering {
                 current.buffering = false
                 emit(
@@ -1131,7 +1172,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             metadata: plan.metadata,
             duration: duration,
             position: position,
-            rate: Double(desiredRate),
+            rate: current?.plan.playbackSessionID == plan.playbackSessionID && current?.buffering == true
+                ? 0 : Double(desiredRate),
             isPlaying: isPlaying,
             seekability: seekability,
             remoteCapabilities: remoteCommandCapabilities,
