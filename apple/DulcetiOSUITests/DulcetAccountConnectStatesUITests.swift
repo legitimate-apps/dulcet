@@ -384,19 +384,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         XCTAssertGreaterThan(accepted, 0, "The progress shown must have been a real connection to the silent port")
         print("DULCET ACCOUNT STATE left=in-progress via=cancel silent-connections=\(accepted)")
 
-        // Repeat the real silent-server request at the largest accessibility text size. The
-        // existing DEBUG entry hook submits through the production connector, skipping typing
-        // only; no layout fixture or injected connection state supplies this Cancel control.
+        // Repeat through Connect at the largest accessibility text size. Launch idle, so the
+        // request's 30-second deadline begins only after the form is visible and filled.
         app.terminate()
         app.launchArguments = [
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
-            "-dulcet-debug-connect-account",
-            "-dulcet-debug-account-server-url", silentURL,
-            "-dulcet-debug-account-username", server.username,
-            "-dulcet-debug-account-password", server.password,
         ]
         launchInInteractionScope(app)
         guard openConnection(in: app, compact: compact),
+              fill(app, serverURL: silentURL, username: server.username, password: server.password),
+              tap(primary, in: app, name: "Connect"),
               waitForLabel(containing: "Cancel", of: primary, timeout: 5),
               waitForStableHitTarget(primary, matching: .identifier("dulcet.account-connect.primary-action"),
                                     in: app.windows.firstMatch, timeout: 5), primary.isEnabled else {
