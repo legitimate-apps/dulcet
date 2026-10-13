@@ -17,7 +17,7 @@ import XCTest
 /// | domain error, server | the fault proxy in front of the disposable server answers `ping` with OpenSubsonic error 0 |
 /// | in progress | a loopback port this process listens on and never answers; Cancel, by remote, ends it |
 /// | connected | the right account, submitted through Connect's own path by the DEBUG launch hook |
-/// | saved, disconnected | a relaunch with the account saved: the library offers Reconnect, Connection names the server |
+/// | saved launch | reconnects automatically; an unreachable server leaves the device library and manual Reconnect |
 /// | credential persistence | a relaunch whose active-account pointer names no Keychain item |
 ///
 /// The right password is never typed: the DEBUG launch hook hands the form the account and calls
