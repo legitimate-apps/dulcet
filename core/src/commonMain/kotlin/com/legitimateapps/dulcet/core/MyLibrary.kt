@@ -251,8 +251,13 @@ internal class MyLibraryStore(private val database: DulcetDatabase, private val 
 
     /**
      * Writes listed members, ranked by the server's newest-first order above every rank given so
-     * far. A listing ranks a row its own page wrote (the flag of the same response) — `<=` — but
-     * never one a later read or acknowledgement wrote.
+     * far. A listing ranks a row its own page wrote (the flag of the same response) but never one a
+     * later read or acknowledgement wrote.
+     *
+     * Each list is ordered within its kind only, and the wire carries no added time, so ranks are
+     * aligned from the newest of each kind: the newest artist, album and song of one read share a
+     * rank. Order across kinds — an album shown for its songs among albums added themselves — is
+     * exact only for additions this device made or read in a later refresh (spec §29.9).
      */
     private fun writeListed(listed: Map<CacheItemKind, List<Pair<String, Long>>>) {
         val longest = listed.values.maxOfOrNull { it.size } ?: 0
@@ -263,7 +268,7 @@ internal class MyLibraryStore(private val database: DulcetDatabase, private val 
                 val row = queries.selectItem(serverId, kind.wireName, rawId).executeAsOneOrNull()
                 if (row != null && row.issue_seq > issueSeq) return@forEachIndexed
                 val rank = if (row != null && row.member == 1L && row.issue_seq < issueSeq && row.added_rank >= base) row.added_rank
-                    else base + (items.size - index)
+                    else base + (longest - index)
                 queries.upsertItem(serverId, kind.wireName, rawId, 1L, rank, maxOf(issueSeq, row?.issue_seq ?: 0L))
             }
         }

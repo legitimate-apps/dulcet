@@ -64,6 +64,8 @@ UNION SELECT server_id FROM sync_seen
 UNION SELECT server_id FROM sync_generation
 UNION SELECT server_id FROM deletion_reconciliation
 UNION SELECT server_id FROM cache_binding
+UNION SELECT server_id FROM my_library_item
+UNION SELECT server_id FROM my_library_state
 UNION SELECT server_id FROM cache_epoch
 UNION SELECT server_id FROM cache_artist
 UNION SELECT server_id FROM cache_album
