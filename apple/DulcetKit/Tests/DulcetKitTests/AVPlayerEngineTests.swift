@@ -663,6 +663,22 @@ private func mp3FramesWithUndecodablePayloads() -> Data {
 @Suite(.serialized)
 struct AVPlayerEngineTests {
     @Test @MainActor
+    func aMainThreadRemoteCommandCallsTheCoreRouterOutsideTheEngineQueue() async {
+        let controls = RecordingSystemMediaControls()
+        let queue = DispatchQueue(label: "dulcet.tests.remote-reentry")
+        let router = ReentrantRemoteCommandRouter(queue: queue)
+        let engine = DulcetAVPlayerEngine(
+            clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: false,
+            systemMediaControls: controls, remoteCommandRouter: router, queue: queue
+        )
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemReadyForTesting(duration: 60, seekability: .seekable)
+        #expect(controls.send(.pause(sessionID: .init("session"))),
+                "a main-thread command must reach the main-thread core router without a queue inversion")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test @MainActor
     func lateDurationEnablesTheSystemScrubberWithoutAnArtworkRefresh() async {
         let engine = DulcetAVPlayerEngine(
             clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: false
@@ -2060,6 +2076,19 @@ struct AVPlayerEngineTests {
         #expect(!DulcetMacAudioRouteClassifier.becomingNoisy(old: .hdmi, new: .builtIn))
     }
     #endif
+}
+
+/// The core router enters MainActor, whose observation callbacks can reenter the engine. Prove
+/// that the engine queue can service work while routing, without hanging the test on an actual
+/// main/engine queue inversion. Thread.isMainThread alone cannot detect an inline dispatch sync.
+private final class ReentrantRemoteCommandRouter: DulcetRemotePlaybackCommandRouting, Sendable {
+    let queue: DispatchQueue
+    init(queue: DispatchQueue) { self.queue = queue }
+    func handleRemotePlaybackCommand(_ command: DulcetRemotePlaybackCommand) -> Bool {
+        let serviced = DispatchSemaphore(value: 0)
+        queue.async { serviced.signal() }
+        return serviced.wait(timeout: .now() + 1) == .success
+    }
 }
 
 private func execute(

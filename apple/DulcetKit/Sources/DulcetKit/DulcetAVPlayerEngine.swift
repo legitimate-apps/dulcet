@@ -1198,12 +1198,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func handleRemoteCommandSynchronously(_ command: DulcetRemotePlaybackCommand) -> Bool {
         var handled = false
+        var router: (any DulcetRemotePlaybackCommandRouting)?
         performOnQueueSynchronously { [self] in
             guard !released,
                   let current,
                   current.plan.playbackSessionID == command.sessionID else { return }
             if let remoteCommandRouter {
-                handled = remoteCommandRouter.handleRemotePlaybackCommand(command)
+                router = remoteCommandRouter
                 return
             }
             switch command {
@@ -1239,7 +1240,10 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 handled = false
             }
         }
-        return handled
+        // The core router enters MainActor. Holding the engine queue while it waits on main
+        // can deadlock a main-thread observation that synchronously updates this engine.
+        // The core also checks the session identity, covering a transition after this snapshot.
+        return router?.handleRemotePlaybackCommand(command) ?? handled
     }
 
     private func applyPositionSample(
