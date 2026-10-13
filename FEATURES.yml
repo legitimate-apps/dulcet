@@ -725,7 +725,7 @@
           "status": "shipped",
           "evidence": [
             {
-              "observes": "on the iPhone simulator (compact, tab navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
+              "observes": "on the iPhone simulator (compact, tab navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library and reconnects without a tap, the album opens from its tile with the favourite still shown; search finds the album and clears the device-only scope after the server answers; removing the favourite reaches the server again. No request is counted",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPhone"
@@ -767,7 +767,7 @@
           "status": "shipped",
           "evidence": [
             {
-              "observes": "on the iPad simulator (regular width, sidebar navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library offering Reconnect, the album opens from its tile and says it is showing what this device saw, with the favourite still shown; search there answers from this device and says so; Reconnect brings the library back in place and the favourite is removed from the server again. No request is counted",
+              "observes": "on the iPad simulator (regular width, sidebar navigation), through the production app and reader against the disposable server, an album favourited live is shown at once and reaches the server; relaunched with the account saved and no account hook, the app opens into its library and reconnects without a tap, the album opens from its tile with the favourite still shown; search finds the album and clears the device-only scope after the server answers; removing the favourite reaches the server again. No request is counted",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetiOSUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnIPadOS"

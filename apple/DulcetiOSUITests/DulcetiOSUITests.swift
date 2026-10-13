@@ -1171,19 +1171,13 @@ final class DulcetiOSUITests: XCTestCase {
         proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact: false)
     }
 
-    /// The library is the reader's, end to end, on the destination its caller names (the window's
-    /// width decides the navigation, must match that destination, and the log names it):
-    ///
+    /// Through the production reader on the named destination:
     /// 1. A favourite made on an album page shows at once and reaches the server (CONF-84).
-    /// 2. Relaunched with the account saved and no account hook, the app opens straight into the
-    ///    library this device saw -- Reconnect offered, the album's tile opens its page, and that
-    ///    page says it is showing what this device saw (CONF-76, CONF-10b) -- and the favourite is
-    ///    still shown. Requests are not counted here, so "nothing is sent" is not observed.
-    /// 3. Search there reads the device and says so (CONF-79's offline scope).
-    /// 4. Reconnect brings the library back in place, and the favourite is removed again, so the
-    ///    disposable server ends as it started.
-    ///
-    /// The server is read back over `/rest` with the disposable account; that read never writes.
+    /// 2. A fresh launch with only the saved account opens Library, reconnects without a tap,
+    ///    and still shows that favourite (CONF-76, CONF-10b).
+    /// 3. Search finds the album after reconnect and clears the device-only scope.
+    /// 4. Removing the favourite reaches the server, leaving the fixture as it started.
+    /// The server is read back over `/rest` with the disposable account.
     @MainActor
     private func proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact expectedCompact: Bool) {
         guard let configuration = livePlaybackConfiguration() else { return }
@@ -1239,21 +1233,20 @@ final class DulcetiOSUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
-        let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
-        guard reconnect.waitForExistence(timeout: 15) else {
-            XCTFail("A saved account must open straight into its library and offer Reconnect: " + app.debugDescription)
+        let libraryTile = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
+            "A saved account must open straight into its library: " + app.debugDescription)
+        guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact),
+              app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The saved account must reconnect without a tap: " + app.debugDescription)
             return
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
             "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
-        let seenLine = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Showing what")
-        ).firstMatch
-        XCTAssertTrue(seenLine.waitForExistence(timeout: 5),
-            "The album page must say it is showing what this device saw: " + app.debugDescription)
+        attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
-        // 3. Search reads the device from the first characters and labels its scope.
+        // 3. Connected search merges server and device results; its offline scope clears.
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return
         }
@@ -1266,10 +1259,11 @@ final class DulcetiOSUITests: XCTestCase {
         field.typeText("Dou")
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
         XCTAssertTrue(firstResult.waitForExistence(timeout: 10),
-            "Device search must answer without the server: " + app.debugDescription)
+            "Connected search must answer: " + app.debugDescription)
         // The scope's icon carries the same identifier; the sentence is the text.
         let scope = app.staticTexts["dulcet.search.scope"].firstMatch
-        XCTAssertTrue(scope.waitForExistence(timeout: 5), "The results must say they come from this device")
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 30),
+            "The device-only search scope must clear after the server answers")
         let scopeLabel = scope.exists ? scope.label : "<none>"
         let resultLabel = firstResult.exists ? firstResult.label : "<none>"
         // The ranker orders by match tier, then type (spec §16.15), so the album need not be rank 0:
@@ -1285,36 +1279,21 @@ final class DulcetiOSUITests: XCTestCase {
             swipes += 1
         }
         XCTAssertTrue(albumResult.exists,
-            "The album this device saw must be among the device's results; rank 0 was \(resultLabel): "
+            "The album must be among the search results; rank 0 was \(resultLabel): "
                 + app.debugDescription)
         let albumRank = albumResult.exists ? albumResult.identifier : "<none>"
         _ = dismissKeyboardIfPresent(in: app)
 
-        // 4. Reconnect in place, then leave the server as it was found.
+        // 4. The automatic reconnect already completed; leave the fixture as it was found.
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
             return
         }
-        // Library comes back where the person left it -- the album page, on a phone's tab and on
-        // an iPad's sidebar alike -- and that page offers its own Reconnect (`dulcet.reader.retry`),
-        // which reconnects the same session as the account's (`dulcet.reader.reconnect`) on Home.
-        let reconnectHere = app.buttons.matching(NSPredicate(
-            format: "label == %@ AND (identifier == %@ OR identifier == %@)",
-            "Reconnect", "dulcet.reader.reconnect", "dulcet.reader.retry"
-        )).firstMatch
-        guard reconnectHere.waitForExistence(timeout: 10) else {
-            XCTFail("Reconnect must still be offered in the library: " + app.debugDescription)
-            return
-        }
-        let reconnectedFrom = reconnectHere.identifier
-        reconnectHere.tap()
-        XCTAssertTrue(reconnectHere.waitForNonExistence(timeout: 30),
-            "Reconnect must bring the library back without leaving it: " + app.debugDescription)
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
         if !(albumTitle.exists && albumTitle.label == album) {
             guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         }
         guard heart.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer its heart after Reconnect: " + app.debugDescription)
+            XCTFail("The album page must offer its heart after the automatic reconnect: " + app.debugDescription)
             return
         }
         heart.tap()
@@ -1322,8 +1301,8 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20), false,
             "Removing the favourite must reach the server")
         print("DULCET READER PROOF PASS destination=\(compact ? "compact" : "regular")"
-            + " relaunch=device-only scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)"
-            + " album-row=\(albumRank) reconnected-from=\(reconnectedFrom)")
+            + " relaunch=auto-connected scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)"
+            + " album-row=\(albumRank)")
     }
 
     /// A track that cannot play because of what it is -- here, an MP3 whose frames do not decode --
