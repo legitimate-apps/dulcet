@@ -26,7 +26,7 @@ jobs:
   core-build:
     name: core-build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     # The required job downloads this job's evidence by the attempt that PRODUCED it. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -129,6 +129,23 @@ jobs:
           name: dulcet-server-test-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: server/build/test-results/test
           if-no-files-found: warn
+          retention-days: 7
+      # The Dulcet API conformance suite (docs/dulcet-api/CONFORMANCE.md) proves itself here: a
+      # contract-valid mock must pass, and each deliberately broken mock must fail its check.
+      - name: Build and self-test the Dulcet API conformance suite
+        run: >-
+          ./gradlew --no-daemon
+          --max-workers=2
+          :dulcet-api-conformance:test
+          :dulcet-api-conformance:fatJar
+          :dulcet-api-conformance:licensee
+      - name: Upload Dulcet API conformance self-test evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-api-conformance-selftest-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dulcet-api-conformance/build/test-results/test
+          if-no-files-found: error
           retention-days: 7
       - name: Upload Android app evidence
         if: ${{ always() }}

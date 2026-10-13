@@ -1,8 +1,10 @@
 # Dulcet API conformance suite: plan
 
 This is the plan for a public, runnable suite that proves a server or a client implements Dulcet
-API v1. The suite does not exist yet; this document is what its build follows. Profiles are
-defined in [README §20](README.md#20-claiming-compatibility).
+API v1. Suite 0.1.0 covers the server side of the **Core**, **Sync** and **Device** profiles and lives in
+[`dulcet-api-conformance/`](../../dulcet-api-conformance); [Running the suite](#running-the-suite)
+says how to use it and where it departs from this plan. The rest of this document is the plan the
+remaining build follows. Profiles are defined in [README §20](README.md#20-claiming-compatibility).
 
 ## Goals
 
@@ -47,6 +49,117 @@ defined in [README §20](README.md#20-claiming-compatibility).
   `--server-log-command <cmd>` for a container (`docker logs …`). No API exposes logs.
 - **Output.** JUnit XML (one test case per check id) plus a JSON report and a one-line summary:
   `DULCET-CONFORMANCE suite=1.0.0 profiles=Core,Sync passed=N failed=M`.
+
+## Running the suite
+
+Build the runnable JAR once (JDK 17 or newer), then point it at a disposable instance started in
+test mode:
+
+```sh
+./gradlew :dulcet-api-conformance:fatJar
+export DULCET_TOKEN=...          # user A: catalog:read media:read user:read user:write user:delete plays:write account
+export DULCET_TOKEN_B=...        # user B, a second ordinary user
+export DULCET_ADMIN_TOKEN=...    # an admin, for scans, source visibility and the test hooks
+java -jar dulcet-api-conformance/build/dist/dulcet-api-conformance.jar \
+  --base-url https://music.test --profile Core,Sync,Device,Testing,Queue,Events,Webhooks,MCP \
+  --webhook-listen 0.0.0.0:8099 --webhook-url https://hooks.music.test \
+  --library-dir /srv/music/conformance --server-log-command 'docker logs dulcet-test' \
+  --server-start-command './start-test-mode-on-served-data.sh' \
+  --server-restart-command 'docker restart dulcet-test' --require-complete \
+  --junit conformance.xml --report-json conformance.json
+```
+
+- **Credentials come only from the environment.** The suite refuses a `--base-url` that carries
+  user info or a query, and it never puts a token in a URL. Everything it prints or writes passes
+  through redaction.
+- **Test mode only.** The suite writes favourites, ratings, plays, playlists, tokens and library
+  files, changes a user's sources, and restores checkpoints. It reads `/.well-known/dulcet` first and
+  runs no check unless that says `testMode: true`; otherwise it exits `2`.
+- **Each check prints one line**, `PASS`, `FAIL`, `SKIP` or `MANUAL`, with its id and the contract
+  text it proves; a skip says which input it needs, and `MANUAL` marks a check that needs a step
+  outside the API (starting or restarting the server) which the run was given no command for. `--list` prints every check; `--only` runs a subset;
+  `--profile Core` limits the run to one profile.
+- **Every response is validated** against the bundled `openapi.yaml` (or `--contract FILE`). A
+  response that departs from its operation's schema fails the check that received it.
+- **Test hooks.** With the admin token the suite sets the Testing overrides it needs for one check
+  at a time (short signed-URL lifetimes, a one-second journal retention, a low rate limit) and puts
+  the previous overrides back afterwards; the run ends with `{}`. Restores use
+  `POST /admin/test/checkpoints` and `/{id}/restore`. Merges come from writing a second album with
+  the first one's MusicBrainz release id and scanning.
+- **OAuth.** By default (`--oauth auto`) the suite lists its client id in `autoApprove` as user A,
+  so sign-in and device approval need no person; every other OAuth rule is still checked.
+  `--oauth interactive` prints each authorization URL for a person to approve instead, and
+  `--oauth off` skips the flow checks. The refresh-token retry window defaults to 60 seconds;
+  `--refresh-window-seconds` matches a server configured shorter.
+- **Optional inputs widen coverage:** `--library-dir` (a directory the server scans; the suite adds,
+  retags and deletes its own files in a subfolder and calls `POST /admin/scans`), `--server-log FILE`
+  or `--server-log-command CMD` (the server's log, scanned for secrets and canaries after the run),
+  `DULCET_OTHER_INSTANCE_URL` with `DULCET_OTHER_INSTANCE_TOKEN` (a second instance, for foreign
+  cursors), and `DULCET_NON_TEST_URL` with `DULCET_NON_TEST_ADMIN_TOKEN` (the same build started
+  without test mode, whose hooks must answer `404`).
+- **Process control** is outside the API, so the operator supplies it. `--server-start-command`
+  starts this build in test mode on a data directory a normal start already served (DA-TEST-3): it
+  must exit non-zero within `--server-command-timeout-seconds` (default 120); one still running
+  then has started, which fails, and exit `127` (command not found) proves nothing. A
+  `--server-restart-command` restarts the server under test and returns (DA-TEST-5); the suite sets
+  an override, restarts, waits for discovery in test mode and requires `GET /admin/test/settings`
+  to answer `{}`.
+- **Queue, Events, Webhooks and MCP.** The Queue checks register their own devices (ids start
+  `conf-<run>-`), hold an `/events` stream for each device that must be online, and forget them at
+  the end. `--event-timeout-seconds` (default 15) bounds each wait for an event or a delivery, and
+  `--quiet-seconds` (default 5) is how long the suite watches for something that must not arrive;
+  the heartbeat check waits up to 32 seconds for each of two heartbeats.
+- **Webhook receiver.** The Webhooks profile runs its own HTTP receiver inside the suite, on
+  `--webhook-listen HOST:PORT` (default `127.0.0.1:0`, an ephemeral loopback port), and registers
+  webhooks pointing at a fresh path per check under `/dulcet-conformance/<run>/`. The suite sets
+  the Testing override `webhooks.allowPrivateTargets`, so the server delivers to that plain-HTTP
+  loopback receiver; when the server runs elsewhere (a container, another host), pass a base URL
+  that reaches the listener as `--webhook-url` and the suite appends its paths to it. A server that
+  refuses the receiver with the override set fails the webhook checks. The receiver can answer
+  `500` (to see a retry) or `307` (to see that redirects are not followed). Retries and
+  auto-disable are driven by `webhooks.retryScheduleSeconds` and `webhooks.disableAfterFailures`,
+  so they take seconds.
+- **MCP.** The suite talks Streamable HTTP to `/dulcet/v1/mcp` as personal tokens it mints with
+  exact scopes, and compares `tools/list` field by field with the bundled `mcp-tools.json`; each
+  listed tool must carry `_meta["dulcet/scopes"]` equal to the file's `x-dulcet-scope`, and not the
+  `x-dulcet-scope` field itself.
+- **Verified client.** One webhook check signs in as a verified OAuth client: the suite lists its
+  own client metadata document in the Testing override `trustedClients` (client id
+  `https://conformance.dulcet.invalid/oauth/trusted-client.json`, redirect
+  `http://127.0.0.1/dulcet-conformance/callback`) and auto-approves it, so it needs `--oauth=auto`.
+- **Exit codes:** `0` no failures, `1` a failure (or, with `--require-complete`, any `SKIP` or
+  `MANUAL`), `2` a usage error or a server not in test mode.
+
+### Claiming compatibility
+
+A claim names the profiles, the suite version and the contract checksum, and links the JSON report
+of a run with `--require-complete` that exited `0`: no check failed, skipped or stayed manual
+(Goal 3). The report's summary line reads
+`DULCET-CONFORMANCE suite=<version> profiles=Core,Sync passed=N failed=0 skipped=0 manual=0 complete=true`.
+
+A Testing claim therefore needs `--server-start-command` and `--server-restart-command`: without
+them DA-TEST-3 and DA-TEST-5 report `MANUAL`, which a complete run never accepts. The device
+user-code lockout on the HTML verification page is not a suite check; a Device claim records it
+from a person's run of the checklist.
+
+### Where 0.1.0 departs from this plan
+
+- **Fixture corpus.** The plan has the suite refuse a server that does not report exactly the
+  fixture corpus; 0.1.0 relies on test mode and on catalog content the server already has (at
+  least two albums and four tracks), and generates only small MP3 files for its library checks.
+- **Negative controls** run against a contract-valid in-memory mock in the suite's own tests, with
+  one switch per deliberate fault, instead of a `--break` switch on the reference server. CI
+  (`core-ci`, on `ubuntu-latest`) runs the healthy mock (must pass), every fault (must fail its
+  check), and a mock without test mode (must be refused) on each change.
+- **Process control** for DA-TEST-3 and DA-TEST-5 goes through operator-supplied commands rather
+  than the plan's adapter; the self-tests stand in for them with a mock endpoint.
+- **Webhooks.** A public name that resolves to a private address is not checked; the suite does
+  not control DNS. That `webhooks.allowPrivateTargets` is ignored outside test mode is not checked
+  either, since the suite runs only against a server in test mode.
+- **MCP.** Prompt-injection handling of track titles and the absence of administration tools are not
+  checked beyond the `tools/list` comparison.
+- **Not yet covered:** the device user-code lockout (manual) and the Transcoding, Lyrics and Admin
+  profiles.
 
 ## Server checks, by profile
 
@@ -179,6 +292,18 @@ what the client did.
 | Redaction | Never write a canary token or grant to its logs (checked through the client's own log export). |
 
 ## Negative controls
+
+The suite's own tests hold the controls in use today: each deliberate fault of the in-memory mock
+must fail the check that covers it. The Queue, Webhooks and MCP controls are: a stale queue write
+accepted (DA-Q-2, DA-Q-6, DA-Q-10), a device that is not active moving the position (DA-Q-3,
+DA-Q-4), an unsigned delivery (DA-WH-3, DA-WH-4), an MCP delete without `user:delete` (DA-MCP-4)
+and a webhook that outlives its token's revocation (DA-WH-8). For the rules settled on 2026-10-13:
+a private target accepted without `allowPrivateTargets` and a refused target answered `400`
+(DA-WH-2), a retry that ignores `retryScheduleSeconds` (DA-WH-5), a webhook for unreadable events
+accepted and filtered (DA-WH-7), a webhook disabled rather than deleted on revocation (DA-WH-8,
+DA-WH-10), `trustedClients` ignored (DA-WH-10), a webhook never auto-disabled (DA-WH-9), `tools/list`
+without `_meta["dulcet/scopes"]` (DA-MCP-3), presence that needs an event stream (DA-Q-12), and a
+default `/events` stream refused instead of filtered (DA-EV-9).
 
 The reference server gets a `--break=<check-id>` switch that disables exactly one behaviour (for
 example, accept a token in the query, reuse a deleted id, drop tombstones). The suite's own CI runs
