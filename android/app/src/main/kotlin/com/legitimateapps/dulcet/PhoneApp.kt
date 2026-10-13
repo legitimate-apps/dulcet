@@ -53,7 +53,10 @@ import com.legitimateapps.dulcet.library.playTracks
 import com.legitimateapps.dulcet.library.playPlaylist
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.MyLibraryAvailability
+import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.titledTracks
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.playback.PlayRequest
 import com.legitimateapps.dulcet.playback.PlaybackBinding
 import com.legitimateapps.dulcet.playback.PlaybackIntents
@@ -82,7 +85,7 @@ internal class PhonePlaybackRequests {
 
 internal const val PLAYBACK_ENTRY_ALIAS = "com.legitimateapps.dulcet.PlaybackEntry"
 
-private enum class PhoneTab { Search, Library }
+private enum class PhoneTab { Search, Library, Browse }
 
 private val routeSaver = listSaver<SnapshotStateList<String>, String>({ it.toList() }, { it.toMutableStateList() })
 private fun List<String>.toMutableStateList() = mutableStateListOf<String>().also { it.addAll(this) }
@@ -101,6 +104,8 @@ internal fun PhoneApp(
     requests: PhonePlaybackRequests,
     playback: AndroidPlaybackController? = rememberPlaybackController(),
     restoredAccount: Boolean = false,
+    /** The account's My Library; the session's own unless a test seats one. */
+    myLibrary: MyLibrarySession? = null,
 ) {
     val context = LocalContext.current
     val preferences = remember { runCatching { context.getSharedPreferences("dulcet.ui", 0) }.getOrNull() }
@@ -118,6 +123,12 @@ internal fun PhoneApp(
         .collectAsStateWithLifecycle()
     val foreground = hostInForeground()
     val library = remember(account) { LibrarySession(context, account, foreground, restoredAccount) }
+    // My Library (spec §29.4): with `dulcetLibrary` advertised, Library is the account's own library
+    // and the catalog moves to Browse; without it, everything is exactly as it always was.
+    val myLibrarySession = myLibrary ?: library.myLibrary
+    val myLibraryPublication by myLibrarySession.state.collectAsState()
+    val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
+    if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
     val pending by requests.pending.collectAsState()
     LaunchedEffect(playback, pending) {
         val request = pending ?: return@LaunchedEffect
@@ -184,7 +195,7 @@ internal fun PhoneApp(
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
         back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
         // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
-        if (tab == PhoneTab.Library && routes.isEmpty()) SavedAccountNotice(library, account)
+        if ((tab == PhoneTab.Library || tab == PhoneTab.Browse) && routes.isEmpty()) SavedAccountNotice(library, account)
         NavigationBar {
             NavigationBarItem(
                 selected = tab == PhoneTab.Library && routes.isEmpty(),
@@ -192,6 +203,13 @@ internal fun PhoneApp(
                 icon = { Icon(DulcetIcons.LibraryMusic, null) },
                 label = { Text(stringResource(R.string.tab_library)) },
                 modifier = Modifier.testTag("library.open"),
+            )
+            if (split) NavigationBarItem(
+                selected = tab == PhoneTab.Browse && routes.isEmpty(),
+                onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
+                icon = { Icon(DulcetIcons.Search, null) },
+                label = { Text(stringResource(SharedR.string.library_browse)) },
+                modifier = Modifier.testTag("browse.open"),
             )
             NavigationBarItem(
                 selected = tab == PhoneTab.Search && routes.isEmpty(),
@@ -210,14 +228,25 @@ internal fun PhoneApp(
         val saved = rememberSaveableStateHolder()
         when {
             route?.startsWith("album:") == true ->
-                AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions)
+                AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions,
+                    myLibrary = myLibrarySession.takeIf { split })
             route?.startsWith("artist:") == true ->
-                ArtistScreen(account, library, route.removePrefix("artist:"), actions)
+                ArtistScreen(account, library, route.removePrefix("artist:"), actions,
+                    myLibrary = myLibrarySession.takeIf { split })
             route?.startsWith("genre:") == true ->
-                GenreScreen(account, library, route.removePrefix("genre:"), playingRawId, actions)
+                GenreScreen(account, library, route.removePrefix("genre:"), playingRawId, actions,
+                    myLibrary = myLibrarySession.takeIf { split })
             route?.startsWith("playlist:") == true ->
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
+            tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
+                MyLibraryHome(account, library, myLibrarySession, actions,
+                    openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) })
+            }
             tab == PhoneTab.Library -> saved.SaveableStateProvider("library") { LibraryHome(account, library, actions, playingRawId) }
+            tab == PhoneTab.Browse -> saved.SaveableStateProvider("browse") {
+                LibraryHome(account, library, actions, playingRawId,
+                    title = SharedR.string.library_browse, myLibrary = myLibrarySession)
+            }
             else -> MobileSearchScreen(searchPresenter, searchActivation::activate, account, { result ->
                 plays.play { it.playSong(result.id.providerInstanceId, result.id.rawId, result.title) }
             }, (if (playback != null) { result, insertion ->

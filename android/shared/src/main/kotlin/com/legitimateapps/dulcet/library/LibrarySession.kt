@@ -209,6 +209,17 @@ public class LibrarySession internal constructor(
     internal fun lyricsFacade(preferredLanguages: List<String>): AndroidLibraryLyrics =
         lyricsFacade ?: AndroidLibraryLyrics(reader, preferredLanguages).also { lyricsFacade = it }
 
+    private var myLibrarySession: MyLibrarySession? = null
+
+    /**
+     * The account's My Library (spec §29.4, the `dulcetLibrary` extension): what this account added,
+     * beside the whole catalog the reader windows. Backed by the core's `AndroidMyLibrary` once that
+     * facade lands on `feat/my-library`; until then [UnavailableMyLibrarySource] answers for every
+     * server, so nothing splits and no library endpoint is ever called. Closed with this session.
+     */
+    public val myLibrary: MyLibrarySession
+        get() = myLibrarySession ?: MyLibrarySession(UnavailableMyLibrarySource()).also { myLibrarySession = it }
+
     internal val isClosed: Boolean get() = closed
 
     private val surfaces = mutableListOf<LibrarySurface>()
@@ -571,6 +582,7 @@ public class LibrarySession internal constructor(
         releaseHeldLoss()
         closed = true
         reconnectRegistration.close()
+        myLibrarySession?.close()
         outcomeRegistration.close()
         playlistRegistration.close()
         playlistQuestions.close()
