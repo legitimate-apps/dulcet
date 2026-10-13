@@ -1312,12 +1312,16 @@ struct DulcetReaderHomeLink: View {
     let symbolName: String
     let identifier: String
     let action: () -> Void
+    /// The icon's column grows with the label's text style, so a scaled symbol never reaches
+    /// into the title at the accessibility sizes.
+    @ScaledMetric(relativeTo: .title3) private var iconColumnWidth = 28
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: DulcetSpacing.xs) {
                 Image(systemName: symbolName)
-                    .frame(width: 28)
+                    .font(.title3)
+                    .frame(width: iconColumnWidth)
                     .dulcetForeground(.accentIconOnWindow)
                     .accessibilityHidden(true)
                 Text(title)
