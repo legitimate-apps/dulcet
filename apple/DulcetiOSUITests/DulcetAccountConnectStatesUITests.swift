@@ -775,7 +775,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         repeat {
             if signOut.waitForExistence(timeout: 5) { return true }
             guard openConnection(in: app, compact: compact) else { return false }
-            if !signOut.exists { app.swipeUp() }
+            // Navigation and its accessibility reads can consume the deadline on a loaded
+            // host. Accept the connected state just observed before checking elapsed time.
+            if signOut.exists { return true }
+            app.swipeUp()
+            if signOut.exists { return true }
         } while Date() < deadline
         XCTFail("The connection must succeed and Connection must offer Sign Out: " + app.debugDescription)
         return false
