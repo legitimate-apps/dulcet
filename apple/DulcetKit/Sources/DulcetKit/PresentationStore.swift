@@ -691,7 +691,18 @@ public final class DulcetPresentationStore {
         followLibraryPage(in: snapshot, arrivingFrom: self.snapshot.selectedDestination)
         if !snapshot.playbackFailed { dismissedPlaybackFailure = nil }
         self.snapshot = snapshot
-        selectedDestination = requestedBrowse && myLibraryAvailable && snapshot.selectedDestination == .library ? .browse : snapshot.selectedDestination
+        let destination = requestedBrowse && myLibraryAvailable && snapshot.selectedDestination == .library
+            ? .browse : snapshot.selectedDestination
+        if destination != selectedDestination {
+            // A destination change the source makes on its own -- playback moving the app to Now
+            // Playing -- saves and restores the reader's stacks exactly as a choice on the bar
+            // does, or Library loses the page it was left on.
+            if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
+            if destination == .library || destination == .browse {
+                readerPath = savedReaderPaths[destination] ?? []
+            }
+        }
+        selectedDestination = destination
         searchQuery = snapshot.searchQuery
         accountServerURL = snapshot.accountForm.serverURL
         accountUsername = snapshot.accountForm.username
