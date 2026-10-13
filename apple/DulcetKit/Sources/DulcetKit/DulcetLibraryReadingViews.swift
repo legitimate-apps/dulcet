@@ -1668,6 +1668,7 @@ struct DulcetReaderTrackListPage: View {
                 if let window = model.window {
                     wideAlbumHeader(window)
                         .frame(width: 420)
+                        .focusSection()
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             let subject: DulcetReaderCopy.Subject = window.header == nil ? .album : .albumTracks
@@ -1678,6 +1679,8 @@ struct DulcetReaderTrackListPage: View {
                         .padding(.vertical, DulcetSpacing.xs)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    // A focus section, so the remote can move into the track column from the
+                    // header's actions or the section bar at all.
                     .focusSection()
                 } else {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 120)
