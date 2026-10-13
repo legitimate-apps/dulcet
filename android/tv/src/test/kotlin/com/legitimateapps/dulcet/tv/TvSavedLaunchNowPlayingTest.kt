@@ -39,16 +39,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 
-/**
- * CONF-10b for the TV's cold Now Playing entry (spec §13.1): the player opened from the notification
- * or a played track, with no library activity behind it, on a saved account the person has not
- * connected in this process. The last run left a queue whose current song is not downloaded and a play
- * it could not deliver. The player runs as TvPlaybackActivity hosts it, over the PRODUCTION playback
- * service's controller and the player's own library session; only the server is a loopback fixture that
- * records every request. Nothing reaches it -- the restored entry, the waiting play, the heart, the
- * stars, the lyrics opened -- and Play says the song needs Reconnect. Reconnect, one UP from Play on
- * the remote, then delivers the play and reads the entry.
- */
+/** A saved account reconnects and delivers its outbox with the restored queue still paused. */
 @RunWith(RobolectricTestRunner::class)
 @Config(shadows = [HostCredentialCipher::class], instrumentedPackages = ["com.legitimateapps.dulcet"],
     qualifiers = "w960dp-h540dp-land-television")
@@ -72,35 +63,70 @@ class TvSavedLaunchNowPlayingTest {
         context.deleteDatabase("dulcet.db")
     }
 
-    @Test fun aColdNowPlayingOnASavedAccountSendsNothingUntilReconnectThenDeliversThePlay() {
+    @Test fun aSavedLaunchAutomaticallyReconnectsAndDeliversTheWaitingPlayWithTheQueuePaused() {
         val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
         leaveEarlierRun(context, saved.id, server.url, queue = listOf("jazz-song-1", "jazz-song-2"), unsentPlays = listOf("ambient-song-1"))
         val playback = launch(SearchAccount(saved.id, server.url, "u", "p", true))
-
-        await("the restored queue, from the device") { playback.state.value.queue.size == 2 }
-        await("Play to hold focus") { focused("tv.player.playpause") }
-        // The lyrics, opened: the panel reads only what this device has kept.
-        repeat(6) { if (!focused("tv.player.lyrics")) key(Key.DirectionRight) }
-        assertTrue(focused("tv.player.lyrics"), "the lyrics toggle, right of Play; focused=${focusedTags()}")
-        key(Key.DirectionCenter)
-        repeat(6) { if (!focused("tv.player.playpause")) key(Key.DirectionLeft) }
-        assertTrue(focused("tv.player.playpause"), "back to Play; focused=${focusedTags()}")
-        key(Key.DirectionCenter)
-        settle()
-        assertFalse(playback.state.value.playWhenReady, "nothing plays")
-        assertEquals(emptyList(), server.endpoints(), "nothing reaches the server before Reconnect")
-        await("Play to say the song needs Reconnect") { exists("tv.player.needsReconnect") }
-
-        key(Key.DirectionUp)
-        assertTrue(focused("tv.player.reconnect"), "Reconnect is one UP from Play; focused=${focusedTags()}")
-        key(Key.DirectionCenter)
-        await("the waiting play delivered") {
+        await("the restored queue") { playback.state.value.queue.size == 2 }
+        await("the waiting play delivered without a tap") {
             server.requests("scrobble").any { it["submission"] == "true" && it["id"] == "ambient-song-1" }
         }
         await("the restored entry read") { server.requests("getSong").any { it["id"] == "jazz-song-1" } }
-        await("the player's own session reconnected") { server.endpoints().any { it == "getScanStatus" } }
-        await("the notice gone") { !exists("tv.player.reconnect") }
+        await("automatic epoch read") { server.requests("getScanStatus").isNotEmpty() }
+        assertFalse(playback.state.value.playWhenReady, "restored queue stays paused")
+        assertFalse(playback.state.value.needsReconnect)
+        await("Play focused") { focused("tv.player.playpause") }
+        repeat(6) { if (!focused("tv.player.lyrics")) key(Key.DirectionRight) }
+        assertTrue(focused("tv.player.lyrics"), "Lyrics stays reachable from Play")
+        key(Key.DirectionCenter)
+        repeat(6) { if (!focused("tv.player.playpause")) key(Key.DirectionLeft) }
+        assertTrue(focused("tv.player.playpause"), "Return to Play")
+        assertFalse(exists("tv.player.reconnect"))
     }
+
+    @Test fun aSavedPlayerShowsAuthenticationFailureAndManualReconnect() {
+        server.scanFailureCode = 40
+        val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
+        leaveEarlierRun(context, saved.id, server.url, queue = listOf("jazz-song-1"), unsentPlays = emptyList())
+        launch(SearchAccount(saved.id, server.url, "u", "p", true))
+        await("authentication words and reconnect in the player") {
+            exists("tv.player.saved") && exists("tv.player.reconnect")
+        }
+        val node = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true).fetchSemanticsNodes().single()
+        assertTrue(node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].any {
+            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials))
+        }, "The authentication failure is stated in the player")
+    }
+
+    @Test fun aColdPlayerWithoutLibraryWindowsShowsAuthenticationFailureAfterAnAutomaticRetry() {
+        server.scanFailureCode = 54321 // Unknown server errors retry with the reader's backoff.
+        val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
+        launch(SearchAccount(saved.id, server.url, "u", "p", true))
+        await("first transient reconnect answered") { server.requests("getScanStatus").isNotEmpty() && playerSays(com.legitimateapps.dulcet.shared.R.string.library_error_server) }
+        server.scanFailureCode = 40
+        await("automatic retry shows authentication without opening lyrics") {
+            server.requests("getScanStatus").size >= 2 && playerSaysCredentials()
+        }
+        assertTrue(exists("tv.player.reconnect"))
+    }
+
+    @Test fun aColdPlayerWithoutLibraryWindowsRemovesItsNoticeAfterAnAutomaticRetrySucceeds() {
+        server.scanFailureCode = 54321
+        val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
+        launch(SearchAccount(saved.id, server.url, "u", "p", true))
+        await("first transient reconnect answered") { server.requests("getScanStatus").isNotEmpty() && playerSays(com.legitimateapps.dulcet.shared.R.string.library_error_server) }
+        server.scanFailureCode = null
+        await("automatic retry succeeds without opening lyrics") {
+            server.requests("getScanStatus").size >= 2 && !exists("tv.player.saved") && !exists("tv.player.reconnect")
+        }
+    }
+
+    private fun playerSaysCredentials(): Boolean = playerSays(com.legitimateapps.dulcet.shared.R.string.library_error_credentials)
+
+    private fun playerSays(resource: Int): Boolean = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true)
+        .fetchSemanticsNodes().any { node -> node.config[SemanticsProperties.Text].any {
+            it.text.contains(context.getString(resource))
+        } }
 
     private fun launch(account: SearchAccount): AndroidPlaybackController {
         val controller = Robolectric.buildService(PlaybackService::class.java).create().also { service = it }

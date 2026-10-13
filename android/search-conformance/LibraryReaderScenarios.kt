@@ -141,13 +141,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         compose.activityRule.scenario.recreate()
         ui.openLibrary()
         await("every home row to paint") { HOME.all { frames(it).isNotEmpty() } }
-        // A new process opened on a saved account sends nothing until the person chooses Reconnect
-        // (spec §13.1, CONF-10b); the rows painted from the device alone.
-        assertEquals(emptyList(), proxy.since(relaunchMark).map { it.endpoint }, "the relaunch sent nothing before Reconnect")
-        ui.activate(compose.onNodeWithTag("library.reconnect"))
-        // Reconnect reads the epoch and revalidates the screen (§16.11): the rows on it issue their
-        // reads, which are held, so what is shown next is still the device's.
-        await("the shown rows' reads to be issued after Reconnect, and held") {
+        // Automatic reconnect reads the epoch then revalidates these cached rows. Their content
+        // reads are held, so the first publications still prove device content paints immediately.
+        await("automatic reconnect issues the shown rows' reads, held") {
             val held = proxy.since(relaunchMark).filter { !it.answered }
             ROW_READS.any { (endpoint, type) -> held.any { it.endpoint == endpoint && it.parameters["type"] == type } }
         }
@@ -921,14 +917,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             "unstar-from-list=true cover-art=${coverArt()}")
     }
 
-    /**
-     * CONF-10b with a saved favourite change still unread: close the activity and process reader, then relaunch
-     * the production app. Both home and favourites paint the cache, including cover art, without
-     * contacting the server until Reconnect. The new session must not inherit a connected host's
-     * pending favourites refresh.
-     */
-    fun aSavedRelaunchAfterFavouriteChangesSendsNothingUntilReconnect() {
-        // The unstar at the end is saved but not reread; the list still contains the hollow row.
+    /** Saved favourite changes are revalidated by the relaunch's automatic reconnect. */
+    fun aSavedRelaunchAfterFavouriteChangesReconnectsAutomatically() {
         aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack(completeHomeRead = true)
         awaitQuiet()
         val activityType = compose.activity.javaClass
@@ -937,37 +927,16 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val mark = proxy.size()
         ActivityScenario.launch(activityType).use {
             ui.openLibrary()
-            await("the saved account awaiting Reconnect after favourite changes") {
-                exists("library.saved") && exists("library.reconnect")
-            }
-            ui.activate(compose.onNodeWithTag("library.view.home"))
-            await("the home cache while awaiting Reconnect") {
-                HOME.all { key ->
-                    (frames(key).lastOrNull()?.freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Offline
-                }
-            }
+            await("automatic relaunch revalidation") { HOME.all { frames(it).lastOrNull()?.freshness == AndroidLibraryFreshness.Live } }
             ui.activate(compose.onNodeWithTag("library.view.favourites"))
-            await("the favourites cache while awaiting Reconnect") {
-                (frames("favourites").lastOrNull()?.freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Offline &&
-                    exists("library.favourites.track.0")
-            }
-            repeat(50) {
-                compose.waitForIdle()
-                assertEquals(emptyList(), proxy.since(mark).map { it.endpoint },
-                    "the saved relaunch sends nothing before Reconnect, including cover art")
-                Thread.sleep(100)
-            }
-            compose.waitForIdle()
-            assertEquals(emptyList(), proxy.since(mark).map { it.endpoint }, "nothing sent immediately before Reconnect")
-            ui.activate(compose.onNodeWithTag("library.reconnect"))
-            await("Reconnect reading the favourites in place") {
-                !exists("library.saved") && !exists("library.reconnect") &&
-                    frames("favourites").lastOrNull()?.freshness == AndroidLibraryFreshness.Live &&
+            await("saved favourites revalidated in place") {
+                frames("favourites").lastOrNull()?.freshness == AndroidLibraryFreshness.Live &&
                     frames("favourites").lastOrNull()?.itemCount == 0
             }
-            assertTrue(proxy.since(mark).any { it.endpoint == "getStarred2" }, "Reconnect must reach the server")
+            assertTrue(proxy.since(mark).any { it.endpoint == "getStarred2" }, "Automatic reconnect reaches the server")
+            assertTrue(!exists("library.saved") && !exists("library.reconnect"))
             assertNoCredentialLeak()
-            println("SAVED FAVOURITES RELAUNCH OBSERVED $platform unread-saved-change=true before-Reconnect=0 after-Reconnect-live=true")
+            println("SAVED FAVOURITES RELAUNCH OBSERVED $platform unread-saved-change=true automatic-reconnect-live=true")
         }
     }
 

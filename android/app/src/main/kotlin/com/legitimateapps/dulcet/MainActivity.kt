@@ -101,7 +101,7 @@ internal fun AccountConnectScreen(
             )
         }
         CompositionLocalProvider(LocalAccountActions provides actions) {
-            PhoneApp(storedAccount, searchDependencies, requests, untilReconnectChosen = true)
+            PhoneApp(storedAccount, searchDependencies, requests, restoredAccount = true)
         }
         return
     }

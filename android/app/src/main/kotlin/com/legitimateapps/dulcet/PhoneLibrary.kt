@@ -99,6 +99,7 @@ import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.LibrarySurface
+import com.legitimateapps.dulcet.library.hasConnectionNotice
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -190,15 +191,17 @@ private fun HomeRows(account: SearchAccount, session: LibrarySession, actions: P
 @Composable
 private fun HomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurface, session: LibrarySession, actions: PhoneActions) {
     val publication by row.surface.state.collectAsState()
+    val connection by session.connection.collectAsState()
+    val connectionNotice = connection.hasConnectionNotice()
     val resources = libraryResources()
     Column(Modifier.fillMaxWidth().testTag("library.home.$index").padding(top = 20.dp)) {
         Text(resources.getString(row.row.titleResource()), Modifier.padding(horizontal = 16.dp),
             style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         val current = publication ?: return@Column
-        FreshnessLine(current.freshness, "library.home.$index", session::retry)
+        FreshnessLine(current.freshness, "library.home.$index", session::retry, includeReason = !connectionNotice)
         when (val freshness = current.freshness) {
             AndroidLibraryFreshness.Loading -> RowPlaceholder(Modifier.testTag("library.home.$index.loading"))
-            is AndroidLibraryFreshness.Unavailable -> StatementText(
+            is AndroidLibraryFreshness.Unavailable -> if (!connectionNotice) StatementText(
                 resources.unavailableLine(freshness.reason, LibrarySubject.List), "library.home.$index.unavailable")
             else -> if (current.items.isEmpty()) {
                 StatementText(resources.getString(SharedR.string.library_empty_list), "library.home.$index.empty")
@@ -492,8 +495,7 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
 }
 
 /**
- * The saved account waiting for the person (spec §13.1, CONF-10b): the line saying nothing is sent
- * until Reconnect, and Reconnect, which connects in place. Nothing while the account is connected.
+ * One connection statement above the home, with manual Reconnect as a fallback.
  */
 @Composable
 internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount) {
@@ -868,13 +870,13 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
 
 /** The one freshness line (§16.14), with "Try again" where a reconnect can help. Null for live content. */
 @Composable
-internal fun FreshnessLine(freshness: AndroidLibraryFreshness, tag: String, retry: () -> Unit) {
+internal fun FreshnessLine(freshness: AndroidLibraryFreshness, tag: String, retry: () -> Unit, includeReason: Boolean = true) {
     val resources = libraryResources()
-    val line = resources.freshnessLine(freshness) ?: return
+    val line = resources.freshnessLine(freshness, includeReason = includeReason) ?: return
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(line, Modifier.weight(1f).testTag("$tag.freshness"), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (freshness.offersRetry()) TextButton(onClick = retry, modifier = Modifier.testTag("$tag.retry")) {
+        if (includeReason && freshness.offersRetry()) TextButton(onClick = retry, modifier = Modifier.testTag("$tag.retry")) {
             Text(resources.getString(SharedR.string.library_try_again))
         }
     }

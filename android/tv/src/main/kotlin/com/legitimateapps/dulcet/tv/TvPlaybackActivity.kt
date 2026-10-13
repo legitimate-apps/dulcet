@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
@@ -201,15 +202,12 @@ internal class TvPlayerSaved(val line: String, val reconnect: () -> Unit)
 @Composable
 internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, playback: AndroidPlaybackController?) {
     val context = LocalContext.current
-    // The account's process reader, for the heart, the stars and the lyrics. This session is never
-    // started: the library activity's session reports the foreground and reachability, and a second
-    // one here would tell the reader the app went to the background whenever that activity stops
-    // behind this one. Like every entry point it holds a saved account for Reconnect (§13.1): this
-    // activity is also opened cold, from the notification or a played track, with no library behind it.
+    // A cold notification entry owns a foreground session too: no library activity is required.
+    val foreground = com.legitimateapps.dulcet.library.hostInForeground()
     val library = remember(account) {
-        account?.let { runCatching { LibrarySession(context, it, foreground = false, untilReconnectChosen = true) }.getOrNull() }
+        account?.let { runCatching { LibrarySession(context, it, foreground, restoredAccount = true) }.getOrNull() }
     }
-    DisposableEffect(library) { onDispose { library?.close() } }
+    library?.let { com.legitimateapps.dulcet.library.LibraryLifecycle(it) }
     val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId
     val target = remember(rawId) { rawId?.let { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, it) } }
     val favourite = if (library != null && target != null) {
@@ -227,7 +225,7 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     val lyrics: (@Composable () -> Unit)? = library?.let { session -> { TvLyricsPanel(session, state) } }
     val saved = if (library != null && account != null) {
         val connection by library.connection.collectAsState()
-        context.resources.savedAccountLine(connection, account)?.let { line ->
+        (context.resources.savedAccountLine(connection, account) ?: context.resources.connectionLine(connection))?.let { line ->
             TvPlayerSaved(if (state.needsReconnect) context.getString(SharedR.string.now_playing_needs_reconnect) else line,
                 library::connectSavedAccount)
         }

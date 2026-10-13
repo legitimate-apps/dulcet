@@ -122,6 +122,7 @@ import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.LibrarySurface
+import com.legitimateapps.dulcet.library.hasConnectionNotice
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -219,15 +220,15 @@ internal fun TvLibraryEntry(
     /** The playback service's controller, null until it binds. */
     playback: AndroidPlaybackController? = rememberPlaybackController(),
     /**
-     * The app opened on the saved account, so nothing is sent until the person connects it in this
+     * The app opened on the saved account, so device content paints before the automatic reconnect in this
      * process (spec §13.1, CONF-10b); the app's entry passes true.
      */
-    untilReconnectChosen: Boolean = false,
+    restoredAccount: Boolean = false,
     search: @Composable (TvNavigator, AndroidPlaybackController?) -> Unit,
 ) {
     val context = LocalContext.current
     val foreground = hostInForeground()
-    val session = remember(account) { LibrarySession(context, account, foreground, untilReconnectChosen) }
+    val session = remember(account) { LibrarySession(context, account, foreground, restoredAccount) }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
@@ -664,6 +665,8 @@ private val HOME_ROW = Regex("library\\.home\\.(\\d+)\\.item\\.\\d+")
 private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurface, session: LibrarySession,
                       playback: AndroidPlaybackController?, navigator: TvNavigator) {
     val publication by row.surface.state.collectAsState()
+    val connection by session.connection.collectAsState()
+    val connectionNotice = connection.hasConnectionNotice()
     val resources = libraryResources()
     val context = LocalContext.current
     val title = resources.getString(row.row.titleResource())
@@ -674,17 +677,17 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
     Column(Modifier.fillMaxWidth().testTag("library.home.$index"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.headlineSmall)
         val current = publication ?: return@Column
-        resources.freshnessLine(current.freshness)?.let { line ->
+        resources.freshnessLine(current.freshness, includeReason = !connectionNotice)?.let { line ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvStatement(line, "library.home.$index.freshness")
-                if (current.freshness.offersRetry()) {
+                if (!connectionNotice && current.freshness.offersRetry()) {
                     TvAction(resources.getString(SharedR.string.library_try_again), "library.home.$index.retry") { session.retry() }
                 }
             }
         }
         when (val freshness = current.freshness) {
             AndroidLibraryFreshness.Loading -> TvStatement("…", "library.home.$index.loading")
-            is AndroidLibraryFreshness.Unavailable ->
+            is AndroidLibraryFreshness.Unavailable -> if (!connectionNotice)
                 TvStatement(resources.unavailableLine(freshness.reason, LibrarySubject.List), "library.home.$index.unavailable")
             else -> if (current.items.isEmpty()) {
                 TvStatement(resources.getString(SharedR.string.library_empty_list), "library.home.$index.empty")
@@ -714,9 +717,7 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
 }
 
 /**
- * The saved account waiting for the person (spec §13.1, CONF-10b): Reconnect, one DOWN from any place
- * on the bar and the first place UP out of the library below, and the line saying nothing is sent
- * until it is chosen. Nothing while the account is connected.
+ * One home connection notice with Reconnect reachable from the remote's navigation bar.
  */
 @Composable
 private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount, navigation: TvNavigationFocus) {

@@ -74,9 +74,10 @@
     <string name="library_artist_nothing_playable">Nothing on this artist\'s albums can play right now.</string>
     <string name="library_try_again">Try again</string>
     <string name="library_dismiss">Dismiss</string>
-    <string name="library_saved_not_connected">Your account on %1$s is saved and not connected. Dulcet contacts the server only after you choose Reconnect.</string>
+    <string name="library_saved_not_connected">Showing what is on this device. Dulcet will reconnect when the server is reachable.</string>
+    <string name="library_saved_connecting">Showing what is on this device while Dulcet reconnects…</string>
     <string name="library_reconnect">Reconnect</string>
-    <string name="now_playing_needs_reconnect">This song plays from your server, which Dulcet contacts only after you choose Reconnect.</string>
+    <string name="now_playing_needs_reconnect">This song needs a connection to your server. Dulcet is reconnecting automatically.</string>
     <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>
     <string name="library_no_epoch">Your server doesn\'t say when its library changes, so lists may be out of date until you refresh.</string>
     <plurals name="library_discarded_changes">

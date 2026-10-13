@@ -33,34 +33,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * CONF-09b on a phone emulator, through the production app from an install with no saved account
- * (spec §10.2, §13.6): a person's own path to a connected library, with every declared connect state
- * reached by what the app itself does — never an injected result.
- *
- * Every touch is a real touch: a motion event injected at the control's place on the screen, so a
- * keyboard or a dialog lying over a control takes the touch instead of it. Text is typed as key
- * events into the focused field. The server is the disposable one behind a [ServerRelay], which can
- * hold the app's request in flight, make the server unreachable, and read what the server answered.
- *
- * - **idle**: the empty form, Connect, no status.
- * - **domain error, from the server**: a wrong password, refused by the server itself (the relay
- *   reads its Subsonic error 40), shown as an account the server did not accept — not as a server
- *   that could not be reached — and nothing saved.
- * - **domain error, from the network**: the same form with the server unreachable, shown as such.
- * - **in progress**: with the request held, the connecting card and Cancel; Cancel returns the form
- *   to idle, and the request answered after that saves nothing.
- * - **credential-persistence error**: the device refuses the save (its preferences directory made
- *   read-only), so the server accepted the account and the app says it could not be saved, stays on
- *   the form, and nothing is on disk.
- * - **connected**: the library, the server's albums in it, the account on disk.
- * - **saved, disconnected**: a relaunch opens the library this device has seen for the saved account,
- *   says it is saved and not connected, and sends the server nothing — the relay counts no connection
- *   in five seconds — until the person touches Reconnect, which reconnects in place (spec §13.1).
- * - **credential-persistence error at launch**: the saved account's Keystore key lost, as a Keystore
- *   reset loses it; the relaunch says the account could not be read and offers to sign it out, and
- *   signing it out leaves an empty install.
- */
+/** Production account-connect states, persistence failures and automatic saved-account relaunch. */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorAccountConnectProofTest {
     @get:Rule val compose = createEmptyComposeRule()
@@ -201,14 +174,8 @@ class AndroidEmulatorAccountConnectProofTest {
         }
     }
 
-    /**
-     * CONF-10b on a phone emulator (spec §13.1): an app launched into a saved account sends its server
-     * nothing — no library read, no cover art, no reconnect on reachability or the foreground — until
-     * the person touches Reconnect, which connects in place without the form. The account is connected
-     * and saved through the form first, as a person's is, so the relaunch has the albums this device
-     * has seen to show.
-     */
-    @Test fun aRelaunchIntoTheSavedAccountSendsNothingUntilThePersonTouchesReconnect() {
+    /** A production saved account relaunch reconnects without a touch. */
+    @Test fun aRelaunchIntoTheSavedAccountReconnectsWithoutATouch() {
         val probe = DisposableServerProbe.fromInstrumentation()
         awaitQueuedBroadcastsDelivered()
         val store = AndroidAccountCredentialStore(context)
@@ -247,43 +214,18 @@ class AndroidEmulatorAccountConnectProofTest {
         }
     }
 
-    /**
-     * A relaunch into the saved account (spec §13.1): the library this device has seen, said to be
-     * saved and not connected, and NOTHING sent to the server until the person touches Reconnect —
-     * which then reconnects in place. The process's reader is closed first, as a new process has none;
-     * this instrumentation shares the app's process.
-     */
+    /** A new process reader automatically reconnects the saved account in place. */
     private fun relaunchIntoTheSavedAccountAndReconnect(relay: ServerRelay, observed: MutableList<String>) {
         endProcessConnection()
-        // Every accept counts, even with no HTTP bytes or a stalled upstream dial.
         val triedBefore = relay.acceptedConnections.get()
-        val tried = { relay.acceptedConnections.get() - triedBefore }
-        val relaunchNanos = System.nanoTime()
         launch().use { scenario ->
-            awaitNode("the library for the saved account at relaunch") { exists("library.open") }
+            awaitNode("the saved library") { exists("library.open") }
             check(!exists("account.submit")) { "A saved account must not be asked for again" }
-            awaitNode("the library saying the account is saved and not connected") {
-                exists("library.saved") && exists("library.reconnect")
+            awaitNode("automatic reconnect in place", 60_000) {
+                relay.acceptedConnections.get() > triedBefore && !saysOffline() && exists("library.home.0.item.0")
             }
-            check(label("library.saved").contains(relay.url.removePrefix("http://").substringBefore(':'))) {
-                "The saved line names the saved account's server: ${label("library.saved")}"
-            }
-            awaitNode("the albums this device has seen, painted with nothing sent") { exists("library.home.0.item.0") }
-            SystemClock.sleep(SAVED_SETTLE_MILLIS)
-            val triedBeforeReconnect = tried()
-            check(triedBeforeReconnect == 0) {
-                "The app contacted the server $triedBeforeReconnect times before Reconnect " +
-                    "(accepted baseline=$triedBefore; times relative to relaunch):\n" + relay.connectionDiagnostics(relaunchNanos)
-            }
-            observed += "saved-disconnected(relaunch, tried=$triedBeforeReconnect)"
-
-            touch("library.reconnect", scenario)
-            awaitNode("Reconnect reaching the server, in place", 60_000) {
-                tried() > 0 && !exists("library.saved") && !exists("library.reconnect") && exists("library.open")
-            }
-            check(!exists("account.submit")) { "Reconnect connects in place, without the form" }
-            awaitNode("the library connected, not offline", 60_000) { !saysOffline() }
-            observed += "reconnected(in-place, tried=${tried()})"
+            check(!exists("library.saved") && !exists("library.reconnect")) { "The connected library has no reconnect notice" }
+            observed += "auto-reconnected(relaunch, tried=${relay.acceptedConnections.get() - triedBefore})"
         }
     }
 
