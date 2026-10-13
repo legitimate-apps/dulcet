@@ -28,8 +28,6 @@ application {
 dependencies {
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.cio)
-    implementation(libs.ktor.client.core)
-    implementation(libs.ktor.client.cio)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.sqlite.jdbc)

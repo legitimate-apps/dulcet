@@ -66,7 +66,7 @@ object Schema {
             search TEXT NOT NULL
         );
         CREATE INDEX track_album ON track(album_id, disc_no, track_no);
-        CREATE INDEX track_artist ON track(artist_id);
+        CREATE INDEX track_by_artist ON track(artist_id);
         CREATE INDEX track_mbz ON track(mbz_recording_id);
 
         CREATE TABLE track_artist (

@@ -169,7 +169,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                     this["artistCount"] = counts["artist"] ?: 0
                     this["albumCount"] = counts["album"] ?: 0
                     this["songCount"] = counts["song"] ?: 0
-                    db.read { string("SELECT MAX(added) FROM library_item WHERE user_id = ?", userId) }?.let { this["changed"] = Catalog.iso(it.toLong()) }
+                    db.read { string("SELECT value FROM meta WHERE key = ?", "library_changed:$userId") }?.let { this["changed"] = Catalog.iso(it.toLong()) }
                     if (type == null || type == "artist") catalog.artists(userId, "li.added IS NOT NULL$sinceClause", sinceArgs, order = "li.added DESC, ar.id", limit = size, offset = offset).forEach { add(it) }
                     if (type == null || type == "album") catalog.albums(userId, "li.added IS NOT NULL$sinceClause", sinceArgs, order = "li.added DESC, al.id", limit = size, offset = offset).forEach { add(it) }
                     if (type == null || type == "song") catalog.songs(userId, "li.added IS NOT NULL$sinceClause", sinceArgs, order = "li.added DESC, t.id", limit = size, offset = offset).forEach { add(it) }
@@ -181,6 +181,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val now = System.currentTimeMillis()
             db.write {
                 items.forEach { (type, id) -> execute("INSERT OR IGNORE INTO library_item(user_id, item_type, item_id, added) VALUES (?,?,?,?)", call.user.id, type, id, now) }
+                markLibraryChanged(call.user.id, now)
             }
             ok()
         },
@@ -194,10 +195,15 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                     if (type.isEmpty()) execute("DELETE FROM library_item WHERE user_id = ? AND item_id = ?", call.user.id, id)
                     else execute("DELETE FROM library_item WHERE user_id = ? AND item_type = ? AND item_id = ?", call.user.id, type, id)
                 }
+                markLibraryChanged(call.user.id, System.currentTimeMillis())
             }
             ok()
         },
     )
+}
+
+internal fun Db.Session.markLibraryChanged(userId: String, now: Long) {
+    execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = CAST(MAX(CAST(value AS INTEGER) + 1, CAST(excluded.value AS INTEGER)) AS TEXT)", "library_changed:$userId", now.toString())
 }
 
 internal fun Db.Session.ensureAnnotation(userId: String, type: String, id: String) {
