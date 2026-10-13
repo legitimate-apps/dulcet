@@ -111,6 +111,31 @@ class RestTest {
         assertEquals(50, client.rest("deletePlaylist", "bob", "bob-pw", "id" to playlistId).code())
     }
 
+    @Test fun adminCanReadButCannotEditAnotherUsersPlaylist() = testApplication {
+        application { dulcetModule(ctx) }
+        val pl = client.rest("createPlaylist", "bob", "bob-pw", "name" to "Bob", "songId" to songIds[0])["playlist"]!!.jsonObject["id"]!!.jsonPrimitive.content
+        assertEquals(JsonPrimitive(true), client.rest("getPlaylist", "alice", "alice-pw", "id" to pl)["playlist"]!!.jsonObject["readonly"])
+        assertEquals(50, client.rest("updatePlaylist", "alice", "alice-pw", "playlistId" to pl, "name" to "Erased").code())
+        assertEquals(50, client.rest("deletePlaylist", "alice", "alice-pw", "id" to pl).code())
+        assertEquals("Bob", client.rest("getPlaylist", "bob", "bob-pw", "id" to pl)["playlist"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun playlistArtUsesTheSameVisibilityAsPlaylistContents() = testApplication {
+        application { dulcetModule(ctx) }
+        val pl = client.rest("createPlaylist", "bob", "bob-pw", "name" to "Bob", "songId" to songIds[0])["playlist"]!!.jsonObject["id"]!!.jsonPrimitive.content
+        ctx.users.create("charlie", "pw", false)
+        for (artId in listOf(pl, "pl-$pl")) {
+            val body = client.get("/rest/getCoverArt?u=charlie&p=pw&v=1&c=t&f=json&id=$artId").bodyAsText()
+            assertTrue("\"code\":70" in body, body)
+        }
+        for ((user, pw) in listOf("alice" to "alice-pw", "bob" to "bob-pw")) {
+            val bytes = client.get("/rest/getCoverArt?u=$user&p=$pw&v=1&c=t&id=pl-$pl").bodyAsBytes()
+            assertEquals(0x89.toByte(), bytes[0])
+        }
+        client.rest("updatePlaylist", "bob", "bob-pw", "playlistId" to pl, "public" to "true")
+        assertEquals(HttpStatusCode.OK, client.get("/rest/getCoverArt?u=charlie&p=pw&v=1&c=t&id=pl-$pl").status)
+    }
+
     @Test
     fun streamServesRangesAndEnvelopesErrors() = testApplication {
         application { dulcetModule(ctx) }

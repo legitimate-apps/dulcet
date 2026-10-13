@@ -133,7 +133,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
         "updatePlaylist" to { call ->
             val id = call.required("playlistId")
             val row = db.read { playlistRows("p.id = ?", id).firstOrNull() } ?: throw SubsonicError.notFound("Playlist")
-            if (row.ownerId != call.user.id && !call.user.isAdmin) throw SubsonicError.notAuthorized()
+            if (row.ownerId != call.user.id) throw SubsonicError.notAuthorized()
             val add = call.params("songIdToAdd").filter(String::isNotEmpty)
             val remove = call.params("songIndexToRemove").mapNotNull { it.toIntOrNull() }.toSet()
             db.write {
@@ -153,7 +153,7 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
         "deletePlaylist" to { call ->
             val id = call.required("id")
             val row = db.read { playlistRows("p.id = ?", id).firstOrNull() } ?: throw SubsonicError.notFound("Playlist")
-            if (row.ownerId != call.user.id && !call.user.isAdmin) throw SubsonicError.notAuthorized()
+            if (row.ownerId != call.user.id) throw SubsonicError.notAuthorized()
             db.write { execute("DELETE FROM playlist WHERE id = ?", id) }
             ok()
         },

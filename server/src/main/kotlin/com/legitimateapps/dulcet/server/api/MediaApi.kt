@@ -106,8 +106,8 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
         },
         "getCoverArt" to { call ->
             val id = call.required("id")
-            val image = withContext(Dispatchers.IO) { ctx.artwork.image(id, call.intOrNull("size")) } ?: throw SubsonicError.notFound("Artwork")
-            call.ktor.response.headers.append(HttpHeaders.CacheControl, "public, max-age=315360000")
+            val image = withContext(Dispatchers.IO) { ctx.artwork.image(id, call.intOrNull("size"), call.user) } ?: throw SubsonicError.notFound("Artwork")
+            call.ktor.response.headers.append(HttpHeaders.CacheControl, "private, max-age=315360000")
             call.ktor.respond(ByteContent(image.bytes, ContentType.parse(image.contentType)))
             Reply.Handled
         },

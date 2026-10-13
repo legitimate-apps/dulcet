@@ -31,7 +31,12 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
     }
 
     /** null means the id names nothing at all (error 70); a known item without art gets a placeholder. */
-    fun image(id: String, size: Int?): Image? {
+    fun image(id: String, size: Int?, user: com.legitimateapps.dulcet.server.auth.User? = null): Image? {
+        val playlistId = if (id.startsWith("pl-")) id.removePrefix("pl-") else id.takeIf { exists("playlist", it) }
+        if (playlistId != null) {
+            val visible = user != null && db.read { long("SELECT COUNT(*) FROM playlist WHERE id = ? AND (owner_id = ? OR public = 1 OR ? = 1)", playlistId, user.id, user.isAdmin) > 0 }
+            if (!visible) return null
+        }
         val source = when {
             id.startsWith("al-") -> albumSource(id.removePrefix("al-")) ?: if (exists("album", id.removePrefix("al-"))) null else return null
             id.startsWith("mf-") -> trackSource(id.removePrefix("mf-")) ?: if (exists("track", id.removePrefix("mf-"))) null else return null
@@ -40,6 +45,7 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
             exists("album", id) -> albumSource(id)
             exists("track", id) -> trackSource(id)
             exists("artist", id) -> artistSource(id)
+            playlistId != null -> playlistSource(playlistId)
             else -> return null
         }
         if (source == null) return placeholder(size)
