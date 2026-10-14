@@ -329,6 +329,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     The consent uses a typed switch query. The control rejects live geometry polling, accepting a
     moving frame, and accepting an occluded target; temporary snapshot absence must be re-observed.
     Host pressure contributing to the query slowdown is ASSUMED, not established by these failures.
+    OBSERVED in run 38488956473: the playlist-edit proof on iPad spent twelve 60-second animation
+    waits before its 900-second allowance expired; the same proof passed in 237 seconds on main
+    run 38480396625. Its complete event sequence now uses the existing interaction scope, with
+    every UI and server-write assertion retained. In the iPhone account proof, redundant live
+    Cancel-label reads (including logging) consumed 34 seconds after connection started, beyond
+    the unchanged 30-second deadline. The recording shows visible Cancel; the failure hierarchy
+    later shows Try Again. Match Cancel's label and enabled state in the same immutable snapshots
+    used for geometry, then retain the live hittability check and actual cancellation assertion.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the
