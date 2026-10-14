@@ -1,5 +1,7 @@
 import Observation
 import Foundation
+import CoreGraphics
+import ImageIO
 import Security
 import Testing
 @testable import DulcetKit

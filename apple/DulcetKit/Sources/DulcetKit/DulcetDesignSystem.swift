@@ -425,14 +425,6 @@ struct DulcetArtworkView: View {
         .accessibilityHidden(true)
         .onAppear(perform: startLoading)
         .onChange(of: loadIdentity) { _, _ in startLoading() }
-        // A cover asked for while the account was not yet connected -- the player restored at
-        // launch, a page drawn while the connection was still being made -- was answered
-        // unavailable and stayed a placeholder for as long as the view lived, while views drawn
-        // a moment later loaded the same cover. Once the account connects, a view still showing
-        // its placeholder asks again.
-        .onChange(of: store.snapshot.accountConnected) { _, connected in
-            if connected, loadedData == nil { startLoading() }
-        }
         .onDisappear(perform: cancelLoading)
     }
 
@@ -442,6 +434,8 @@ struct DulcetArtworkView: View {
 
     private var loadIdentity: DulcetArtworkLoadIdentity? {
         artwork.remoteReference.map {
+            // Connection arrival retries a placeholder through this identity, using the same
+            // loading path as reference/size changes and avoiding a second connection observer.
             DulcetArtworkLoadIdentity(reference: $0, sizeBucket: sizeBucket, connected: store.snapshot.accountConnected)
         }
     }
