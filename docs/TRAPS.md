@@ -329,6 +329,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     The consent uses a typed switch query. The control rejects live geometry polling, accepting a
     moving frame, and accepting an occluded target; temporary snapshot absence must be re-observed.
     Host pressure contributing to the query slowdown is ASSUMED, not established by these failures.
+    OBSERVED in run 38488956473: the playlist-edit proof on iPad spent twelve 60-second animation
+    waits before its 900-second allowance expired; the same proof passed in 237 seconds on main
+    run 38480396625. Its complete event sequence now uses the existing interaction scope, with
+    every UI and server-write assertion retained. In the iPhone account proof, redundant live
+    Cancel-label reads (including logging) consumed 34 seconds after connection started, beyond
+    the unchanged 30-second deadline. The recording shows visible Cancel; the failure hierarchy
+    later shows Try Again. Match Cancel's label and enabled state in the same immutable snapshots
+    used for geometry, then retain the live hittability check and actual cancellation assertion.
 49. **A reader tile has no tracks when it lifts, so its drag carries a read, not an addition.** An
     album or playlist in the reader's grids and lists is a `DulcetReaderItem`: a title, an id and
     counts, with its track list read on demand (`resolveTracks`). `dulcetQueueDragSource` needs the
@@ -399,3 +407,12 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     or infer a media failure from paused transport alone. Diagnostic strings exclude error
     descriptions, unknown domain names, URLs and server addresses. Notification counts and the
     latest failure codes survive eviction from the bounded transition history.
+
+54. **A live XCUITest query's count does not keep its elements alive.** OBSERVED on tvOS in
+    hosted runs 38354526936 and 38470501331: the Search proof failed before reaching Search.
+    Launch focus inspection counted Connection's text fields and inspected index 0; the
+    successful connection then landed on Library, and resolving index 1 failed with
+    "No matches found for Descendants matching type TextField". Both failure hierarchies and
+    recordings showed Library with Home focused. Read focus attributes from one immutable
+    `app.snapshot()` hierarchy; read the section title from that same hierarchy when pairing
+    section and focus. An `exists` check before a live attribute read leaves the same race.

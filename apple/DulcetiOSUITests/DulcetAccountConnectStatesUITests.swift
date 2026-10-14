@@ -356,18 +356,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
               tap(tryAgain, in: app, name: "Try Again") else { return }
         let connecting = app.staticTexts["Connecting to the server…"].firstMatch
         guard connecting.waitForExistence(timeout: 15),
-              waitForLabel(containing: "Cancel", of: primary, timeout: 5) else {
-            XCTFail("A connection waiting on the server must show progress and Cancel: " + app.debugDescription)
-            return
-        }
-        print("DULCET ACCOUNT STATE reached=in-progress primary=\(primary.label.debugDescription)")
-        tourPhotograph("connection-connecting")
-        // Cancellation must be reachable in the current viewport, without reveal or a swipe.
-        guard waitForStableHitTarget(primary, matching: .identifier("dulcet.account-connect.primary-action"),
-                                    in: app.windows.firstMatch, timeout: 5), primary.isEnabled else {
+              waitForStableHitTarget(primary, matching: .cancel,
+                                    in: app.windows.firstMatch, timeout: 5) else {
             XCTFail("Cancel must be visible and tappable without scrolling: " + app.debugDescription)
             return
         }
+        // The same snapshots confirmed Cancel's label, enabled state and viewport geometry.
+        // Re-reading its live label for a wait and then for logging took 34 s in hosted run
+        // 38488956473: the unchanged 30 s connection expired before visibility was inspected.
+        print("DULCET ACCOUNT STATE reached=in-progress primary=\"Cancel\" observation=window-snapshot")
+        tourPhotograph("connection-connecting")
         let cancelShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         cancelShot.name = "Cancel visible without scrolling"
         cancelShot.lifetime = .keepAlways
@@ -398,9 +396,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         launchInInteractionScope(app)
         guard openConnection(in: app, compact: compact),
               tap(primary, in: app, name: "Connect"),
-              waitForLabel(containing: "Cancel", of: primary, timeout: 5),
-              waitForStableHitTarget(primary, matching: .identifier("dulcet.account-connect.primary-action"),
-                                    in: app.windows.firstMatch, timeout: 5), primary.isEnabled else {
+              waitForStableHitTarget(primary, matching: .cancel,
+                                    in: app.windows.firstMatch, timeout: 5) else {
             XCTFail("Cancel must be visible and tappable without scrolling at the largest text size: " + app.debugDescription)
             return
         }
@@ -946,6 +943,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         case identifier(String)
         case button(String)
         case localHTTPConsent
+        case cancel
 
         @MainActor
         func matches(_ snapshot: XCUIElementSnapshot) -> Bool {
@@ -956,6 +954,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 return snapshot.elementType == .button && snapshot.label == label
             case .localHTTPConsent:
                 return snapshot.elementType == .switch && snapshot.label == "Allow HTTP on this local network"
+            case .cancel:
+                return snapshot.elementType == .button
+                    && snapshot.identifier == "dulcet.account-connect.primary-action"
+                    && snapshot.label.contains("Cancel") && snapshot.isEnabled
             }
         }
     }

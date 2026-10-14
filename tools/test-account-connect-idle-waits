@@ -67,6 +67,7 @@ protocol XCUIElementSnapshot {
     var identifier: String { get }
     var label: String { get }
     var frame: CGRect { get }
+    var isEnabled: Bool { get }
 }
 struct Snapshot: XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] = []
@@ -74,6 +75,7 @@ struct Snapshot: XCUIElementSnapshot {
     var identifier = "moving-button"
     var label = "moving-button"
     var frame: CGRect
+    var isEnabled = true
 }
 enum RuntimeCase { case supported, missing, changed }
 var runtimeCase = RuntimeCase.supported
@@ -216,6 +218,16 @@ checks = r'''
 struct Check {
     @MainActor static func main() {
         let proof = Proof()
+        let cancel = Snapshot(identifier: "dulcet.account-connect.primary-action", label: "Cancel",
+                              frame: CGRect(x: 20, y: 100, width: 100, height: 30))
+        precondition(Proof.HitTarget.cancel.matches(cancel))
+        var expired = cancel
+        expired.label = "Try Again"
+        precondition(!Proof.HitTarget.cancel.matches(expired), "a timed-out connection is not Cancel")
+        var disabled = cancel
+        disabled.isEnabled = false
+        precondition(!Proof.HitTarget.cancel.matches(disabled), "disabled Cancel cannot authorize a tap")
+        print("Cancel label / enabled state from immutable snapshot: PASS")
         proof.proveEveryAccountConnectState(compact: false)
         let app = XCUIApplication.latest!
         precondition(proof.driven == 1 && app.scopeCalls == 1 && app.reads == 1)
