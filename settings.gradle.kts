@@ -17,6 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "Dulcet"
 include(":core")
 include(":core-conformance")
+include(":server")
 include(":android:shared")
 include(":android:app")
 include(":android:tv")

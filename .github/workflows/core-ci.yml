@@ -103,6 +103,33 @@ jobs:
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
           :android:tv:testDebugUnitTest
+      # Dulcet Server (spec §29) is a plain JVM module: its scanner, /rest, auth, lyrics and importer
+      # tests need no SDK or emulator, so they ride this runner's Gradle setup. They generate and
+      # probe real audio: install both tools instead of replacing media behaviour with a stub.
+      # Ubuntu Noble's exact package version: https://packages.ubuntu.com/noble/ffmpeg
+      # This is FFmpeg 6.1.1, also used by the pinned Linux conformance environment.
+      - name: Install pinned server test media tools
+        run: |
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = "ubuntu:24.04"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
+          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
+          ffmpeg -version
+          ffprobe -version
+      - name: Test Dulcet Server
+        run: >-
+          ./gradlew --no-daemon
+          --max-workers=2
+          :server:test
+      - name: Upload server test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-server-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: server/build/test-results/test
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload Android app evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

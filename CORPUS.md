@@ -24,6 +24,11 @@ Navidrome.*
 
 Surfaces: iOS, iPadOS, macOS, tvOS (SwiftUI) and Android + Android TV (Compose). macOS ships first.
 
+**Dulcet Server** (spec §29) is the project's own OpenSubsonic server. To the apps it is one more
+OpenSubsonic server: they speak only `/rest` to it, and anything extra it offers, such as the
+per-user My Library (`dulcetLibrary`), is an advertised extension the apps adopt only where a server
+advertises it. People keep using whatever server they already run.
+
 ## 2 · The thesis
 
 A Kotlin Multiplatform **fat core** plus **genuinely native UI shells**. The core owns everything that
@@ -247,7 +252,7 @@ that must argue against the recorded rationale, not a blank to fill in.
 
 ## 7 · What Dulcet is not
 
-Not a server. Not a library manager. Not a tag editor. Not a video player. Not a podcast or audiobook
+Not a library manager. Not a tag editor. Not a video player. Not a podcast or audiobook
 app — long-form media gets ordinary-song behavior and nothing more. Not a last.fm client: we scrobble
 to the server and its relays are its business. Not a Jellyfin client. Not a wrapper around a web app.
 Not an analytics product.
