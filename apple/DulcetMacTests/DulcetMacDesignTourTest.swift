@@ -73,7 +73,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable],
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .unifiedCompact
@@ -568,6 +568,14 @@ final class DulcetMacDesignTourTest: XCTestCase {
     }
 
     private func chooseMenuItem(_ title: String, photographMenu: Bool = false, photographScreen: String = "track-menu", performAction: Bool = true, opening open: () async -> Bool) async -> Bool {
+        guard let window else { return false }
+        // Hosted tests do not receive the activation handoff that launching the app normally
+        // supplies. Match the existing hosted Settings proof before asking AppKit for a menu.
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        if !(await waitFor(seconds: 2, { NSApp.isActive })) {
+            print("DULCET DESIGN TOUR native-menu-inactive activation-policy=\(NSApp.activationPolicy().rawValue)")
+        }
         @MainActor final class Tracking {
             let tour: DulcetMacDesignTourTest
             var performed = false
@@ -644,6 +652,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// Photographs an observed native menu while its event-tracking loop remains open. A
     /// window-only capture or view render would omit the overlay, so neither is a fallback here.
     private func shootNativeMenu(_ menu: NSMenu, screen: String, expectedItemTitle: String) -> Bool {
+        print("DULCET DESIGN TOUR native-menu app-active=\(NSApp.isActive)")
         shotNumber += 1
         let name = String(format: "%02d-%@", shotNumber, screen)
         func fail(_ reason: String) -> Bool {

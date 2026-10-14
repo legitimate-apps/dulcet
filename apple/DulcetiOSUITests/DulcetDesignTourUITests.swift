@@ -5,8 +5,9 @@ import XCTest
 
 /// A screenshot tour of the app's key screens against a live disposable server, for design review.
 ///
-/// This is an instrument, not a proof: it asserts only that each screen was reached, so a shot is
-/// never of a spinner or an error in place of the screen it is named after. `tools/design-tour-apple`
+/// This instrument asserts that each screen was reached and checks the playlist's action-row
+/// geometry, single title at rest and action margins. A shot is never of a spinner or an error
+/// in place of the screen it is named after. `tools/design-tour-apple`
 /// runs it and exports the attachments; it returns at once unless `DULCET_DESIGN_TOUR=1`, so no ordinary
 /// run of this target photographs anything.
 ///
@@ -133,6 +134,7 @@ final class DulcetDesignTourUITests: XCTestCase {
             sort.tap()
             return app.buttons["Random"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
+        if app.buttons["Done"].firstMatch.exists { app.buttons["Done"].firstMatch.tap() }
         dismissOverlay(in: app)
         step("album-menu", app) {
             guard self.openSection("albums", in: app, compact: compact) else { return false }
@@ -204,8 +206,8 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
         closePlayer(in: app)
         // Paused, from the now-playing bar, for the rest of the tour: the simulator's audio is the host's.
-        let pause = app.buttons["Pause"].firstMatch
-        if pause.waitForExistence(timeout: 3), pause.isHittable { pause.tap() }
+        let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        if pause.waitForExistence(timeout: 3), pause.label == "Pause", pause.isHittable { pause.tap() }
 
         step("playlists", app) {
             self.openPlaylists(in: app, compact: compact)
@@ -227,9 +229,20 @@ final class DulcetDesignTourUITests: XCTestCase {
             guard row.waitForExistence(timeout: 20), self.scrollIntoView(row, in: app) else { return false }
             row.tap()
             let title = app.staticTexts["dulcet.playlist.title"].firstMatch
-            return title.waitForExistence(timeout: 10)
+            let reached = title.waitForExistence(timeout: 10)
                 && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 20)
                 && self.settle(app)
+            if reached {
+                XCTAssertEqual(app.navigationBars.staticTexts.matching(identifier: Self.playlistName).count, 0,
+                               "The playlist's header title must appear only once at rest")
+                let shuffle = app.buttons["dulcet.playlist.shuffle"].firstMatch
+                print("DULCET PLAYLIST LAYOUT shuffle=\(shuffle.frame)")
+                XCTAssertLessThan(shuffle.frame.height, 110,
+                                  "Shuffle must remain a single readable row, never a stack of letters")
+                XCTAssertGreaterThan(shuffle.frame.width, 100,
+                                     "Shuffle must have room for its whole label")
+            }
+            return reached
         }
         step("playlist-edit", app) {
             let edit = app.buttons["dulcet.playlist.edit"].firstMatch
@@ -242,7 +255,17 @@ final class DulcetDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.playlist.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.scrollIntoView(more, in: app) else { return false }
             more.tap()
-            return app.buttons["Delete Playlist"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            let delete = app.buttons["Delete Playlist"].firstMatch
+            let reached = delete.waitForExistence(timeout: 10) && self.settle(app)
+            if reached {
+                let bounds = app.windows.firstMatch.frame
+                print("DULCET PLAYLIST ACTION MARGINS delete=\(delete.frame) window=\(bounds)")
+                XCTAssertGreaterThanOrEqual(delete.frame.minX, bounds.minX + 8,
+                                            "Playlist actions must stay inside the screen margins")
+                XCTAssertLessThanOrEqual(delete.frame.maxX, bounds.maxX - 8,
+                                         "Playlist actions must stay inside the screen margins")
+            }
+            return reached
         }
         step("playlist-delete-confirmation", app) {
             let delete = app.buttons["Delete Playlist"].firstMatch
@@ -311,6 +334,10 @@ final class DulcetDesignTourUITests: XCTestCase {
             _ = self.settle(app, seconds: 0.8)
             track.press(forDuration: 1.2)
             let download = app.buttons["Download"].firstMatch
+            if !download.waitForExistence(timeout: 2) {
+                let more = app.buttons["More"].firstMatch
+                if more.exists { more.tap() }
+            }
             if download.waitForExistence(timeout: 5) { download.tap() }
             else { app.tap(); return false }
             return self.waitFor(timeout: 60) { (track.value as? String)?.contains("Downloaded") == true }
@@ -327,6 +354,7 @@ final class DulcetDesignTourUITests: XCTestCase {
         }
         step("downloads-offline", app) {
             self.openAlbum("Threshold Boundary", in: app, compact: compact)
+                && self.scrollIntoView(app.buttons["dulcet.reader.track"].firstMatch, in: app)
                 && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
         XCTAssertEqual(shotNumber, compact ? 34 : 36, "The connected tour must photograph every requested destination and overlay")

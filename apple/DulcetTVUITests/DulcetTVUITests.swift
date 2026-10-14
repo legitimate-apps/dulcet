@@ -1752,7 +1752,8 @@ final class DulcetTVUITests: XCTestCase {
         let album = try playlistProofAlbum(server: server)
         let name = "TV Delete Playlist \(UUID().uuidString.prefix(6))"
         let playlist = try makeServerPlaylist(named: name, entries: [album.songs[0].id], server: server)
-        let confirmTitle = "Delete this playlist? It is deleted from your server too."
+        let confirmTitle = "Delete Playlist"
+        let confirmMessage = "Delete this playlist? It is deleted from your server too."
 
         let app = try launchAndConnect(serverURL: server.url, server: server)
         try openLibraryPlaylistsByRemote(app)
@@ -1773,6 +1774,8 @@ final class DulcetTVUITests: XCTestCase {
             let question = app.alerts[confirmTitle]
             XCTAssertTrue(question.waitForExistence(timeout: 15),
                 "Delete Playlist must ask first: " + app.debugDescription)
+            XCTAssertTrue(question.staticTexts[confirmMessage].exists,
+                "The question must explain that deletion also reaches the server: " + app.debugDescription)
             return question
         }
         // tvOS draws each alert action as a button inside a button of the same label, the two
@@ -2218,6 +2221,14 @@ final class DulcetTVUITests: XCTestCase {
 
     @MainActor
     private func waitForNavigationTitle(_ title: String, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        if title == "Playlists" {
+            let section = app.buttons["dulcet.reader.section.playlists"].firstMatch
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
+            while !section.isSelected, ContinuousClock.now < deadline {
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+            return section.isSelected && section.label == title
+        }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
         while app.navigationBars.firstMatch.identifier != title, ContinuousClock.now < deadline {
             Thread.sleep(forTimeInterval: 0.25)
