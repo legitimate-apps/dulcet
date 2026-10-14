@@ -297,10 +297,17 @@ with tempfile.TemporaryDirectory(prefix="dulcet-proxy-evidence-") as directory:
             f"returncode={result.returncode}, output={result.stdout!r}"
         )
 
+# Only these platforms have signed-receipt withdrawal rules in the boundary checker.
+# Other declarations can record a replaced test citation while the cell remains shipped.
+receipt_prefixes = {
+    "ipados": "evidence/receipts/signed-ipad-account-connect-",
+    "ios": "evidence/receipts/signed-iphone-account-connect-",
+    "macos": "evidence/receipts/signed-mac-account-connect-",
+}
 withdrawn_cells = {
     (row.get("id"), row.get("platform"))
     for row in json.loads(Path("FEATURES.yml").read_text()).get("accepted_regressions", [])
-    if row.get("id") == "account.connect"
+    if row.get("id") == "account.connect" and row.get("platform") in receipt_prefixes
 }
 
 for platform, label, expected, deferral, stale in (
@@ -341,11 +348,6 @@ for platform, label, expected, deferral, stale in (
         if result.returncode == 0 or expected not in result.stdout:
             raise AssertionError(f"{platform} {label}: expected rejection {expected!r}, output={result.stdout!r}")
 
-receipt_prefixes = {
-    "ipados": "evidence/receipts/signed-ipad-account-connect-",
-    "ios": "evidence/receipts/signed-iphone-account-connect-",
-    "macos": "evidence/receipts/signed-mac-account-connect-",
-}
 for _, platform in sorted(withdrawn_cells):
     for label, expected in (
         ("undeclared", f"account.connect/{platform}"),
