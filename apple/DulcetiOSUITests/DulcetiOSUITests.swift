@@ -840,8 +840,19 @@ final class DulcetiOSUITests: XCTestCase {
                 XCTFail("A compact window must present the \(tabTitle) tab: " + app.debugDescription)
                 return false
             }
-            tab.tap()
-            return true
+            // A synthesized tap can finish without selecting its tab on a loaded host.
+            // Confirm the navigation before a caller queries the destination's controls.
+            for attempt in 1...3 {
+                if tab.isHittable { tab.tap() }
+                let deadline = Date().addingTimeInterval(3)
+                repeat {
+                    if tab.isSelected { return true }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                } while Date() < deadline
+                print("DULCET DESTINATION retry tab=\(tabTitle) attempt=\(attempt) reason=not-selected")
+            }
+            XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
+            return false
         }
         // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
         // by both its SF Symbol image and its label, so an .any query resolves ambiguously.

@@ -19,12 +19,13 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
+parser.add_argument('--navigation-source-ref', help='Replay an earlier compact navigation helper')
 parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
 parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target'])
 args = parser.parse_args()
 source = (args.source or ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
 
-def declaration(marker):
+def declaration(marker, source=source):
     start = source.index(marker)
     opening = source.index('{', start)
     depth = 1
@@ -41,6 +42,10 @@ scope = method('withoutIdleWaits')
 proof = method('proveEveryAccountConnectState')
 sign_out = method('signOut')
 await_sign_out = method('awaitSignOut').replace('Date()', 'AccountWaitClock.now')
+navigation_path = 'apple/DulcetiOSUITests/DulcetiOSUITests.swift'
+navigation_source = (subprocess.check_output(['git', 'show', f'{args.navigation_source_ref}:{navigation_path}'], cwd=ROOT, text=True)
+                     if args.navigation_source_ref else (ROOT / navigation_path).read_text())
+open_destination = declaration('    private func openDestination(', navigation_source).replace('Date()', 'AccountWaitClock.now')
 scroll = method('scrollIntoView')
 stable = method('waitForStableHitTarget')
 snapshot_polling = 'matching target: HitTarget' in stable
@@ -127,6 +132,11 @@ final class XCUIApplication: NSObject {
     var awaitingConnection = false
     var connectionOpens = 0
     override var debugDescription: String { state }
+    var selectedTab = "Connection"
+    var ignoredNavigationTaps = 0
+    var navigationTaps = 0
+    var tabBars: ElementQuery { ElementQuery(app: self, scope: "tab") }
+    var staticTexts: ElementQuery { ElementQuery(app: self, scope: "sidebar") }
     var confirmationExists = false
     var confirmTapCount = 0
     var buttons: ElementQuery { ElementQuery(app: self, scope: "root") }
@@ -156,9 +166,15 @@ struct Element {
     var exists: Bool {
         precondition(!app.forbidLiveGeometry || (key != "moving-button" && key != "window"),
                      "presence polling must come from the same snapshot as geometry")
+        if scope == "tab" || scope == "sidebar" { return true }
         if key == "moving-button" || key == "window" { return true }
         if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
         return key == "Sign Out" && (scope == "root" ? !app.awaitingConnection && app.state != "signed-out" : scope == "sheet" && app.confirmationExists)
+    }
+    var isSelected: Bool {
+        // A missed synthetic tap uses up this attempt's wait, without a real sleep.
+        AccountWaitClock.offset += 4
+        return app.selectedTab == key
     }
     var isHittable: Bool {
         if key != "moving-button" { return exists }
@@ -196,6 +212,12 @@ struct Element {
     var label: String { key == "dulcet.account-connect.primary-action" ? "Connect" : "Sign Out" }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
     func tap() {
+        if scope == "tab" || scope == "sidebar" {
+            app.navigationTaps += 1
+            if app.ignoredNavigationTaps > 0 { app.ignoredNavigationTaps -= 1 }
+            else { app.selectedTab = key }
+            return
+        }
         if key == "moving-button" {
             precondition(app.lastTargetY == 100, "the tap must target the button after its scroll finishes")
             return
@@ -276,6 +298,16 @@ struct Check {
         app.awaitingConnection = true
         precondition(proof.awaitSignOut(in: app, compact: false) && app.connectionOpens == 1)
         print("slow Connection navigation / Sign Out at deadline: PASS")
+        app.selectedTab = "Connection"
+        precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
+        precondition(app.selectedTab == "Search" && app.navigationTaps == 1)
+        print("compact destination / observed selection: PASS")
+        app.selectedTab = "Connection"
+        app.ignoredNavigationTaps = 1
+        precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
+        precondition(app.selectedTab == "Search" && app.navigationTaps == 3,
+                     "A completed tap without the selected destination must not authorize a field lookup")
+        print("missed compact tab tap / observed selection after retry: PASS")
         for condition in [RuntimeCase.missing, .changed] {
             runtimeCase = condition
             var calls = 0
@@ -293,6 +325,6 @@ checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' 
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
     swift = path / 'control.swift'
-    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
+    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
     subprocess.run([str(path / 'control')], check=True)
