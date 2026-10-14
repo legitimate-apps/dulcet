@@ -2780,6 +2780,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-junit" \
             "$RUNNER_TEMP/dulcet-ios-lyrics-junit" \
+            "$RUNNER_TEMP/dulcet-ios-paused-previous-junit" \
             "$RUNNER_TEMP/dulcet-ios-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-ipados-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
