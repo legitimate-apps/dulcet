@@ -396,7 +396,8 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     with no item error; its error log was empty. The engine already reads that notification.
     OBSERVED in hosted [run 37944337563](https://github.com/legitimate-apps/dulcet/actions/runs/37944337563),
     on tvOS Simulator: the same test requested play but ended its 270 s wait paused at time zero
-    without a failure event. This is **undiagnosed**, not evidence that increasing the wait helps.
+    without a failure event. The missing AVFoundation verdict was then **undiagnosed**;
+    increasing the wait did not explain it.
     Local immediate-play, play-after-ready and play-before-delivery controls did not reproduce
     it; only the suspended-delivery case guarantees play before readiness. The test now records
     independent, timed transport/item transitions, failure/stall/end notifications, numeric error
@@ -407,6 +408,21 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     or infer a media failure from paused transport alone. Diagnostic strings exclude error
     descriptions, unknown domain names, URLs and server addresses. Notification counts and the
     latest failure codes survive eviction from the bounded transition history.
+
+    OBSERVED again on 2026-10-14 in hosted
+    [run 38535897557](https://github.com/legitimate-apps/dulcet/actions/runs/38535897557),
+    with Play preceding byte delivery: ready at 39 ms, paused at 69 ms, no progress or failure
+    notification for 270 s, and a responsive engine queue. AudioQueue logged the same converter
+    error (1650549857, zero decoded frames) as the passing controls. This exposes a product gap:
+    a requested, ready item silently paused before progress had no recovery or terminal bound.
+    The engine now reasserts that transport request once after 2 s; continued paused startup
+    without an AVFoundation verdict fails as `engine` after another 120 s. Pending resource reads
+    defer the deadline; waiting transport, deliberate pauses, interruptions, progress and retired
+    attempts do not trigger recovery. The real decoder's `undecodable` verdict is preserved;
+    inactivity alone never invents it. Local native macOS and tvOS Simulator regression controls
+    deliberately drop the initial Play, then require valid media to progress and corrupt media to
+    fail as `undecodable`. A manual-clock control requires the absent-verdict case to fail once as
+    `engine`. Physical-device occurrence remains unproven; the engine gap is not simulator-specific.
 
 54. **A live XCUITest query's count does not keep its elements alive.** OBSERVED on tvOS in
     hosted runs 38354526936 and 38470501331: the Search proof failed before reaching Search.

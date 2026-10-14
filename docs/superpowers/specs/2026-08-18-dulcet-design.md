@@ -1543,6 +1543,14 @@ Three rules, each because the alternative fails silently:
    fallback is the analogue of the Apple shell's missing-catalog `preparing`, which rule 1 does not
    cover either. The first Android shell that branches on `phase` extends this gate to Android.
 
+**Apple startup transport recovery:** a current ready item whose Play request remains active but
+whose transport is paused before any media progress gets one reassertion of the same Play request
+after 2 s. If it remains paused without a verdict for another 120 s, the adapter emits
+`FailedBeforeStart(engine)`. Outstanding resource reads defer recovery/failure; network waiting is
+not a decoder verdict. Progress, deliberate pause, interruption, end, failure or attempt retirement
+cancel the deadline. A later deliberate Play starts a fresh recovery budget. The adapter preserves
+AVFoundation's actual `undecodable` failure and never infers it from elapsed time alone.
+
 ### 12.3 Position cadence
 
 Two numbers, named because §15.2 depends on both: **`cadenceTarget = 0.5 s`** (the nominal 2 Hz
@@ -7750,6 +7758,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-14 — Bound silently paused Apple startup without inventing media errors.**
+OBSERVED in hosted run 38535897557: Play before byte delivery left a ready tvOS item paused at
+zero for 270 s without a failure notification, while the engine queue remained responsive.
+The Apple adapter now reasserts the requested startup transport once, then bounds continued paused
+startup as an engine failure (§12.2). Source retry and queue policy remain in the core. Native macOS
+and tvOS Simulator controls reproduce the missing initial transport request and require the real
+decoder's `undecodable` verdict, valid-media progress, and bounded absent-verdict failure separately.
 
 **2026-10-13 — iOS and iPadOS account cancellation stays in the visible safe area.**
 The grouped account Form keeps credentials and status scrollable, while its existing primary action

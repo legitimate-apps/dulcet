@@ -133,6 +133,53 @@ private final class WholeRepresentationPlaybackResource: DulcetPlaybackResourceL
 /// (which the core reads as `Playback.NoPlayableSource`), never `.engine`, which the queue stops on.
 @Suite(.serialized)
 struct AVPlayerDecodeFailureTests {
+    /// Force the public state from the hosted failure: Play accepted, ready item, transport
+    /// paused, no progress and no verdict. The recovery must ask the real decoder to render.
+    @Test
+    func lostStartupPlaySurfacesTheRealDecoderFailure() async throws {
+        let player = StartupPlayDroppingPlayer(dropCount: 1)
+        let engine = DulcetAVPlayerEngine(player: player)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let resource = SuspendedPlaybackResource()
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(
+            resource: resource, expectedContainer: .mp3
+        )))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        try await waitUntil("the decoder never requested the bytes", engine: engine,
+                            timeout: realAVFoundationProgressTimeout) { resource.requestCount > 0 }
+        resource.resume(with: mp3FramesWithUndecodablePayloads())
+        try await waitUntil("the recovery never reached the real decoder", engine: engine,
+                            timeout: undecodableVerdictTimeout) {
+            events.snapshot.contains { if case .failedBeforeStart(_, .undecodable) = $0 { true } else { false } }
+        }
+        #expect(player.playRequestCount == 2, "one requested Play and one transport recovery")
+        #expect(!events.containsProgressBegan)
+        #expect(events.snapshot.filter { if case .failedBeforeStart = $0 { true } else { false } }.count == 1)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func lostStartupPlayStartsValidMediaAfterDelayedBytes() async throws {
+        let player = StartupPlayDroppingPlayer(dropCount: 1)
+        let engine = DulcetAVPlayerEngine(player: player)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let resource = SuspendedPlaybackResource()
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(resource: resource)))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        try await waitUntil("the loader never requested delayed bytes", engine: engine,
+                            timeout: realAVFoundationProgressTimeout) { resource.requestCount > 0 }
+        #expect(!events.containsReady)
+        #expect(player.playRequestCount == 1)
+        resource.resume(with: makePCMWave(duration: 4))
+        try await waitUntil("the recovered valid item never progressed", engine: engine,
+                            timeout: realAVFoundationProgressTimeout) { events.containsProgressBegan }
+        #expect(player.playRequestCount == 2)
+        #expect(!events.snapshot.contains { if case .failedBeforeStart = $0 { true } else { false } })
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
     @Test(arguments: DecodePlayTiming.allCases)
     func mediaAVFoundationCannotDecodeFailsAsUndecodable(playTiming: DecodePlayTiming) async throws {
         let bytes = mp3FramesWithUndecodablePayloads()
@@ -255,6 +302,144 @@ struct AVPlayerDecodeFailureTests {
         diagnostics.invalidate()
         NotificationCenter.default.post(name: .AVPlayerItemPlaybackStalled, object: item)
         #expect(diagnostics.describe() == filled, "invalidated diagnostics kept receiving notifications")
+    }
+}
+
+@Suite(.serialized)
+struct AVPlayerStartupRecoveryTests {
+    @Test
+    func remoteToggleGetsAFreshRecoveryAfterADeliberatePause() async throws {
+        let clock = ManualAVPlayerEngineClock()
+        let player = StartupPlayDroppingPlayer(dropCount: .max)
+        let controls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false,
+                                         systemMediaControls: controls)
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        #expect(controls.send(.toggle(sessionID: .init("session"))))
+        #expect(clock.fireScheduledDeadline())
+        #expect(player.playRequestCount == 2)
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.startupRecoveryVerdictBudget)
+        #expect(controls.send(.toggle(sessionID: .init("session"))))
+        #expect(!clock.fireScheduledDeadline())
+        #expect(controls.send(.toggle(sessionID: .init("session"))))
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.startupRecoveryDelay)
+        #expect(clock.fireScheduledDeadline())
+        #expect(player.playRequestCount == 4)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func waitingForMediaDoesNotReassertPlayOrStartAFailureDeadline() async throws {
+        let clock = ManualAVPlayerEngineClock()
+        let player = StartupPlayDroppingPlayer(dropCount: .max, transportOverride: .waitingToPlayAtSpecifiedRate)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        engine.reportPlayerTransportChangedForTesting()
+        #expect(!clock.fireScheduledDeadline())
+        #expect(player.playRequestCount == 1)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test
+    func aMissingVerdictIsBoundedAndIsNotInventedAsADecodeFailure() async throws {
+        let clock = ManualAVPlayerEngineClock()
+        let player = StartupPlayDroppingPlayer(dropCount: .max)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(
+            resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2))
+        )))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.startupRecoveryDelay)
+        #expect(clock.fireScheduledDeadline())
+        #expect(player.playRequestCount == 2)
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.startupRecoveryVerdictBudget)
+        #expect(clock.fireScheduledDeadline())
+        #expect(events.snapshot.last == .failedBeforeStart(attemptID: .init("attempt"), error: .engine))
+        engine.reportPlayerTransportChangedForTesting()
+        #expect(!clock.fireScheduledDeadline(), "a failed attempt must not recover again")
+        #expect(events.snapshot.filter { if case .failedBeforeStart = $0 { true } else { false } }.count == 1)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test(arguments: StartupRecoveryCancellation.allCases)
+    func deliberateOrTerminalStateCancelsThePendingRecovery(reason: StartupRecoveryCancellation) async throws {
+        let clock = ManualAVPlayerEngineClock()
+        let player = StartupPlayDroppingPlayer(dropCount: .max)
+        let audioSession = RecordingAudioSession()
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false,
+                                         audioSession: audioSession)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let playbackPlan = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)))
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.startupRecoveryDelay)
+        switch reason {
+        case .pause: _ = await execute(engine, .pause(commandID: .init("pause")))
+        case .interruption:
+            audioSession.publish(.interruptionBegan)
+            _ = await engine.probeQueueLivenessForTesting()
+        case .route:
+            audioSession.publish(.routeChanged(old: .bluetooth, new: .builtIn, becomingNoisy: true))
+            _ = await engine.probeQueueLivenessForTesting()
+        case .progress:
+            clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
+        case .failure: engine.reportCurrentItemFailedForTesting(.undecodable)
+        case .replacement:
+            _ = await execute(engine, .replaceCurrent(commandID: .init("replace"), plan: plan(
+                resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)), attempt: "replacement"
+            )))
+        case .release: _ = await execute(engine, .release(commandID: .init("release")))
+        }
+        engine.reportPlayerTransportChangedForTesting()
+        #expect(!clock.fireScheduledDeadline())
+        #expect(player.playRequestCount == 1)
+        #expect(!events.snapshot.contains { if case .failedBeforeStart(_, .engine) = $0 { true } else { false } })
+        _ = await execute(engine, .release(commandID: .init("cleanup")))
+    }
+}
+
+enum StartupRecoveryCancellation: CaseIterable, Sendable {
+    case pause, interruption, route, progress, failure, replacement, release
+}
+
+/// Supplies the same silent loss of Play observed on hosted tvOS without depending on its race.
+/// Subsequent calls use AVFoundation unchanged, including the decoder's real error notification.
+private final class StartupPlayDroppingPlayer: AVQueuePlayer, @unchecked Sendable {
+    private nonisolated let lock = NSLock()
+    private nonisolated let dropCount: Int
+    private nonisolated let transportOverride: AVPlayer.TimeControlStatus?
+    private nonisolated(unsafe) var count = 0 // protected by lock
+
+    nonisolated init(dropCount: Int, transportOverride: AVPlayer.TimeControlStatus? = nil) {
+        self.dropCount = dropCount
+        self.transportOverride = transportOverride
+        super.init()
+    }
+
+    nonisolated override var timeControlStatus: AVPlayer.TimeControlStatus {
+        transportOverride ?? super.timeControlStatus
+    }
+
+    nonisolated var playRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    nonisolated override func playImmediately(atRate rate: Float) {
+        lock.lock()
+        count += 1
+        let drop = count <= dropCount
+        lock.unlock()
+        if !drop { super.playImmediately(atRate: rate) }
     }
 }
 
@@ -2640,6 +2825,13 @@ private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unche
     private var samplerHandler: (@Sendable () -> Void)?
     private var deferredQueue: DispatchQueue?
     private var deferredHandler: (@Sendable () -> Void)?
+    private var deferredDelay: TimeInterval?
+
+    var scheduledDelay: TimeInterval? {
+        lock.lock()
+        defer { lock.unlock() }
+        return deferredDelay
+    }
 
     /// Fire the pending one-shot deadline (the audio-session grace period) without waiting for it.
     /// Returns false when nothing is scheduled, so a test cannot silently pass by firing nothing.
@@ -2650,6 +2842,7 @@ private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unche
         let handler = deferredHandler
         deferredQueue = nil
         deferredHandler = nil
+        deferredDelay = nil
         lock.unlock()
         guard let queue, let handler else { return false }
         queue.sync(execute: handler)
@@ -2658,18 +2851,20 @@ private final class ManualAVPlayerEngineClock: DulcetAVPlayerEngineClock, @unche
 
     func scheduleOnce(
         on queue: DispatchQueue,
-        after _: TimeInterval,
+        after interval: TimeInterval,
         handler: @escaping @Sendable () -> Void
     ) -> @Sendable () -> Void {
         lock.lock()
         deferredQueue = queue
         deferredHandler = handler
+        deferredDelay = interval
         lock.unlock()
         return { [weak self] in
             guard let self else { return }
             self.lock.lock()
             self.deferredQueue = nil
             self.deferredHandler = nil
+            self.deferredDelay = nil
             self.lock.unlock()
         }
     }
