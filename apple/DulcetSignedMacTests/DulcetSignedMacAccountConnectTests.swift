@@ -89,28 +89,11 @@ final class DulcetSignedMacAccountConnectTests: XCTestCase {
             XCTAssertEqual(request.password, "dulcet-ci-canary-password")
             XCTAssertTrue(request.allowLocalHTTP)
             try assertStoredAttributes(accountID: accountID)
-            XCTAssertFalse(presentation.snapshot.accountConnected)
             XCTAssertEqual(presentation.selectedDestination, .library)
-            guard case let .saved(serverName) = presentation.snapshot.accountConnection else {
-                throw ProofError.notSavedDisconnected
-            }
             XCTAssertEqual(presentation.accountServerURL, request.serverURL)
             XCTAssertEqual(presentation.accountUsername, request.username)
             XCTAssertEqual(presentation.accountPassword, request.password)
-            let reconnectLabel = DulcetStrings.reconnectToServer(serverName)
-            _ = try await element(in: host, labelContaining: reconnectLabel)
-            _ = try await element(in: host, identifier: "dulcet.reader.reconnect")
-            presentation.selectDestination(.settings)
-            XCTAssertEqual(presentation.snapshot.state, .accountSavedDisconnected)
-            _ = try await element(in: host, labelContaining: reconnectLabel)
-            XCTAssertFalse(descendants(host).contains { label($0) == DulcetStrings.signOut })
-            presentation.selectDestination(.library)
-            // Drive the rendered library's Reconnect action, with no form input on this launch.
-            let button = try await element(in: host, identifier: "dulcet.reader.reconnect")
-            let object = try XCTUnwrap(button as? NSObject)
-            let press = #selector(NSAccessibilityProtocol.accessibilityPerformPress)
-            guard object.responds(to: press) else { throw ProofError.missingAction }
-            _ = object.perform(press)
+            // The fresh process reaches connected from its saved item with no Reconnect action.
             try await requireConnected(presentation, host: host)
             XCTAssertEqual(store.activeAccountID, accountID)
             XCTAssertEqual(try store.load(), request)

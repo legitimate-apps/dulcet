@@ -1,5 +1,7 @@
 import Observation
 import Foundation
+import CoreGraphics
+import ImageIO
 import Security
 import Testing
 @testable import DulcetKit
@@ -95,8 +97,8 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
     // Reconstruct from credentials actually saved by the successful production submission.
     let restoredConnector = ControlledAccountConnector()
     let restored = makeStore(restoredConnector, credentials: credentials)
-    #expect(restored.snapshot.state == .accountSavedDisconnected)
-    #expect(restoredConnector.requests.isEmpty)
+    #expect(restored.snapshot.accountConnection == .connecting)
+    #expect(restoredConnector.requests == [request])
 
     // The oracle is written out per failure kind, deliberately not derived from `kind.family`:
     // derived from production, it would move with a broken production mapping and still agree.
@@ -1256,7 +1258,7 @@ func keepingAccountAfterCleanupFailurePreservesPersistedCredential(cleanupTimesO
     let relaunched = DulcetAccountDataSource(
         connector: ControlledAccountConnector(), credentialStore: credentials
     )
-    #expect(relaunched.currentSnapshot.state == .accountSavedDisconnected)
+    #expect(relaunched.currentSnapshot.accountConnection == .connecting)
 }
 
 @Test @MainActor
@@ -1661,7 +1663,8 @@ func unentitledKeychainWriteFailsClosedWithoutLegacyFallback() throws {
 #endif
 }
 
-@Test @MainActor
+// Keep the published test identity while reversing its expectation with the contract.
+@Test("Saved credentials reconnect without a tap") @MainActor
 func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     let persisted = DulcetAccountConnectRequest(
         serverURL: "https://music.example.invalid",
@@ -1679,20 +1682,20 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )
     let store = DulcetPresentationStore(source: source)
 
-    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .connecting)
     #expect(store.snapshot.accountForm == persisted)
     #expect(!store.snapshot.accountConnected)
-    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
-    #expect(store.snapshot.connectivity == .disconnected(serverName: "music.example.invalid"))
-    #expect(connector.requests.isEmpty)
+    #expect(store.snapshot.accountConnection == .connecting)
+
+    #expect(connector.requests == [persisted])
     #expect(libraryBrowser.requests.isEmpty)
 
     store.selectDestination(.library)
 
-    #expect(store.snapshot.state == .accountSavedDisconnected)
+    #expect(store.snapshot.accountConnection == .connecting)
     #expect(store.snapshot.selectedDestination == .library)
-    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
-    #expect(connector.requests.isEmpty)
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(connector.requests == [persisted])
     #expect(libraryBrowser.requests.isEmpty)
     #expect(DulcetStrings.reconnectToServer("music.example.invalid") == "Reconnect to music.example.invalid")
     #expect(DulcetStrings.savedAccountDisconnectedBody.localizedCaseInsensitiveContains("saved"))
@@ -1706,9 +1709,7 @@ func relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect() {
     )))
 
     #expect(credentials.saved == [persisted])
-    // Reconnect was pressed on the library surface, so it lands in the library rather than on the
-    // account pane. The CONF-10b guarantee is the one asserted above -- that neither the connector
-    // nor the browser was touched before the person chose to reconnect -- and it is unchanged.
+    // The manual fallback joined the launch negotiation; success keeps Library selected.
     #expect(store.snapshot.selectedDestination == .library)
     #expect(store.snapshot.state == .libraryLoading)
     #expect(libraryBrowser.requests.count == 1)
@@ -1772,7 +1773,7 @@ func aRelaunchIntoASavedAccountReconcilesItsDownloadsBeforeAnyReconnect() {
     #expect(account?.allowLocalHTTP == true)
     #expect(!downloads.configuredBeforeStatusHandler,
             "a state the reconciliation publishes must reach the presentation")
-    #expect(connector.requests.isEmpty, "reconciling downloads is not a connection")
+    #expect(connector.requests.count == 1, "downloads reconcile while the saved account reconnects")
 }
 
 /// Saved playback knows the local account while network playback remains unconfigured.
@@ -4006,16 +4007,15 @@ func accessGrantedAfterASavedAccountsLibraryReplacedTheRefusalStillConnects() {
         credentialStore: MemoryCredentialStore(persisted: saved),
         localNetworkAccess: probe
     ))
-    #expect(store.snapshot.state == .accountSavedDisconnected, "the experiment needs a saved account")
+    #expect(store.snapshot.accountConnection == .connecting, "the saved account reconnects at launch")
     store.navigate(to: .settings)
     store.submitAccountConnection()
     connector.complete(.failed(accountFailure(.transportUnreachable)))
     probe.answer(.denied)
     #expect(shownFailureKind(store) == .localNetworkAccessDenied)
     store.navigate(to: .library)
-    // The condition under test: the refusal is no longer what the status shows.
-    #expect(shownFailureKind(store) == nil)
-    #expect(store.snapshot.accountConnection == .saved(serverName: "10.0.0.20:4533"))
+    // Navigation preserves the refusal until the grant retries in place.
+    #expect(shownFailureKind(store) == .localNetworkAccessDenied)
 
     probe.answer(.notDenied)
     #expect(connector.requests.count == 2, "the grant retried the connection")
@@ -4271,3 +4271,113 @@ func anArtworkViewDrawnBeforeTheAccountConnectedLoadsOnceItConnects() async {
     #expect(artworkFetcher.requests.map(\.reference.artworkKey) == ["cover:late"])
 }
 #endif
+
+@Test @MainActor
+func savedAccountLoadsDeviceArtworkBeforeNegotiation() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid",
+        username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let connector = ControlledAccountConnector()
+    let fetcher = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(connector: connector,
+        credentialStore: InstanceCredentialStore(persisted: request, providerInstanceID: "art-provider"),
+        artworkFetcher: fetcher)
+    let reference = DulcetArtworkReference(serverID: "art-provider", artworkKey: "cover:versioned")
+    let png = try artworkMemoryFixturePNG()
+    var loaded: Data?
+    _ = source.loadArtwork(reference, sizeBucket: .pixels256) {
+        if case let .loaded(data) = $0 { loaded = data }
+    }
+    #expect(connector.requests.count == 1)
+    #expect(fetcher.requests.count == 1)
+    fetcher.complete(.loaded(png))
+    #expect(loaded == png)
+    #expect(fetcher.requests.first?.cachedOnly == true)
+    var second: Data?
+    _ = source.loadArtwork(reference, sizeBucket: .pixels256) {
+        if case let .loaded(data) = $0 { second = data }
+    }
+    #expect(second == png)
+    #expect(fetcher.requests.count == 1)
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid")))
+    _ = source.loadArtwork(reference, sizeBucket: .pixels256) { _ in }
+    #expect(fetcher.requests.count == 1, "Connecting must not refetch a cached cover")
+}
+
+@Test @MainActor
+func aSeenCoverIsServedSynchronouslyWithoutAnotherArtworkRead() throws {
+    let connector = ControlledAccountConnector()
+    let fetcher = ControlledArtworkFetcher()
+    let source = DulcetAccountDataSource(connector: connector, artworkFetcher: fetcher,
+        providerInstanceIDFactory: { "art-provider" })
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "https://music.example.invalid"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture-password"
+    store.submitAccountConnection()
+    connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+        normalizedServerURL: "https://music.example.invalid")))
+    let reference = DulcetArtworkReference(serverID: "art-provider", artworkKey: "cover:versioned")
+    let png = try artworkMemoryFixturePNG()
+    _ = store.loadArtwork(reference, sizeBucket: .pixels256) { _ in }
+    fetcher.complete(.loaded(png))
+    var loaded: Data?
+    let second = store.loadArtwork(reference, sizeBucket: .pixels256) {
+        if case let .loaded(data) = $0 { loaded = data }
+    }
+    #expect(second == nil)
+    #expect(loaded == png)
+    #expect(fetcher.requests.count == 1)
+}
+
+func artworkMemoryFixturePNG() throws -> Data {
+    let context = try #require(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.setFillColor(CGColor(red: 0.9, green: 0.1, blue: 0.2, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+    let png = NSMutableData()
+    let destination = try #require(CGImageDestinationCreateWithData(png, "public.png" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+    #expect(CGImageDestinationFinalize(destination))
+    return png as Data
+}
+
+
+@Test @MainActor
+func signOutClearsDecodedArtworkAndRejectsLateArtworkCompletion() async throws {
+    let connector = ControlledAccountConnector()
+    let fetcher = ControlledArtworkFetcher()
+    let credentials = MemoryCredentialStore(persisted: nil)
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        artworkFetcher: fetcher, providerInstanceIDFactory: { "art-provider" })
+    let store = DulcetPresentationStore(source: source)
+    func connect() {
+        store.accountServerURL = "https://music.example.invalid"
+        store.accountUsername = "listener"
+        store.accountPassword = "fixture-password"
+        store.submitAccountConnection()
+        connector.complete(.connected(DulcetConnectedAccountSummary(serverName: "Music",
+            normalizedServerURL: "https://music.example.invalid")))
+    }
+    connect()
+    let seen = DulcetArtworkReference(serverID: "art-provider", artworkKey: "seen-cover")
+    let pending = DulcetArtworkReference(serverID: "art-provider", artworkKey: "pending-cover")
+    let png = try artworkMemoryFixturePNG()
+    _ = store.loadArtwork(seen, sizeBucket: .pixels256) { _ in }
+    fetcher.complete(.loaded(png))
+    #expect(store.cachedArtwork(seen, sizeBucket: .pixels256) != nil)
+    var lateWasDelivered = false
+    _ = store.loadArtwork(pending, sizeBucket: .pixels256) { _ in lateWasDelivered = true }
+    store.removeAccount()
+    for _ in 0..<30 { await Task.yield() }
+    #expect(try credentials.load() == nil)
+    #expect(fetcher.removedServerIDs == ["art-provider"])
+    fetcher.complete(.loaded(png))
+    #expect(!lateWasDelivered)
+    // Reusing the fixture provider id makes this detect retained pixels, rather than merely
+    // passing because the source rejects a reference after its account id is cleared.
+    connect()
+    #expect(store.cachedArtwork(seen, sizeBucket: .pixels256) == nil)
+    #expect(store.cachedArtwork(pending, sizeBucket: .pixels256) == nil)
+}

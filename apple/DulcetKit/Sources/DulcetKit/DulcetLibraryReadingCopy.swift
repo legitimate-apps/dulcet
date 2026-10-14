@@ -14,10 +14,12 @@ enum DulcetReaderCopy {
     /// The one line shown with a publication's content, or nil for `live` content, for `loading`
     /// (which shows an indicator instead), and for `unavailable` (which says so in place of the
     /// content). Cached content always says how old it is.
-    static func freshnessLine(_ freshness: DulcetReaderFreshness, now: Date = Date()) -> String? {
+    static func freshnessLine(
+        _ freshness: DulcetReaderFreshness, now: Date = Date(), includesReason: Bool = true
+    ) -> String? {
         guard case let .cached(reason, asOf) = freshness else { return nil }
         let seen = asOf.map { DulcetStrings.readerSeenAt(age($0, now: now)) } ?? DulcetStrings.readerSeenUnknownAge
-        return DulcetStrings.readerSeenWithReason(seen, reasonPhrase(reason))
+        return includesReason ? DulcetStrings.readerSeenWithReason(seen, reasonPhrase(reason)) : seen
     }
 
     /// The statement shown instead of content when there is none -- never a spinner.

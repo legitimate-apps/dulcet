@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run real Apple controller restoration regressions with a built DulcetCore framework."""
 import argparse
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,6 +16,14 @@ subprocess.run(["swift", "build", "--package-path", str(package)], check=True)
 build = Path(subprocess.check_output(
     ["swift", "build", "--package-path", str(package), "--show-bin-path"], text=True
 ).strip())
+# SwiftPM's native and Xcode-backed build systems place modules and objects differently.
+module_dir = build / "Modules" if (build / "Modules").is_dir() else build
+objects = list((build / "DulcetKit.build").glob("*.o"))
+if not objects:
+    archive = build / "libDulcetKit.a"
+    if not archive.is_file():
+        raise SystemExit("restoration check requires DulcetKit objects or its static archive")
+    objects = [archive]
 with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".build") as temp:
     temp = Path(temp)
     subprocess.run(["clang", "-mmacosx-version-min=14.0", "-c",
@@ -22,14 +31,18 @@ with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".bu
                     "-o", str(temp / "sqlite.o")], check=True)
     subprocess.run([
         "swiftc", "-parse-as-library", "-target", "arm64-apple-macos14.0",
-        "-I", str(build / "Modules"), "-F", str(args.framework_dir.resolve()),
+        "-I", str(module_dir), "-F", str(args.framework_dir.resolve()),
         "-framework", "DulcetCore", "-lsqlite3",
         str(root / "apple/DulcetAppleShared/DulcetCorePlayback.swift"),
         str(root / "apple/DulcetAppleShared/DulcetCorePlaybackController.swift"),
         str(root / "tools/playback-restoration-check.swift"), str(temp / "sqlite.o"),
-        *map(str, (build / "DulcetKit.build").glob("*.o")),
+        *map(str, objects),
         "-o", str(temp / "check"),
     ], check=True)
+    # An Xcode-backed SwiftPM resource accessor locates its bundle beside the executable.
+    for resource in build.glob("DulcetKit_DulcetKit.*"):
+        if resource.is_dir():
+            shutil.copytree(resource, temp / resource.name)
     prefix = f"dulcet-restoration-check-{uuid.uuid4()}"
     assert prefix.startswith("dulcet-restoration-check-"), prefix
     # NativeSqliteDriver's macOS database directory. Everything this run creates begins with the

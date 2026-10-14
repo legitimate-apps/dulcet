@@ -17,7 +17,7 @@ import XCTest
 /// | domain error, server | the fault proxy in front of the disposable server answers `ping` with OpenSubsonic error 0 |
 /// | in progress | a loopback port this process listens on and never answers; Cancel, by remote, ends it |
 /// | connected | the right account, submitted through Connect's own path by the DEBUG launch hook |
-/// | saved, disconnected | a relaunch with the account saved: the library offers Reconnect, Connection names the server |
+/// | saved launch | reconnects automatically; an unreachable server leaves the device library and manual Reconnect |
 /// | credential persistence | a relaunch whose active-account pointer names no Keychain item |
 ///
 /// The right password is never typed: the DEBUG launch hook hands the form the account and calls
@@ -205,30 +205,39 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         // 9. Connected: the account submitted through Connect's own path lands on the library,
         //    and Connection, reached through the section bar, says connected.
         app.terminate()
-        guard connectByLaunchHook(app, server: server) else { return }
+        guard connectByLaunchHook(app, server: (url: proxy.url, username: server.username, password: server.password)) else { return }
         let connected = element(labelPrefix: "Connected to", in: app)
         XCTAssertTrue(connected.waitForExistence(timeout: 5), "Connection must say it is connected: " + app.debugDescription)
         print("DULCET TV ACCOUNT STATE reached=connected label=\(connected.label.debugDescription)")
 
-        // 10. Saved and disconnected: a relaunch opens the saved account's library, which offers
-        //    Reconnect; Connection names the saved server.
+        // 10. A fresh process reconnects from its saved credentials without a remote action.
         app.terminate()
         app.launchArguments = []
         app.launch()
+        guard selectSection(app, "settings") else { return }
+        XCTAssertTrue(connected.waitForExistence(timeout: 30), "Saved launch must connect without a tap")
+        print("DULCET TV ACCOUNT STATE reached=saved-auto-connected")
+        let connectedShot = XCTAttachment(screenshot: app.screenshot())
+        connectedShot.name = "saved-launch-auto-connected"; connectedShot.lifetime = .keepAlways; add(connectedShot)
+        XCTAssertNotNil(proxy.control("POST", "state=on", path: "/__dulcet/outage"))
+        setLocalFixtureServer(running: false)
+        defer { setLocalFixtureServer(running: true) }
+        defer { _ = proxy.control("POST", "state=off", path: "/__dulcet/outage") }
+        app.terminate(); app.launch()
         guard awaitSection(app, among: ["Library"]) != nil else { return }
         let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
-        XCTAssertTrue(reconnect.waitForExistence(timeout: 20), "A saved account's library offers Reconnect: " + app.debugDescription)
-        guard selectSection(app, "settings") else {
-            XCTFail("The section bar must reach Connection from Library: " + app.debugDescription)
-            return
-        }
-        let savedServer = element(labelPrefix: "Reconnect to", in: app)
-        guard savedServer.waitForExistence(timeout: 20), waitForLabel(containing: "Reconnect", of: primary, timeout: 5) else {
-            XCTFail("Connection must name the saved server and offer Reconnect: " + app.debugDescription)
-            return
-        }
-        XCTAssertFalse(signOutButton.exists, "A saved account is not connected until Reconnect")
-        print("DULCET TV ACCOUNT STATE reached=saved-disconnected label=\(savedServer.label.debugDescription)")
+        XCTAssertTrue(reconnect.waitForExistence(timeout: 20), "Offline Library remains usable with Reconnect")
+        let observations = proxy.control("GET", "", path: "/__dulcet/outage")
+        let dropped = observations?["dropped"] as? [String: Int] ?? [:]
+        XCTAssertGreaterThan((dropped["ping"] ?? 0) + (dropped["getOpenSubsonicExtensions"] ?? 0), 0,
+            "Saved launch actually tried the unreachable server")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "saved-launch-offline-library"; shot.lifetime = .keepAlways; add(shot)
+        setLocalFixtureServer(running: true)
+        XCTAssertNotNil(proxy.control("POST", "state=off", path: "/__dulcet/outage"))
+        guard selectSection(app, "settings") else { return }
+        XCTAssertTrue(connected.waitForExistence(timeout: 60), "Transient backoff must recover without a tap")
+        print("DULCET TV ACCOUNT STATE reached=saved-offline-recovered")
 
         // 11. Credential persistence: a launch whose active-account pointer the Keychain cannot answer.
         app.terminate()
@@ -251,8 +260,9 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         app.launch()
         guard awaitSection(app, among: ["Library"]) != nil else { return }
-        XCTAssertTrue(app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 20),
-                      "The saved account must survive an unreadable pointer: " + app.debugDescription)
+        guard selectSection(app, "settings") else { return }
+        XCTAssertTrue(connected.waitForExistence(timeout: 20),
+                      "The saved account must reconnect after an unreadable pointer: " + app.debugDescription)
         print("DULCET TV ACCOUNT STATES PASS")
     }
 
@@ -576,12 +586,25 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         return (url, username, password)
     }
 
+    /// Optional local-run process control: CI uses the proxy outage; a local proof can additionally
+    /// stop its owned disposable Navidrome and assert that its listener really refused connections.
+    private func setLocalFixtureServer(running: Bool) {
+        guard let url = ProcessInfo.processInfo.environment["DULCET_AUTORC_SERVER_CONTROL_URL"] else { return }
+        let components = URLComponents(string: url)
+        guard components?.host == "127.0.0.1", components?.scheme == "http" else {
+            XCTFail("The fixture process control must be loopback"); return
+        }
+        let result = FaultProxy(url: url).control("POST", "", path: running ? "/start" : "/stop")
+        XCTAssertEqual(result?[running ? "serverRunning" : "serverStopped"] as? Bool, true)
+        print("DULCET SAVED LAUNCH fixture-process=\(running ? "running" : "stopped-and-refused")")
+    }
+
     private struct FaultProxy {
         let url: String
 
         /// One request to the proxy's server-error control, answered synchronously: its JSON, or nil.
-        func control(_ method: String, _ query: String) -> [String: Any]? {
-            guard let target = URL(string: url + "/__dulcet/subsonic-error" + (query.isEmpty ? "" : "?" + query)) else {
+        func control(_ method: String, _ query: String, path: String = "/__dulcet/subsonic-error") -> [String: Any]? {
+            guard let target = URL(string: url + path + (query.isEmpty ? "" : "?" + query)) else {
                 return nil
             }
             var request = URLRequest(url: target)

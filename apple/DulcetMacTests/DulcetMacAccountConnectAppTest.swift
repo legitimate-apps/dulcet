@@ -817,16 +817,23 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             credentialStore: offlineCredentials,
             libraryBrowser: reopenedLibrary
         ))
+        // A saved account reconnects on launch; the unreachable endpoint fails that one attempt.
+        XCTAssertEqual(reopenedStore.snapshot.state, .accountConnecting)
+        XCTAssertEqual(offlineConnector.requests.map(\.serverURL), [unreachableURL.absoluteString])
+        offlineConnector.complete(.failed(DulcetAccountFailurePresentation(
+            kind: .transportUnreachable, serverName: "Music", title: "Offline", message: "Offline",
+            recovery: "Reconnect", automaticRetryFloor: .zero
+        )))
         XCTAssertEqual(reopenedStore.snapshot.state, .accountSavedDisconnected)
         reopenedStore.selectDestination(.library)
 
         XCTAssertEqual(reopenedStore.snapshot.state, .libraryBrowse)
         XCTAssertFalse(reopenedStore.snapshot.accountConnected)
-        XCTAssertTrue(offlineConnector.requests.isEmpty)
+        XCTAssertEqual(offlineConnector.requests.count, 1)
         XCTAssertEqual(reopenedLibrary.startedSyncCount, 0)
         XCTAssertEqual(reopenedLibrary.completedSyncGenerations, [])
         XCTAssertEqual(reopenedLibrary.displayedCommittedGenerations, [2])
-        // A saved-account reopen reads the committed library only: no server is contacted, so
+        // The failed reconnect starts no sync: the reopen reads the committed library only, so
         // it publishes once and there is no preview at all.
         XCTAssertEqual(reopenedLibrary.publicationOrder, ["committed"])
         XCTAssertEqual(reopenedLibrary.deliveredPreviewCount, 0)
@@ -836,7 +843,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             "LIBRARY SYNC APP INTEGRATION"
                 + " sync-generations=1,2 displayed-generations=1,2"
                 + " scheduled-refresh-fired=true offline-endpoint=unreachable"
-                + " offline-sync-starts=0 offline-displayed-generation=2"
+                + " offline-reconnect-attempts=1 offline-sync-starts=0 offline-displayed-generation=2"
         )
     }
 
@@ -1007,10 +1014,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         let databaseName = "dulcet-reader-hosted-\(UUID().uuidString).db"
         let providerInstanceID = "macos-reader-\(UUID().uuidString)"
         let credentials = ReaderHostedCredentialStore()
-        func makeStore() -> (DulcetPresentationStore, DulcetLibrarySession) {
+        func makeStore(connector: any DulcetAccountConnecting = DulcetCoreAccountConnector()) -> (DulcetPresentationStore, DulcetLibrarySession) {
             let session = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName))
             let source = DulcetAccountDataSource(
-                connector: DulcetCoreAccountConnector(),
+                connector: connector,
                 credentialStore: credentials,
                 playbackController: SearchIntentPlaybackController(),
                 providerInstanceIDFactory: { providerInstanceID },
@@ -1100,10 +1107,11 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         XCTAssertNotNil(try credentials.load(), "The account stays saved across the relaunch")
 
         // 2. Relaunch with the account saved: the library paints from this device, sending nothing.
-        let (second, secondSession) = makeStore()
+        let deferred = ReaderDeferredConnector()
+        let (second, secondSession) = makeStore(connector: deferred)
         XCTAssertEqual(second.snapshot.state, .libraryBrowse, "A saved account opens straight into its library")
         XCTAssertEqual(second.selectedDestination, .library)
-        XCTAssertEqual(secondSession.mode, .deviceOnly, "Nothing is sent until Reconnect is chosen")
+        XCTAssertEqual(secondSession.mode, .deviceOnly, "The device library remains readable while negotiation is held")
         var cachedPublications: [DulcetLibraryWindow] = []
         let cachedAlbums = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
             cachedPublications.append($0)
@@ -1169,8 +1177,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         gridOnlyOfflinePage.close()
         neverSeenPage.close()
 
-        // 3. Reconnect, as the library's own button does: in place, and live again.
-        dulcetReaderRetry(second)
+        // 3. Release the launch negotiation; no Reconnect action is sent.
+        deferred.release()
         try await waitUntil(
             timeout: .seconds(20),
             failureMessage: "reconnect: mode=\(secondSession.mode) state=\(second.snapshot.state)"
@@ -1823,4 +1831,23 @@ private final class ReaderHostedCredentialStore: DulcetProviderInstanceCredentia
         providerInstanceID = nil
         credentialGeneration += 1
     }
+}
+
+
+/// Holds an already requested launch negotiation while the reader's first cached paint is checked.
+@MainActor
+private final class ReaderDeferredConnector: DulcetAccountConnecting {
+    private let core = DulcetCoreAccountConnector()
+    private var pending: (() -> Void)?
+    private var operation: (any DulcetAccountConnectOperation)?
+    func connect(_ request: DulcetAccountConnectRequest,
+                 completion: @escaping @MainActor (DulcetAccountConnectOutcome) -> Void) -> any DulcetAccountConnectOperation {
+        pending = { [weak self] in self?.operation = self?.core.connect(request, completion: completion) }
+        return ReaderDeferredOperation()
+    }
+    func release() { let action = pending; pending = nil; action?() }
+}
+@MainActor
+private final class ReaderDeferredOperation: DulcetAccountConnectOperation {
+    func cancel() {}
 }

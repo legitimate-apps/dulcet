@@ -169,21 +169,7 @@ enum SignedAccountConnectProof {
         quit()
         launch("read") // observation flags only: no account hook, pointer override or credential arguments
         expectMarker("saved=PASS")
-        let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
-        XCTAssertTrue(reconnect.waitForExistence(timeout: 15), "The saved library must offer Reconnect")
-        connection()
-        XCTAssertTrue(saved.waitForExistence(timeout: 10), "Connection must name the saved server")
-        XCTAssertFalse(app.buttons["Sign Out"].exists)
-        let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
-        XCTAssertTrue(primary.label.contains("Reconnect")); expectHittable(primary)
-        let libraryRow = app.staticTexts["dulcet.sidebar.library"].firstMatch
-        if libraryRow.exists {
-            expectHittable(libraryRow); libraryRow.tap()
-        } else {
-            let library = app.tabBars.buttons["Library"].firstMatch
-            expectHittable(library); library.tap()
-        }
-        expectHittable(reconnect); reconnect.tap()
+        // The new process reads the saved Keychain item and reconnects without any UI action.
         expectMarker("connected=PASS")
         connection()
         XCTAssertTrue(connected.waitForExistence(timeout: 10))
@@ -207,11 +193,12 @@ enum SignedAccountConnectProof {
         connection()
         XCTAssertTrue(app.staticTexts["Your saved account could not be opened"].waitForExistence(timeout: 10))
         XCTAssertFalse(saved.exists)
-        XCTAssertFalse(reconnect.exists)
+        XCTAssertFalse(app.buttons["dulcet.reader.reconnect"].firstMatch.exists)
         quit()
         launch("cleanup")
         expectMarker("cleanup=PASS")
         connection()
+        let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         XCTAssertTrue(primary.waitForExistence(timeout: 10))
         XCTAssertFalse(primary.label.contains("Reconnect"))
         XCTAssertFalse(primary.isEnabled)

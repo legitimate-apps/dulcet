@@ -116,3 +116,85 @@ private final class TestDateSource: @unchecked Sendable {
         return Date(timeIntervalSince1970: tick)
     }
 }
+
+
+@Test @MainActor
+func decodedArtworkMemoryCacheReusesPixelsAcrossSizesAndStaysBounded() throws {
+    let cache = DulcetArtworkMemoryCache(maximumByteCount: 1_000, maximumEntryCount: 2)
+    let png = try artworkMemoryFixturePNG()
+    let first = DulcetArtworkCacheKey(serverID: "art-A", artworkKey: "cover-A", sizeBucket: .pixels256)
+    let second = DulcetArtworkCacheKey(serverID: "art-A", artworkKey: "cover-B", sizeBucket: .pixels96)
+    let third = DulcetArtworkCacheKey(serverID: "art-B", artworkKey: "cover-C", sizeBucket: .pixels96)
+    cache.insert(png, for: first)
+    cache.insert(png, for: second)
+    let image = try #require(cache.image(for: first))
+    let fallback = try #require(cache.image(for: .init(serverID: first.serverID,
+        artworkKey: first.artworkKey, sizeBucket: .pixels512)))
+    #expect(image === fallback, "Another size reuses the decoded pixels for the first paint")
+    cache.insert(png, for: third)
+    #expect(cache.data(for: second) == nil)
+    #expect(cache.data(for: first) == png)
+    #expect(cache.entryCount == 2)
+    #expect(cache.byteCount <= 1_000)
+    #expect(cache.image(for: .init(serverID: "art-A", artworkKey: "cover-C", sizeBucket: .pixels512)) == nil)
+    cache.remove(serverID: "art-A")
+    #expect(cache.data(for: first) == nil)
+    #expect(cache.data(for: third) == png)
+    let tooSmall = DulcetArtworkMemoryCache(maximumByteCount: png.count, maximumEntryCount: 2)
+    #expect(DulcetArtworkMemoryCache.decode(png, maximumByteCount: png.count) == nil)
+    tooSmall.insert(png, for: first)
+    #expect(tooSmall.entryCount == 0, "Encoded bytes plus decoded pixels must fit the byte bound")
+}
+
+@Test
+func artworkDiskCacheInventoriesOnceAndTracksReplacementRemovalAndRelaunch() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = DulcetArtworkDiskCache(rootDirectory: root, maximumByteCount: 50, maximumEntryCount: 10)
+    let keys = (0..<20).map {
+        DulcetArtworkCacheKey(serverID: "art-provider", artworkKey: "cover-\($0)", sizeBucket: .pixels96)
+    }
+    for key in keys { await cache.insert(Data([1, 2, 3]), for: key) }
+    let last = try #require(keys.last)
+    await cache.insert(Data(repeating: 7, count: 15), for: last)
+    #expect(await cache.data(for: last) == Data(repeating: 7, count: 15))
+    let stats = await cache.statistics()
+    #expect(stats.entryCount <= 10 && stats.byteCount <= 50)
+    #expect(await cache.directoryEnumerationCount == 1)
+    let reopened = DulcetArtworkDiskCache(rootDirectory: root, maximumByteCount: 50, maximumEntryCount: 10)
+    #expect(await reopened.statistics() == stats)
+    #expect(await reopened.data(for: last) == Data(repeating: 7, count: 15))
+    await reopened.remove(last)
+    #expect(await reopened.statistics().entryCount == stats.entryCount - 1)
+    await reopened.remove(serverID: "art-provider")
+    #expect(await reopened.statistics() == .init(entryCount: 0, byteCount: 0))
+    #expect(await reopened.directoryEnumerationCount == 1)
+}
+
+
+@Test
+func cancelledArtworkWriteCannotRecreateADeletedServerCache() async {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = DulcetArtworkDiskCache(rootDirectory: root)
+    let key = DulcetArtworkCacheKey(serverID: "art-provider", artworkKey: "late-cover", sizeBucket: .pixels96)
+    let gate = ArtworkCacheWriteGate()
+    let write = Task {
+        await gate.wait() // Intentionally resumes even after cancellation, like a late adapter.
+        await cache.insert(Data([1, 2, 3]), for: key)
+    }
+    while !(await gate.isWaiting) { await Task.yield() }
+    write.cancel()
+    await cache.remove(serverID: key.serverID)
+    await gate.release()
+    await write.value
+    #expect(await cache.data(for: key) == nil)
+    #expect(await cache.statistics() == .init(entryCount: 0, byteCount: 0))
+}
+
+private actor ArtworkCacheWriteGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { continuation != nil }
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    func release() { continuation?.resume(); continuation = nil }
+}

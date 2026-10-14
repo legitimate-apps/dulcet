@@ -3,7 +3,8 @@
 
 This checks the input protocol, not UIKit animation completion. The field models a cursor,
 secure bullets, placeholders and dropped typing. Hardware-key events are recorded to check the chosen
-ordinary-Delete input protocol; this does not diagnose UIKit animation-idle failures. A trailing-edge
+ordinary-Delete input protocol; throwing snapshots model a transient query failure,
+and immutable reads keep a value and its placeholder from the same snapshot; this does not diagnose UIKit animation-idle failures. A trailing-edge
 tap on text wider than the field lands short of the end, as iPhone CI showed. --source-ref
 replays an earlier helper to prove that the controls reject incorrect cursor handling and stale focus.
 """
@@ -57,8 +58,19 @@ final class XCUIElement {
     var dropNextInsertion = false
     var insertions = 0
     var dropFocusOnNextValueRead = false
+    var snapshotFailures = 0
+    struct Snapshot { let value: Any?; let placeholderValue: String? }
+    enum SnapshotFailure: Error { case unavailable }
+    func snapshot() throws -> Snapshot {
+        if snapshotFailures > 0 { snapshotFailures -= 1; throw SnapshotFailure.unavailable }
+        return Snapshot(value: readValue(), placeholderValue: placeholderValue)
+    }
     init(_ text: String, secure: Bool = false) { self.text = text; self.secure = secure }
     var value: Any? {
+        precondition(snapshotFailures == 0, "A timed-out live value query records a fatal test failure")
+        return readValue()
+    }
+    private func readValue() -> Any? {
         // A live query can outlast keyboard/layout settling. The next typing event must
         // reacquire focus rather than rely on the check made before reading this value.
         if dropFocusOnNextValueRead { dropFocusOnNextValueRead = false; focused = false }
@@ -150,6 +162,19 @@ struct Controls {
             precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure))
             precondition(field.text == "canary", "Focus recovery must still replace the whole credential")
             precondition(field.hardwareEvents == 0)
+            print("\(name): PASS")
+        }
+        for (name, old, secure, failures) in [
+            ("snapshot-retry-before-delete", "previous-user", false, 1),
+            ("snapshot-retry-before-insert", "", false, 2),
+            ("snapshot-retry-secure", "previous-password", true, 1)
+        ] {
+            let field = XCUIElement(old, secure: secure)
+            field.snapshotFailures = failures
+            precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure))
+            precondition(field.text == "canary" && field.snapshotFailures == 0)
+            precondition(field.insertions == 1 && field.hardwareEvents == 0,
+                         "A missing snapshot must not be mistaken for an empty field or send blind typing")
             print("\(name): PASS")
         }
     }

@@ -196,6 +196,8 @@ public struct DulcetAccountFailurePresentation: Sendable, Hashable {
     public let message: String
     public let recovery: String
     public let targetHost: String?
+    /// Nil means this failure waits for a person or lifecycle event, never a timer.
+    public let automaticRetryFloor: Duration?
 
     public init(
         kind: DulcetAccountFailureKind,
@@ -203,8 +205,10 @@ public struct DulcetAccountFailurePresentation: Sendable, Hashable {
         title: String,
         message: String,
         recovery: String,
-        targetHost: String? = nil
+        targetHost: String? = nil,
+        automaticRetryFloor: Duration? = nil
     ) {
+        self.automaticRetryFloor = automaticRetryFloor
         self.kind = kind
         self.serverName = serverName
         self.title = title

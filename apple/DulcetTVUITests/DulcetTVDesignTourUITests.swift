@@ -45,6 +45,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         continueAfterFailure = true
         let remote = XCUIRemote.shared
         let app = XCUIApplication()
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
+            guard let proxy = faultProxy(),
+                  connectByLaunchHook(app, server: (proxy.url, username, password)) else { return }
+            step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
+            return
+        }
         tourAccountStates(app, server: (url, username, password))
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
@@ -773,17 +779,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         _ = settle(1)
         _ = pressByRemote(primary, in: app, name: "Cancel")
         step("connection-connected", app) {
-            self.connectByLaunchHook(app, server: server)
+            guard let proxy = self.faultProxy() else { return false }
+            return self.connectByLaunchHook(app, server: (proxy.url, server.username, server.password))
                 && self.element(labelPrefix: "Connected to", in: app).waitForExistence(timeout: 15)
                 && self.settle(1)
         }
-        step("connection-saved-disconnected", app) {
-            app.terminate()
-            app.launchArguments = []
-            app.launch()
-            return self.launchSection(app) == "Library" && self.selectSection(app, "settings")
-                && self.element(labelPrefix: "Reconnect to", in: app).waitForExistence(timeout: 15)
-        }
+        step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
         step("connection-error-persistence", app) {
             app.terminate()
             app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
@@ -793,6 +794,19 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             }
             return self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 15)
         }
+    }
+
+    @MainActor
+    private func savedDisconnected(_ app: XCUIApplication) -> Bool {
+        // A saved launch reconnects; only an unreachable server keeps this offline shot.
+        guard let proxy = self.faultProxy(),
+              proxy.control("POST", "state=on", path: "/__dulcet/outage") != nil else { return false }
+        defer { _ = proxy.control("POST", "state=off", path: "/__dulcet/outage") }
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        return self.launchSection(app) == "Library" && self.selectSection(app, "settings")
+            && self.element(labelPrefix: "Reconnect to", in: app).waitForExistence(timeout: 15)
     }
 
     /// Launches with the account handed to the form by the DEBUG hook, which submits it through
@@ -1112,8 +1126,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let url: String
 
         /// One request to the proxy's server-error control, answered synchronously: its JSON, or nil.
-        func control(_ method: String, _ query: String) -> [String: Any]? {
-            guard let target = URL(string: url + "/__dulcet/subsonic-error" + (query.isEmpty ? "" : "?" + query)) else {
+        func control(_ method: String, _ query: String, path: String = "/__dulcet/subsonic-error") -> [String: Any]? {
+            guard let target = URL(string: url + path + (query.isEmpty ? "" : "?" + query)) else {
                 return nil
             }
             var request = URLRequest(url: target)

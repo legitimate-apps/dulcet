@@ -1292,17 +1292,9 @@ final class DulcetTVUITests: XCTestCase {
             + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
     }
 
-    /// A saved account's library on Apple TV, every step by remote (spec §16.14, §16.18), the tvOS
-    /// counterpart of the iPhone and iPad saved-account reader proofs:
-    ///
-    /// 1. A favourite made on an album page shows at once and reaches the server.
-    /// 2. Relaunched with the account saved and no account hook, the app opens straight into
-    ///    Library, not Connection, offering Reconnect; the album's tile opens its page from what
-    ///    this device saw, which says so, with the favourite still shown. Requests are not counted
-    ///    here, so "nothing is sent" is not observed (the CONF-76 app-host proof counts them).
-    /// 3. Search there answers from this device and says so.
-    /// 4. The album page's Reconnect brings it live in place, and the favourite is removed again,
-    ///    so the disposable server ends as it started.
+    /// A saved account's library on Apple TV, every step by remote (spec §16.14, §16.18).
+    /// A favourite reaches the server, survives a fresh saved launch that automatically connects,
+    /// stays visible on its album page and in connected search, then is removed again.
     @MainActor
     func testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV() throws {
         continueAfterFailure = false
@@ -1349,28 +1341,22 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(waitForNavigationTitle("Library", in: app, timeout: 30),
             "A saved account must open straight into Library, not \(app.navigationBars.firstMatch.identifier.debugDescription): "
                 + app.debugDescription)
-        let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
-        XCTAssertTrue(reconnect.waitForExistence(timeout: 15), "Library must offer Reconnect: " + app.debugDescription)
         let launchFocus = focusedElement(app)
+        XCTAssertTrue(selectSection(app, "settings"), "Connection must be reachable by remote")
+        XCTAssertTrue(app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30),
+            "The saved account must reconnect without a tap: " + app.debugDescription)
         try openAlbumTileByRemote(app, album)
-        // Its tracks are listed from this device too, each saying it cannot play offline.
-        let offlineRows = app.buttons.matching(identifier: "dulcet.reader.track.unavailable")
-        let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(15))
-        while offlineRows.count < album.songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
-        XCTAssertEqual(offlineRows.count, album.songs.count,
-            "The page must list every track this device saw, as unavailable offline: " + app.debugDescription)
         XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
             "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
         let seenLine = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing what")).firstMatch
-        XCTAssertTrue(seenLine.waitForExistence(timeout: 5),
-            "The album page must say it is showing what this device saw: " + app.debugDescription)
-        let seenLabel = seenLine.label
+        XCTAssertTrue(seenLine.waitForNonExistence(timeout: 30),
+            "The device-only age line clears after automatic revalidation")
 
-        // 3. Search answers from this device and says so.
+        // 3. Connected search merges device and server results.
         typeSearchQuery(app, query: String(albumName.prefix(3)))
         let scope = app.staticTexts["dulcet.search.scope"].firstMatch
-        XCTAssertTrue(scope.waitForExistence(timeout: 10), "The results must say where they come from: " + app.debugDescription)
-        let scopeLabel = scope.label
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 30), "The offline search scope clears after the server answers")
+        let scopeLabel = scope.exists ? scope.label : "<none>"
         let albumResult = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "dulcet.search.result.", albumName + ", "
         )).firstMatch
@@ -1378,28 +1364,20 @@ final class DulcetTVUITests: XCTestCase {
             "The album this device saw must be among the device's results: " + app.debugDescription)
         let albumRow = albumResult.identifier
 
-        // 4. Library comes back on the album page, whose Reconnect brings it live in place.
+        // 4. Automatic reconnect already completed; return to the album and clean up.
         XCTAssertTrue(selectSection(app, "library"), "The section bar must return to Library: " + app.debugDescription)
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
         XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == albumName,
             "Library must come back on the album it was left on: " + app.debugDescription)
-        let retry = app.buttons["dulcet.reader.retry"].firstMatch
-        XCTAssertTrue(retry.waitForExistence(timeout: 10) && retry.label == "Reconnect",
-            "The album page must offer Reconnect: " + app.debugDescription)
-        XCTAssertTrue(focusByRemote(retry, in: app), "Reconnect must take remote focus: " + app.debugDescription)
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(retry.waitForNonExistence(timeout: 30), "Reconnect must bring the page live: " + app.debugDescription)
-        XCTAssertTrue(seenLine.waitForNonExistence(timeout: 15), "Live, the page no longer says it shows what was seen")
-        XCTAssertTrue(albumTitle.exists && albumTitle.label == albumName, "Reconnect must not leave the album page")
         XCTAssertTrue(heart.waitForExistence(timeout: 10) && focusByRemote(heart, in: app),
-            "The heart must take remote focus after Reconnect: " + app.debugDescription)
+            "The heart must take remote focus after automatic reconnect: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
             "Removing the favourite must reach the server")
         print("DULCET TV READER PROOF PASS relaunch=Library launch-focus=\(launchFocus?.id ?? "-")"
-            + " seen=\(seenLabel.debugDescription) scope=\(scopeLabel.debugDescription) album-row=\(albumRow)"
-            + " reconnected-from=dulcet.reader.retry setup=debug-account-then-none")
+            + " reconnect=automatic scope=\(scopeLabel.debugDescription) album-row=\(albumRow)"
+            + " setup=debug-account-then-none")
     }
 
     /// The album's page by remote, as `openAlbumByRemote` reaches it, without requiring playable
@@ -2266,19 +2244,21 @@ final class DulcetTVUITests: XCTestCase {
         app.launch()
         _ = try awaitLaunchAndLiveConnection(app)
 
-        // Before any playback the marker must read three zeros, each excluding a different way a
-        // later delivered=1 could be credited to the wrong play: nothing delivered by this launch,
-        // nothing left in the durable outbox by an earlier one, nothing persisted yet.
+        // Settle any older submitted-play drain from automatic saved launch. No new play or
+        // ephemeral now-playing may originate before the remote starts playback below.
         let marker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
         XCTAssertTrue(marker.waitForExistence(timeout: 10), "The delivery marker must exist when its launch argument is passed")
         let baseline = try XCTUnwrap(
-            waitForScrobbleDeliveryCounts(in: marker, timeout: 10) { $0["delivered"] != nil },
+            waitForScrobbleDeliveryCounts(in: marker, timeout: 10) { $0["delivered"] != nil && $0["pending"] == 0 },
             "The delivery marker must report counts; last label: \(marker.label)"
         )
-        XCTAssertEqual(baseline["delivered"], 0, "No play may be delivered before playback starts")
+        let previouslyDelivered = baseline["delivered"] ?? -1
+        XCTAssertGreaterThanOrEqual(previouslyDelivered, 0, "The delivery counter must be readable")
         XCTAssertEqual(baseline["pending"], 0, "No play may be waiting from an earlier launch")
         XCTAssertEqual(baseline["persisted"], 0, "No play may be persisted before playback")
-        guard baseline["delivered"] == 0, baseline["pending"] == 0, baseline["persisted"] == 0 else { return }
+        XCTAssertEqual(baseline["now-playing"], 0, "A paused saved queue must not report now-playing before playback")
+        guard previouslyDelivered >= 0, baseline["pending"] == 0, baseline["persisted"] == 0,
+              baseline["now-playing"] == 0 else { return }
 
         try playFromSearch(app, query: canary, track: canary)
         let progress = app.progressIndicators["Now Playing"].firstMatch
@@ -2303,10 +2283,12 @@ final class DulcetTVUITests: XCTestCase {
             "Media time must progress past the canary's 15.5 s threshold; first=\(first ?? "nil") last=\(last ?? "nil")"
         )
         let delivered = try XCTUnwrap(
-            waitForScrobbleDeliveryCounts(in: marker, timeout: 60) { ($0["delivered"] ?? 0) >= 1 },
+            waitForScrobbleDeliveryCounts(in: marker, timeout: 60) { ($0["delivered"] ?? 0) >= previouslyDelivered + 1 },
             "The app must report the play delivered before this proof returns; last marker: \(marker.label)"
         )
-        XCTAssertEqual(delivered["delivered"], 1, "Exactly one play is expected for one crossing")
+        XCTAssertEqual(delivered["delivered"], previouslyDelivered + 1, "Exactly one new play is expected for this crossing")
+        XCTAssertEqual(delivered["persisted"], 1, "Only this playback may persist a new play")
+        XCTAssertEqual(delivered["refused-dropped"], baseline["refused-dropped"], "The new play must be delivered, never dropped")
         XCTAssertEqual(delivered["pending"], 0, "No play may be left unsent once it is delivered")
         print("DULCET TV PLAYBACK PASS simulator=\(udid) idiom=tv first=\(first ?? "nil") last=\(last ?? "nil")"
             + " marker=\(marker.label)")

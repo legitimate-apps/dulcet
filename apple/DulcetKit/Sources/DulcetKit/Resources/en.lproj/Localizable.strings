@@ -69,7 +69,7 @@
 "library.empty.connected.body" = "The connected server returned no artists or albums.";
 "library.empty.connected.footnote" = "Dulcet reads the server again whenever you open Library.";
 "library.savedAccount.disconnected.body" = "This server account is saved, but Dulcet has not connected during this launch.";
-"library.savedAccount.disconnected.footnote" = "Dulcet will contact the server only after you choose Reconnect.";
+"library.savedAccount.disconnected.footnote" = "Dulcet reconnects automatically when the server is reachable.";
 "library.loading.title" = "Reading your library…";
 "library.loading.body" = "Dulcet is fetching artists and albums from the connected server. Track lists are read when you open an album.";
 "library.error.title" = "The library could not be loaded";
@@ -135,7 +135,7 @@
 "account.connect.localHTTP.hint" = "Use only for a server you control on a private local network.";
 "account.connect.submit" = "Connect";
 "account.connect.reconnectToServer" = "Reconnect to %@";
-"account.connect.saved.body" = "This account is saved. Dulcet remains disconnected until you choose Reconnect.";
+"account.connect.saved.body" = "This account is saved. Dulcet reconnects automatically when the server is reachable.";
 "account.connect.progress" = "Connecting to the server…";
 "account.connect.progress.body" = "Dulcet is checking the server, signing in, and reading account capabilities. You can cancel at any time.";
 "account.connect.keychain" = "After a successful connection, Dulcet stores these credentials in the system Keychain.";
@@ -367,7 +367,7 @@
 "reader.coverage.openTotal" = "Showing %1$@ of %2$@ — the rest need a connection";
 "reader.coverage.open" = "Showing %@ — the rest need a connection";
 "reader.connectionFailed" = "Couldn’t connect to your server — %@";
-"reader.deviceOnly.body" = "Dulcet will contact %@ only after you choose Reconnect.";
+"reader.deviceOnly.body" = "Dulcet reconnects to %@ automatically when it is reachable.";
 "reader.change.notSaved" = "Couldn’t save that change — %@";
 "reader.change.heldRefused" = "That change isn’t sent yet — %@. It’s kept, and will be sent once your server accepts it.";
 "reader.search.scope.offline" = "Searching what’s available offline — %1$@ and %2$@ on this device";

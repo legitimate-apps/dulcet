@@ -403,7 +403,8 @@ struct DulcetArtworkView: View {
     var muted = false
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.displayScale) private var displayScale
-    @State private var loadedData: Data?
+    @State private var decodedImage: CGImage?
+    @State private var decodedReference: DulcetArtworkReference?
     @State private var operation: (any DulcetArtworkFetchOperation)?
     @State private var loadGeneration = 0
     @State private var retryTask: Task<Void, Never>?
@@ -424,14 +425,6 @@ struct DulcetArtworkView: View {
         .accessibilityHidden(true)
         .onAppear(perform: startLoading)
         .onChange(of: loadIdentity) { _, _ in startLoading() }
-        // A cover asked for while the account was not yet connected -- the player restored at
-        // launch, a page drawn while the connection was still being made -- was answered
-        // unavailable and stayed a placeholder for as long as the view lived, while views drawn
-        // a moment later loaded the same cover. Once the account connects, a view still showing
-        // its placeholder asks again.
-        .onChange(of: store.snapshot.accountConnected) { _, connected in
-            if connected, loadedData == nil { startLoading() }
-        }
         .onDisappear(perform: cancelLoading)
     }
 
@@ -441,24 +434,28 @@ struct DulcetArtworkView: View {
 
     private var loadIdentity: DulcetArtworkLoadIdentity? {
         artwork.remoteReference.map {
-            DulcetArtworkLoadIdentity(reference: $0, sizeBucket: sizeBucket)
+            // Connection arrival retries a placeholder through this identity, using the same
+            // loading path as reference/size changes and avoiding a second connection observer.
+            DulcetArtworkLoadIdentity(reference: $0, sizeBucket: sizeBucket, connected: store.snapshot.accountConnected)
         }
     }
 
     private var loadedImage: Image? {
-        guard let loadedData else { return nil }
-#if os(macOS)
-        guard let image = NSImage(data: loadedData) else { return nil }
-        return Image(nsImage: image)
-#else
-        guard let image = UIImage(data: loadedData) else { return nil }
-        return Image(uiImage: image)
-#endif
+        guard let reference = artwork.remoteReference else { return nil }
+        let image = (decodedReference == reference ? decodedImage : nil)
+            ?? store.cachedArtwork(reference, sizeBucket: sizeBucket)
+        return image.map { Image(decorative: $0, scale: displayScale, orientation: .up) }
     }
 
     private func startLoading() {
         cancelLoading()
-        loadedData = nil
+        decodedImage = nil
+        decodedReference = artwork.remoteReference
+        if let reference = artwork.remoteReference,
+           let cached = store.cachedArtwork(reference, sizeBucket: sizeBucket, allowingOtherSizes: false) {
+            decodedImage = cached
+            return
+        }
         load(attempt: 0)
     }
 
@@ -471,7 +468,9 @@ struct DulcetArtworkView: View {
             operation = nil
             switch outcome {
             case let .loaded(data):
-                loadedData = data
+                decodedReference = reference
+                decodedImage = store.cachedArtwork(reference, sizeBucket: sizeBucket, allowingOtherSizes: false)
+                    ?? DulcetArtworkMemoryCache.decode(data, maximumPixelSize: sizeBucket.rawValue)
             case .failed where attempt < Self.transientRetryDelays.count:
                 // Only a transient failure is retried; `.unavailable` means there is no cover.
                 let delay = Self.transientRetryDelays[attempt]
@@ -554,6 +553,7 @@ struct DulcetArtworkSurface: View {
 private struct DulcetArtworkLoadIdentity: Hashable {
     let reference: DulcetArtworkReference
     let sizeBucket: DulcetArtworkSizeBucket
+    let connected: Bool
 }
 
 struct DulcetStatusDot: View {

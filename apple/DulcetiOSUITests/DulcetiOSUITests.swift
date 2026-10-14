@@ -840,8 +840,19 @@ final class DulcetiOSUITests: XCTestCase {
                 XCTFail("A compact window must present the \(tabTitle) tab: " + app.debugDescription)
                 return false
             }
-            tab.tap()
-            return true
+            // A synthesized tap can finish without selecting its tab on a loaded host.
+            // Confirm the navigation before a caller queries the destination's controls.
+            for attempt in 1...3 {
+                if tab.isHittable { tab.tap() }
+                let deadline = Date().addingTimeInterval(3)
+                repeat {
+                    if tab.isSelected { return true }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                } while Date() < deadline
+                print("DULCET DESTINATION retry tab=\(tabTitle) attempt=\(attempt) reason=not-selected")
+            }
+            XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
+            return false
         }
         // staticTexts, not descendants(matching: .any): the sidebar row's identifier is carried
         // by both its SF Symbol image and its label, so an .any query resolves ambiguously.
@@ -1171,19 +1182,13 @@ final class DulcetiOSUITests: XCTestCase {
         proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact: false)
     }
 
-    /// The library is the reader's, end to end, on the destination its caller names (the window's
-    /// width decides the navigation, must match that destination, and the log names it):
-    ///
+    /// Through the production reader on the named destination:
     /// 1. A favourite made on an album page shows at once and reaches the server (CONF-84).
-    /// 2. Relaunched with the account saved and no account hook, the app opens straight into the
-    ///    library this device saw -- Reconnect offered, the album's tile opens its page, and that
-    ///    page says it is showing what this device saw (CONF-76, CONF-10b) -- and the favourite is
-    ///    still shown. Requests are not counted here, so "nothing is sent" is not observed.
-    /// 3. Search there reads the device and says so (CONF-79's offline scope).
-    /// 4. Reconnect brings the library back in place, and the favourite is removed again, so the
-    ///    disposable server ends as it started.
-    ///
-    /// The server is read back over `/rest` with the disposable account; that read never writes.
+    /// 2. A fresh launch with only the saved account opens Library, reconnects without a tap,
+    ///    and still shows that favourite (CONF-76, CONF-10b).
+    /// 3. Search finds the album after reconnect and clears the device-only scope.
+    /// 4. Removing the favourite reaches the server, leaving the fixture as it started.
+    /// The server is read back over `/rest` with the disposable account.
     @MainActor
     private func proveASavedAccountReopensIntoItsLibraryAndKeepsAFavourite(compact expectedCompact: Bool) {
         guard let configuration = livePlaybackConfiguration() else { return }
@@ -1239,21 +1244,20 @@ final class DulcetiOSUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
-        let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
-        guard reconnect.waitForExistence(timeout: 15) else {
-            XCTFail("A saved account must open straight into its library and offer Reconnect: " + app.debugDescription)
+        let libraryTile = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
+            "A saved account must open straight into its library: " + app.debugDescription)
+        guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact),
+              app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
+            XCTFail("The saved account must reconnect without a tap: " + app.debugDescription)
             return
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
             "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
-        let seenLine = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Showing what")
-        ).firstMatch
-        XCTAssertTrue(seenLine.waitForExistence(timeout: 5),
-            "The album page must say it is showing what this device saw: " + app.debugDescription)
+        attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
-        // 3. Search reads the device from the first characters and labels its scope.
+        // 3. Connected search merges server and device results; its offline scope clears.
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return
         }
@@ -1266,10 +1270,11 @@ final class DulcetiOSUITests: XCTestCase {
         field.typeText("Dou")
         let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
         XCTAssertTrue(firstResult.waitForExistence(timeout: 10),
-            "Device search must answer without the server: " + app.debugDescription)
+            "Connected search must answer: " + app.debugDescription)
         // The scope's icon carries the same identifier; the sentence is the text.
         let scope = app.staticTexts["dulcet.search.scope"].firstMatch
-        XCTAssertTrue(scope.waitForExistence(timeout: 5), "The results must say they come from this device")
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 30),
+            "The device-only search scope must clear after the server answers")
         let scopeLabel = scope.exists ? scope.label : "<none>"
         let resultLabel = firstResult.exists ? firstResult.label : "<none>"
         // The ranker orders by match tier, then type (spec §16.15), so the album need not be rank 0:
@@ -1285,36 +1290,21 @@ final class DulcetiOSUITests: XCTestCase {
             swipes += 1
         }
         XCTAssertTrue(albumResult.exists,
-            "The album this device saw must be among the device's results; rank 0 was \(resultLabel): "
+            "The album must be among the search results; rank 0 was \(resultLabel): "
                 + app.debugDescription)
         let albumRank = albumResult.exists ? albumResult.identifier : "<none>"
         _ = dismissKeyboardIfPresent(in: app)
 
-        // 4. Reconnect in place, then leave the server as it was found.
+        // 4. The automatic reconnect already completed; leave the fixture as it was found.
         guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
             return
         }
-        // Library comes back where the person left it -- the album page, on a phone's tab and on
-        // an iPad's sidebar alike -- and that page offers its own Reconnect (`dulcet.reader.retry`),
-        // which reconnects the same session as the account's (`dulcet.reader.reconnect`) on Home.
-        let reconnectHere = app.buttons.matching(NSPredicate(
-            format: "label == %@ AND (identifier == %@ OR identifier == %@)",
-            "Reconnect", "dulcet.reader.reconnect", "dulcet.reader.retry"
-        )).firstMatch
-        guard reconnectHere.waitForExistence(timeout: 10) else {
-            XCTFail("Reconnect must still be offered in the library: " + app.debugDescription)
-            return
-        }
-        let reconnectedFrom = reconnectHere.identifier
-        reconnectHere.tap()
-        XCTAssertTrue(reconnectHere.waitForNonExistence(timeout: 30),
-            "Reconnect must bring the library back without leaving it: " + app.debugDescription)
         let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
         if !(albumTitle.exists && albumTitle.label == album) {
             guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         }
         guard heart.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer its heart after Reconnect: " + app.debugDescription)
+            XCTFail("The album page must offer its heart after the automatic reconnect: " + app.debugDescription)
             return
         }
         heart.tap()
@@ -1322,8 +1312,8 @@ final class DulcetiOSUITests: XCTestCase {
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20), false,
             "Removing the favourite must reach the server")
         print("DULCET READER PROOF PASS destination=\(compact ? "compact" : "regular")"
-            + " relaunch=device-only scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)"
-            + " album-row=\(albumRank) reconnected-from=\(reconnectedFrom)")
+            + " relaunch=auto-connected scope=\(scopeLabel.debugDescription) rank0=\(resultLabel.debugDescription)"
+            + " album-row=\(albumRank)")
     }
 
     /// A track that cannot play because of what it is -- here, an MP3 whose frames do not decode --
@@ -4969,6 +4959,19 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
+        let searchMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
+        guard searchMarker.waitForExistence(timeout: 10),
+              let searchBaseline = waitForScrobbleDeliveryCounts(
+                in: searchMarker, timeout: 10,
+                until: { $0["delivered"] != nil && $0["pending"] == 0 }
+              ), let searchPreviouslyDelivered = searchBaseline["delivered"] else {
+            XCTFail("Search must observe a settled delivery baseline before activation")
+            return
+        }
+        XCTAssertEqual(searchBaseline["persisted"], 0, "Search has not started a new play before its result is pressed")
+        XCTAssertEqual(searchBaseline["now-playing"], 0, "Saved queue restoration does not announce playback")
+        guard searchBaseline["persisted"] == 0, searchBaseline["now-playing"] == 0 else { return }
+
         canaryResult.tap()
 
         // Activation plays without leaving the results; the bar is the way to the full player
@@ -5011,6 +5014,18 @@ final class DulcetiOSUITests: XCTestCase {
             playbackEvidence,
             "Real playback of the activated track must begin and expose progressing media time"
         )
+        // This phase plays the same canary as the next threshold proof. Finish its submission
+        // before CI records that proof's server baseline, so a later launch cannot drain it then.
+        guard let searchDelivery = waitForScrobbleDeliveryCounts(
+            in: deliveryMarker, timeout: 60,
+            until: { ($0["delivered"] ?? 0) >= searchPreviouslyDelivered + 1 && $0["pending"] == 0 }
+        ) else {
+            XCTFail("Search playback must finish its submitted-play delivery before this phase returns: " + deliveryMarker.label)
+            return
+        }
+        XCTAssertEqual(searchDelivery["persisted"], 1, "Search activation produces one submitted play")
+        XCTAssertEqual(searchDelivery["delivered"], searchPreviouslyDelivered + 1, "The current search play must reach the server once")
+        XCTAssertEqual(searchDelivery["refused-dropped"], searchBaseline["refused-dropped"], "No search play may be dropped")
         print(
             "DULCET SEARCH UI PASS width=\(windowExpectation == .compactWidth ? "compact" : "regular")"
                 + " query=typed ranks=\(observedLabels)"
@@ -5205,15 +5220,9 @@ final class DulcetiOSUITests: XCTestCase {
             return
         }
 
-        // Negative control, before any playback: the marker must be live and read three zeros,
-        // each excluding a different way a later "delivered=1" could be credited to the wrong
-        // event. The counts are per process; only `pending` reads the durable outbox.
-        //   delivered=0  this launch has not yet delivered anything (a leftover row drained on
-        //                configureDelivery would already show here);
-        //   pending=0    no row survives from an earlier launch on a reused simulator, so a
-        //                drain that has not happened yet cannot supply the 1 either;
-        //   persisted=0  this launch has not itself persisted a play (a crossing before the
-        //                account settled, or a restored session, would show here).
+        // Saved launch may drain a submitted play queued by an earlier process. Settle that
+        // outbox before taking the baseline; a new play or ephemeral now-playing before the tap
+        // remains a failure. Only delivered acknowledgements from THIS crossing count below.
         let deliveryMarker = app.staticTexts["dulcet.debug.scrobble-delivery"].firstMatch
         guard deliveryMarker.waitForExistence(timeout: 10) else {
             XCTFail("The app's scrobble delivery marker must exist when its launch argument is passed")
@@ -5222,15 +5231,18 @@ final class DulcetiOSUITests: XCTestCase {
         guard let baseline = waitForScrobbleDeliveryCounts(
             in: deliveryMarker,
             timeout: 10,
-            until: { $0["delivered"] != nil }
+            until: { $0["delivered"] != nil && $0["pending"] == 0 }
         ) else {
             XCTFail("The scrobble delivery marker must report counts; last label: \(deliveryMarker.label)")
             return
         }
-        XCTAssertEqual(baseline["delivered"], 0, "No play may be delivered before playback starts")
+        let previouslyDelivered = baseline["delivered"] ?? -1
+        XCTAssertGreaterThanOrEqual(previouslyDelivered, 0, "The delivery counter must be readable")
         XCTAssertEqual(baseline["pending"], 0, "No play may be waiting in the outbox from an earlier launch")
         XCTAssertEqual(baseline["persisted"], 0, "No play may be persisted by this launch before playback")
-        guard baseline["delivered"] == 0, baseline["pending"] == 0, baseline["persisted"] == 0 else {
+        XCTAssertEqual(baseline["now-playing"], 0, "A paused saved queue must not send now-playing before playback")
+        guard previouslyDelivered >= 0, baseline["pending"] == 0, baseline["persisted"] == 0,
+              baseline["now-playing"] == 0 else {
             return
         }
 
@@ -5317,14 +5329,17 @@ final class DulcetiOSUITests: XCTestCase {
         guard let delivered = waitForScrobbleDeliveryCounts(
             in: deliveryMarker,
             timeout: 60,
-            until: { ($0["delivered"] ?? 0) >= 1 }
+            until: { ($0["delivered"] ?? 0) >= previouslyDelivered + 1 }
         ) else {
             XCTFail(
                 "The app must report the scrobble delivered before this proof returns; last marker: \(deliveryMarker.label)"
             )
             return
         }
-        XCTAssertEqual(delivered["delivered"], 1, "Exactly one play is expected for one crossing")
+        XCTAssertEqual(delivered["delivered"], previouslyDelivered + 1, "Exactly one new play is expected for this crossing")
+        XCTAssertEqual(delivered["persisted"], 1, "Only this playback may persist a new play")
+        XCTAssertEqual(delivered["refused-dropped"], baseline["refused-dropped"], "The new play must be delivered, never dropped")
+        print("DULCET THRESHOLD BASELINE delivered=\(previouslyDelivered) final=\(deliveryMarker.label)")
         // A refused attempt that a retry then delivered is the designed path, not a failure of
         // this proof (apple-ci's server-side play count still has to read exactly one); what must
         // not be left is a play waiting in the outbox.

@@ -30,7 +30,7 @@ public actor DulcetArtworkDiskCache {
     private struct Entry {
         let url: URL
         let byteCount: Int
-        let lastAccess: Date
+        var lastAccess: Date
     }
 
     private let rootDirectory: URL
@@ -38,6 +38,9 @@ public actor DulcetArtworkDiskCache {
     private let maximumEntryCount: Int
     private let fileManager: FileManager
     private let now: @Sendable () -> Date
+    private var indexedEntries: [String: Entry]?
+    private var indexedByteCount = 0
+    private(set) var directoryEnumerationCount = 0
 
     public init(
         rootDirectory: URL? = nil,
@@ -49,74 +52,105 @@ public actor DulcetArtworkDiskCache {
         precondition(maximumByteCount > 0)
         precondition(maximumEntryCount > 0)
         self.fileManager = fileManager
-        self.rootDirectory = rootDirectory
+        self.rootDirectory = (rootDirectory
             ?? fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("DulcetArtwork", isDirectory: true)
+                .appendingPathComponent("DulcetArtwork", isDirectory: true))
+            .standardizedFileURL.resolvingSymlinksInPath()
         self.maximumByteCount = maximumByteCount
         self.maximumEntryCount = maximumEntryCount
         self.now = now
     }
 
     public func data(for key: DulcetArtworkCacheKey) -> Data? {
+        loadIndexIfNeeded()
         let url = fileURL(for: key)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        try? fileManager.setAttributes(
-            [.modificationDate: now()],
-            ofItemAtPath: url.path
-        )
+        guard let data = try? Data(contentsOf: url) else {
+            forget(url)
+            return nil
+        }
+        let access = now()
+        try? fileManager.setAttributes([.modificationDate: access], ofItemAtPath: url.path)
+        remember(Entry(url: url, byteCount: data.count, lastAccess: access))
         return data
     }
 
     public func insert(_ data: Data, for key: DulcetArtworkCacheKey) {
-        guard !data.isEmpty else { return }
+        guard !Task.isCancelled, !data.isEmpty, data.count <= maximumByteCount else { return }
+        loadIndexIfNeeded()
         let url = fileURL(for: key)
         do {
-            try fileManager.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+            try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
-            try fileManager.setAttributes(
-                [.modificationDate: now()],
-                ofItemAtPath: url.path
-            )
+            let access = now()
+            try fileManager.setAttributes([.modificationDate: access], ofItemAtPath: url.path)
+            remember(Entry(url: url, byteCount: data.count, lastAccess: access))
             evictIfNeeded()
         } catch {
             try? fileManager.removeItem(at: url)
+            forget(url)
         }
     }
 
     public func remove(serverID: String) {
-        try? fileManager.removeItem(at: serverDirectory(for: serverID))
+        loadIndexIfNeeded()
+        let directory = serverDirectory(for: serverID)
+        try? fileManager.removeItem(at: directory)
+        for entry in (indexedEntries ?? [:]).values.filter({ $0.url.deletingLastPathComponent().path == directory.path }) {
+            forget(entry.url)
+        }
     }
 
     public func remove(_ key: DulcetArtworkCacheKey) {
-        try? fileManager.removeItem(at: fileURL(for: key))
+        loadIndexIfNeeded()
+        let url = fileURL(for: key)
+        try? fileManager.removeItem(at: url)
+        forget(url)
     }
 
     public func statistics() -> Statistics {
+        loadIndexIfNeeded()
+        return Statistics(entryCount: indexedEntries?.count ?? 0, byteCount: indexedByteCount)
+    }
+
+    /// Each cache owner inventories disk once. Inserts and hits update the index in constant
+    /// time; only crossing a bound sorts it, evicting a small batch to avoid sorting per cover.
+    private func loadIndexIfNeeded() {
+        guard indexedEntries == nil else { return }
         let entries = entriesByLastAccess()
-        return Statistics(
-            entryCount: entries.count,
-            byteCount: entries.reduce(0) { $0 + $1.byteCount }
-        )
+        indexedEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.url.path, $0) })
+        indexedByteCount = entries.reduce(0) { $0 + $1.byteCount }
+        evictIfNeeded()
+    }
+
+    private func remember(_ entry: Entry) {
+        forget(entry.url)
+        indexedEntries?[entry.url.path] = entry
+        indexedByteCount += entry.byteCount
+    }
+
+    private func forget(_ url: URL) {
+        if let entry = indexedEntries?.removeValue(forKey: url.path) { indexedByteCount -= entry.byteCount }
     }
 
     private func evictIfNeeded() {
-        var entries = entriesByLastAccess()
-        var byteCount = entries.reduce(0) { $0 + $1.byteCount }
-        while entries.count > maximumEntryCount || byteCount > maximumByteCount {
-            let entry = entries.removeFirst()
+        guard (indexedEntries?.count ?? 0) > maximumEntryCount || indexedByteCount > maximumByteCount else { return }
+        let entryTarget = maximumEntryCount - maximumEntryCount / 10
+        let byteTarget = maximumByteCount - maximumByteCount / 10
+        let oldest = (indexedEntries ?? [:]).values.sorted {
+            if $0.lastAccess == $1.lastAccess { return $0.url.path < $1.url.path }
+            return $0.lastAccess < $1.lastAccess
+        }
+        for entry in oldest {
+            if (indexedEntries?.count ?? 0) <= entryTarget && indexedByteCount <= byteTarget { break }
             do {
                 try fileManager.removeItem(at: entry.url)
-                byteCount -= entry.byteCount
-            } catch {
-                break
-            }
+                forget(entry.url)
+            } catch { break }
         }
     }
 
     private func entriesByLastAccess() -> [Entry] {
+        directoryEnumerationCount += 1
         guard let enumerator = fileManager.enumerator(
             at: rootDirectory,
             includingPropertiesForKeys: [
@@ -135,7 +169,8 @@ public actor DulcetArtworkDiskCache {
                   ]),
                   values.isRegularFile == true else { return nil }
             return Entry(
-                url: url,
+                // Enumeration can spell a system symlink differently from URL construction.
+                url: url.standardizedFileURL.resolvingSymlinksInPath(),
                 byteCount: values.fileSize ?? 0,
                 lastAccess: values.contentModificationDate ?? .distantPast
             )

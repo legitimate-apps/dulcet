@@ -4,6 +4,9 @@ import Foundation
 import ImageIO
 import Network
 import Observation
+#if os(iOS) || os(tvOS)
+import UIKit
+#endif
 
 /// Shared production account composition for every native Apple shell.
 @MainActor
@@ -83,6 +86,14 @@ enum DulcetAppleProduction {
     }
     #endif
 
+    private static var initialForeground: Bool {
+        #if os(iOS) || os(tvOS)
+        UIApplication.shared.applicationState != .background
+        #else
+        true
+        #endif
+    }
+
     /// The one database every production component opens, so the reader sees what the
     /// downloads write.
     private static var databaseName: String {
@@ -132,7 +143,8 @@ enum DulcetAppleProduction {
                         databaseName: databaseName,
                         readsDownloads: downloads != nil
                     ),
-                    reachability: DulcetNetworkReachability()
+                    reachability: DulcetNetworkReachability(),
+                    foreground: initialForeground
                 )
             )
         )
@@ -647,6 +659,7 @@ private final class DulcetCoreSearchOperation: DulcetSearchOperation {
 final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
     private let client: AppleArtworkFetchClient
     private let cache: DulcetArtworkDiskCache
+    private var operations: [DulcetCoreArtworkFetchOperation] = []
 
     init(
         client: AppleArtworkFetchClient = AppleArtworkFetchClient(),
@@ -666,6 +679,8 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
             request: request,
             completion: completion
         )
+        operations.removeAll { !$0.isActive }
+        operations.append(operation)
         operation.start()
         return operation
     }
@@ -673,6 +688,8 @@ final class DulcetCoreArtworkFetcher: DulcetArtworkFetching {
 
 extension DulcetCoreArtworkFetcher: DulcetArtworkCacheRemoving {
     func removeCachedArtwork(serverID: String) async {
+        for operation in operations where operation.serverID == serverID { operation.cancel() }
+        operations.removeAll { $0.serverID == serverID || !$0.isActive }
         await cache.remove(serverID: serverID)
     }
 }
@@ -686,6 +703,8 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
     private var task: Task<Void, Never>?
     private var coreOperation: (any AppleArtworkFetchOperation)?
     private var cancelled = false
+    var isActive: Bool { completion != nil }
+    var serverID: String { request.reference.serverID }
 
     init(
         client: AppleArtworkFetchClient,
@@ -712,6 +731,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
                 await cache.remove(key)
             }
             guard !Task.isCancelled, !cancelled else { return }
+            guard !request.cachedOnly else { deliver(.unavailable); return }
             startNetworkRequest(key: key)
         }
     }
@@ -746,7 +766,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
                     return
                 }
                 task = Task { [weak self] in
-                    guard let self else { return }
+                    guard let self, !Task.isCancelled, !cancelled else { return }
                     await cache.insert(data, for: key)
                     guard !Task.isCancelled, !cancelled else { return }
                     deliver(.loaded(data))
@@ -880,7 +900,14 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
                 invalidServerURLIsInternationalized:
                     error.invalidServerURLIsInternationalized
             )
-            completion(.failed(DulcetAccountErrorPresenter.presentation(for: context)))
+            let presentation = DulcetAccountErrorPresenter.presentation(for: context)
+            completion(.failed(DulcetAccountFailurePresentation(
+                kind: presentation.kind, serverName: presentation.serverName,
+                title: presentation.title, message: presentation.message,
+                recovery: presentation.recovery, targetHost: presentation.targetHost,
+                automaticRetryFloor: outcome.automaticRetryFloorMilliseconds >= 0
+                    ? .milliseconds(outcome.automaticRetryFloorMilliseconds) : nil
+            )))
         }
         return DulcetCoreAccountOperation(operation: operation)
     }
