@@ -16,31 +16,22 @@ subprocess.run(["swift", "build", "--package-path", str(package)], check=True)
 build = Path(subprocess.check_output(
     ["swift", "build", "--package-path", str(package), "--show-bin-path"], text=True
 ).strip())
-# SwiftPM's native engine places the module in Modules and the target's objects in
-# DulcetKit.build beside it; the default swiftbuild engine places the module in Products
-# and the objects in Intermediates. Fall back to the static archive when neither holds objects.
-modules = build / "Modules" if (build / "Modules").is_dir() else build
-objects = sorted((build / "DulcetKit.build").glob("*.o"))
+# SwiftPM's native and Xcode-backed build systems place modules and objects differently.
+module_dir = build / "Modules" if (build / "Modules").is_dir() else build
+objects = list((build / "DulcetKit.build").glob("*.o"))
 if not objects:
-    objects = sorted((build.parents[1] / "Intermediates.noindex").glob(
-        "DulcetKit.build/*/DulcetKit-t.build/Objects-normal/arm64/*.o"
-    ))
-if not objects and (build / "libDulcetKit.a").is_file():
-    objects = [build / "libDulcetKit.a"]
-if not (modules / "DulcetKit.swiftmodule").exists() or not objects:
-    raise SystemExit("restoration check could not locate the built DulcetKit module and objects")
+    archive = build / "libDulcetKit.a"
+    if not archive.is_file():
+        raise SystemExit("restoration check requires DulcetKit objects or its static archive")
+    objects = [archive]
 with tempfile.TemporaryDirectory(prefix="restoration-check-", dir=package / ".build") as temp:
     temp = Path(temp)
-    resources = build / "DulcetKit_DulcetKit.bundle"
-    if resources.is_dir():
-        # swiftbuild's accessor locates resources beside a standalone executable.
-        (temp / resources.name).symlink_to(resources)
     subprocess.run(["clang", "-mmacosx-version-min=14.0", "-c",
                     str(root / "apple/DulcetAppleShared/SQLiteLoadExtensionUnsupported.c"),
                     "-o", str(temp / "sqlite.o")], check=True)
     subprocess.run([
         "swiftc", "-parse-as-library", "-target", "arm64-apple-macos14.0",
-        "-I", str(modules), "-F", str(args.framework_dir.resolve()),
+        "-I", str(module_dir), "-F", str(args.framework_dir.resolve()),
         "-framework", "DulcetCore", "-lsqlite3",
         str(root / "apple/DulcetAppleShared/DulcetCorePlayback.swift"),
         str(root / "apple/DulcetAppleShared/DulcetCorePlaybackController.swift"),
