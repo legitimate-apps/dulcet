@@ -2728,16 +2728,16 @@ final class DulcetTVUITests: XCTestCase {
         let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         var section = ""
         var observedFocus: String?
-        // The section and the focus are read as one observation: the connection this launch asks
-        // for can land on Library between two separate reads, which once paired Connection's bar
-        // with Library's focus. A pair that disagrees is read again until the two settle.
+        // A connection can replace the form with Library while focus is inspected. Read the
+        // section and focus from one immutable hierarchy, so neither a disappearing field nor
+        // a title from the preceding screen can become part of this observation.
         repeat {
-            let bar = app.navigationBars.firstMatch
-            section = bar.exists ? bar.identifier : ""
-            observedFocus = launchSections.contains(section) ? focusedControlIdentifier(app) : nil
-            let barAfter = app.navigationBars.firstMatch
-            let settled = barAfter.exists && barAfter.identifier == section
-            if settled, let focus = observedFocus, section != "Connection" || focus.hasPrefix("dulcet.account-connect.") { break }
+            if let snapshot = try? app.snapshot() {
+                let elements = hierarchyElements(snapshot)
+                section = elements.first { $0.elementType == .navigationBar }?.identifier ?? ""
+                observedFocus = launchSections.contains(section) ? focusedControlIdentifier(in: elements) : nil
+                if let focus = observedFocus, section != "Connection" || focus.hasPrefix("dulcet.account-connect.") { break }
+            }
             Thread.sleep(forTimeInterval: 0.25)
         } while ContinuousClock.now < deadline
         XCTAssertTrue(
@@ -2798,17 +2798,38 @@ final class DulcetTVUITests: XCTestCase {
         }
     }
 
-    /// The identifier of the control that currently holds remote focus inside a section.
+    /// The identifier of the focused control in one observation. Enumerating a live query by
+    /// an earlier count races with screen transitions: Connection's text fields can disappear
+    /// after the count and before `hasFocus` resolves the next field (hosted runs 38354526936
+    /// and 38470501331). All attribute reads below belong to the same immutable snapshot.
     @MainActor
     private func focusedControlIdentifier(_ app: XCUIApplication) -> String? {
+        guard let snapshot = try? app.snapshot() else { return nil }
+        return focusedControlIdentifier(in: hierarchyElements(snapshot))
+    }
+
+    @MainActor
+    private func focusedControlIdentifier(in elements: [XCUIElementSnapshot]) -> String? {
         for kind in [XCUIElement.ElementType.textField, .secureTextField, .button, .switch] {
-            let query = app.descendants(matching: kind)
-            for index in 0..<query.count {
-                let element = query.element(boundBy: index)
-                if element.hasFocus, !element.identifier.isEmpty { return element.identifier }
+            if let element = elements.first(where: {
+                $0.elementType == kind && $0.hasFocus && !$0.identifier.isEmpty
+            }) {
+                return element.identifier
             }
         }
         return nil
+    }
+
+    /// Depth-first document order, matching the query's first-match order without re-querying.
+    @MainActor
+    private func hierarchyElements(_ root: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+        var elements: [XCUIElementSnapshot] = []
+        var pending = [root]
+        while let element = pending.popLast() {
+            elements.append(element)
+            pending.append(contentsOf: element.children.reversed())
+        }
+        return elements
     }
 
     /// Margin over the OBSERVED minimum for `focusSectionBarViaUpNavigation`. OBSERVED

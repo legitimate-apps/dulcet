@@ -399,3 +399,12 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     or infer a media failure from paused transport alone. Diagnostic strings exclude error
     descriptions, unknown domain names, URLs and server addresses. Notification counts and the
     latest failure codes survive eviction from the bounded transition history.
+
+54. **A live XCUITest query's count does not keep its elements alive.** OBSERVED on tvOS in
+    hosted runs 38354526936 and 38470501331: the Search proof failed before reaching Search.
+    Launch focus inspection counted Connection's text fields and inspected index 0; the
+    successful connection then landed on Library, and resolving index 1 failed with
+    "No matches found for Descendants matching type TextField". Both failure hierarchies and
+    recordings showed Library with Home focused. Read focus attributes from one immutable
+    `app.snapshot()` hierarchy; read the section title from that same hierarchy when pairing
+    section and focus. An `exists` check before a live attribute read leaves the same race.
