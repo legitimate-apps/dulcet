@@ -23,6 +23,8 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     public static let sampleInterval: TimeInterval = 0.5
     public static let cadenceMaximum: TimeInterval = 2
     public static let emptyQueueAudioSessionGracePeriod: TimeInterval = 10
+    static let startupRecoveryDelay: TimeInterval = 2
+    static let startupRecoveryVerdictBudget: TimeInterval = 120
 
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<UInt8>()
@@ -186,6 +188,16 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
+    func reportPlayerTransportChangedForTesting() {
+        performOnQueueSynchronously { [self] in timeControlStatusChanged() }
+    }
+
+    func currentItemHasPendingRequestsForTesting() -> Bool {
+        var pending = false
+        performOnQueueSynchronously { [self] in pending = current?.loader.hasPendingRequests == true }
+        return pending
+    }
+
     /// Whether artwork is held for a session. Artwork for a session the engine does not hold is
     /// dropped, so the owner must deliver it after the engine accepted that session's plan.
     func holdsArtworkForTesting(_ sessionID: DulcetPlaybackSessionID) -> Bool {
@@ -288,8 +300,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 return
             }
             let wasRequested = current.playRequested
-            current.playRequested = true
+            requestStartupPlayback(current)
             player.playImmediately(atRate: desiredRate)
+            updateStartupRecovery(current)
             updateSystemTransport(for: current, isPlaying: true)
             if current.readyEmitted && !wasRequested {
                 emit(.resumed(
@@ -408,8 +421,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
         emit(.preparing(attemptID: plan.attemptID))
         if wasPlaying {
-            context.playRequested = true
+            requestStartupPlayback(context)
             player.playImmediately(atRate: desiredRate)
+            updateStartupRecovery(context)
         }
         completion(.accepted(commandID: commandID))
     }
@@ -702,6 +716,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         )
         if current === context {
             publishNowPlaying(context)
+            updateStartupRecovery(context)
         }
     }
 
@@ -715,6 +730,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func itemEnded(_ context: PlayerItemContext) {
         guard isActive(context), !context.endEmitted else { return }
         context.endEmitted = true
+        context.cancelStartupRecovery()
         emit(
             .endedNaturally(
                 attemptID: context.plan.attemptID,
@@ -730,6 +746,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     private func itemFailed(_ context: PlayerItemContext, reported: DulcetPlaybackFailure? = nil) {
         guard isActive(context), !context.failureEmitted, !context.waitingForRefresh else { return }
         context.failureEmitted = true
+        context.cancelStartupRecovery()
         stopPresentingAsPlaying(afterFailureOf: context)
         let failure = context.item.error.map { closedFailure(for: $0) } ?? reported ?? closedFailure(for: nil)
         if context.progressBegan {
@@ -753,6 +770,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard let context = context(for: attemptID), !context.failureEmitted else { return }
         if refreshReason == .unauthorized || refreshReason == .expired {
             context.waitingForRefresh = true
+            context.cancelStartupRecovery()
             // Only the CURRENT item may pause the shared player. A preloaded item that needs a
             // refresh is reported and dropped by its owner; pausing here would silence the song
             // that is playing, with no Paused event, for a failure that is not its own.
@@ -770,6 +788,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             return
         }
         context.failureEmitted = true
+        context.cancelStartupRecovery()
         stopPresentingAsPlaying(afterFailureOf: context)
         if context.progressBegan {
             emit(
@@ -822,6 +841,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         // whose play was requested -- never sees the new item progress, so it never reports
         // PlaybackProgressBegan and the play is never scrobbled, while audio is plainly playing.
         incoming.playRequested = outgoing.playRequested
+        if incoming.playRequested { requestStartupPlayback(incoming) }
         current = incoming
         preloaded = nil
         artworkBySession = artworkBySession.filter { $0.key == incoming.plan.playbackSessionID }
@@ -831,6 +851,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         if incoming.readyEmitted {
             publishNowPlaying(incoming)
         }
+        updateStartupRecovery(incoming)
     }
 
     private func timeControlStatusChanged() {
@@ -872,6 +893,62 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         @unknown default:
             break
         }
+        updateStartupRecovery(current)
+    }
+
+    private func requestStartupPlayback(_ context: PlayerItemContext) {
+        if !context.playRequested || context.startupPlayRequestedAt == nil {
+            context.startupRecoveryAttempted = false
+            context.startupPlayRequestedAt = clock.monotonicNow
+        }
+        context.playRequested = true
+    }
+
+    /// OBSERVED: requested playback can remain ready and paused at zero with no failure verdict.
+    /// ASSUMED: a dropped/ignored Play caused run 38535897557; the controls inject that loss.
+    /// Reassert transport once when ready/paused with no outstanding reads. If that does not
+    /// help, fail as .engine by 120 s from Play (the former bound was approximately 122 s).
+    /// Reads and transport flaps cannot reset the monotonic budget or invent a decoder error.
+    private func updateStartupRecovery(_ context: PlayerItemContext) {
+        guard needsStartupRecovery(context) else {
+            context.cancelStartupRecovery()
+            return
+        }
+        guard context.cancelStartupRecoveryTimer == nil else { return }
+        let token = UUID()
+        context.startupRecoveryToken = token
+        let remaining = max(0, Self.startupRecoveryVerdictBudget -
+            (clock.monotonicNow - (context.startupPlayRequestedAt ?? clock.monotonicNow)))
+        let delay = context.startupRecoveryAttempted
+            ? remaining : min(Self.startupRecoveryDelay, remaining)
+        context.cancelStartupRecoveryTimer = clock.scheduleOnce(on: queue, after: delay) {
+            [weak self, weak context] in
+            guard let self, let context, context.startupRecoveryToken == token else { return }
+            context.cancelStartupRecoveryTimer = nil
+            context.startupRecoveryToken = nil
+            guard self.needsStartupRecovery(context) else { return }
+            let elapsed = self.clock.monotonicNow -
+                (context.startupPlayRequestedAt ?? self.clock.monotonicNow)
+            if elapsed >= Self.startupRecoveryVerdictBudget {
+                // No progress within the Play budget is an engine failure, including when a
+                // resource request never completes/cancels. It must stop, not skip, the queue.
+                self.itemFailed(context, reported: .engine)
+            } else {
+                if !context.startupRecoveryAttempted && context.readyEmitted &&
+                    self.player.timeControlStatus == .paused && !context.loader.hasPendingRequests &&
+                    (!self.usesAVFoundationMediaStack || self.player.currentItem === context.item) {
+                    context.startupRecoveryAttempted = true
+                    self.player.playImmediately(atRate: self.desiredRate)
+                }
+                self.updateStartupRecovery(context)
+            }
+        }
+    }
+
+    private func needsStartupRecovery(_ context: PlayerItemContext) -> Bool {
+        !released && current === context && context.playRequested &&
+            !context.progressBegan && !context.endEmitted && !context.failureEmitted &&
+            !context.waitingForRefresh && context.startupPlayRequestedAt != nil
     }
 
     private func beginBuffering(_ context: PlayerItemContext) {
@@ -890,6 +967,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
 
     private func pause(context: PlayerItemContext) {
         context.playRequested = false
+        context.cancelStartupRecovery()
         player.pause()
         updateSystemTransport(for: context, isPlaying: false)
         if context.progressBegan && !context.pausedAfterProgress {
@@ -977,6 +1055,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         case .interruptionBegan:
             interruptionWasPlaying = current.playRequested || player.timeControlStatus == .playing
             current.playRequested = false
+            current.cancelStartupRecovery()
             current.pausedAfterProgress = current.progressBegan
             player.pause()
             updateSystemTransport(for: current, isPlaying: false)
@@ -986,7 +1065,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             interruptionWasPlaying = false
             emit(.interruptionEnded(attemptID: current.plan.attemptID, shouldResume: shouldResume))
             if shouldResume {
-                current.playRequested = true
+                requestStartupPlayback(current)
                 if current.progressBegan {
                     emit(.resumed(
                         attemptID: current.plan.attemptID,
@@ -995,6 +1074,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 }
                 current.pausedAfterProgress = false
                 player.playImmediately(atRate: desiredRate)
+                updateStartupRecovery(current)
                 updateSystemTransport(for: current, isPlaying: true)
             }
         case let .routeChanged(old, new, becomingNoisy):
@@ -1002,6 +1082,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 (current.playRequested || player.timeControlStatus == .playing)
             if becomingNoisy {
                 current.playRequested = false
+                current.cancelStartupRecovery()
                 current.pausedAfterProgress = current.progressBegan
                 player.pause()
                 updateSystemTransport(for: current, isPlaying: false)
@@ -1085,8 +1166,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             }
             switch command {
             case .play:
-                current.playRequested = true
+                requestStartupPlayback(current)
                 player.playImmediately(atRate: desiredRate)
+                updateStartupRecovery(current)
                 updateSystemTransport(for: current, isPlaying: true)
                 handled = true
             case .pause:
@@ -1096,8 +1178,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 if current.playRequested {
                     pause(context: current)
                 } else {
-                    current.playRequested = true
+                    requestStartupPlayback(current)
                     player.playImmediately(atRate: desiredRate)
+                    updateStartupRecovery(current)
                     updateSystemTransport(for: current, isPlaying: true)
                 }
                 handled = true
@@ -1127,6 +1210,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         guard position > context.lastSampledPosition + 0.000_001 else { return }
         if !context.progressBegan {
             context.progressBegan = true
+            context.cancelStartupRecovery()
             context.progressStartWallClock = clock.wallClockNow
             emit(
                 .playbackProgressBegan(
@@ -1231,6 +1315,7 @@ struct DulcetAVPlayerEngineClockSample: Sendable {
 
 protocol DulcetAVPlayerEngineClock: Sendable {
     var wallClockNow: Date { get }
+    var monotonicNow: TimeInterval { get }
 
     func sample(player: AVQueuePlayer) -> DulcetAVPlayerEngineClockSample
 
@@ -1251,6 +1336,12 @@ protocol DulcetAVPlayerEngineClock: Sendable {
         after interval: TimeInterval,
         handler: @escaping @Sendable () -> Void
     ) -> @Sendable () -> Void
+}
+
+extension DulcetAVPlayerEngineClock {
+    var monotonicNow: TimeInterval {
+        Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+    }
 }
 
 private struct DulcetAVPlayerEngineSystemClock: DulcetAVPlayerEngineClock {
@@ -1335,6 +1426,10 @@ private final class PlayerItemContext: @unchecked Sendable {
     var endEmitted = false
     var failureEmitted = false
     var waitingForRefresh = false
+    var startupRecoveryAttempted = false
+    var startupPlayRequestedAt: TimeInterval?
+    var startupRecoveryToken: UUID?
+    var cancelStartupRecoveryTimer: (@Sendable () -> Void)?
     var lastSampledPosition: TimeInterval = 0
     var lastSampleMonotonic: DulcetMonotonicInstant?
     var duration: TimeInterval?
@@ -1356,8 +1451,16 @@ private final class PlayerItemContext: @unchecked Sendable {
     }
 
     func invalidate() {
+        cancelStartupRecovery()
         observers.forEach { $0.invalidate() }
         observers.removeAll()
+    }
+
+    func cancelStartupRecovery() {
+        startupPlayRequestedAt = nil
+        startupRecoveryToken = nil
+        cancelStartupRecoveryTimer?()
+        cancelStartupRecoveryTimer = nil
     }
 
     func snapshot() -> DulcetPlaybackObservationSnapshot {

@@ -1543,6 +1543,18 @@ Three rules, each because the alternative fails silently:
    fallback is the analogue of the Apple shell's missing-catalog `preparing`, which rule 1 does not
    cover either. The first Android shell that branches on `phase` extends this gate to Android.
 
+**Apple startup transport recovery:** an active Play request for the current item starts a
+120 s monotonic budget to reach media progress. The adapter checks startup after 2 s and can
+reassert the same Play once when ready and paused with no outstanding resource reads. Reads defer
+that reassertion, never the terminal deadline. If progress or a terminal verdict never arrives by
+120 s from Play, the adapter emits `FailedBeforeStart(engine)`, including when a read never
+completes/cancels or transport flaps between waiting and paused. Repeated Play on the same active
+request cannot reset the budget. Progress, deliberate pause, interruption, end, failure or attempt
+retirement cancel it; Play after a deliberate pause starts a fresh budget. On preload promotion the
+incoming item gets its own startup budget. The adapter preserves AVFoundation's actual
+`undecodable` failure and never infers it from elapsed time alone. An engine timeout stops the queue
+rather than skipping through entries during a network outage.
+
 ### 12.3 Position cadence
 
 Two numbers, named because §15.2 depends on both: **`cadenceTarget = 0.5 s`** (the nominal 2 Hz
@@ -7750,6 +7762,17 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-14 — Bound silently paused Apple startup without inventing media errors.**
+OBSERVED in hosted run 38535897557: Play before byte delivery left a ready tvOS item paused at
+zero for 270 s without a failure notification, while the engine queue remained responsive.
+ASSUMED: a dropped/ignored Play caused this run. Native macOS and tvOS Simulator controls inject
+that missing initial request with `StartupPlayDroppingPlayer`; they do not reproduce its cause.
+The adapter reasserts transport once. If that does not help, the original bound still turns the
+270 s hang into an approximately 122 s engine failure; the revised bound is 120 s total from Play
+(§12.2), including pending reads and waiting/paused flaps. The controls separately require the real
+decoder's `undecodable` verdict, valid-media progress, pending-read deferral, and bounded engine
+failure. Source retry and queue policy remain in the core; an engine timeout stops the queue.
 
 **2026-10-13 — iOS and iPadOS account cancellation stays in the visible safe area.**
 The grouped account Form keeps credentials and status scrollable, while its existing primary action

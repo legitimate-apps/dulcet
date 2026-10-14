@@ -501,6 +501,12 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
         return contentInformation
     }
 
+    var hasPendingRequests: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !contexts.isEmpty
+    }
+
     public init(
         resource: any DulcetPlaybackResourceLoading,
         attemptID: DulcetPlaybackAttemptID,
