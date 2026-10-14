@@ -3969,6 +3969,61 @@ final class DulcetiOSUITests: XCTestCase {
         proveNowPlayingHeartFillsAtOnceAndReachesTheServer(compact: false)
     }
 
+    /// Exercises the recovery path even on a fast host: Previous from a paused third song must
+    /// move to the second, then the heart proof must return to its first song and pause it.
+    @MainActor
+    func testPausedPreviousReturnsToTheHeartProofTrackOnIPhone() {
+        guard requireSimulator(.phone, "The paused Previous proof"),
+              let configuration = livePlaybackConfiguration(),
+              let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true),
+              openLibraryAlbum("Threshold Boundary", in: app, compact: true),
+              playAlbumTrack("UI Playback Canary", in: app),
+              openNowPlayingFromBar(in: app, expectingTitle: "UI Playback Canary") else { return }
+        let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        func button(_ label: String) -> XCUIElement? {
+            app.buttons.matching(NSPredicate(format: "label == %@", label))
+                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isEnabled && $0.isHittable }
+        }
+        func press(_ label: String) -> Bool {
+            guard let control = button(label) else {
+                XCTFail("The player must offer a tappable \(label): " + app.debugDescription)
+                return false
+            }
+            control.tap()
+            return true
+        }
+        func pause(startIfNeeded: Bool = false) -> Bool {
+            // Selecting the final row keeps its title stable even if a slow host lets it end.
+            // Play in that case starts it again; Previous must then step from its paused start.
+            if startIfNeeded, button("Play") != nil, !press("Play") { return false }
+            let deadline = Date().addingTimeInterval(10)
+            while button("Pause") == nil, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            guard press("Pause") else { return false }
+            while button("Play") == nil, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            XCTAssertNotNil(button("Play"), "The current song must pause")
+            return button("Play") != nil
+        }
+        guard pause(startIfNeeded: true) else { return }
+        XCTAssertEqual(title.label, "UI Playback Canary", "The control must start on the paused third song")
+        print("DULCET PAUSED PREVIOUS CONTROL old-label-matches=\(app.buttons.matching(NSPredicate(format: "label == %@", "Previous")).count)"
+            + " actual-label=Previous Track title=\(title.label.debugDescription)")
+        guard press("Previous Track"), waitForLabel("Thirty One Seconds", of: title, timeout: 10),
+              pause() else {
+            XCTFail("Previous from the paused third song must select the second; title=\(title.label)")
+            return
+        }
+        print("DULCET PAUSED PREVIOUS CONTROL actual-press=third-to-second paused=true")
+        guard bringPausedNowPlaying(to: "Twenty Nine Seconds", in: app) else { return }
+        XCTAssertEqual(title.label, "Twenty Nine Seconds")
+        XCTAssertNotNil(button("Play"), "The heart proof must leave its target song paused")
+        attachScreenshot(named: "heart-proof-track-paused-after-previous", app: app)
+        print("DULCET PAUSED PREVIOUS PROOF PASS third-to-second=true second-to-first=true paused=true")
+    }
+
     /// The heart fills with the tap, before the server answers, and the star reaches the server
     /// for the playing track. Taking it off again empties it at once and unstars the track, so the
     /// proof leaves the server as it found it. Each destination has its own test, and each fails
@@ -4335,32 +4390,57 @@ final class DulcetiOSUITests: XCTestCase {
         return stars
     }
 
-    /// Pauses Now Playing, then steps back with Previous until `track` is in front, so a later tap
-    /// cannot reach a track the queue advanced to on its own. Four presses: the first may only
-    /// restart the track in front, and the fixture album has three tracks.
+    /// Returns to the proof's song through actual transport presses, then leaves it paused so
+    /// a delayed heart or stars tap cannot reach a song that advanced automatically. Previous
+    /// starts its selected song, so pause again after every press. Four presses also cover a
+    /// finished queue's first Previous replaying its final selection before stepping backward.
     @MainActor
     private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
-        // By label, re-queried each time: an element bound to "Pause" stops resolving once it reads Play.
+        // Re-query by label: Pause becomes Play, and the hidden bar has another transport row.
         func playerButton(_ label: String) -> XCUIElement? {
             app.buttons.matching(NSPredicate(format: "label == %@", label))
                 .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
         }
-        playerButton("Pause")?.tap()
-        let pauseDeadline = Date().addingTimeInterval(10)
-        while playerButton("Play") == nil, Date() < pauseDeadline {
-            Thread.sleep(forTimeInterval: 0.25)
+        func pauseCurrent(waitForStart: Bool) -> Bool {
+            let startedDeadline = Date().addingTimeInterval(10)
+            var pause = playerButton("Pause")
+            while pause == nil, Date() < startedDeadline {
+                if !waitForStart, playerButton("Play") != nil { return true }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                pause = playerButton("Pause")
+            }
+            guard let pause else {
+                XCTFail("The selected song must start before it can be paused: " + app.debugDescription)
+                return false
+            }
+            pause.tap()
+            let pausedDeadline = Date().addingTimeInterval(10)
+            while playerButton("Play") == nil, Date() < pausedDeadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            guard playerButton("Play") != nil else {
+                XCTFail("Now Playing must pause before its heart or stars are tapped: " + app.debugDescription)
+                return false
+            }
+            return true
         }
-        guard playerButton("Play") != nil else {
-            XCTFail("Now Playing must pause before its stars are tapped: " + app.debugDescription)
-            return false
-        }
+        guard pauseCurrent(waitForStart: false) else { return false }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
-        for _ in 0..<4 where title.label != track {
-            playerButton("Previous")?.tap()
-            _ = waitForLabel(track, of: title, timeout: 5)
+        for press in 1...4 {
+            let before = title.label
+            if before == track { return true }
+            // OBSERVED in run 38519386586: the old label "Previous" matched no buttons, so all
+            // four optional taps were skipped. The actual accessible label is "Previous Track".
+            guard let previous = playerButton("Previous Track"), previous.isEnabled else {
+                XCTFail("Now Playing must offer tappable Previous Track while returning to \(track): " + app.debugDescription)
+                return false
+            }
+            previous.tap()
+            guard pauseCurrent(waitForStart: true) else { return false }
+            print("DULCET PAUSED NOW PLAYING previous-press=\(press) from=\(before.debugDescription) to=\(title.label.debugDescription)")
         }
         guard title.label == track else {
-            XCTFail("Now Playing must be back on \(track) before its stars are tapped; title=\(title.label)")
+            XCTFail("Now Playing must be back on \(track) before its heart or stars are tapped; title=\(title.label)")
             return false
         }
         return true

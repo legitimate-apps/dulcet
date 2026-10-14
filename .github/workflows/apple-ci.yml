@@ -2454,6 +2454,29 @@ jobs:
           # (spec §14.5); they stream, so they stay before the streaming-quality cap.
           tools/ci/run-download-handoff-proofs iphone
           # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
+          # Exercise recovery from a paused later song even when this host opens the player fast.
+          # Each proof keeps its own bundle: the execution verifier requires one individual result.
+          TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+            TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+            TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+            xcodebuild test-without-building \
+              -project apple/Dulcet.xcodeproj \
+              -scheme DulcetiOS \
+              -configuration Debug \
+              -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+              -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+              -resultBundlePath "$RUNNER_TEMP/dulcet-ios-paused-previous.xcresult" \
+              -parallel-testing-enabled NO \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testPausedPreviousReturnsToTheHeartProofTrackOnIPhone 2>&1 | \
+            tee "$RUNNER_TEMP/dulcet-ios-paused-previous.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-paused-previous.xcresult" \
+            DulcetiOSUITests.DulcetiOSUITests \
+            testPausedPreviousReturnsToTheHeartProofTrackOnIPhone
+          python3 tools/swift-testing-junit \
+            "$RUNNER_TEMP/dulcet-ios-paused-previous.xcresult" \
+            "$RUNNER_TEMP/dulcet-ios-paused-previous-junit/TEST-DulcetiOSUITests.xml" \
+            DulcetiOSUITests
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
             TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
             TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
@@ -2757,6 +2780,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-tvos-search-junit" \
             "$RUNNER_TEMP/dulcet-ios-playlist-junit" \
             "$RUNNER_TEMP/dulcet-ios-lyrics-junit" \
+            "$RUNNER_TEMP/dulcet-ios-paused-previous-junit" \
             "$RUNNER_TEMP/dulcet-ios-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-ipados-np-heart-junit" \
             "$RUNNER_TEMP/dulcet-tvos-now-playing-junit" \
