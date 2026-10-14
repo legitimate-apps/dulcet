@@ -106,6 +106,13 @@ def test_names() -> set[str]:
             continue
         text = path.read_text(errors="ignore")
         names.update(re.findall(r"\b(?:fun|func|void)\s+([A-Za-z_][A-Za-z0-9_]*)", text))
+        if path.suffix == ".swift":
+            # Swift Testing emits a literal @Test display name in JUnit instead of the function
+            # identifier. Require the attribute to belong to a function, not an arbitrary string.
+            names.update(re.findall(
+                r'@Test\(\s*"([^"\\]+)"\s*\)\s*'
+                r'(?:@\w+(?:\([^)]*\))?\s*)*func\s+\w+\s*\(', text,
+            ))
     return names
 
 

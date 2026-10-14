@@ -38,7 +38,7 @@ base is an error naming that document; the gate never substitutes a different ba
 | CONF-09b | account-connect render-state inventory |
 | CONF-09c | total actionable account-error presentation |
 | CONF-10a | unavailable platform-secure credential storage fails closed with a typed reason, no active-account pointer, and no weaker fallback |
-| CONF-10b | no request after a relaunch into persisted credentials until an explicit Connect or Reconnect (downloads queued earlier excepted); prefill where a form is shown |
+| CONF-10b | saved-account relaunch shows the device library immediately and reconnects in the background without a tap; unreachable retains the library with bounded transient backoff; foreground/network restoration join an in-flight attempt; auth/trust failures stop timer retries; credential prefill and independently requested downloads remain (§13.1) |
 | CONF-10c | a 407 proxy-auth challenge rejects ambient credentials |
 | CONF-10d | restricted-user permission errors map to `Auth.Forbidden` |
 | CONF-10e | a production Apple credential-store save records `AfterFirstUnlockThisDeviceOnly` accessibility and a non-synchronizable item, observed by an unconstrained attribute read-back; this does not claim protection enforcement or device-equivalent simulator semantics |
@@ -115,7 +115,7 @@ an iPad simulator (each its own method, which fails on the other device class),
 | server error | the fault proxy in front of the server answers the connect sequence's `ping` with OpenSubsonic error 0, and counts its answer |
 | in progress, then Cancel | a loopback port that accepts the connection and never answers; the proof counts the connection |
 | connected | the right account (on the simulators submitted through Connect's own path by the DEBUG launch hook) |
-| saved, disconnected | a relaunch with the account saved: the library offers Reconnect, Connection names the server |
+| saved, disconnected | a saved-account relaunch while the proxy is unreachable: the device library offers manual Reconnect, the proxy counts an automatic negotiation attempt, and restoring reachability recovers without a tap; a reachable saved launch connects automatically |
 | credential persistence | simulators: a launch whose active-account pointer names no Keychain item, so the real Keychain read fails; Mac: that, and the unentitled host's Keychain refusing to save an account the server accepted |
 
 Three inputs are not the server's or the person's own. The server error's answer is the fault
@@ -130,17 +130,19 @@ accepted raises the system's save-password prompt, which no UI test can dismiss 
 **How macOS is evidenced.** The hosted Mac host is signed ad hoc without entitlements, so its
 Keychain refuses every save: `DulcetMacAccountConnectStatesAppTest` reaches both persistence errors
 for real, but connected and saved/disconnected over an in-memory credential store, with the
-production connector, reader, data source and view. The signed, entitled host
-(`DulcetSignedMacAccountConnectTests`, §21.3.1) supplies the Keychain half on main, in separate app
+production connector, reader, data source and view. The earlier signed, entitled host
+(`DulcetSignedMacAccountConnectTests`, §21.3.1) supplied the Keychain half on main, in separate app
 processes: a real save and the connected UI, a relaunch that reads the item back into the saved
 library, Reconnect through the rendered action, and the load-time persistence error once the item
-is deleted. That run is cited through its committed receipt; the hosted proof carries the CONF-09b
-row and the signed proof an `observes` row.
+is deleted. That receipt is historical and withdrawn from active evidence because its pinned
+proof sources changed for automatic reconnect. The hosted proof carries the CONF-09b row; a
+signed rerun must renew the credential-storage and saved-item-read observations.
 
 **How signed iPad evidence is bounded.** OBSERVED 2026-10-10: main run 38089075644 of
 `signed-ipad-account-connect` passed on an attached physical iPad at `b07dd7af`. Its audited
-receipt, `evidence/receipts/signed-ipad-account-connect-38089075644.json`, is an `observes` row on
-the shipped `account.connect/ipados` cell, beside the simulator CONF-09b row. The proof types the
+receipt, `evidence/receipts/signed-ipad-account-connect-38089075644.json`, was an `observes` row on
+the then-shipped `account.connect/ipados` cell, beside the simulator CONF-09b row. It is now
+historical and withdrawn pending a signed rerun of the automatic-reconnect proof. The proof types the
 server address, username and password by touch on the software keyboard and declines the system
 save-password sheet. The production iOS Kotlin connection saves to the real Keychain; an
 unfiltered attribute read follows a wrong-accessibility control; a fresh process with no account
@@ -155,8 +157,9 @@ pins.
 **How signed iPhone evidence is bounded.** OBSERVED 2026-10-11: main run 38154870416 of
 `signed-iphone-account-connect` passed on an attached physical iPhone at `df8ad133`, after a
 private rehearsal of the same commit. Its audited receipt,
-`evidence/receipts/signed-iphone-account-connect-38154870416.json`, is an `observes` row on the
-shipped `account.connect/ios` cell, beside the simulator CONF-09b row. The iPhone lane runs the
+`evidence/receipts/signed-iphone-account-connect-38154870416.json`, was an `observes` row on the
+then-shipped `account.connect/ios` cell, beside the simulator CONF-09b row. It is now historical
+and withdrawn pending a signed rerun of the automatic-reconnect proof. The iPhone lane runs the
 same shared proof as the iPad, without rotation, on a fresh install of the isolated signed iPhone
 host. A first phase that writes no state accepts the system Local Network prompt for that host
 only. The proof types the server address, username and password by touch into the rendered fields,
@@ -166,6 +169,16 @@ a wrong-accessibility control; a fresh process with no account hook loads the sa
 Library's Reconnect tap reaches connected; deleting the owned item reaches the load-time
 persistence error; cleanup passes. Hardware-keyboard entry and rotation on iPhone are deferred
 (spec §28, 2026-10-11) and not claimed: XCTest's synthetic typing is not a hardware keyboard.
+
+**Saved-account launch evidence.** `Saved credentials reconnect without a tap` is the Swift
+Testing display name emitted in JUnit by `DulcetKitTests` (macOS), `DulcetKitIOSTests`
+(iPhone and iPad) and `DulcetKitTVOSTests` (Apple TV). Each Apple CONF-10b cell cites that
+executed identity. This controlled presentation test observes saved credential prefill, immediate
+launch negotiation, a manual request joining it, and success starting the library read. The
+platform account-state proofs observe automatic connected relaunch and unreachable relaunch
+retaining the device library, followed by backoff recovery without a tap. The separate DulcetKit
+lifecycle and failure controls bound joining, retries, foreground/network triggers and terminal
+auth/trust failures; the display-name test alone does not prove all those behaviors.
 
 **The earlier presentation test.** `accountPresentationTransitionsGivenConnectorOutcomes` submits
 through the production `DulcetPresentationStore` into `DulcetAccountDataSource` but injects the
@@ -178,7 +191,11 @@ cells cited for CONF-09b before revision 109, each for the one thing it shows:
 `fixtureRendersEveryDeclaredDistinctState` (macOS), `accountConnectRootLoadsForIOS`,
 `accountConnectRootLoadsForTVOS` and `testAccountConnectUsesRegularWidthSplitLayout` (iPadOS).
 
-**Android.** `AndroidEmulatorAccountConnectProofTest` (phone) and
+**Earlier Android evidence (explicit-reconnect policy).** The observations below describe the
+proofs registered before the 2026-10-12 §13.1 contract change; they do not establish automatic
+reconnect. Updating Android implementation and its evidence belongs to the Android leg.
+
+`AndroidEmulatorAccountConnectProofTest` (phone) and
 `AndroidTvEmulatorAccountConnectProofTest` (TV) run in core-ci on the API 34 emulators against the
 disposable server, from an install with no saved account. The phone is driven by touches injected at
 each control's place on the screen and typed key events; the TV by the remote's keys and its own
@@ -197,7 +214,7 @@ states through injected gateway results and an injected failing credential store
 bounded `observes` row. The capability point below does not arise on Android, which declares one
 failure render state for every error.
 
-Each emulator also has its own CONF-10b proof (§13.1), which connects through the form and then
+Each emulator also has its own proof of the earlier CONF-10b policy, which connects through the form and then
 relaunches, and the CONF-09b proofs take the same relaunch: the relay in front of the server counts
 no connection for five seconds while the library paints the albums this device has seen, and the
 first connection comes only after the person chooses Reconnect — a touch on the phone, the remote on

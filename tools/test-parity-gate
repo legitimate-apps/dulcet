@@ -302,6 +302,21 @@ def expect_rejection(
             )
 
 
+with tempfile.TemporaryDirectory(prefix="dulcet-parity-display-name-") as directory:
+    root = Path(directory)
+    materialize(root)
+    result = invoke(root)
+    assert result.returncode == 0, result.stdout
+    source = root / "apple/DulcetKit/Tests/DulcetKitTests/AccountConnectionPresentationTests.swift"
+    text = source.read_text()
+    annotation = '@Test("Saved credentials reconnect without a tap")'
+    assert text.count(annotation) == 1
+    # Keep the words in a comment: only a declaration may satisfy the citation.
+    source.write_text(text.replace(annotation, '// Saved credentials reconnect without a tap\n@Test'))
+    result = invoke(root)
+    assert result.returncode != 0 and "evidence test does not exist" in result.stdout, result.stdout
+
+
 COVERAGE_CONTROLS = (
     "observation-only-stream-partial", "observation-only-stream-blocked",
     "observation-only-scrobble-partial", "observation-only-scrobble-blocked",
@@ -996,7 +1011,7 @@ passing_cases = """\
   <testcase classname="DulcetKitTests"
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitTests"
-            name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+            name="Saved credentials reconnect without a tap" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
             name="accountConnectSurfacePublishesProgressAndCancelsTheActiveOperation" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
@@ -1008,7 +1023,7 @@ passing_cases = """\
   <testcase classname="DulcetKitIOSTests"
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitIOSTests"
-            name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+            name="Saved credentials reconnect without a tap" time="0.1" />
   <testcase classname="DulcetKeychainIOSTests"
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnIOSSimulator" time="0.1" />
   <testcase classname="DulcetKeychainIOSTests"
@@ -1058,7 +1073,7 @@ passing_cases = """\
   <testcase classname="DulcetKitTVOSTests"
             name="unentitledKeychainWriteFailsClosedWithoutLegacyFallback" time="0.1" />
   <testcase classname="DulcetKitTVOSTests"
-            name="relaunchPrefillsKeychainCredentialsButWaitsForExplicitReconnect" time="0.1" />
+            name="Saved credentials reconnect without a tap" time="0.1" />
   <testcase classname="DulcetKeychainTVOSTests"
             name="testProductionSaveRecordsDeviceOnlyNonSynchronizableAttributesOnTVOSSimulator" time="0.1" />
   <testcase classname="com.legitimateapps.dulcet.conformance.DarwinProxyAuthenticationConformanceTest[macosArm64]"
