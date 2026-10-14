@@ -64,6 +64,9 @@ interface ReaderAppUi {
     fun openSearch()
     fun backFromAlbum()
 
+    /** Reveals the home's section controls after a notice or focused card has scrolled them away. */
+    fun showHomeSections() {}
+
     /**
      * Selects the element tagged [tag] the way a person does on this platform. [from] is the
      * focusable element just above it, where a D-pad starts; a touch screen ignores it.
@@ -301,8 +304,11 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             environment.network.lose()
             await("offline again") { observed().connections.last() is LibraryConnectionState.Offline }
             proxy.fail { it.endpoint == "getScanStatus" }
+            val failedMark = proxy.size()
             environment.network.restore()
             await("the reconnect to fail") { observed().connections.last() is LibraryConnectionState.Failed }
+            assertTrue(proxy.since(failedMark).any { it.endpoint == "getScanStatus" && it.answered && it.status == 500 },
+                "this reconnect reached the injected epoch failure")
             assertTrue((observed().connections.last() as LibraryConnectionState.Failed).readerOffline, "the reader is still offline")
             compose.onNodeWithTag("library.connection").assertTextContains("Couldn't connect to your server — ", substring = true)
             // An answer that is not a Subsonic envelope is not a failure the reader retries by itself,
@@ -310,9 +316,15 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             await("every home row to state the failure") {
                 HOME.all { (last(it).freshness as? AndroidLibraryFreshness.Cached)?.reason is AndroidLibraryCachedReason.Failed }
             }
-            compose.onNodeWithTag("library.home.0.freshness").assertTextContains("your server couldn't answer", substring = true)
+            // The connection failure is stated once, above the home. The shelves retain their
+            // cache age, without repeating that failure or offering a second reconnect action.
+            compose.onNodeWithTag("library.connection").assertTextContains("your server couldn't answer", substring = true)
+            assertEquals(1, compose.onAllNodes(hasText("your server couldn't answer", substring = true)).fetchSemanticsNodes().size,
+                "one connection failure is shown on the home")
+            compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
             compose.onNodeWithTag("library.home.0.freshness").assert(!hasText("offline", substring = true))
-            compose.onNodeWithTag("library.home.0.retry").assertExists()
+            compose.onNodeWithTag("library.home.0.retry").assertDoesNotExist()
+            compose.onNodeWithTag("library.connection.retry").assertExists()
             proxy.fail(null)
         }
         failAReconnect()
@@ -894,7 +906,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
                     }
             }
         }
-        ui.activate(compose.onNodeWithTag("library.view.favourites"))
+        openSection("library.view.favourites")
         await("the favourites surface opened") { frames("favourites").isNotEmpty() }
         proxy.release()
         await("the favourites live") { frames("favourites").lastOrNull()?.freshness == AndroidLibraryFreshness.Live }
@@ -928,7 +940,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         ActivityScenario.launch(activityType).use {
             ui.openLibrary()
             await("automatic relaunch revalidation") { HOME.all { frames(it).lastOrNull()?.freshness == AndroidLibraryFreshness.Live } }
-            ui.activate(compose.onNodeWithTag("library.view.favourites"))
+            openSection("library.view.favourites")
             await("saved favourites revalidated in place") {
                 frames("favourites").lastOrNull()?.freshness == AndroidLibraryFreshness.Live &&
                     frames("favourites").lastOrNull()?.itemCount == 0
@@ -1004,7 +1016,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         ui.openLibrary()
         awaitHomeLive()
-        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        openSection("library.view.playlists")
         // The TV's browse grids carry no observation, so the list is waited on by what it draws.
         await("the playlist listed") { listed("library.playlists.item", PLAYLIST_ORDER) != null }
         ui.activate(compose.onNodeWithTag(listed("library.playlists.item", PLAYLIST_ORDER)!!))
@@ -1042,7 +1054,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val mark = proxy.log().size
 
         // Create, from the list: the page opens on it at once and follows it to the server's id.
-        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        openSection("library.view.playlists")
         await("the playlists live") { frames("playlists").lastOrNull()?.freshness == AndroidLibraryFreshness.Live }
         compose.onNodeWithTag("library.playlists.new").performClick()
         compose.onNodeWithTag("library.playlists.name").performTextReplacement(PLAYLIST_EDIT)
@@ -1059,7 +1071,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         compose.waitForIdle()
 
         // Add the album, from its header, then one song from its row's menu.
-        ui.activate(compose.onNodeWithTag("library.view.home"))
+        openSection("library.view.home")
         openHomeAlbum(OPENED_ALBUM)
         await("the album live with its tracks") {
             last("album:$albumId").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
@@ -1077,7 +1089,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         ui.backFromAlbum()
 
         // Reorder and remove on the page, in edit mode.
-        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        openSection("library.view.playlists")
         await("the playlist listed") { listed("library.playlists.item", PLAYLIST_EDIT) != null }
         ui.activate(compose.onNodeWithTag(listed("library.playlists.item", PLAYLIST_EDIT)!!))
         await("the page live with every entry") { frames("playlist:$id").lastOrNull()?.itemRawIds == filled }
@@ -1241,7 +1253,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         compose.waitForIdle()
 
         // The add-to-playlist sheet lists only playlists this account may change.
-        ui.activate(compose.onNodeWithTag("library.view.home"))
+        openSection("library.view.home")
         openHomeAlbum(OPENED_ALBUM)
         await("the album live") { exists("album.addToPlaylist") }
         compose.onNodeWithTag("album.addToPlaylist").performClick()
@@ -1262,7 +1274,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     }
 
     private fun openPlaylist(name: String) {
-        ui.activate(compose.onNodeWithTag("library.view.playlists"))
+        openSection("library.view.playlists")
         await("$name listed") { listed("library.playlists.item", name) != null }
         ui.activate(compose.onNodeWithTag(listed("library.playlists.item", name)!!))
     }
@@ -1365,14 +1377,17 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(proxy.log().any { it.endpoint == "getAlbumList2" && it.parameters["type"] == "frequent" }, "control: row 2 did ask")
         assertEquals(AndroidLibraryFreshness.Loading, last("home.2").freshness, "row 2 still says it is loading")
         compose.onNodeWithTag("library.home.0.item.0").assertExists()
-        compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
-            .performScrollToNode(hasTestTag("library.home.3.unavailable"))
-        compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
         proxy.release()
         await("row 2 live") { last("home.2").freshness == AndroidLibraryFreshness.Live }
         assertEquals(AndroidLibraryFreshness.Live, last("home.0").freshness)
         assertEquals(AndroidLibraryFreshness.Live, last("home.1").freshness)
         assertTrue(last("home.3").freshness.isFailed(), "the failed row stays failed on its own")
+        // On TV this is also the initial reconnect: while row 2 was held, the home had one
+        // connecting notice. Once it settles, the independent row failure must be visible.
+        await("the initial reconnect to finish") { observed().connections.last() is LibraryConnectionState.Online }
+        compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
+            .performScrollToNode(hasTestTag("library.home.3.unavailable"))
+        compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
         proxy.fail(null)
         assertNoCredentialLeak()
         println("CONF-86 OBSERVED $platform rows-live-before-held-row=0,1 failed-row=3 other-rows-live=true " +
@@ -1402,7 +1417,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // network is metered, so each leg reports its constraint explicitly rather than inheriting it.)
         network.constrain(true)
         val constrainedMark = proxy.size()
-        ui.activate(compose.onNodeWithTag("library.view.albums"))
+        openSection("library.view.albums")
         await("the albums grid live") { albumsGrid()?.let { last(it).freshness == AndroidLibraryFreshness.Live } == true }
         val grid = checkNotNull(albumsGrid())
         val albums = last(grid).itemRawIds
@@ -1418,7 +1433,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // Unconstrained, every detail read held: two in flight, and no third while they are.
         proxy.hold { it.endpoint == "getAlbum" }
         val mark = proxy.size()
-        ui.activate(compose.onNodeWithTag("library.view.albums"))
+        openSection("library.view.albums")
         // A finder, so the main looper and the frames that report the viewport run as the wait polls.
         await("the albums grid drawn") { exists("library.albums.item.0") }
         await("two look-ahead reads in flight") { detailReads(mark).size >= 2 }
@@ -1685,7 +1700,6 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val grid = openPagedAlbums()
         val type = windowReads(0).last().parameters.getValue("type")
         val ids = server.albumIds(type)
-        val viewport = viewportPages(grid)
 
         var mark = proxy.size()
         foregroundReturn()
@@ -1694,7 +1708,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         proxy.rewrite({ it.endpoint == "getScanStatus" }) { body -> scanStatus(body) { it.put("lastScan", SENTINEL); it.put("scanning", false) } }
         mark = proxy.size()
-        foregroundReturn()
+        // The connecting notice changes the height available to the grid. Measure its viewport
+        // during this reconnect, before the held epoch answer lets revalidation start.
+        var viewport = emptyList<Int>()
+        foregroundReturn(whileEpochHeld = { viewport = viewportPages(grid) })
         await("the window re-read with no epoch") { last(grid).coverage == AndroidLibraryCoverage.UnverifiedNoEpoch }
         awaitQuiet()
         assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = true), observed().connections.last(), "the sentinel is no epoch")
@@ -1868,11 +1885,21 @@ class LibraryReaderScenarios<A : ComponentActivity>(
     }
 
     /** The app stopped and brought back: the session reconnects, reading the epoch (§16.11 policy 1). */
-    private fun foregroundReturn() {
+    private fun foregroundReturn(whileEpochHeld: (() -> Unit)? = null) {
         val before = observed().reconnects
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         awaitQuiet(composed = false)
-        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        if (whileEpochHeld != null) proxy.hold { it.endpoint == "getScanStatus" }
+        try {
+            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+            if (whileEpochHeld != null) {
+                await("the foreground epoch read held") { proxy.log().any { it.endpoint == "getScanStatus" && !it.answered } }
+                awaitQuiet(held = true)
+                whileEpochHeld()
+            }
+        } finally {
+            if (whileEpochHeld != null) proxy.release()
+        }
         await("the foreground reconnect to finish") {
             observed().reconnects > before && observed().connections.last() is LibraryConnectionState.Online
         }
@@ -1895,6 +1922,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
     }
 
+    /** A section may have scrolled away when a connection notice disappeared above the first card. */
+    private fun openSection(tag: String) {
+        ui.showHomeSections()
+        ui.activate(compose.onNodeWithTag(tag))
+    }
+
     /**
      * The library opened, then its albums grid, live. The network is reported constrained, so the
      * grid reads no album details ahead (§16.13) and every request counted is the window's own.
@@ -1904,7 +1937,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         awaitHomeLive()
         environment.network.constrain(true)
         awaitQuiet()
-        ui.activate(compose.onNodeWithTag("library.view.albums"))
+        openSection("library.view.albums")
         await("the albums grid live") { albumsGrid()?.let { last(it).freshness == AndroidLibraryFreshness.Live } == true }
         awaitQuiet()
         return checkNotNull(albumsGrid())
