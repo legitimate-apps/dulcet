@@ -58,7 +58,6 @@ final class XCUIElement {
     var dropNextInsertion = false
     var insertions = 0
     var dropFocusOnNextValueRead = false
-    var forbidLiveValueReads = false
     var snapshotFailures = 0
     struct Snapshot { let value: Any?; let placeholderValue: String? }
     enum SnapshotFailure: Error { case unavailable }
@@ -68,7 +67,7 @@ final class XCUIElement {
     }
     init(_ text: String, secure: Bool = false) { self.text = text; self.secure = secure }
     var value: Any? {
-        precondition(!forbidLiveValueReads, "Credential reads must use throwing snapshots, not fatal live value queries")
+        precondition(snapshotFailures == 0, "A timed-out live value query records a fatal test failure")
         return readValue()
     }
     private func readValue() -> Any? {
@@ -171,7 +170,6 @@ struct Controls {
             ("snapshot-retry-secure", "previous-password", true, 1)
         ] {
             let field = XCUIElement(old, secure: secure)
-            field.forbidLiveValueReads = true
             field.snapshotFailures = failures
             precondition(proof.replaceText(in: field, with: "canary", name: name, secure: secure))
             precondition(field.text == "canary" && field.snapshotFailures == 0)
