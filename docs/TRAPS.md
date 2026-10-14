@@ -415,12 +415,16 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     notification for 270 s, and a responsive engine queue. AudioQueue logged the same converter
     error (1650549857, zero decoded frames) as the passing controls. This exposes a product gap:
     a requested, ready item silently paused before progress had no recovery or terminal bound.
-    The engine now reasserts that transport request once after 2 s; continued paused startup
-    without an AVFoundation verdict fails as `engine` after another 120 s. Pending resource reads
-    defer the deadline; waiting transport, deliberate pauses, interruptions, progress and retired
-    attempts do not trigger recovery. The real decoder's `undecodable` verdict is preserved;
+    ASSUMED: a dropped/ignored Play caused this hosted run; the trace establishes the paused
+    state and missing verdict, not that cause. The controls inject the lost Play with
+    `StartupPlayDroppingPlayer`. The engine reasserts transport once when ready and paused with no
+    pending reads. If reassertion does not help, the original watchdog turns the 270 s hang into
+    an approximately 122 s `engine` failure; its revised ceiling is 120 s from the Play request,
+    measured monotonically. Pending reads defer the reassertion, never the terminal deadline;
+    waiting/paused flaps and repeated Play cannot reset it. Deliberate pauses, interruptions,
+    progress and retired attempts cancel it. The real decoder's `undecodable` verdict is preserved;
     inactivity alone never invents it. Local native macOS and tvOS Simulator regression controls
-    deliberately drop the initial Play, then require valid media to progress and corrupt media to
+    inject a dropped initial Play, then require valid media to progress and corrupt media to
     fail as `undecodable`. A manual-clock control requires the absent-verdict case to fail once as
     `engine`. Physical-device occurrence remains unproven; the engine gap is not simulator-specific.
 
