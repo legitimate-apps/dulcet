@@ -1056,25 +1056,36 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return true
         }
         var observed = ""
-        for attempt in 1...3 {
+        attempts: for attempt in 1...3 {
             guard focusForTyping(retap: true) else { return false }
-            func remaining() -> String {
-                (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
+            func remaining() -> String? {
+                // A live value read records a fatal XCTest failure when the host cannot
+                // resolve its query. Read value and placeholder from one throwing snapshot;
+                // an unavailable snapshot is unknown, never evidence that the field is empty.
+                for _ in 0..<3 {
+                    if let snapshot = try? field.snapshot() {
+                        return (snapshot.value as? String)
+                            .flatMap { $0 == snapshot.placeholderValue ? nil : $0 } ?? ""
+                    }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                }
+                return nil
             }
             for round in 0..<4 {
-                let existing = remaining()
+                guard let existing = remaining() else { continue attempts }
                 if existing.isEmpty { break }
                 guard focusForTyping(retap: round > 0) else { return false }
                 field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
             }
-            let left = remaining()
+            guard let left = remaining() else { continue }
             guard left.isEmpty else {
                 print("DULCET ACCOUNT STATES clear field=\(name) attempt=\(attempt) remaining-length=\(left.count)")
                 continue
             }
             guard focusForTyping() else { return false }
             field.typeText(value)
-            observed = field.value as? String ?? ""
+            guard let replacement = remaining() else { continue }
+            observed = replacement
             if secure ? observed.count == value.count : observed == value {
                 return true
             }
