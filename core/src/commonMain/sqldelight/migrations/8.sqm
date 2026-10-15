@@ -1,0 +1,24 @@
+-- My Library on Dulcet Server (spec §29.9): additive. Two new tables and an index; no existing
+-- table is touched and nothing is seeded. Re-derivable from the server, so not protected (§11.4).
+
+CREATE TABLE my_library_state (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  advertised INTEGER CHECK (advertised IS NULL OR advertised IN (0, 1)),
+  library_clock TEXT,
+  complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1)),
+  read_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (read_issue_seq >= 0),
+  read_at_wall INTEGER,
+  next_rank INTEGER NOT NULL DEFAULT 1 CHECK (next_rank >= 1)
+);
+
+CREATE TABLE my_library_item (
+  server_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track')),
+  raw_id TEXT NOT NULL,
+  member INTEGER NOT NULL CHECK (member IN (0, 1)),
+  added_rank INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  PRIMARY KEY (server_id, item_kind, raw_id)
+);
+
+CREATE INDEX my_library_item_member ON my_library_item(server_id, member, item_kind);

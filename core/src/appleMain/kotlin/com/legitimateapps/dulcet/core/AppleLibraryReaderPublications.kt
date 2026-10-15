@@ -330,6 +330,7 @@ internal fun CreditRole.appleKind(): String = when (this) {
 internal fun MutationField.appleKind(): String = when (this) {
     MutationField.Starred -> "favourite"
     MutationField.Rating -> "rating"
+    MutationField.InLibrary -> "inLibrary"
 }
 
 /**

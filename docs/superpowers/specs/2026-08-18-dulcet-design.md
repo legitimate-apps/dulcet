@@ -1329,7 +1329,8 @@ both additive, seeded with nothing, and not protected data.
   constraints (compared as expressions, whitespace aside) a fresh install creates, and compares the
   `cache_playlist` rows of every fixture that holds the columns schema 7 added — a cache table, so
   not protected data, but a column a schema added is compared with data — each again with a
-  negative control. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  negative control. From schema 9 it also compares the re-derivable `my_library_item` and
+  `my_library_state` rows. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
   files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
   that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
   instrument reading nothing) and requires the newest fixture to equal it object for object
@@ -1338,7 +1339,7 @@ both additive, seeded with nothing, and not protected data.
   by hand: `tools/generate_migration_fixture.py --to N` copies fixture N−1, applies
   `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
   vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
-  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v8 (v1–v3 were
+  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v9 (v1–v3 were
   written by 3.50.6; none reserves bytes per page), and refuses any other, since a different build
   lays pages out differently (revision 104, item 23). That byte check is local; CI runs
   `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
@@ -7844,6 +7845,14 @@ establish the earlier process's lifecycle. Signed Keychain relaunch proofs must 
 connected without tapping Reconnect; their existing receipts evidence the earlier proof only.
 New automatic-reconnect signed evidence requires a signed rerun.
 
+**2026-10-12 — My Library on Dulcet Server**
+The apps now offer My Library on a server that advertises `dulcetLibrary` v1, and only there
+(§29.9). The core detects the extension per account, keeps a per-account read model refreshed by a
+clock probe, a totals-checked `since` read or a stable full read, reads the `dulcetInLibrary` flag
+on ordinary responses, and sends adds and removes through the favourites outbox. On every other
+server nothing changes. Wire calls sit behind one transport seam, so another protocol can be added
+without changing the rest.
+
 **2026-10-12 — Dulcet Server retains identity through retags and refuses destructive scans.**
 §29.2 now records persistent track identity, existing-id migration, fingerprint-based moves, and
 catalog retention when the music root is unavailable or suddenly empty. §29.6 records import
@@ -13490,3 +13499,91 @@ OpenSubsonic server as that user.
 Dulcet Server is a second target for the `:core-conformance` JVM suites. The suites run against it
 with the same seeded corpus and users as the disposable Navidrome. Results and the reasons for each
 difference are recorded in `docs/dulcet-server/README.md`.
+
+### 29.9 My Library in the apps
+
+The client side of `dulcetLibrary` v1. Code: `core/.../MyLibrary.kt` (detection, refresh, read
+model, presentation), the favourites outbox (`MutationField.InLibrary`), `AppleMyLibraryClient` and
+`AndroidMyLibrary`. Tests: `MyLibraryTest`, against an in-process server that follows the wire
+contract.
+
+**Offered only where advertised.** The core asks `getOpenSubsonicExtensions` when a shell first
+refreshes My Library on a connection, and keeps the answer per account. After a successful
+reconnect it asks again and refreshes for an account whose server offered My Library, or retries
+an initial detection the shell requested but which failed or ran offline without an answer.
+Accounts not yet asked for and servers known to lack the extension cost no discovery request on
+reconnect. The Android session requests the first refresh when its My Library is first used,
+before availability can drive the Library/Browse split; the reader's offline rule preserves a
+saved account's wait for the person to choose Reconnect. A change made while the
+answer is unknown waits for that first refresh. A valid extension list that does not advertise
+`dulcetLibrary` v1, or a discovery response establishing that the endpoint is unavailable
+(Subsonic error 70, or a bare HTTP 404 or 501), makes My Library `unavailable`: nothing is paged,
+the `dulcetInLibrary` flag is not read, and the apps show Browse exactly as before. The reader
+preserves an error envelope's meaning rather than treating its HTTP status as endpoint absence.
+Auth, permission, generic and unknown errors, other HTTP failures and malformed extension lists
+are failed detection, not an answer: nothing is persisted, waiting outbox changes are kept, and
+detection is retried on the next refresh. An earlier valid advertisement is retained when
+redetection fails. **OBSERVED:** the [Subsonic error table](https://opensubsonic.netlify.app/docs/responses/error/)
+defines 70 as requested data not found and 0 as generic; 0 does not establish endpoint absence.
+A server advertising only a later version is treated as not advertising one this client
+implements. `CapabilitySet.dulcetLibraryVersion()`
+gives the same answer from a negotiated capability set.
+
+**One seam for the wire.** Detection, paging and add/remove go through `MyLibraryTransport`.
+`OpenSubsonicMyLibraryTransport` is the only implementation; another protocol can replace it
+without touching the read model, the outbox or the presentation.
+
+**Read model.** Two tables per account (`my_library_state`, `my_library_item`), in the account's
+seen-cache namespace, so a rebind to another user purges them and sign-out removes them with the
+rest of the account's data (§14.7); the launch sweep counts them. Items keep a member flag, a local
+rank and the seen-cache issue sequence of what last wrote them, so an older read never overwrites a
+newer read or acknowledgement. Member items are exempt from seen-cache eviction. Lists paint from
+the device, offline included.
+
+**Refresh.** The reader traps hold (TRAPS 18–19): there is no change token, `changed` is compared
+for equality only, offset paging is not a snapshot, and `lastScan` is never read for user state.
+
+1. Probe with `size=1`. If `changed` equals the clock of the last complete read, nothing changed.
+2. Otherwise, if a complete read is held, read additions with `since` = held clock − 60 s. Accept
+   it only if, for every kind, the held members plus the listed ones number exactly the server's
+   total: the server's set contains what was added since and is contained in held ∪ added, so equal
+   sizes make them equal. Any removal fails the check.
+3. Otherwise read everything, all three kinds per page, until every kind's list ends. The read is
+   one state only if `changed` and the three totals are the same on its first and last page; then
+   members it did not list, written before it began, stop being members. If the library changes
+   under three reads in a row, the device keeps what it had, adds nothing as complete, and says
+   `unsettled`.
+
+Every listed element is also written to the seen-cache, so the lists have titles and artwork.
+
+**The flag on ordinary responses.** On an advertising server, every live artist, album or track
+object carries `dulcetInLibrary` when it is a member. Its presence makes the item a member; its
+absence demotes an item the device holds as a member, but never creates a "not a member" row on its
+own. Both are ordered by issue sequence like any cache write.
+
+**Writes.** Add and remove are `MutationField.InLibrary` (1 or 0) in the favourites outbox, so they
+inherit its guarantees (§18.6): shown at once, durable across relaunch, compacted per item, sent at
+least once (both calls are set-to-value and idempotent), adopted on acknowledgement, and rolled
+back on a permanent failure. Error 70 (unknown id) is a refusal. A change made before detection
+waits; once the server is known not to advertise the extension the change is refused with
+`CapabilityUnsupported(MyLibrary)`. When definitive detection changes availability, it triggers
+the waiting changes' flush whether the extension is available or unavailable; withdrawal by a
+previously advertising server therefore resolves queued adds and removes with that same refusal,
+without sending membership requests. Outcomes use the favourite outcome stream with field
+`inLibrary`. Removing an album also removes its member songs.
+
+**Presentation.** Albums are the explicit members plus the albums of member songs; artists are the
+explicit members plus the artists of member albums and songs; songs are the explicit members. An
+album is `added` when it is a member, `partial` when only some of its songs are, `notAdded` when a
+complete read says neither, and `unknown` before any complete read or flag. Items the device has no
+details for count toward membership but are left out of the lists until a read brings them. Sorts:
+newest added (by local rank; a pending add is newest) and alphabetical (case-folded, then id).
+
+**Limits, ASSUMED until the server says otherwise.** The wire carries no added time, and each list
+is ordered within its kind only. Ranks from one full read are aligned from the newest of each kind,
+so an album shown only for its songs is placed among explicitly added albums by position, not by
+time; additions made on this device or read by a later `since` read are ordered exactly. An
+`added` time on each element would make this exact. A library member the catalog no longer holds
+counts in the server's totals but is never listed, so step 2 always falls back to a full read for
+that user. A scan that changes the catalog during a full read can shift offsets without moving
+`changed`; the totals check then does not detect it.

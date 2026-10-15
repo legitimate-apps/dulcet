@@ -23,7 +23,7 @@ it are written down. This tool is those steps:
     tools/generate_migration_fixture.py --all --check-semantic
                                                            # every version with a seed (CI)
 
-Fixtures v1-v3 were written with SQLite 3.50.6 and v4-v8 with SQLite 3.51.0, by Python's sqlite3
+Fixtures v1-v3 were written with SQLite 3.50.6 and v4-v9 with SQLite 3.51.0, by Python's sqlite3
 module; none reserves bytes per page. Writing and --check refuse any SQLite version but 3.51.0,
 and refuse a result that reserves bytes, because a different build lays pages out differently and a
 regeneration would then differ for reasons that have nothing to do with the schema. --check is
@@ -157,7 +157,40 @@ def seed_v8(connection):
     connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 44) WHERE singleton_id = 1")
 
 
-SEEDS = {7: seed_v7, 8: seed_v8}
+def seed_v9(connection):
+    """My Library (8.sqm): known and unknown capability, membership, and a pending add/remove.
+
+    The read model is re-derivable; the pending changes in mutation_outbox are protected data.
+    """
+    wall = 1_791_000_000_000
+    connection.executemany(
+        "INSERT INTO my_library_state (server_id, advertised, library_clock, complete, "
+        "read_issue_seq, read_at_wall, next_rank) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("server:fixture-alpha", 1, "library:clock-1", 1, 45, wall, 3),
+            ("server:fixture-beta", None, None, 0, 0, None, 1),
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO my_library_item (server_id, item_kind, raw_id, member, added_rank, issue_seq) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("server:fixture-alpha", "album", "album:my-library-member", 1, 2, 45),
+            ("server:fixture-alpha", "track", "track:my-library-removed", 0, 1, 45),
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO mutation_outbox (server_id, target_id, field, value, local_sequence, wall_clock) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("server:fixture-beta", "album:pending-library-add", "album.inLibrary", '{"value":1}', 46, wall),
+            ("server:fixture-alpha", "album:my-library-member", "album.inLibrary", '{"value":0}', 47, wall),
+        ],
+    )
+    connection.execute("UPDATE cache_meta SET last_issued = MAX(last_issued, 47) WHERE singleton_id = 1")
+
+
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9}
 
 
 def fail(message):

@@ -29,6 +29,8 @@ SCHEMA_INTENT_TABLES = {
     "credit",
     "genre",
     "library_starred",
+    "my_library_item",
+    "my_library_state",
     "playlist",
     "playlist_entry",
     "queue_entry",
@@ -58,6 +60,8 @@ SCHEMA_INTENT_TABLES = {
     "cache_lyrics_line",
 }
 REQUIRED_IMPLEMENTED_TABLES = {
+    "my_library_item",
+    "my_library_state",
     "music_folder",
     "artist",
     "album",
@@ -135,6 +139,8 @@ PIN_COVERAGE_SINCE_VERSION = 6
 # those rows as they were. A cache rebuilt on purpose goes through §11.5 and changes this map.
 COMPARED_CACHE_ROWS_SINCE_VERSION = {
     "cache_playlist": 7,
+    "my_library_item": 9,
+    "my_library_state": 9,
 }
 
 

@@ -26,6 +26,8 @@
     "library_starred",
     "music_folder",
     "mutation_outbox",
+    "my_library_item",
+    "my_library_state",
     "playlist",
     "playlist_entry",
     "queue_entry",

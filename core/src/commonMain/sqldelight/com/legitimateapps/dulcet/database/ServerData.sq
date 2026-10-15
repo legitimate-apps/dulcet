@@ -22,6 +22,8 @@ SELECT sum(row_count) FROM (
   UNION ALL SELECT count(*) FROM sync_generation WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM deletion_reconciliation WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_binding WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM my_library_item WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM my_library_state WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_epoch WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_artist WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM cache_album WHERE server_id = :server_id
@@ -62,6 +64,8 @@ UNION SELECT server_id FROM sync_seen
 UNION SELECT server_id FROM sync_generation
 UNION SELECT server_id FROM deletion_reconciliation
 UNION SELECT server_id FROM cache_binding
+UNION SELECT server_id FROM my_library_item
+UNION SELECT server_id FROM my_library_state
 UNION SELECT server_id FROM cache_epoch
 UNION SELECT server_id FROM cache_artist
 UNION SELECT server_id FROM cache_album
@@ -138,6 +142,8 @@ DELETE FROM deletion_reconciliation WHERE server_id = ?;
 -- The seen-cache of one account (spec §16.10), including its binding and pins. Account removal
 -- (§14.7) deletes the account's downloads in the same transaction, so no pin outlives its reason.
 deleteSeenCacheForServer {
+  DELETE FROM my_library_item WHERE server_id = :server_id;
+  DELETE FROM my_library_state WHERE server_id = :server_id;
   DELETE FROM cache_lyrics_line WHERE server_id = :server_id;
   DELETE FROM cache_lyrics_layer WHERE server_id = :server_id;
   DELETE FROM cache_lyrics WHERE server_id = :server_id;

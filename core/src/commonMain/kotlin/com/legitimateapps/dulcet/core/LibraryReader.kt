@@ -1498,7 +1498,7 @@ internal sealed interface ReaderConnectionOutcome {
 // ---- Hooks --------------------------------------------------------------------------------------------
 
 /** A pending local change to one entity's user state (§16.20). Null fields are not pending. */
-internal data class PendingUserState(val starred: Boolean? = null, val userRating: Int? = null)
+internal data class PendingUserState(val starred: Boolean? = null, val userRating: Int? = null, val inLibrary: Boolean? = null)
 
 /**
  * R1d implements this over `mutation_outbox`: the latest pending value per field, overlaid at

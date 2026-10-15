@@ -408,6 +408,7 @@ public class AndroidLibraryReader internal constructor(
         when (outcome.field) {
             MutationField.Starred -> acknowledgedFavourites[kind to outcome.target.rawId] = known == 1
             MutationField.Rating -> acknowledgedRatings[kind to outcome.target.rawId] = known
+            MutationField.InLibrary -> return
         }
         favouriteWatches.toList()
             .filter { it.target.rawId == outcome.target.rawId && it.target.kind == kind }
@@ -804,6 +805,27 @@ public class AndroidLibraryReader internal constructor(
             return
         }
         outcomeListeners.toList().forEach { it.emit(converted) }
+    }
+
+    /** My Library's add or remove (§29.9), as [change] does a favourite; [AndroidMyLibrary] is the entry point. */
+    internal fun changeInLibrary(target: AndroidLibraryEntity, member: Boolean): Boolean {
+        if (target.rawId.isBlank() || closed.get()) return false
+        val ref = LibraryEntityRef(target.kind.toCore(), target.rawId)
+        onReader {
+            val library = composed()?.session?.myLibrary
+            if (library == null) {
+                fanOutOutcome(MutationOutcome.NotRecorded(ref, MutationField.InLibrary))
+                return@onReader
+            }
+            try {
+                if (member) library.add(ref) else library.remove(ref)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                fanOutOutcome(MutationOutcome.NotRecorded(ref, MutationField.InLibrary))
+            }
+        }
+        return true
     }
 
     private fun change(

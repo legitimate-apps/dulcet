@@ -1,0 +1,80 @@
+-- My Library on a server that advertises the `dulcetLibrary` extension (spec §29.9): the read model
+-- of what THIS account has added, so My Library paints from the device and works offline.
+--
+-- Scoped by `server_id` like the seen-cache (one user on one server). Re-derivable from the server,
+-- so not protected data (§11.4); pending adds and removes live in `mutation_outbox`, never here.
+-- `issue_seq` orders writes exactly as the seen-cache's does: a row is rewritten only by a read or an
+-- acknowledgement issued after the one that wrote it. `added_rank` orders by addition, larger is
+-- newer; the server gives no addition time, only newest-first order.
+
+CREATE TABLE my_library_state (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  advertised INTEGER CHECK (advertised IS NULL OR advertised IN (0, 1)),
+  library_clock TEXT,
+  complete INTEGER NOT NULL DEFAULT 0 CHECK (complete IN (0, 1)),
+  read_issue_seq INTEGER NOT NULL DEFAULT 0 CHECK (read_issue_seq >= 0),
+  read_at_wall INTEGER,
+  next_rank INTEGER NOT NULL DEFAULT 1 CHECK (next_rank >= 1)
+);
+
+CREATE TABLE my_library_item (
+  server_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL CHECK (item_kind IN ('artist', 'album', 'track')),
+  raw_id TEXT NOT NULL,
+  member INTEGER NOT NULL CHECK (member IN (0, 1)),
+  added_rank INTEGER NOT NULL,
+  issue_seq INTEGER NOT NULL CHECK (issue_seq >= 0),
+  PRIMARY KEY (server_id, item_kind, raw_id)
+);
+
+CREATE INDEX my_library_item_member ON my_library_item(server_id, member, item_kind);
+
+selectState:
+SELECT advertised, library_clock, complete, read_issue_seq, read_at_wall, next_rank
+FROM my_library_state WHERE server_id = ?;
+
+ensureState:
+INSERT OR IGNORE INTO my_library_state(server_id) VALUES (?);
+
+updateAdvertised:
+UPDATE my_library_state SET advertised = ? WHERE server_id = ?;
+
+updateRead:
+UPDATE my_library_state SET library_clock = ?, complete = ?, read_issue_seq = ?, read_at_wall = ?
+WHERE server_id = ?;
+
+updateNextRank:
+UPDATE my_library_state SET next_rank = ? WHERE server_id = ?;
+
+selectItem:
+SELECT member, added_rank, issue_seq FROM my_library_item
+WHERE server_id = ? AND item_kind = ? AND raw_id = ?;
+
+selectMembers:
+SELECT item_kind, raw_id, added_rank FROM my_library_item
+WHERE server_id = ? AND member = 1;
+
+selectMemberIds:
+SELECT raw_id FROM my_library_item WHERE server_id = ? AND item_kind = ? AND member = 1;
+
+upsertItem:
+INSERT OR REPLACE INTO my_library_item(server_id, item_kind, raw_id, member, added_rank, issue_seq)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- A full read lists every member: a member it did not list, written by something issued before it,
+-- is no longer one. The store selects these and demotes each, rather than binding the listed set.
+selectMembersIssuedBefore:
+SELECT item_kind, raw_id FROM my_library_item WHERE server_id = ? AND member = 1 AND issue_seq < ?;
+
+demoteItem:
+UPDATE my_library_item SET member = 0, issue_seq = :issue_seq
+WHERE server_id = :server_id AND item_kind = :item_kind AND raw_id = :raw_id AND issue_seq < :issue_seq;
+
+-- Rows that say "not a member" carry no information a later read does not repeat.
+deleteNonMembers:
+DELETE FROM my_library_item WHERE server_id = ? AND member = 0 AND issue_seq < ?;
+
+deleteForServer {
+  DELETE FROM my_library_item WHERE server_id = :server_id;
+  DELETE FROM my_library_state WHERE server_id = :server_id;
+}

@@ -437,6 +437,30 @@ public class AppleLibraryReaderClient internal constructor(
         outcomeSubscriptions.toList().forEach { it.emit(converted) }
     }
 
+    /**
+     * My Library's add or remove (§29.9), with the same input checks, NotRecorded fallback and
+     * outcome stream as a favourite; [AppleMyLibraryClient] is the public entry point.
+     */
+    internal fun changeInLibrary(kind: String, rawId: String, member: Boolean): Boolean {
+        val entity = LibraryEntityKind.fromWireName(kind) ?: return false
+        if (rawId.isBlank()) return false
+        val target = LibraryEntityRef(entity, rawId)
+        return onReader {
+            val library = composition?.session?.myLibrary
+            if (library == null) {
+                fanOutOutcome(MutationOutcome.NotRecorded(target, MutationField.InLibrary))
+                return@onReader
+            }
+            try {
+                if (member) library.add(target) else library.remove(target)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                fanOutOutcome(MutationOutcome.NotRecorded(target, MutationField.InLibrary))
+            }
+        }
+    }
+
     private fun change(
         kind: String,
         rawId: String,
