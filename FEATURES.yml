@@ -13,116 +13,6 @@
   ],
   "features": [
     {
-      "id": "library.my_library",
-      "title": "Per-account My Library and Browse on Dulcet Server",
-      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#299-my-library-in-the-apps",
-      "gates": [
-        "extension:dulcetLibrary:1"
-      ],
-      "platforms": {
-        "macos": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetMacUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
-          "evidence": [
-            {
-              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
-            },
-            {
-              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
-            }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
-        },
-        "ios": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
-          "evidence": [
-            {
-              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
-            },
-            {
-              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
-            }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
-        },
-        "ipados": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
-          "evidence": [
-            {
-              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
-            },
-            {
-              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
-            }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
-        },
-        "tvos": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetTVUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
-          "evidence": [
-            {
-              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
-            },
-            {
-              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
-              "workflow": "apple-ci",
-              "job": "apple-ci",
-              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
-            }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
-        },
-        "android": {
-          "status": "planned",
-          "reason": "Android My Library is owned by its separate platform implementation leg."
-        },
-        "androidtv": {
-          "status": "planned",
-          "reason": "Android My Library is owned by its separate platform implementation leg."
-        }
-      }
-    },
-    {
       "id": "account.connect",
       "title": "Connect an OpenSubsonic server",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
@@ -1291,6 +1181,116 @@
              "test": "AndroidTvEmulatorRatingProofTest/theRemoteRatesThePlayingSongOnTheServerAndTheShownStarClearsIt"}
           ],
           "reason": "The conformance-env-linux job runs the TV app's favourite proof against the disposable server and exports its JUnit to the required core-ci execution verifier: an album's star shows in the first publication after the tap, survives a revalidation that lands before the send is answered, and the send's acknowledgement is adopted into the cache with no read; three taps made offline are one pending change, sent once at reconnect. The server is read directly to check each. A heart is also on every song row (album and Favourites), the artist page and Now Playing, and a Favourites screen lists what the server holds; the live proof stars a song and reads it back from the server and through that screen. A change that needs words (refused, held, superseded, not recorded) is said where its heart is, in the shared copy; a pending change is shown as the change itself and labelled nowhere (spec §16.20). The system media notification has no like button (none on Apple either). Five stars rate the playing track on the TV's Now Playing, reached UP from the scrubber and set with the centre key; the star shown removes the rating, and a rating the device does not know is shown and said as unknown, never as 0. The TV has no per-song menu for any action, so a song is rated while it plays. The live rating proof reaches the stars with D-pad keys alone from the player's own first focus and reads the server's userRating back as 4 and then 0. The same rating is also driven on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorRatingProofTest): key events alone, the server's userRating read back as 4, then the centre key again and read back as 0; it executed and passed, one testcase with no failure and none skipped, in three green core-ci runs on main. The remaining rows are Compose/Robolectric compositions and host tests, and no physical device was used."
+        }
+      }
+    },
+    {
+      "id": "library.my_library",
+      "title": "Per-account My Library and Browse on Dulcet Server",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#299-my-library-in-the-apps",
+      "gates": [
+        "extension:dulcetLibrary:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetMacUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "evidence": [
+            {
+              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
+            },
+            {
+              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "Required Apple CI My Library server fixture execution",
+            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
+          }
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "evidence": [
+            {
+              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
+            },
+            {
+              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "Required Apple CI My Library server fixture execution",
+            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
+          }
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "evidence": [
+            {
+              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
+            },
+            {
+              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "Required Apple CI My Library server fixture execution",
+            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
+          }
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetTVUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "evidence": [
+            {
+              "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack"
+            },
+            {
+              "observes": "membership changes accept only current-account targets, partial album membership adds the full album, and closed account publications are cancelled and ignored",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            }
+          ],
+          "promotion_condition": {
+            "status": "blocked",
+            "blocked_on": "Required Apple CI My Library server fixture execution",
+            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
+          }
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Android My Library is owned by its separate platform implementation leg."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Android My Library is owned by its separate platform implementation leg."
         }
       }
     },
