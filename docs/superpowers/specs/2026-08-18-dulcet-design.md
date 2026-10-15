@@ -1329,7 +1329,8 @@ both additive, seeded with nothing, and not protected data.
   constraints (compared as expressions, whitespace aside) a fresh install creates, and compares the
   `cache_playlist` rows of every fixture that holds the columns schema 7 added — a cache table, so
   not protected data, but a column a schema added is compared with data — each again with a
-  negative control. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
+  negative control. From schema 9 it also compares the re-derivable `my_library_item` and
+  `my_library_state` rows. The fresh install it compares with is SQLDelight's own snapshot of the `.sq`
   files; from schema 8 the gate also builds the schema from the current `.sq` files alone, requires
   that build to equal the snapshot (so an empty difference is the instrument agreeing, not the
   instrument reading nothing) and requires the newest fixture to equal it object for object
@@ -1338,7 +1339,7 @@ both additive, seeded with nothing, and not protected data.
   by hand: `tools/generate_migration_fixture.py --to N` copies fixture N−1, applies
   `migrations/<N−1>.sqm` as shipped, sets the schema version, adds that version's seed rows and
   vacuums; `--check` regenerates into a temporary directory and requires the committed fixture to
-  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v8 (v1–v3 were
+  be byte-identical. It writes only with SQLite 3.51.0, the build that wrote v4–v9 (v1–v3 were
   written by 3.50.6; none reserves bytes per page), and refuses any other, since a different build
   lays pages out differently (revision 104, item 23). That byte check is local; CI runs
   `--all --check-semantic` in the parity gate, which any SQLite build can answer: it regenerates
