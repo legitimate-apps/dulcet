@@ -13,17 +13,30 @@ network is used. Cases:
 
 from contextlib import contextmanager
 import hashlib
-from importlib.machinery import SourceFileLoader
 import io
 from pathlib import Path
 import tarfile
 import tempfile
 
 
+def _load_source(name, path):
+    """Imports a tool that has no .py suffix. Loaders no longer offer load_module() on the
+    Python that hosted macOS runners now run (apple-ci run 38680055395), so exec_module()
+    runs it, registered first as load_module() did."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
 TOOLS = Path(__file__).parent
-installer = SourceFileLoader(
+installer = _load_source(
     "install_darwin_ffmpeg", str(TOOLS / "conformance-env" / "install-darwin-ffmpeg")
-).load_module()
+)
 
 
 def tarball(name: str, payload: bytes) -> bytes:
