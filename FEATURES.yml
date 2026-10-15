@@ -1185,10 +1185,10 @@
       }
     },
     {
-      "id": "library.mylibrary",
-      "title": "My Library beside Browse, per account, where the server advertises dulcetLibrary",
+      "id": "library.my_library",
+      "title": "Per-account My Library and Browse on Dulcet Server",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#299-my-library-in-the-apps",
-      "gates": ["account:authenticated"],
+      "gates": ["extension:dulcetLibrary:1"],
       "platforms": {
         "macos": {
           "status": "n/a",
