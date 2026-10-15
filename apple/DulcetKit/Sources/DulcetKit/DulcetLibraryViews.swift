@@ -757,6 +757,8 @@ struct DulcetTrackRow<Trailing: View>: View {
         surface: DulcetTrackRowSurface = .window,
         isCurrent: Bool = false,
         showsArtwork: Bool = true,
+        showsIndex: Bool = true,
+        prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
@@ -769,6 +771,8 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.surface = surface
         self.isCurrent = isCurrent
         self.showsArtwork = showsArtwork
+        self.showsIndex = showsIndex
+        self.prominentTVFocus = prominentTVFocus
         self.albumArtists = albumArtists
         self.onActivate = onActivate
         self.onDownload = onDownload
@@ -1125,6 +1129,8 @@ extension DulcetTrackRow where Trailing == EmptyView {
         surface: DulcetTrackRowSurface = .window,
         isCurrent: Bool = false,
         showsArtwork: Bool = true,
+        showsIndex: Bool = true,
+        prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil
@@ -1137,6 +1143,8 @@ extension DulcetTrackRow where Trailing == EmptyView {
             surface: surface,
             isCurrent: isCurrent,
             showsArtwork: showsArtwork,
+            showsIndex: showsIndex,
+            prominentTVFocus: prominentTVFocus,
             albumArtists: albumArtists,
             onActivate: onActivate,
             onDownload: onDownload,
