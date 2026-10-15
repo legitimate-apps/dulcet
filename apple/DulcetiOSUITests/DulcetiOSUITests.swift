@@ -3980,10 +3980,7 @@ final class DulcetiOSUITests: XCTestCase {
               playAlbumTrack("UI Playback Canary", in: app),
               openNowPlayingFromBar(in: app, expectingTitle: "UI Playback Canary") else { return }
         let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
-        func button(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isEnabled && $0.isHittable }
-        }
+        func button(_ label: String) -> XCUIElement? { visiblePlayerButton(label, in: app) }
         func press(_ label: String) -> Bool {
             guard let control = button(label) else {
                 XCTFail("The player must offer a tappable \(label): " + app.debugDescription)
@@ -4390,6 +4387,20 @@ final class DulcetiOSUITests: XCTestCase {
         return stars
     }
 
+    /// The tappable player control labelled `label`. The hidden bar carries a second transport
+    /// row whose copies can leave between the query and a read of one of them; a lazily resolved
+    /// element's `frame` then records "Failed to get matching snapshot" as a test failure
+    /// (OBSERVED on main's hosted run 38666950484, element at index 1). Each candidate is read
+    /// through one throwing snapshot first, so a departed copy is skipped, and hittability is
+    /// asked only of a drawn, enabled one.
+    @MainActor
+    private func visiblePlayerButton(_ label: String, in app: XCUIApplication) -> XCUIElement? {
+        app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first { element in
+            guard let snapshot = try? element.snapshot(), snapshot.frame.width > 0, snapshot.isEnabled else { return false }
+            return element.isHittable
+        }
+    }
+
     /// Returns to the proof's song through actual transport presses, then leaves it paused so
     /// a delayed heart or stars tap cannot reach a song that advanced automatically. Previous
     /// starts its selected song, so pause again after every press. Four presses also cover a
@@ -4397,10 +4408,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
         // Re-query by label: Pause becomes Play, and the hidden bar has another transport row.
-        func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
-        }
+        func playerButton(_ label: String) -> XCUIElement? { visiblePlayerButton(label, in: app) }
         func pauseCurrent(waitForStart: Bool) -> Bool {
             let startedDeadline = Date().addingTimeInterval(10)
             var pause = playerButton("Pause")
