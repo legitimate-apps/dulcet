@@ -75,10 +75,10 @@ val fatJar by tasks.registering(Jar::class) {
 
 tasks.test {
     useJUnitPlatform()
-    // The self-tests start in-process mock servers; one fault per run, so they are cheap but many.
+    // Each fault runs its named checks and setup; the healthy test covers the whole suite once.
     maxHeapSize = "1g"
     testLogging {
-        events("failed")
+        events("started", "passed", "failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         showExceptions = true
         showCauses = true

@@ -2,10 +2,12 @@ package com.legitimateapps.dulcet.apiconformance
 
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
+import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -18,7 +20,6 @@ import kotlin.test.assertTrue
  */
 class SuiteSelfTest {
 
-    /** Checks a healthy mock still skips: four wait on hooks the contract has not defined, and DA-DEV-2 needs a person. */
     /** Only the checks the contract keeps manual (restarting or starting a server is outside the API). */
     private val expectedSkips = emptySet<String>()
 
@@ -166,11 +167,33 @@ class SuiteSelfTest {
     @TestFactory
     fun `every deliberate fault fails the check that covers it`() = negativeControls.map { (fault, ids) ->
         DynamicTest.dynamicTest("$fault fails ${ids.joinToString()}") {
-            val r = runAgainst(setOf(fault))
-            val failed = r.failedIds()
-            assertTrue(failed.containsAll(ids), "$fault: expected ${ids} to FAIL, failures were $failed\n${r.output}")
-            assertEquals(1, r.code)
+            // JUnit's method timeout only bounds the factory, not its dynamic children.
+            assertTimeoutPreemptively(Duration.ofSeconds(90)) {
+                val only = checksForNegativeControl(ids)
+                // Prove the same selection passes without the fault: missing setup must never
+                // masquerade as detection. The full healthy test above still covers all profiles.
+                val healthy = runAgainst(tweak = { it.copy(only = only) })
+                assertEquals(emptySet(), healthy.failedIds(), "$fault healthy control:\n${healthy.output}")
+                for (id in only) assertEquals(Outcome.PASS, healthy.outcome(id), "$fault healthy $id:\n${healthy.output}")
+                val r = runAgainst(setOf(fault), tweak = { it.copy(only = only) })
+                val failed = r.failedIds()
+                assertTrue(failed.containsAll(ids), "$fault: expected ${ids} to FAIL, failures were $failed\n${r.output}")
+                assertEquals(1, r.code)
+            }
         }
+    }
+
+    /** Shared subjects and the few checks that consume state left by an earlier check. */
+    private fun checksForNegativeControl(ids: Set<String>): Set<String> {
+        val only = (ids + setOf("DA-PRE-1", "DA-PRE-2", "DA-DISC-1", "DA-DISC-4")).toMutableSet()
+        if ("DA-AUTH-7" in ids) only += setOf("DA-AUTH-3", "DA-AUTH-6")
+        if ("DA-AUTH-10" in ids) only += setOf("DA-AUTH-3", "DA-AUTH-9")
+        if (ids.any { it in setOf("DA-SYNC-13", "DA-SYNC-14") }) only += "DA-SYNC-12"
+        // DA-ERR-1 inspects earlier errors; request an unknown catalog id to produce a 404.
+        if ("DA-ERR-1" in ids) only += "DA-CAT-5"
+        // DA-LOG-1 inspects earlier responses; exercise issuance and fetching of a media URL.
+        if ("DA-LOG-1" in ids) only += "DA-MEDIA-1"
+        return only
     }
 
     @Test
