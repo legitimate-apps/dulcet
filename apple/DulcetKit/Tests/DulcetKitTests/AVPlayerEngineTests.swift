@@ -662,6 +662,66 @@ private func mp3FramesWithUndecodablePayloads() -> Data {
 
 @Suite(.serialized)
 struct AVPlayerEngineTests {
+    @Test @MainActor
+    func aMainThreadRemoteCommandCallsTheCoreRouterOutsideTheEngineQueue() async {
+        let controls = RecordingSystemMediaControls()
+        let queue = DispatchQueue(label: "dulcet.tests.remote-reentry")
+        let router = ReentrantRemoteCommandRouter(queue: queue)
+        let engine = DulcetAVPlayerEngine(
+            clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: false,
+            systemMediaControls: controls, remoteCommandRouter: router, queue: queue
+        )
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemReadyForTesting(duration: 60, seekability: .seekable)
+        #expect(controls.send(.pause(sessionID: .init("session"))),
+                "a main-thread command must reach the main-thread core router without a queue inversion")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test @MainActor
+    func lateDurationEnablesTheSystemScrubberWithoutAnArtworkRefresh() async {
+        let engine = DulcetAVPlayerEngine(
+            clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: false
+        )
+        let center = MPNowPlayingInfoCenter.default()
+        let commands = MPRemoteCommandCenter.shared()
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        engine.reportCurrentItemReadyForTesting(duration: nil, seekability: .unknown)
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] == nil)
+        #expect(!commands.changePlaybackPositionCommand.isEnabled)
+        engine.reportCurrentItemDurationForTesting(60, seekability: .seekable)
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
+        #expect(commands.changePlaybackPositionCommand.isEnabled)
+        #expect(events.snapshot.contains {
+            if case let .observationResynced(_, snapshot) = $0 {
+                return snapshot.seekability == .seekable && snapshot.duration == 60
+            }
+            return false
+        }, "the core's command router must receive updated seekability too")
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil,
+                "duration and scrubber do not depend on an artwork callback")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    @Test @MainActor
+    func aColdPreparePublishesBeforeReadinessAndProgressRestoresAnEvictedEntry() async {
+        let clock = ManualAVPlayerEngineClock()
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let center = MPNowPlayingInfoCenter.default()
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Playback fixture",
+                "slow media and missing artwork must not delay publication")
+        engine.reportCurrentItemReadyForTesting(duration: 60, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        center.nowPlayingInfo = nil
+        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Playback fixture")
+        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
     #if !os(macOS)
     @Test
     func manuallyReportedReadinessPublishesSeekabilityWithoutAVFoundationTiming() async {
@@ -801,7 +861,7 @@ struct AVPlayerEngineTests {
         let liveness = await engine.probeQueueLivenessForTesting(timeout: blockedQueueProbeTimeout)
 
         #expect(events.containsReady(seekability: .seekable))
-        #expect(mediaControls.publications.first?.seekability == .seekable)
+        #expect(mediaControls.publications.last?.seekability == .seekable)
         if case .responsive = liveness {
             // Expected: media sampling is isolated from the serialized engine state machine.
         } else {
@@ -1299,7 +1359,7 @@ struct AVPlayerEngineTests {
             engine: engine,
             timeout: realAVFoundationProgressTimeout
         ) {
-            !mediaControls.publications.isEmpty
+            mediaControls.publications.last?.seekability == .seekable
         }
         #expect(mediaControls.publications.last?.artworkImageData == nil)
 
@@ -1580,14 +1640,15 @@ struct AVPlayerEngineTests {
     }
 
     @Test
-    func nowPlayingIsNotPublishedAtPreparingAndBecomesSeekableOnlyAfterReady() async throws {
+    func nowPlayingPublishesAtPreparingAndBecomesSeekableOnlyAfterReady() async throws {
         let mediaControls = RecordingSystemMediaControls()
         let suspended = SuspendedPlaybackResource()
         let engine = DulcetAVPlayerEngine(systemMediaControls: mediaControls)
         let playbackPlan = plan(resource: suspended, title: "Ordered metadata")
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
-        #expect(mediaControls.publications.isEmpty)
+        #expect(mediaControls.publications.last?.metadata.title == "Ordered metadata")
+        #expect(mediaControls.publications.last?.seekability == .unknown)
 
         suspended.resume(with: makePCMWave(duration: 2))
         try await waitUntil(
@@ -1595,9 +1656,9 @@ struct AVPlayerEngineTests {
             engine: engine,
             timeout: realAVFoundationProgressTimeout
         ) {
-            mediaControls.publications.count == 1
+            mediaControls.publications.last?.seekability == .seekable
         }
-        let state = try #require(mediaControls.publications.first)
+        let state = try #require(mediaControls.publications.last)
         #expect(state.metadata.title == "Ordered metadata")
         #expect(state.seekability == .seekable)
         #expect(state.sessionID == playbackPlan.playbackSessionID)
@@ -1618,7 +1679,7 @@ struct AVPlayerEngineTests {
             engine: engine,
             timeout: realAVFoundationProgressTimeout
         ) {
-            mediaControls.publications.count == 1
+            mediaControls.publications.last?.seekability == .seekable
         }
         ordering.reset()
 
@@ -2015,6 +2076,19 @@ struct AVPlayerEngineTests {
         #expect(!DulcetMacAudioRouteClassifier.becomingNoisy(old: .hdmi, new: .builtIn))
     }
     #endif
+}
+
+/// The core router enters MainActor, whose observation callbacks can reenter the engine. Prove
+/// that the engine queue can service work while routing, without hanging the test on an actual
+/// main/engine queue inversion. Thread.isMainThread alone cannot detect an inline dispatch sync.
+private final class ReentrantRemoteCommandRouter: DulcetRemotePlaybackCommandRouting, Sendable {
+    let queue: DispatchQueue
+    init(queue: DispatchQueue) { self.queue = queue }
+    func handleRemotePlaybackCommand(_ command: DulcetRemotePlaybackCommand) -> Bool {
+        let serviced = DispatchSemaphore(value: 0)
+        queue.async { serviced.signal() }
+        return serviced.wait(timeout: .now() + 1) == .success
+    }
 }
 
 private func execute(

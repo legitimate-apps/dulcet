@@ -1986,9 +1986,12 @@ The supported command set is declared once in the core and mirrored by both `Now
 implementations: play, pause, toggle, next, previous, seek (**only when the engine reports the item
 seekable**), and rating/favourite where the user's role permits it. Not supported in v1: queue editing
 from system UI, playback-rate control, and chapter navigation. Metadata updates are ordered — Now
-Playing is updated after `Ready` and after each `AttemptReplaced`, never speculatively at `Preparing`,
-so the system UI never shows a track that failed to start. Commands arriving for a stale session are
-rejected, not applied to the current one.
+Playing is updated after `Ready` and after each `AttemptReplaced`. Apple also publishes the known
+track metadata at `Preparing`, after audio-session activation, with elapsed time zero and playback
+rate zero until playback starts; stream readiness and artwork must not gate the entry's existence.
+Late duration and seekability update both the system entry and the core observation. Stop/release
+withdraw the entry, and transport samples restore an evicted system dictionary from retained
+metadata. Commands arriving for a stale session are rejected, not applied to the current one.
 
 **Revision 106.** Rating and like are **not registered** with the system command centre until a
 shell can reach the favourites outbox (§18.3): a lock-screen heart whose handler answers "failed" is
@@ -7867,6 +7870,17 @@ DNS pinning and plaintext security enforcement are unchanged (§10.2, §13.5). H
 skips the hidden control. The Mac's hosted keyboard proofs retain exact focus traces, Return submission,
 Escape cancellation and duplicate-Return assertions with that expected sequence. Credential labels
 no longer repeat as placeholders, and the Mac uses a grouped native Form with a trailing default action.
+
+**2026-10-12 — Apple Now Playing publishes during preparation and recovers lost metadata.**
+The Apple engine publishes the known track after audio activation, before stream readiness, and
+refreshes late duration and seekability without resetting the playback attempt. A transport sample
+restores a lost system entry, including artwork, while an intact entry keeps elapsed-time write
+coalescing. Remote handlers persist through same-session metadata updates. OBSERVED: production
+engine and default MediaPlayer-center regressions fail on the previous implementation and pass
+with the changes (`AVPlayerEngineTests`, `SystemNowPlayingTests`). These regressions establish the
+preparation/recovery defects; the cause of a particular naturally intermittent device incident
+remains ASSUMED until reproduced on that path. System UI and production composition evidence are
+separate from these host regressions.
 
 **2026-10-11 — `account.connect/ios` ships on the signed iPhone device receipt.**
 The signed iPhone lane runs the shared signed account-connect proof, without rotation, on a fresh

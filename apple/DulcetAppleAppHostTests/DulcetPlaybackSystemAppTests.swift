@@ -2,6 +2,7 @@ import CryptoKit
 import DulcetCore
 import Foundation
 import MediaPlayer
+import Network
 import XCTest
 @testable import DulcetKit
 #if os(iOS)
@@ -171,6 +172,79 @@ final class DulcetPlaybackSystemAppTests: XCTestCase {
 
     // MARK: Helpers
 
+    /// Hold only the stream's response while all REST metadata reaches the disposable server.
+    /// This reproduces a cold/slow transcode without changing the production composition.
+    func testColdProductionQueuePublishesBeforeSlowStreamReadiness() async throws {
+        let server = try disposableServer()
+        let album = try await server.album(named: "Threshold Boundary")
+        let song = try XCTUnwrap(album.songs.first { $0.title == "UI Playback Canary" })
+        let proxy = try SlowPlaybackStreamProxy(upstream: server.baseURL)
+        defer { proxy.stop() }
+        try await waitUntil("the local stream proxy never listened", seconds: 10) { proxy.port != nil }
+        let port = try XCTUnwrap(proxy.port)
+        let composition = DulcetAppleProduction.makeIOSComposition()
+        let controller = composition.playbackController
+        let provider = "now-playing-cold-\(UUID().uuidString)"
+        controller.configure(account: DulcetPlaybackAccount(
+            providerInstanceID: provider, normalizedServerURL: "http://127.0.0.1:\(port)",
+            username: username, password: password, allowLocalHTTP: true
+        ))
+        defer { controller.disconnect() }
+        controller.replaceQueueAndPlay(DulcetPlaybackQueueIntent(
+            tracks: [song.dulcetTrack(provider: provider)], sourceKind: .album,
+            sourceID: nil, sourceDisplayName: album.name, startIndex: 0, shuffle: false
+        ))
+        try await waitUntil("the production player did not request the held stream", seconds: 30) {
+            proxy.heldStream
+        }
+        let center = MPNowPlayingInfoCenter.default()
+        XCTAssertEqual(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, song.title,
+                       "metadata must publish while the first stream is still preparing")
+        XCTAssertEqual(center.nowPlayingInfo?[MPMediaItemPropertyArtist] as? String, "Dulcet Fixture")
+        XCTAssertEqual(center.nowPlayingInfo?[MPMediaItemPropertyAlbumTitle] as? String, album.name)
+        XCTAssertFalse(MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled,
+                       "the positive metadata control must not invent a seekable stream")
+        print("NOW-PLAYING-COLD-EVIDENCE production-factory=true stream-held=true title-published=\(center.nowPlayingInfo?[MPMediaItemPropertyTitle] != nil)")
+    }
+
+    /// The real iOS factory, core controller, AVFoundation player and default system center.
+    /// Losing the system entry during steady playback must recover without a skip, artwork
+    /// completion or pause. The deliberate eviction is the trigger, not a mock publisher.
+    func testProductionPlaybackRestoresAnEvictedNowPlayingEntry() async throws {
+        let server = try disposableServer()
+        let album = try await server.album(named: "Threshold Boundary")
+        let song = try XCTUnwrap(album.songs.first { $0.title == "UI Playback Canary" })
+        let composition = DulcetAppleProduction.makeIOSComposition()
+        let controller = composition.playbackController
+        let provider = "now-playing-recovery-\(UUID().uuidString)"
+        controller.configure(account: DulcetPlaybackAccount(
+            providerInstanceID: provider, normalizedServerURL: server.baseURL,
+            username: username, password: password, allowLocalHTTP: true
+        ))
+        defer { controller.disconnect() }
+        controller.replaceQueueAndPlay(DulcetPlaybackQueueIntent(
+            tracks: [song.dulcetTrack(provider: provider)], sourceKind: .album,
+            sourceID: nil, sourceDisplayName: album.name, startIndex: 0, shuffle: false
+        ))
+        let center = MPNowPlayingInfoCenter.default()
+        try await waitUntil("the cold queue did not publish metadata and artwork", seconds: 45) {
+            center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == song.title &&
+                center.nowPlayingInfo?[MPMediaItemPropertyArtwork] != nil &&
+                (center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double ?? 0) > 1
+        }
+        // Let readiness/artwork/capability updates settle before the eviction.
+        try await Task.sleep(for: .seconds(2))
+        center.nowPlayingInfo = nil
+        try await waitUntil("steady production playback left the system entry empty", seconds: 2) {
+            center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == song.title
+        }
+        XCTAssertEqual(center.nowPlayingInfo?[MPMediaItemPropertyArtist] as? String, "Dulcet Fixture")
+        XCTAssertEqual(center.nowPlayingInfo?[MPMediaItemPropertyAlbumTitle] as? String, album.name)
+        XCTAssertGreaterThan(try XCTUnwrap(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double), 0)
+        try assertDecodableArtwork(center, "recovered")
+        print("NOW-PLAYING-RECOVERY-EVIDENCE production-factory=true system-entry-restored=true")
+    }
+
     private func assertDecodableArtwork(_ center: MPNowPlayingInfoCenter, _ label: String) throws {
         let artwork = try XCTUnwrap(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork)
         XCTAssertGreaterThan(artwork.bounds.width, 0)
@@ -185,8 +259,17 @@ final class DulcetPlaybackSystemAppTests: XCTestCase {
         let environment = ProcessInfo.processInfo.environment
         let baseURL = try XCTUnwrap(environment["DULCET_CONFORMANCE_BASE_URL"],
                                     "supply the local disposable server as TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL")
-        guard environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true",
-              let host = URL(string: baseURL)?.host, host == "127.0.0.1" else {
+        let host = URL(string: baseURL)?.host ?? ""
+        let components = host.split(separator: ".", omittingEmptySubsequences: false)
+        let address = components.compactMap { Int($0) }
+        let privateLAN = components.count == 4
+            && components.allSatisfy { !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }
+            && address.count == 4 && address.allSatisfy { (0...255).contains($0) }
+            && (address[0] == 10 || (address[0] == 172 && (16...31).contains(address[1]))
+                || (address[0] == 192 && address[1] == 168))
+        let allowedHost = host == "127.0.0.1"
+            || (environment["DULCET_CONFORMANCE_ALLOW_PRIVATE_LAN"] == "true" && privateLAN)
+        guard environment["DULCET_CONFORMANCE_DISPOSABLE"] == "true", allowedHost else {
             XCTFail("playback-system evidence writes play counts: local disposable server only")
             throw PlaybackSystemTestError.notDisposable
         }
@@ -215,6 +298,76 @@ private enum PlaybackSystemTestError: Error {
     case notDisposable
     case timedOut
     case server(String)
+}
+
+/// A test-owned loopback proxy. No request URL or credential is logged. Only /rest/stream is
+/// held; real metadata requests are forwarded to the already-validated disposable fixture.
+private final class SlowPlaybackStreamProxy: @unchecked Sendable {
+    private let listener: NWListener
+    private let upstream: String
+    private let queue = DispatchQueue(label: "dulcet.tests.slow-stream")
+    private let lock = NSLock()
+    private var connections: [NWConnection] = []
+    private var didHold = false
+    private var listeningPort: UInt16?
+    var port: UInt16? { lock.lock(); defer { lock.unlock() }; return listeningPort }
+    var heldStream: Bool { lock.lock(); defer { lock.unlock() }; return didHold }
+
+    init(upstream: String) throws {
+        self.upstream = upstream
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
+        listener.stateUpdateHandler = { [weak self] state in
+            guard let self, case .ready = state else { return }
+            self.lock.lock(); self.listeningPort = self.listener.port?.rawValue; self.lock.unlock()
+        }
+        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
+        listener.start(queue: queue)
+    }
+
+    func stop() {
+        listener.cancel()
+        lock.lock(); let active = connections; connections = []; lock.unlock()
+        active.forEach { $0.cancel() }
+    }
+
+    private func accept(_ connection: NWConnection) {
+        lock.lock(); connections.append(connection); lock.unlock()
+        connection.start(queue: queue)
+        receive(connection, prefix: Data())
+    }
+
+    private func receive(_ connection: NWConnection, prefix: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, done, error in
+            guard let self, let data, error == nil else { connection.cancel(); return }
+            let request = prefix + data
+            guard let text = String(data: request, encoding: .utf8), text.contains("\r\n\r\n") else {
+                if !done, request.count < 65_536 { self.receive(connection, prefix: request) }
+                else { connection.cancel() }
+                return
+            }
+            let parts = text.components(separatedBy: "\r\n")[0].split(separator: " ")
+            guard parts.count == 3, parts[0] == "GET",
+                  let target = URL(string: self.upstream + String(parts[1])) else {
+                connection.cancel(); return
+            }
+            let endpoint = target.lastPathComponent.replacingOccurrences(of: ".view", with: "")
+            if endpoint == "stream" || endpoint == "getTranscodeStream" {
+                self.lock.lock(); self.didHold = true; self.lock.unlock()
+                return
+            }
+            Task {
+                do {
+                    let (body, response) = try await URLSession.shared.data(from: target)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 502
+                    var reply = Data("HTTP/1.1 \(status) Response\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                    reply.append(body)
+                    connection.send(content: reply, completion: .contentProcessed { _ in connection.cancel() })
+                } catch { connection.cancel() }
+            }
+        }
+    }
 }
 
 private struct DisposableSong {
