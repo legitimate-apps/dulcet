@@ -218,7 +218,12 @@ public class LibrarySession internal constructor(
      * splits and no library endpoint is ever called. Closed with this session.
      */
     public val myLibrary: MyLibrarySession
-        get() = myLibrarySession ?: MyLibrarySession(CoreMyLibrarySource(reader)).also { myLibrarySession = it }
+        get() = myLibrarySession ?: MyLibrarySession(CoreMyLibrarySource(reader)).also {
+            myLibrarySession = it
+            // Availability begins unknown: detection must precede the shell's Library/Browse split.
+            // A restored account stays local until start() begins its automatic reconnect.
+            it.refresh()
+        }
 
     internal val isClosed: Boolean get() = closed
 

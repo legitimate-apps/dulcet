@@ -63,7 +63,7 @@ class PhoneMyLibraryIntegrationTest {
         }
     }
 
-    private fun host(): ActivityScenario<ComponentActivity> {
+    private fun host(restoredAccount: Boolean = false): ActivityScenario<ComponentActivity> {
         val dependencies = object : SearchHostDependencies {
             override fun loadAccount(context: android.content.Context): SearchAccount = account
             override fun createPresenter(account: SearchAccount, context: android.content.Context, foreground: Boolean) =
@@ -72,7 +72,9 @@ class PhoneMyLibraryIntegrationTest {
         val scenario = ActivityScenario.launch(ComponentActivity::class.java)
         scenarios += scenario
         scenario.onActivity { activity ->
-            activity.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null) } }
+            activity.setContent { MaterialTheme {
+                PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null, restoredAccount = restoredAccount)
+            } }
         }
         compose.waitForIdle()
         return scenario
@@ -170,6 +172,19 @@ class PhoneMyLibraryIntegrationTest {
         assertFalse(exists("mylibrary.surface"))
         assertTrue(server.requests("getDulcetLibrary").isEmpty(), "the library endpoint is never called")
         assertTrue(server.requests("addToDulcetLibrary").isEmpty())
+        assertTrue(server.requests("removeFromDulcetLibrary").isEmpty())
+    }
+
+    @Test fun savedAccountAutomaticallyReconnectsAndDiscoversTheSplitWithoutAnotherRefresh() {
+        server.dulcetLibrary = true
+        host(restoredAccount = true)
+        click("library.open")
+        await("the split after automatic reconnect") { exists("browse.open") }
+        await("the account's library read") { server.requests("getDulcetLibrary").isNotEmpty() }
+        assertTrue(server.requests("getScanStatus").isNotEmpty(), "startup uses the ordinary reconnect")
+        assertTrue(server.requests("getOpenSubsonicExtensions").isNotEmpty(), "startup discovers the extension")
+        assertFalse(exists("library.reconnect"), "a connected account has no reconnect banner")
+        assertTrue(server.requests("addToDulcetLibrary").isEmpty(), "discovery does not mutate membership")
         assertTrue(server.requests("removeFromDulcetLibrary").isEmpty())
     }
 
