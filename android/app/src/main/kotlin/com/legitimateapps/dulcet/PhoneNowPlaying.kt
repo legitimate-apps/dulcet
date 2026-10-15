@@ -6,6 +6,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.outcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
@@ -477,14 +478,13 @@ private fun PlayerError(state: AndroidPlaybackState, saved: (@Composable () -> U
 }
 
 /**
- * The saved account waiting for the person (spec §13.1): the player restored what the device holds,
- * and a song that needs the server waits for Reconnect, which connects in place. Nothing once connected.
+ * One restored-player connection notice, including authentication and trust failures, with Reconnect.
  */
 @Composable
 private fun NowPlayingSavedNotice(session: LibrarySession, account: SearchAccount, state: AndroidPlaybackState) {
     val connection by session.connection.collectAsState()
     val resources = libraryResources()
-    val savedLine = resources.savedAccountLine(connection, account) ?: return
+    val savedLine = resources.savedAccountLine(connection, account) ?: resources.connectionLine(connection) ?: return
     val line = if (state.needsReconnect) resources.getString(SharedR.string.now_playing_needs_reconnect) else savedLine
     Card(modifier = Modifier.fillMaxWidth().testTag("player.saved")) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

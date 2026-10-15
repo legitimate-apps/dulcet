@@ -329,12 +329,19 @@ internal class LibraryReader(
         }
     }
 
+    /** Optional shell observation, including retries that have no explicit caller or open window. */
+    internal var reconnectObserver: ((ReaderConnectionOutcome) -> Unit)? = null
+
     private fun startReconnect(): Deferred<ReaderConnectionOutcome> {
         inFlightReconnect?.let { return it }
         // A reconnect starting now makes a pending retry redundant.
         reconnectRetry?.cancel()
         reconnectRetry = null
-        val run = scope.async(start = CoroutineStart.LAZY) { performReconnect() }
+        val run = scope.async(start = CoroutineStart.LAZY) {
+            performReconnect().also { outcome ->
+                try { reconnectObserver?.invoke(outcome) } catch (failure: Throwable) { uncaughtFailures += failure }
+            }
+        }
         inFlightReconnect = run
         run.invokeOnCompletion { if (inFlightReconnect === run) inFlightReconnect = null }
         run.start()

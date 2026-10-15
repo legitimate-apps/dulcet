@@ -27,12 +27,18 @@ on:
         required: true
         default: '20'
         type: string
+      disposable_conformance:
+        description: Start the local disposable Navidrome and enable production app conformance tests
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Phone and TV samples on the same ref are independent and must not cancel each other.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}
   cancel-in-progress: true
 
 jobs:
@@ -78,6 +84,12 @@ jobs:
         with:
           packages: platform-tools platforms;android-${{ steps.pins.outputs.compile_sdk }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Start disposable conformance environment
+        if: ${{ inputs.disposable_conformance }}
+        run: |
+          root="$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label android-soak)"
+          echo "SOAK_CONFORMANCE_ROOT=$root" >> "$GITHUB_ENV"
+          tools/conformance-env/linux-local --root "$root" up
       - name: Repeat the filtered tests
         shell: bash
         run: |
@@ -90,6 +102,10 @@ jobs:
           results_dir="$project_dir/build/test-results/$task_name"
           failures_dir="$RUNNER_TEMP/android-test-soak-failures"
           mkdir -p "$failures_dir"
+          command=(./gradlew --max-workers=2 --no-build-cache)
+          if [[ -n "${SOAK_CONFORMANCE_ROOT:-}" ]]; then
+            command=(tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" run -- "${command[@]}" -Pdulcet.productionSearchConformance)
+          fi
 
           passed=0
           failed=0
@@ -106,7 +122,7 @@ jobs:
             rm -rf "$results_dir"
             # The runner starts bash with -e: a failing Gradle run must be recorded, not end the soak.
             gradle_exit=0
-            ./gradlew --max-workers=2 --no-build-cache "$SOAK_TASK" --tests "$SOAK_TESTS" --rerun \
+            "${command[@]}" "$SOAK_TASK" --tests "$SOAK_TESTS" --rerun \
               > "$RUNNER_TEMP/soak-$label.log" 2>&1 || gradle_exit=$?
             counts="$(python3 - "$results_dir" <<'PY'
           import sys
@@ -164,6 +180,12 @@ jobs:
           if (( passed < SOAK_REPEAT )); then
             echo "SOAK ERROR only $passed of $SOAK_REPEAT repetitions ran inside the budget"
             exit 1
+          fi
+      - name: Stop disposable conformance environment
+        if: ${{ always() && inputs.disposable_conformance }}
+        run: |
+          if [[ -n "${SOAK_CONFORMANCE_ROOT:-}" ]]; then
+            tools/conformance-env/linux-local --root "$SOAK_CONFORMANCE_ROOT" down
           fi
       - name: Upload failing repetitions
         if: ${{ always() }}

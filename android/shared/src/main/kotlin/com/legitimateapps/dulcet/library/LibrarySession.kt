@@ -81,13 +81,10 @@ import kotlinx.coroutines.flow.update
  * with it. Every callback
  * of this class runs on the main thread, the platform's network callbacks included.
  *
- * **A launch into a saved account (§13.1, CONF-10b).** A session made with a [savedAccountId] whose
- * reader the person has not connected in this process ([SavedAccountConnection]) contacts nothing:
- * before any window opens the reader is told the server is unreachable, so every screen paints what
- * this device has seen, and the session reports no network, starts no reconnect and says
- * [LibraryConnectionState.Saved]. Only the person's own [connectSavedAccount] — Reconnect, or "Try
- * again" and a refresh, which ask for the server too — ends that, and the session then reconnects in
- * place: the screens stay open and go live.
+ * **A launch into a saved account.** Before any window opens, its new reader is offline, so the
+ * device library paints immediately. [start] opens server contact and requests the ordinary reconnect
+ * in the background. The reader owns joining, bounded requests and transient retry backoff; foreground
+ * and network reports use the same path. A manual [connectSavedAccount] remains a fallback.
  */
 public class LibrarySession internal constructor(
     private val reader: AndroidLibraryReader,
@@ -97,13 +94,12 @@ public class LibrarySession internal constructor(
     /**
      * [foreground]: whether the host is in the foreground now ([hostInForeground]), for the process's
      * reader if this creates it. [start] and [stop] report every change after that.
-     * [untilReconnectChosen]: the host opened the app on a saved account, so nothing is sent until the
-     * person connects it in this process — the app's own entry points pass true.
+     * [restoredAccount]: paints a saved account from the device before [start] reconnects it.
      */
-    public constructor(context: Context, account: SearchAccount, foreground: Boolean, untilReconnectChosen: Boolean = false) : this(
+    public constructor(context: Context, account: SearchAccount, foreground: Boolean, restoredAccount: Boolean = false) : this(
         AndroidLibraryReader.forAccount(context, account.toReaderAccount(), foreground),
         context.applicationContext.getSystemService(ConnectivityManager::class.java),
-        account.providerInstanceId.takeIf { untilReconnectChosen },
+        account.providerInstanceId.takeIf { restoredAccount },
     )
 
     private val observationState = MutableStateFlow(LibraryObservationState())
@@ -219,7 +215,7 @@ public class LibrarySession internal constructor(
     private var started = false
     private var closed = false
 
-    /** Whether the person has yet to connect the saved account in this process; see the class notes. */
+    /** A restored reader whose host has not started its automatic reconnect yet. */
     private var awaitingReconnect = savedAccountId != null && !SavedAccountConnection.isConnected(reader, savedAccountId)
 
     /**
@@ -239,6 +235,13 @@ public class LibrarySession internal constructor(
             setConnection(LibraryConnectionState.Saved)
             savedAccountId?.let(SavedAccountConnection::waitFor)
         }
+    }
+
+    private val reconnectRegistration = reader.observeReconnect { outcome ->
+        // Explicit reconnect callers already observe their own answers. Reader-owned retries must
+        // also update a cold player with no library windows, while respecting the latest network hint.
+        if (!closed && started && connectionState.value.readerOffline() && !awaitingReconnect &&
+            lastReport != false && networkAvailable()) reconnected(outcome, reachabilityGeneration)
     }
 
     /** Bumped by every reachability report, so an older reconnect's answer never overrides a newer report. */
@@ -465,8 +468,8 @@ public class LibrarySession internal constructor(
         if (closed || started) return
         started = true
         if (awaitingReconnect) {
-            // Nothing reads the server while it waits for the person, in the foreground or not.
-            reader.setForeground(true)
+            // Cached windows are already open. The ordinary sequence reconnects them in place.
+            connectSavedAccount()
             return
         }
         defaultNetwork = runCatching { connectivity?.activeNetwork }.getOrNull()
@@ -483,6 +486,7 @@ public class LibrarySession internal constructor(
         // After the reachability, so a reader still told reachable from before is not sent to
         // reconnect with no network. In the foreground, offline and told reachable, the reader
         // starts a reconnect itself (§16.14); the one below joins it, for its outcome.
+        foregroundHosts[reader] = (foregroundHosts[reader] ?: 0) + 1
         reader.setForeground(true)
         if (network) reconnect()
     }
@@ -493,7 +497,11 @@ public class LibrarySession internal constructor(
         started = false
         unregisterNetworkCallback()
         releaseHeldLoss()
-        reader.setForeground(false)
+        val remaining = (foregroundHosts[reader] ?: 1) - 1
+        if (remaining > 0) foregroundHosts[reader] = remaining else {
+            foregroundHosts.remove(reader)
+            reader.setForeground(false)
+        }
     }
 
     /**
@@ -527,12 +535,15 @@ public class LibrarySession internal constructor(
     }
 
     /**
-     * Reconnect: the person chose to contact the saved account's server (§13.1, CONF-10b). The reader
-     * reads from now on — in this process, for every screen host — and this session reconnects in
-     * place: the outbox flush, the epoch read, and the screens already open revalidated (§16.14).
+     * Opens server contact for a restored account and reconnects in place. Once open, a manual
+     * Reconnect requests the same sequence and joins an attempt already running.
      */
     public fun connectSavedAccount() {
-        if (closed || !awaitingReconnect) return
+        if (closed) return
+        if (!awaitingReconnect) {
+            retry()
+            return
+        }
         SavedAccountConnection.reconnectChosen(reader)
         leaveSaved()
         // A host that never starts its session (TV Now Playing) reconnects here, where the person chose it.
@@ -559,6 +570,7 @@ public class LibrarySession internal constructor(
         stop()
         releaseHeldLoss()
         closed = true
+        reconnectRegistration.close()
         outcomeRegistration.close()
         playlistRegistration.close()
         playlistQuestions.close()
@@ -829,6 +841,10 @@ public class LibrarySession internal constructor(
     }
 
     public companion object {
+        // Main-thread hosts can overlap during activity transitions. One stopping host must not
+        // suspend the reconnect retries of another that is still visible.
+        private val foregroundHosts = java.util.WeakHashMap<AndroidLibraryReader, Int>()
+
         /** The home rows, in order: recently added, recently played, most played, favourites. */
         public val HOME_ROWS: List<AndroidLibraryHomeRow> = listOf(
             AndroidLibraryHomeRow.Albums(AndroidAlbumListType.Newest),
@@ -898,8 +914,7 @@ public sealed interface LibraryConnectionState {
     public data class Online(val serverReportsNoEpoch: Boolean) : LibraryConnectionState
 
     /**
-     * A saved account not yet connected in this process: nothing is sent until the person chooses
-     * Reconnect ([LibrarySession.connectSavedAccount]), and the screens show what this device has seen.
+     * Device content before the host starts its automatic reconnect. No network work blocks painting.
      */
     public data object Saved : LibraryConnectionState
 

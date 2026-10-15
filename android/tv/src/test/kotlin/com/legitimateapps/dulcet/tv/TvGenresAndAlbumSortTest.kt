@@ -69,7 +69,15 @@ class TvGenresAndAlbumSortTest {
         compose.setContent { MaterialTheme { TvLibraryEntry(account) { _, _ -> } } }
         compose.waitForIdle()
         // The library's default focus is unchanged: its first card takes the remote from the bar.
+        reachSectionsFromFirstCard()
+    }
+
+    private fun reachSectionsFromFirstCard() {
         await("the first home card to take focus") { focused("library.home.0.item.0") }
+        // Removing the connecting notice can leave the lazy home scrolled to its first card.
+        // Reach the sections as a remote does before requesting a particular section's focus.
+        repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
+        assertTrue(exists("library.view.albums"), "UP makes the section controls available")
     }
 
     @Test fun genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay() {
@@ -106,7 +114,7 @@ class TvGenresAndAlbumSortTest {
             PlaybackEndpointAccount(account.providerInstanceId, server.url, "u", "p", true)).also { controller = it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
-        await("the first home card to take focus") { focused("library.home.0.item.0") }
+        reachSectionsFromFirstCard()
         focus("library.view.genres")
         key(Key.DirectionCenter)
         await("the genres, focus on Jazz") { focused("library.genres.item.0") }

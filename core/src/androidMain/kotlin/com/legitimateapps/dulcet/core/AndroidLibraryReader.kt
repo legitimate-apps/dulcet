@@ -67,8 +67,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * offline and told reachable starts a reconnect.
  *
  * **A reconnect the reader starts itself** — its retry, its return to the foreground, a reachable
- * report while offline — completes to no caller: a shell learns of it only from what its screens
- * publish. A failure no timer retries (credentials, security, an unrecognised server, the reader's
+ * report while offline — completes to no explicit caller. [observeReconnect] reports its outcome
+ * even without an open library window, and screens publish the reader's freshness. A failure no timer retries (credentials, security, an unrecognised server, the reader's
  * own) is then stated by every screen in place of `offline`, until a report, a return to the
  * foreground or a reconnect settles it.
  *
@@ -152,6 +152,7 @@ public class AndroidLibraryReader internal constructor(
     private val windows = mutableListOf<AndroidLibraryWindow>()
     private val searches = mutableListOf<AndroidLibrarySearch>()
     private val outcomeListeners = mutableListOf<AndroidLibraryOutcomeRegistration>()
+    private val reconnectListeners = mutableListOf<AtomicReference<((AndroidLibraryConnection) -> Unit)?>>()
     private val favouriteWatches = mutableListOf<AndroidLibraryValueWatch<*>>()
     private val playlistOutcomeListeners = mutableListOf<AndroidPlaylistOutcomeRegistration>()
 
@@ -207,6 +208,10 @@ public class AndroidLibraryReader internal constructor(
             // before any of it.
             compose(readerScope, reportedForeground).also { made ->
                 built = made
+                made.session.reader.reconnectObserver = { outcome ->
+                    val connection = made.session.connection(outcome, discardedAcknowledged.get())
+                    reconnectListeners.toList().forEach { listener -> onMain { listener.get()?.invoke(connection) } }
+                }
                 made.session.favourites.addOutcomeListener(::fanOutOutcome)
                 made.session.favourites.addChangeListener(::fanOutFavouriteChange)
                 made.session.playlists.addOutcomeListener(::fanOutPlaylistOutcome)
@@ -487,6 +492,16 @@ public class AndroidLibraryReader internal constructor(
 
     // ---- Connection lifecycle ------------------------------------------------------------------------------
 
+    /** Every completed reconnect, including the reader's timer retries; closing stops delivery. */
+    public fun observeReconnect(listener: (AndroidLibraryConnection) -> Unit): AutoCloseable {
+        val reference = AtomicReference<((AndroidLibraryConnection) -> Unit)?>(listener)
+        onReader { reconnectListeners += reference }
+        return AutoCloseable {
+            reference.set(null)
+            onReader { reconnectListeners -= reference }
+        }
+    }
+
     /**
      * The app came back to the foreground online (§16.14): the outbox flush, the epoch read, and —
      * only if that read succeeded — back online, the visible screen revalidated (windows, then
@@ -599,6 +614,7 @@ public class AndroidLibraryReader internal constructor(
                         windows.toList().forEach(AndroidLibraryWindow::closeFromReader)
                         searches.toList().forEach(AndroidLibrarySearch::closeFromReader)
                         outcomeListeners.clear()
+                        reconnectListeners.clear()
                         favouriteWatches.clear()
                         playlistOutcomeListeners.clear()
                         acknowledgedFavourites.clear()

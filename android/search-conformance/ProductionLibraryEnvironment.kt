@@ -64,12 +64,7 @@ internal fun closeProcessReader() {
     error("The reader did not terminate within 3,000 polls")
 }
 
-/**
- * A cold start of a process in which the person has connected the saved account again, as Reconnect
- * does (spec §13.1). A launch into a saved account sends nothing until then; that is proved on its own
- * (SavedAccountLaunchTest, the emulator account-connect proofs, CONF-76's relaunch), so a scenario
- * about a connected session's reads starts from one.
- */
+/** A fixture session whose account contact is already open; saved automatic launch is proved separately. */
 internal fun closeProcessReaderAndReconnect() {
     closeProcessReader()
     AndroidAccountCredentialStore(RuntimeEnvironment.getApplication()).activeAccountId()

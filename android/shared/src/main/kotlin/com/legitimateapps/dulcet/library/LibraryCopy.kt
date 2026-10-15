@@ -33,14 +33,14 @@ public enum class LibrarySubject { Album, List }
  * The one line shown with a publication's content (§16.14), or null for `live` content and for
  * `loading`, which shows an indicator instead. Cached content always says how old it is.
  */
-public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis()): String? =
+public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis(), includeReason: Boolean = true): String? =
     when (freshness) {
         AndroidLibraryFreshness.Live, AndroidLibraryFreshness.Loading -> null
         is AndroidLibraryFreshness.Unavailable -> null
         is AndroidLibraryFreshness.Cached -> {
             val seen = freshness.asOfEpochMillis?.let { getString(R.string.library_seen_at, age(it, now)) }
                 ?: getString(R.string.library_seen_unknown_age)
-            getString(R.string.library_seen_with_reason, seen, reasonPhrase(freshness.reason))
+            if (includeReason) getString(R.string.library_seen_with_reason, seen, reasonPhrase(freshness.reason)) else seen
         }
     }
 
@@ -102,18 +102,17 @@ public fun Resources.connectionLine(state: LibraryConnectionState): String? =
         null
     }
 
-/**
- * A saved account not yet connected in this process (§13.1, CONF-10b): what is shown is what this
- * device has seen, and the named server is contacted only after Reconnect. Null otherwise.
- */
-public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? =
-    if (state == LibraryConnectionState.Saved) {
-        val server = runCatching { java.net.URI(account.normalizedBaseUrl).host }.getOrNull()?.takeIf { it.isNotBlank() }
-            ?: account.normalizedBaseUrl
-        getString(R.string.library_saved_not_connected, server)
-    } else {
-        null
-    }
+/** One saved-account connection notice; auth and trust failures use [connectionLine]. */
+public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? = when (state) {
+    LibraryConnectionState.Saved, LibraryConnectionState.Connecting -> getString(R.string.library_saved_connecting)
+    is LibraryConnectionState.Offline -> getString(R.string.library_saved_not_connected)
+    else -> null
+}
+
+/** The home has one account notice, so its shelves need no repeated connection statements. */
+public fun LibraryConnectionState.hasConnectionNotice(): Boolean =
+    this == LibraryConnectionState.Saved || this == LibraryConnectionState.Connecting ||
+        this is LibraryConnectionState.Offline || (this is LibraryConnectionState.Failed && readerOffline)
 
 /** `unverified(noEpoch)`, stated once per account rather than on every list (§16.12, §16.14). */
 public fun Resources.noEpochLine(state: LibraryConnectionState): String? =

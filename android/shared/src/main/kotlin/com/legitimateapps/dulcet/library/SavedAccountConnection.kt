@@ -14,16 +14,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 
 /**
- * Whether the person has chosen, in this process, to contact the saved account's server (spec §13.1,
- * CONF-10b). A launch into a saved account sends nothing on the person's behalf until they choose
- * Connect on the form or Reconnect on a screen: until then the library paints what this device has
- * seen and says the account is saved and not connected, and playback ([contact]) restores its queue
- * paused, plays only downloads and keeps plays in the outbox. A session connected in this process
- * follows reachability and returns to the foreground as §16.11 and §16.14 say.
- *
- * The choice belongs to the process's reader, which lives exactly as long as the process's connection
- * to the account: a new process has no reader, so nothing it makes has been chosen, and a reader
- * closed for a sign-out or an account change takes its choice with it.
+ * Server-contact readiness shared by the process reader, library hosts and restored playback.
+ * A saved account paints from the device before its first foreground host opens this gate and
+ * starts the ordinary reconnect. Sign-out or account replacement closes the reader, taking its
+ * readiness with it. The gate controls contact, not whether a reconnect has succeeded.
  */
 public object SavedAccountConnection {
     private val lock = Any()
@@ -89,7 +83,7 @@ public object SavedAccountConnection {
     }
 
     /**
-     * Whether the person has chosen, in this process, to contact [accountId]'s server: on the form,
+     * Whether a foreground host has opened contact with [accountId]'s server: on the form,
      * not yet claimed by a reader, or by Reconnect on the process's current reader for it.
      */
     public fun isConnected(accountId: String): Boolean = synchronized(lock) {
@@ -97,14 +91,14 @@ public object SavedAccountConnection {
             AndroidLibraryReader.currentFor(accountId)?.let { it in connectedReaders } == true
     }
 
-    /** The person chose Reconnect: [reader] reads the server from now on, in every screen host. */
+    /** A foreground host starts reconnecting: [reader] reads the server from now on, in every screen host. */
     internal fun reconnectChosen(reader: AndroidLibraryReader) {
         synchronized(lock) { connectedReaders += reader }
         changed()
     }
 
     /**
-     * Calls [listener] on the main thread after every choice to connect, whichever screen host made
+     * Calls [listener] on the main thread after contact opens, whichever screen host made
      * it; closing the result stops it.
      */
     internal fun observe(listener: () -> Unit): AutoCloseable {
@@ -112,7 +106,7 @@ public object SavedAccountConnection {
         return AutoCloseable { listeners -= listener }
     }
 
-    /** Playback's view of [accountId] (spec §13.1): open once the person has chosen to connect it. */
+    /** Playback's view of [accountId]: opens with the saved account's automatic reconnect. */
     public fun contact(accountId: String): AndroidServerContact = object : AndroidServerContact {
         override fun isOpen(): Boolean = isConnected(accountId)
         override suspend fun awaitOpen() {

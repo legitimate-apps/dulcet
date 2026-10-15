@@ -85,6 +85,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 show("search.open")
             }
 
+            override fun showHomeSections() = revealHomeSections()
+
             override fun backFromAlbum() = press("album.back")
 
             /** The remote's Back, from a browse grid to the library's home. */
@@ -366,7 +368,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 "selecting the playing row does not start the album over")
 
             back()
-            await("the albums screen offers Now Playing") { exists("library.albums.item.0") && exists("tv.nav.nowplaying") }
+            await("Back restores the album card and the albums screen offers Now Playing") {
+                focusedAlbum()?.let { ALBUM in texts("library.albums.item.$it") } == true && exists("tv.nav.nowplaying")
+            }
             show("search.open")
             await("search offers Now Playing") { exists("search.query") && exists("tv.nav.nowplaying") }
             press("tv.nav.nowplaying")
@@ -733,7 +737,14 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         key(Key.DirectionCenter)
     }
 
+    private fun revealHomeSections() {
+        if (!exists("library.surface")) return
+        repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
+        check(exists("library.view.albums")) { "UP did not reveal the library sections" }
+    }
+
     private fun focus(tag: String) {
+        if (tag.startsWith("library.view.")) revealHomeSections()
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
         compose.waitForIdle()
         assertFocused(tag)

@@ -96,8 +96,8 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     @Test fun aCompletedHomeFavouritesReadIsSharedWithTheFavouritesScreen() =
         scenarios.aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack(completeHomeRead = true)
 
-    @Test fun aSavedRelaunchAfterFavouriteChangesSendsNothingUntilReconnect() =
-        scenarios.aSavedRelaunchAfterFavouriteChangesSendsNothingUntilReconnect()
+    @Test fun aSavedRelaunchAfterFavouriteChangesReconnectsAutomatically() =
+        scenarios.aSavedRelaunchAfterFavouriteChangesReconnectsAutomatically()
 
     /** The rating from the song's row menu: Rate…, then a tap on a star, as a finger does. */
     @Test fun conf84RatingShowsWithTheTapReachesTheServerAndZeroClearsIt() =

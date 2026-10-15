@@ -121,7 +121,7 @@ class PlaybackService : MediaSessionService() {
                 // A downloaded song's title, artist and album, kept with its download (§16.13).
                 override suspend fun localTrack(rawId: String) = withContext(Dispatchers.IO) { downloads()?.localTrack(rawId) }
             },
-            // A launch into a saved account sends nothing until the person connects it (§13.1):
+            // Restored playback waits for the foreground host to begin automatic reconnect:
             // the queue restores paused, downloads play, and plays wait in the outbox till then.
             SavedAccountConnection.contact(account.id))
         // The quality for the next item: the person's choice for the network last reported.

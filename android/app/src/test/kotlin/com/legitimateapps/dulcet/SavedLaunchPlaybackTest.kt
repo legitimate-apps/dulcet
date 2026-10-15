@@ -34,15 +34,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 
-/**
- * CONF-10b for playback on the phone (spec §13.1): a relaunch into a saved account the person has not
- * connected, with the queue the last run left -- its current song not downloaded -- and a play that
- * run could not deliver. The phone runs as it ships: PhoneApp as MainActivity hosts it for a saved
- * account, and the PRODUCTION playback service's controller; only the server is a loopback fixture
- * that records every request. Nothing reaches it -- no song read or resolve for the restored entry, no
- * scrobble, no library read -- not at launch and not when the person presses Play, which says the song
- * needs Reconnect. Reconnect in the player then delivers the waiting play and reads the restored entry.
- */
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
+/** A saved account reconnects and delivers its outbox with the restored queue still paused. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], shadows = [HostCredentialCipher::class], instrumentedPackages = ["com.legitimateapps.dulcet"],
     qualifiers = "w411dp-h891dp-port")
@@ -71,27 +64,31 @@ class SavedLaunchPlaybackTest {
         val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
         leaveEarlierRun(context, saved.id, server.url, queue = listOf("jazz-song-1", "jazz-song-2"), unsentPlays = listOf("ambient-song-1"))
         val playback = launch(SearchAccount(saved.id, server.url, "u", "p", true))
-
-        await("the restored queue, from the device") { playback.state.value.queue.size == 2 && exists("player.mini") }
-        settle()
-        assertFalse(playback.state.value.playWhenReady, "restored paused")
-        assertEquals(emptyList(), server.endpoints(), "nothing reaches the server at launch")
-
-        click("player.mini.playpause")
-        await("the mini player to say the song needs Reconnect") { exists("player.mini.needsReconnect") }
-        click("player.mini")
-        await("the player to say so too, with Reconnect") { exists("player.needsReconnect") && exists("player.reconnect") }
-        settle()
-        assertFalse(playback.state.value.playWhenReady)
-        assertEquals(emptyList(), server.endpoints(), "Play sends nothing either")
-
-        click("player.reconnect")
-        await("the waiting play delivered") {
+        await("the restored queue") { playback.state.value.queue.size == 2 }
+        await("the waiting play delivered without a tap") {
             server.requests("scrobble").any { it["submission"] == "true" && it["id"] == "ambient-song-1" }
         }
         await("the restored entry read") { server.requests("getSong").any { it["id"] == "jazz-song-1" } }
-        await("the player's notice gone") { !exists("player.saved") }
+        await("automatic epoch read") { server.requests("getScanStatus").isNotEmpty() }
+        assertFalse(playback.state.value.playWhenReady, "restored queue stays paused")
         assertFalse(playback.state.value.needsReconnect)
+        assertFalse(exists("player.needsReconnect"))
+    }
+
+    @Test fun aSavedPlayerShowsAuthenticationFailureAndManualReconnect() {
+        server.scanFailureCode = 40
+        val saved = AndroidAccountCredentialStore(context).save("Fixture", server.url, "u", "p", true)
+        leaveEarlierRun(context, saved.id, server.url, queue = listOf("jazz-song-1"), unsentPlays = emptyList())
+        launch(SearchAccount(saved.id, server.url, "u", "p", true))
+        await("the full player") { exists("player.mini") }
+        click("player.mini")
+        await("authentication words and reconnect in the player") {
+            exists("player.savedLine") && exists("player.reconnect")
+        }
+        val node = compose.onAllNodesWithTag("player.savedLine", useUnmergedTree = true).fetchSemanticsNodes().single()
+        assertTrue(node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].any {
+            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials))
+        }, "The authentication failure is stated in the player")
     }
 
     private fun launch(account: SearchAccount): AndroidPlaybackController {
@@ -104,7 +101,7 @@ class SavedLaunchPlaybackTest {
                 ProductionSearchHostDependencies.createPresenter(account, context, foreground)
         }
         // As MainActivity hosts a saved account.
-        compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback, untilReconnectChosen = true) } }
+        compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback, restoredAccount = true) } }
         compose.waitForIdle()
         return playback
     }

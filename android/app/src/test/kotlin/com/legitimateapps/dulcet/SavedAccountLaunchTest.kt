@@ -11,6 +11,7 @@ import com.legitimateapps.dulcet.library.LibraryConnectionState
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.search.conformance.PlatformNetwork
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -31,13 +32,8 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-/**
- * CONF-10b through the PRODUCTION library session (spec §13.1): an app opened on a saved account
- * contacts nothing — not at start, not for a screen that opens, not on a return to the foreground —
- * until the person chooses Reconnect, which then reconnects in place. A session connected in this
- * process (Connect on the form, or Reconnect) reads as §16.14 says. The server is a loopback socket
- * that counts every connection made to it.
- */
+/** Historical test identifiers remain stable for parity evidence; assertions use automatic reconnect. */
+/** Saved launches use the production session's ordinary reconnect, without a user action. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class SavedAccountLaunchTest {
@@ -52,75 +48,99 @@ class SavedAccountLaunchTest {
         context.deleteDatabase("dulcet.db")
     }
 
-    @Test fun aLaunchIntoASavedAccountSendsNothingUntilReconnectThenConnectsInPlace() {
-        val account = account("provider:launch")
-        val session = open(account, untilReconnectChosen = true)
-        session.start()
-        val albums = session.openAlbums()
-        session.stop()
-        session.start()
-        settleFor(1_500)
-        assertEquals(0, server.connections.get(), "Nothing may reach the server before Reconnect")
-        assertEquals(LibraryConnectionState.Saved, session.connection.value)
-        assertEquals(listOf(false), session.observation.value.reachabilityReports, "The reader is told only that it may not read")
-        assertEquals(0, session.observation.value.reconnects)
-        assertTrue(albums.state.value != null, "The screen paints from what this device has seen")
-
-        session.connectSavedAccount()
-        settle("the reconnect Reconnect starts, answered") { session.observation.value.reconnectAnswers >= 1 }
-        assertTrue(server.connections.get() > 0, "Reconnect reaches the server")
-        assertEquals(1, session.observation.value.reconnects)
-        assertTrue(session.connection.value != LibraryConnectionState.Saved, "The session no longer says saved")
+    @Test fun aLaunchIntoASavedAccountConnectsWithoutATapAndReconnectStillWorks() {
+        LoopbackLibraryServer().use { library ->
+            val session = open(SearchAccount("provider:launch", library.url, "u", "p", true), restoredAccount = true)
+            val albums = session.openAlbums()
+            settle("device content before starting") { albums.state.value != null }
+            assertEquals(emptyList(), library.endpoints(), "Cached content paints before any network work")
+            session.start()
+            settle("automatic reconnect online") { session.connection.value is LibraryConnectionState.Online }
+            assertTrue(library.requests("getScanStatus").isNotEmpty())
+            val before = library.requests("getScanStatus").size
+            val answers = session.observation.value.reconnectAnswers
+            session.connectSavedAccount()
+            settle("manual fallback reconnect completed") {
+                library.requests("getScanStatus").size > before && session.observation.value.reconnectAnswers > answers
+            }
+            val foregroundBefore = library.requests("getScanStatus").size
+            session.stop()
+            session.start()
+            settle("foreground reconnect") { library.requests("getScanStatus").size > foregroundBefore }
+        }
     }
 
-    @Test fun tryAgainOnASavedAccountIsTheReconnectThePersonAskedFor() {
-        val session = open(account("provider:retry"), untilReconnectChosen = true)
+    @Test fun tryAgainJoinsTheAutomaticReconnectInFlight() {
+        server.hold = true
+        val session = open(account("provider:retry"), restoredAccount = true)
         session.start()
-        settleFor(500)
-        assertEquals(0, server.connections.get(), "control: nothing before the person asks")
+        settle("automatic request held") { server.connections.get() > 0 }
+        val before = server.connections.get()
         session.retry()
-        settle("the reconnect Try again starts, answered") { session.observation.value.reconnectAnswers >= 1 }
-        assertTrue(server.connections.get() > 0)
+        settleFor(300)
+        assertEquals(before, server.connections.get(), "An in-flight reconnect is joined")
+        server.release.countDown()
+        settle("joined reconnect answered") { session.observation.value.reconnectAnswers >= 1 }
+    }
+
+    @Test fun aSavedAccountReconnectsWhenTheNetworkReturns() {
+        LoopbackLibraryServer().use { library ->
+            val session = open(SearchAccount("provider:network", library.url, "u", "p", true), restoredAccount = true)
+            session.start()
+            settle("initial automatic reconnect") { session.connection.value is LibraryConnectionState.Online }
+            val network = PlatformNetwork(context)
+            network.lose()
+            try {
+                assertIs<LibraryConnectionState.Offline>(session.connection.value)
+                val before = library.requests("getScanStatus").size
+                network.restore()
+                settle("network-return reconnect") {
+                    library.requests("getScanStatus").size > before && session.connection.value is LibraryConnectionState.Online
+                }
+            } finally {
+                network.restoreIfLost()
+            }
+        }
     }
 
     @Test fun anAccountConnectedOnTheFormReadsAndSoDoesEveryLaterHostInTheSameProcess() {
         val account = account("provider:form")
         SavedAccountConnection.connectedOnTheForm(account.providerInstanceId)
-        val first = open(account, untilReconnectChosen = true)
+        val first = open(account, restoredAccount = true)
         first.start()
         settle("the connected session's reconnect, answered") { first.observation.value.reconnectAnswers >= 1 }
         first.close()
 
         // A new screen host in the same process: a return to the foreground of a connected session.
         val before = server.connections.get()
-        val second = open(account, untilReconnectChosen = true)
+        val second = open(account, restoredAccount = true)
         second.start()
         settle("the later host's reconnect, answered") { second.observation.value.reconnectAnswers >= 1 }
         assertTrue(server.connections.get() > before, "A session connected in this process reconnects on foreground")
     }
 
-    @Test fun aNewProcessReaderForTheSameAccountWaitsForReconnectAgain() {
+    @Test fun aNewProcessReaderForTheSameAccountReconnectsAutomatically() {
         val account = account("provider:process")
         SavedAccountConnection.connectedOnTheForm(account.providerInstanceId)
-        val first = open(account, untilReconnectChosen = true)
+        val first = open(account, restoredAccount = true)
         first.start()
         settle("the connected session's reconnect, answered") { first.observation.value.reconnectAnswers >= 1 }
         first.close()
         closeReader()
 
         val before = server.connections.get()
-        val relaunched = open(account, untilReconnectChosen = true)
+        val relaunched = open(account, restoredAccount = true)
         relaunched.start()
         relaunched.openAlbums()
-        settleFor(1_500)
-        assertEquals(before, server.connections.get(), "A reader the person has not connected sends nothing")
-        assertIs<LibraryConnectionState.Saved>(relaunched.connection.value)
+        settle("new process reconnect answered") { relaunched.observation.value.reconnectAnswers >= 1 }
+        assertTrue(server.connections.get() > before, "A new reader reconnects without a tap")
+        assertTrue(relaunched.connection.value !is LibraryConnectionState.Saved)
     }
 
     @Test fun anAccountStaysHeldWhileAnySessionOfItWaitsAndEachReleasesOnlyItsOwnHold() {
         val account = account("provider:two")
-        val library = open(account, untilReconnectChosen = true)
-        val player = open(account, untilReconnectChosen = true)
+        val library = open(account, restoredAccount = true)
+        val player = open(account, restoredAccount = true)
         assertTrue(account.providerInstanceId in SavedAccountConnection.waitingForReconnect.value)
         player.close()
         player.close()
@@ -132,11 +152,11 @@ class SavedAccountLaunchTest {
 
     @Test fun reconnectChosenInOneScreenHostLeavesSavedInEveryOtherInPlace() {
         val account = account("provider:elsewhere")
-        val library = open(account, untilReconnectChosen = true)
+        val library = open(account, restoredAccount = true)
         library.start()
-        val search = open(account, untilReconnectChosen = true)
+        val search = open(account, restoredAccount = true)
         settleFor(500)
-        assertEquals(0, server.connections.get(), "control: nothing before the person asks")
+        assertTrue(server.connections.get() > 0, "The started library already requested reconnect")
 
         search.connectSavedAccount()
         settle("the started library's own reconnect, answered") { library.observation.value.reconnectAnswers >= 1 }
@@ -146,24 +166,26 @@ class SavedAccountLaunchTest {
 
     @Test fun aReconnectTheServerRefusesStatesTheRefusalNotSaved() {
         server.answer = """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}"""
-        val session = open(account("provider:refused"), untilReconnectChosen = true)
+        val session = open(account("provider:refused"), restoredAccount = true)
         session.start()
-        session.connectSavedAccount()
         settle("the refused reconnect, answered") { session.observation.value.reconnectAnswers >= 1 }
         val state = assertIs<LibraryConnectionState.Failed>(session.connection.value)
         assertEquals(DomainError.Auth.InvalidCredentials, state.error)
         val line = assertNotNull(context.resources.connectionLine(state), "The failure is stated above the screen")
         assertTrue(context.getString(R.string.library_error_credentials) in line, line)
-        assertNull(context.resources.savedAccountLine(state, account("provider:refused")))
+        val attempts = server.connections.get()
+        settleFor(4_500)
+        assertEquals(attempts, server.connections.get(), "Authentication failures do not retry on a timer")
     }
 
     @Test fun aReconnectToAServerThatIsGoneSaysItCannotBeReached() {
         val gone = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { "http://127.0.0.1:${it.localPort}" }
         val account = SearchAccount("provider:gone", gone, "launch-user", "launch-canary-password", true)
-        val session = open(account, untilReconnectChosen = true)
+        val session = open(account, restoredAccount = true)
         session.start()
-        session.connectSavedAccount()
         settle("the unreachable reconnect, answered") { session.observation.value.reconnectAnswers >= 1 }
+        val albums = session.openAlbums()
+        settle("usable device library while unreachable") { albums.state.value != null }
         val state = assertIs<LibraryConnectionState.Offline>(session.connection.value)
         assertEquals(DomainError.Transport.Unreachable, state.error)
         assertEquals(context.getString(R.string.library_error_unreachable), context.resources.errorPhrase(state.error!!))
@@ -173,24 +195,12 @@ class SavedAccountLaunchTest {
         val library = LoopbackLibraryServer()
         AndroidLibraryReader.testEpochIntervalMillis = 100
         try {
-            val waiting = open(SearchAccount("provider:cadence", library.url, "u", "p", true), untilReconnectChosen = true)
-            waiting.start()
-            waiting.openAlbums()  // the cadence runs with a library screen open
-            AndroidLibraryReader.currentFor("provider:cadence")!!.setForeground(true)
-            settleFor(1_500)
-            assertEquals(emptyList(), library.endpoints(), "Fifteen cadence periods in the foreground, and no epoch read")
-            waiting.close()
-            closeReader()
-
-            // Control: the same cadence on a connected session reads the epoch again and again.
-            val connected = SearchAccount("provider:cadence-connected", library.url, "u", "p", true)
-            SavedAccountConnection.connectedOnTheForm(connected.providerInstanceId)
-            val session = open(connected, untilReconnectChosen = true)
+            val session = open(SearchAccount("provider:cadence", library.url, "u", "p", true), restoredAccount = true)
             session.start()
             session.openAlbums()
-            settle("the connected session online") { session.connection.value is LibraryConnectionState.Online }
-            val after = library.requests("getScanStatus").size
-            settle("the cadence's own epoch reads") { library.requests("getScanStatus").size >= after + 3 }
+            settle("automatic connection") { session.connection.value is LibraryConnectionState.Online }
+            val before = library.requests("getScanStatus").size
+            settle("foreground cadence") { library.requests("getScanStatus").size >= before + 3 }
         } finally {
             AndroidLibraryReader.testEpochIntervalMillis = null
             sessions.forEach(LibrarySession::close)
@@ -199,10 +209,45 @@ class SavedAccountLaunchTest {
         }
     }
 
+    @Test fun aTransientReconnectThatLaterFailsAuthenticationShowsTheFailureAndStopsRetrying() {
+        server.status = 503
+        server.answer = "<html>Unavailable</html>"
+        val session = open(account("provider:retry-auth"), restoredAccount = true)
+        session.openAlbums()
+        session.start()
+        settle("initial transient failure") { session.observation.value.reconnectAnswers >= 1 }
+        server.status = 200
+        server.answer = """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Refused"}}}"""
+        settle("the reader's retry surfaces authentication") {
+            (session.connection.value as? LibraryConnectionState.Failed)?.error == DomainError.Auth.InvalidCredentials
+        }
+        val attempts = server.connections.get()
+        settleFor(4_500)
+        assertEquals(attempts, server.connections.get(), "No authentication retry timer")
+    }
+
+    @Test fun stoppingOneHostDoesNotStopTheVisibleHostsAutomaticRetries() {
+        server.status = 503
+        server.answer = "<html>Unavailable</html>"
+        val account = account("provider:two-started")
+        val library = open(account, restoredAccount = true)
+        library.openAlbums()
+        library.start()
+        settle("the first host's transient failure") { library.observation.value.reconnectAnswers >= 1 }
+        val player = open(account, restoredAccount = true)
+        player.start()
+        settle("the player's transient failure") { player.observation.value.reconnectAnswers >= 1 }
+        library.stop()
+        val before = server.connections.get()
+        settleFor(300)
+        assertEquals(before, server.connections.get(), "No tight retry loop")
+        settle("retry while the player remains foreground") { server.connections.get() > before }
+    }
+
     private fun account(id: String) = SearchAccount(id, server.url, "launch-user", "launch-canary-password", true)
 
-    private fun open(account: SearchAccount, untilReconnectChosen: Boolean) =
-        LibrarySession(context, account, foreground = true, untilReconnectChosen = untilReconnectChosen).also { sessions += it }
+    private fun open(account: SearchAccount, restoredAccount: Boolean) =
+        LibrarySession(context, account, foreground = true, restoredAccount = restoredAccount).also { sessions += it }
 
     private fun closeReader() {
         var closed = false
@@ -237,6 +282,9 @@ class SavedAccountLaunchTest {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${socket.localPort}"
         val connections = AtomicInteger()
+        @Volatile var status = 200
+        @Volatile var hold = false
+        val release = java.util.concurrent.CountDownLatch(1)
         @Volatile var answer = """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""
         private val pool = Executors.newCachedThreadPool()
 
@@ -255,9 +303,10 @@ class SavedAccountLaunchTest {
             val input = client.getInputStream().bufferedReader()
             input.readLine() ?: return@use
             generateSequence { input.readLine()?.takeIf { it.isNotEmpty() } }.toList()
+            if (hold) release.await(30, TimeUnit.SECONDS)
             val envelope = answer.toByteArray()
             client.getOutputStream().apply {
-                write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${envelope.size}\r\n" +
+                write(("HTTP/1.1 $status Fixture\r\nContent-Type: application/json\r\nContent-Length: ${envelope.size}\r\n" +
                     "Connection: close\r\n\r\n").toByteArray())
                 write(envelope)
                 flush()
@@ -265,6 +314,7 @@ class SavedAccountLaunchTest {
         }
 
         override fun close() {
+            release.countDown()
             socket.close()
             pool.shutdownNow()
         }
