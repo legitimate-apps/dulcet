@@ -14,15 +14,28 @@ defective case to be rejected for its own reason:
   tampered cache    a restored install whose binary, file set or build digest differs from its manifest
 """
 
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import tempfile
 
 
+def _load_source(name, path):
+    """Imports a tool that has no .py suffix. Loaders no longer offer load_module() on the
+    Python that hosted macOS runners now run (apple-ci run 38680055395), so exec_module()
+    runs it, registered first as load_module() did."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
 TOOLS = Path(__file__).parent
-installer = SourceFileLoader(
+installer = _load_source(
     "install_darwin_ffmpeg", str(TOOLS / "conformance-env" / "install-darwin-ffmpeg")
-).load_module()
+)
 
 ENCODERS = """Encoders:
  V..... = Video

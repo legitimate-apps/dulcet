@@ -6,15 +6,28 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from importlib.machinery import SourceFileLoader
 import json
 from pathlib import Path
 import shutil
 import tempfile
 
 
+def _load_source(name, path):
+    """Imports a tool that has no .py suffix. Loaders no longer offer load_module() on the
+    Python that hosted macOS runners now run (apple-ci run 38680055395), so exec_module()
+    runs it, registered first as load_module() did."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
 VERIFIER_PATH = Path(__file__).with_name("verify_design_captures.py")
-verifier = SourceFileLoader("verify_design_captures", str(VERIFIER_PATH)).load_module()
+verifier = _load_source("verify_design_captures", str(VERIFIER_PATH))
 
 
 def expect_rejection(root: Path, expected_fragment: str) -> None:

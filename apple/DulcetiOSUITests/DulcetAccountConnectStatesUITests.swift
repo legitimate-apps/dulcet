@@ -1183,11 +1183,20 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     ) -> Bool {
         let started = ProcessInfo.processInfo.systemUptime
         let deadline = started + timeout
+        // Settling needs several snapshots, and a loaded host has taken 3.3 s for one (apple-ci
+        // run 38667301477 got two polls in five seconds). Wall time alone would then judge the host,
+        // not the layout, so the budget also runs until a minimum number of polls, within a cap.
+        // An offscreen target still fails on its first snapshot below.
+        let minimumPolls = 6
+        let hardDeadline = started + timeout * 3
         var previous = CGRect.null
         var previousWindow = CGRect.null
         var stableSince = started
         var polls = 0
         var slowestSnapshot: TimeInterval = 0
+        func inBudget(_ time: TimeInterval) -> Bool {
+            time < deadline || (polls < minimumPolls && time < hardDeadline)
+        }
         repeat {
             let beforeSnapshot = ProcessInfo.processInfo.systemUptime
             let snapshot: XCUIElementSnapshot
@@ -1198,7 +1207,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             let now = ProcessInfo.processInfo.systemUptime
             polls += 1
             slowestSnapshot = max(slowestSnapshot, now - beforeSnapshot)
-            guard now < deadline else { break }
+            guard inBudget(now) else { break }
             let frame = hitTarget(target, in: snapshot)?.frame ?? .null
             var visibleFrame = snapshot.frame
             if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
@@ -1221,14 +1230,14 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 previousWindow = snapshot.frame
                 stableSince = now
             } else if now - stableSince >= 0.4 {
-                if element.isHittable && ProcessInfo.processInfo.systemUptime < deadline {
+                if element.isHittable && inBudget(ProcessInfo.processInfo.systemUptime) {
                     print("DULCET ACCOUNT HIT TARGET settled polls=\(polls) snapshot-max=\(slowestSnapshot)")
                     return true
                 }
                 stableSince = ProcessInfo.processInfo.systemUptime
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        } while ProcessInfo.processInfo.systemUptime < deadline
+        } while inBudget(ProcessInfo.processInfo.systemUptime)
         print("DULCET ACCOUNT HIT TARGET timeout polls=\(polls) snapshot-max=\(slowestSnapshot)")
         return false
     }

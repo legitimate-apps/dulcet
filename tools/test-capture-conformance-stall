@@ -9,8 +9,22 @@ import sys
 import tempfile
 import unittest
 
+
+def _load_source(name, path):
+    """Imports a tool that has no .py suffix. Loaders no longer offer load_module() on the
+    Python that hosted macOS runners now run (apple-ci run 38680055395), so exec_module()
+    runs it, registered first as load_module() did."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
 TOOL = pathlib.Path(__file__).with_name("capture-conformance-stall")
-module = importlib.machinery.SourceFileLoader("stall_capture", str(TOOL)).load_module()
+module = _load_source("stall_capture", str(TOOL))
 
 
 class CaptureTest(unittest.TestCase):

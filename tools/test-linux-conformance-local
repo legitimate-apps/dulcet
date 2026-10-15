@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Static and mutation controls for the shared Linux conformance lifecycle."""
 
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import json
 import re
@@ -12,13 +11,27 @@ import tempfile
 from types import SimpleNamespace
 
 
+def _load_source(name, path):
+    """Imports a tool that has no .py suffix. Loaders no longer offer load_module() on the
+    Python that hosted macOS runners now run (apple-ci run 38680055395), so exec_module()
+    runs it, registered first as load_module() did."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
 ROOT = Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools/conformance-env/linux-local"
 RESET_TOOL = ROOT / "tools/conformance-env/reset-transcode-cache"
 OBSERVE_TOOL = ROOT / "tools/conformance-env/observe-transcode-cache"
 WORKFLOW = ROOT / ".github/workflows/core-ci.yml"
 APPLE_WORKFLOW = ROOT / ".github/workflows/apple-ci.yml"
-linux_local = SourceFileLoader("linux_conformance_local", str(TOOL)).load_module()
+linux_local = _load_source("linux_conformance_local", str(TOOL))
 
 
 def declared_environment(root: Path) -> set[str]:
