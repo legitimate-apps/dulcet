@@ -942,7 +942,7 @@ final class DulcetCoreLibraryReaderFactory: DulcetLibraryReaderMaking {
     }
 
     func makeReader(account: DulcetLibraryReaderAccount, foreground: Bool) -> any DulcetLibraryReading {
-        DulcetCoreLibraryReader(client: AppleLibraryReaderClient(
+        DulcetCoreLibraryReader(serverID: account.providerInstanceID, client: AppleLibraryReaderClient(
             databaseName: databaseName,
             account: AppleLibraryReaderAccount(
                 providerInstanceId: account.providerInstanceID,
@@ -967,8 +967,13 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     /// Made on first use, one per reader (DulcetCorePlaylistsLyrics.swift).
     var playlistClient: AppleLibraryPlaylistClient?
     var lyricsClient: AppleLibraryLyricsClient?
+    var myLibraryClient: AppleMyLibraryClient?
+    var myLibraryPublication: AppleMyLibraryPublication?
+    var myLibraryCoreSubscription: AppleMyLibrarySubscription?
+    let myLibraryServerID: String
 
-    init(client: AppleLibraryReaderClient) {
+    init(serverID: String, client: AppleLibraryReaderClient) {
+        self.myLibraryServerID = serverID
         self.client = client
     }
 

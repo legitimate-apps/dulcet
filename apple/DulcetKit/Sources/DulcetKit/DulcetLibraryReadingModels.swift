@@ -634,6 +634,7 @@ public enum DulcetFavouriteOutcomeKind: Sendable, Hashable {
 public enum DulcetFavouriteField: String, Sendable, Hashable {
     case favourite
     case rating
+    case inLibrary
 }
 
 public struct DulcetFavouriteOutcome: Sendable, Hashable {
@@ -667,7 +668,7 @@ public struct DulcetFavouriteOutcome: Sendable, Hashable {
         }
         targetRawID = rawID
         self.targetKind = DulcetFavouriteTargetKind(rawValue: targetKind)
-        self.field = field == "rating" ? .rating : .favourite
+        self.field = DulcetFavouriteField(rawValue: field) ?? .favourite
     }
 }
 

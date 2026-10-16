@@ -24,7 +24,7 @@ struct DulcetMacApp: App {
             controller: composition.downloads,
             store: composition.store
         ))
-        if DulcetDownloadHandoffProbe.namespace != nil {
+        if DulcetDownloadHandoffProbe.namespace != nil || ProcessInfo.processInfo.arguments.contains("-dulcet-debug-connect-account") {
             DulcetDebugLaunchAccount.connect(composition.store)
         }
 #endif

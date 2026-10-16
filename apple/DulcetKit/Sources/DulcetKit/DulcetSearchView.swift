@@ -442,6 +442,7 @@ private struct DulcetSearchResultMenuItems: View {
             Button(DulcetStrings.goToArtist, systemImage: "music.mic", action: onActivate)
         }
         if let readerRow, let target = readerRow.favouriteTarget {
+            DulcetMyLibraryButton(target: target, menu: true)
             DulcetFavouriteMenuItem(target: target, published: readerRow.isFavourite)
         }
         if result.kind != .artist {

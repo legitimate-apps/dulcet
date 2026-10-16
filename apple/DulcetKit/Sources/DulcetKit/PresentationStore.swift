@@ -119,6 +119,8 @@ public enum DulcetReaderRoute: Hashable, Sendable {
     case genre(String)
     /// One album list in one order: a home row's "See All".
     case albumList(DulcetAlbumListType)
+    /// A My Library section, pushed by the compact Library root's rows.
+    case myLibrarySection(DulcetMyLibrarySection)
 }
 
 /// The sign-out offer for changes that have not reached the server (§14.7 step 2).
@@ -158,6 +160,31 @@ public final class DulcetPresentationStore {
     /// left -- deriving the stack from the snapshot reset it to the grid on every return.
     public private(set) var libraryPath: [DulcetLibraryRoute] = []
     /// The reader's Library stack, outermost first, while the reader draws the library.
+    public private(set) var myLibrarySection: DulcetMyLibrarySection = .recent
+    public func selectMyLibrarySection(_ section: DulcetMyLibrarySection) {
+        navigate(to: .library)
+        readerPath = []
+        readerReturn = nil
+        readerArrival = nil
+        myLibrarySection = section
+    }
+    private var requestedBrowse = false
+    private var savedReaderPaths: [DulcetSidebarDestination: [DulcetReaderRoute]] = [:]
+    public func resetReaderNavigation() {
+        myLibrarySection = .recent
+        librarySection = .home
+        readerPath = []
+        savedReaderPaths = [:]
+        readerReturn = nil
+        readerArrival = nil
+        requestedBrowse = false
+        if selectedDestination == .browse { selectDestination(.library) }
+    }
+    public var myLibraryAvailable: Bool { librarySession?.myLibrary.availability == .available }
+    public var isReaderDestination: Bool { selectedDestination == .library || selectedDestination == .browse }
+    public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
+        base.flatMap { $0 == .library && myLibraryAvailable ? [.library, .browse] : [$0] }
+    }
     public private(set) var readerPath: [DulcetReaderRoute] = []
     /// The library section at the root of the reader's stack: the sidebar's and the TV bar's
     /// selection. The phone's root is always Home, with the other sections pushed from it.
@@ -262,8 +289,14 @@ public final class DulcetPresentationStore {
     /// Shows a destination's root: Library's grid, whatever was open on top of it.
     public func selectDestination(_ destination: DulcetSidebarDestination) {
         guard !isApplyingSourceSnapshot else { return }
+        let destination = destination == .browse && !myLibraryAvailable ? .library : destination
+        if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
+        if destination == .library || destination == .browse {
+            readerPath = savedReaderPaths[destination] ?? []
+        }
+        requestedBrowse = destination == .browse
         selectedDestination = destination
-        source.send(.selectDestination(destination))
+        source.send(.selectDestination(destination == .browse ? .library : destination))
     }
 
     /// Chooses a top-level destination the way a tab bar or a sidebar does. Coming back to
@@ -272,14 +305,14 @@ public final class DulcetPresentationStore {
     /// tab does.
     public func navigate(to destination: DulcetSidebarDestination) {
         guard !isApplyingSourceSnapshot else { return }
-        if destination == .library, readerOwnsLibrary {
+        if (destination == .library || destination == .browse), readerOwnsLibrary {
             // The reader's pages are the store's own; the source is told only the destination.
-            if selectedDestination == .library {
+            if selectedDestination == destination {
                 readerPath = []
                 readerReturn = nil
                 readerArrival = nil
             }
-            selectDestination(.library)
+            selectDestination(destination)
             return
         }
         if destination == .library, selectedDestination != .library, let page = libraryPath.last {
@@ -475,17 +508,17 @@ public final class DulcetPresentationStore {
     public func showReaderPage(_ route: DulcetReaderRoute) {
         readerReturn = nil
         readerArrival = route
-        if selectedDestination == .library {
+        if isReaderDestination {
             if readerPath.last != route { readerPath.append(route) }
         } else {
-            readerPath = [route]
             selectDestination(.library)
+            readerPath = [route]
         }
     }
 
     /// Pushes a page on top of the Library stack.
     public func pushReaderPage(_ route: DulcetReaderRoute) {
-        guard selectedDestination == .library else {
+        guard isReaderDestination else {
             showReaderPage(route)
             return
         }
@@ -528,7 +561,7 @@ public final class DulcetPresentationStore {
 
     /// Whether Back has a library page to leave: the Library is showing and a page is pushed.
     public var canGoBackInLibrary: Bool {
-        selectedDestination == .library && readerOwnsLibrary && !readerPath.isEmpty
+        isReaderDestination && readerOwnsLibrary && !readerPath.isEmpty
     }
 
     /// Back from the keyboard or the menu bar: the same one step the back button takes.
@@ -576,7 +609,7 @@ public final class DulcetPresentationStore {
         readerPath = []
         readerReturn = nil
         readerArrival = nil
-        if selectedDestination != .library {
+        if !isReaderDestination {
             selectDestination(.library)
         }
     }
@@ -658,7 +691,18 @@ public final class DulcetPresentationStore {
         followLibraryPage(in: snapshot, arrivingFrom: self.snapshot.selectedDestination)
         if !snapshot.playbackFailed { dismissedPlaybackFailure = nil }
         self.snapshot = snapshot
-        selectedDestination = snapshot.selectedDestination
+        let destination = requestedBrowse && myLibraryAvailable && snapshot.selectedDestination == .library
+            ? .browse : snapshot.selectedDestination
+        if destination != selectedDestination {
+            // A destination change the source makes on its own -- playback moving the app to Now
+            // Playing -- saves and restores the reader's stacks exactly as a choice on the bar
+            // does, or Library loses the page it was left on.
+            if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
+            if destination == .library || destination == .browse {
+                readerPath = savedReaderPaths[destination] ?? []
+            }
+        }
+        selectedDestination = destination
         searchQuery = snapshot.searchQuery
         accountServerURL = snapshot.accountForm.serverURL
         accountUsername = snapshot.accountForm.username
