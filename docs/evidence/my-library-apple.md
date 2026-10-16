@@ -91,6 +91,9 @@ visible display with room for window chrome. The driver requires each launched o
 window to stay on screen before it proceeds, retaining every membership and server-read assertion.
 The hosted failure had restored a 1180-point window at x = -78 on a 1024-point display; an
 oversized preferred window must not make the sidebar or title-bar controls unreachable.
+The album helper waits for the catalog scroll view containing album cards before it scrolls.
+The first Mac scroll view is the sidebar: scrolling it while catalog publication was pending
+hid Library above the viewport and caused the subsequent membership navigation to fail.
 
 ## Limits
 
@@ -100,9 +103,10 @@ they are historical evidence. The Round 3 functional checks below do not claim a
 The earlier iPhone album capture is scrolled to show Add at the largest size.
 
 
-The unsigned Mac fixture uses the existing DEBUG disk credential store under a per-test UUID.
+The CI Mac proof host is signed ad hoc with entitlements cleared and uses the existing DEBUG
+disk credential store under a per-test UUID.
 Its relaunch proves durable My Library and outbox behavior with that account store; it does not
-claim signed, entitled Keychain persistence. The test host compiles the production app sources
+claim entitled Keychain persistence. The test host compiles the production app sources
 under a disposable bundle identity. iPhone, iPad and TV use their normal simulator app targets.
 
 The core song facade currently lacks artist IDs and offline playability. Membership actions are

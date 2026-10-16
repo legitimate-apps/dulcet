@@ -301,11 +301,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         if all.exists { activate(all) }
 #endif
         let tile = albumTile(title)
+#if os(macOS)
+        // The sidebar is also a scroll view. Wait for catalog publication and scroll only the
+        // album page; scrolling firstMatch can hide Library before the catalog finishes loading.
+        let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
+        XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The album page must load before scrolling")
+#endif
 #if !os(tvOS)
         for _ in 0..<6 {
             if tile.exists && tile.isHittable { break }
 #if os(macOS)
-            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -450)
+            albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
             app.scrollViews.firstMatch.swipeUp()
 #endif
