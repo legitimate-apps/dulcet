@@ -109,7 +109,9 @@ through `tools/ci/run-my-library-proofs`. The conformance-core job runs Mac and 
 iPhone/iPad matrix runs each device separately. The helper uses the job's disposable Navidrome
 on 4533 through a loopback proxy on 4785 for the fallback control. `:server:installDist` supplies
 the server binary from the checkout; fresh data and all fixture processes live only for the proof.
-Explicit selectors exclude the iPhone-only visibility case on other devices. Each selected case
+The iPad driver waits directly on the identified sidebar text, including during the initial
+account publication; choosing a label-based cell before publication can leave a wait on an
+unlabeled cell query. Explicit selectors exclude the iPhone-only visibility case on other devices. Each selected case
 must appear once, Passed, in the individual xcresult records before JUnit is generated. Each
 platform gets its own JUnit class name so the required aggregator resolves distinct UI evidence.
 `FEATURES.yml` remains partial until these required CI runs have executed successfully.

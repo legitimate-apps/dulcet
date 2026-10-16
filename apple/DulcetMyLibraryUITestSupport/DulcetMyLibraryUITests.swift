@@ -266,12 +266,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
-        let sidebar = app.cells.containing(.any, identifier: "dulcet.sidebar.\(section)").firstMatch
-        if sidebar.exists { return sidebar }
-        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         if UIDevice.current.userInterfaceIdiom == .pad {
-            return app.cells.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            // Construct the identified query even before the account publishes its sidebar.
+            // Choosing a label-based Cell fallback before it exists leaves the wait on cells
+            // with no label; SwiftUI exposes the destination label on their StaticText child.
+            return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
         }
+        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
