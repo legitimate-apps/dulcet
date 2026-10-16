@@ -27,6 +27,8 @@ class ApiUserData(private val ctx: ServerContext) {
         db.write {
             execute("CREATE TABLE IF NOT EXISTS api_state_clock(user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,item_id TEXT NOT NULL,field TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(user_id,item_id,field))")
             execute("CREATE TABLE IF NOT EXISTS api_state_mutation(user_id TEXT NOT NULL,item_id TEXT NOT NULL,PRIMARY KEY(user_id,item_id))")
+            // Legacy incremental reads need receipt time even when an offline API action is old.
+            execute("CREATE TABLE IF NOT EXISTS api_library_receipt(user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,item_id TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(user_id,item_id))")
             val wall="CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)"
             for((column,field) in listOf("starred" to "favorite","rating" to "rating")) {
                 execute("CREATE TRIGGER IF NOT EXISTS api_clock_annotation_$field AFTER UPDATE OF $column ON annotation WHEN NOT EXISTS(SELECT 1 FROM api_state_mutation WHERE user_id=NEW.user_id AND item_id=NEW.item_id) BEGIN INSERT INTO api_state_clock VALUES(NEW.user_id,NEW.item_id,'$field',$wall) ON CONFLICT(user_id,item_id,field) DO UPDATE SET at=excluded.at; END")
@@ -258,7 +260,11 @@ class ApiUserData(private val ctx: ServerContext) {
             execute("DELETE FROM api_state_mutation WHERE user_id=? AND item_id=?",p.user.id,id)
             execute("INSERT INTO api_state_clock VALUES (?,?,?,?) ON CONFLICT(user_id,item_id,field) DO UPDATE SET at=excluded.at",p.user.id,id,field,time)
             // /rest readers probe this clock before deciding whether to refresh My Library.
-            if(field=="library") markLibraryChanged(p.user.id,System.currentTimeMillis())
+            if(field=="library") {
+                val received=System.currentTimeMillis()
+                markLibraryChanged(p.user.id,received)
+                if(op=="libraryAdd") execute("INSERT INTO api_library_receipt(user_id,item_id,at) SELECT ?,?,CAST(value AS INTEGER) FROM meta WHERE key=? ON CONFLICT(user_id,item_id) DO UPDATE SET at=excluded.at",p.user.id,id,"library_changed:${p.user.id}")
+            }
             // An odd half-star may change while the rounded legacy value does not.
             if(op=="rate") journal("itemState",id,p.user.id,"upsert")
             JsonObject(itemState(id,p)+j("applied" to true))

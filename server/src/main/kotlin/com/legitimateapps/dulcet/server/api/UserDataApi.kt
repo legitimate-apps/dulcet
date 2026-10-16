@@ -171,8 +171,10 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val offset = call.int("offset", 0)
             val userId = call.user.id
             val since = call.long("since")
-            val sinceClause = if (since != null) " AND li.added > ?" else ""
-            val sinceArgs = listOfNotNull(since)
+            // API offline additions retain action time in `added`; receipt time keeps them visible
+            // to legacy readers even after journal pruning, so equal totals cannot hide a replacement.
+            val sinceClause = if (since != null) " AND (li.added > ? OR EXISTS (SELECT 1 FROM api_library_receipt r WHERE r.user_id=li.user_id AND r.item_id=li.item_id AND r.at > ?))" else ""
+            val sinceArgs = if(since!=null) listOf(since,since) else emptyList()
             val counts = db.read {
                 query("SELECT item_type,item_id FROM library_item WHERE user_id=?",userId) { it.string("item_type") to it.string("item_id") }
                     .filter { (type,id) -> ctx.access.canReadCatalog(userId,type,id) }.groupingBy { it.first }.eachCount()

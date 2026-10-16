@@ -58,7 +58,7 @@ removed whatever its type.
 | `type` | all three | `artist`, `album` or `song`. Any other value returns error `0`. |
 | `size` | 500 | Page size per type, at most 5000. |
 | `offset` | 0 | Offset per type. |
-| `since` | none | Epoch milliseconds. Returns only members added after this time. |
+| `since` | none | Epoch milliseconds. Returns current members added after this time, including offline Dulcet API additions received after it. |
 
 ```json
 {
@@ -81,8 +81,11 @@ removed whatever its type.
 - `changed` is the user's library clock. It moves forward on every add or remove call, and two
   writes in the same millisecond still give two different values. It is absent until the user's
   first write. Clients compare it for equality only. When it differs from the value they hold,
-  they re-read the library. `since` only helps with additions: removals have no tombstones, so a
-  changed clock always means a full re-read.
+  they refresh the library. `since` only helps with additions: removals have no tombstones, so a
+  client must establish completeness from the whole-library totals or perform a full re-read
+  (§29.9). Dulcet API writes advance the same clock. An offline API addition keeps its original
+  action time, but also has a persistent receipt time used by this endpoint's `since` filter;
+  an equal-count replacement cannot disappear from the incremental read, even after journal pruning.
 - Library writes never move the server's scan clock (`getScanStatus.lastScan`), and scans never
   move `changed`.
 

@@ -43,6 +43,41 @@ class ApiIntegrationTest {
             assertTrue(api["items"]!!.jsonArray.isEmpty())
         } finally { ctx.db.close() }
     }
+    @Test fun `legacy incremental library reads include old offline additions after an equal count replacement`() = testApplication {
+        val ctx=fixture()
+        val user=ctx.users.create("offline-reader","password",false)
+        val token=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read","user:read","user:write","user:delete"))
+        val ids=ctx.db.read { query("SELECT id FROM track ORDER BY id") { it.string("id") } }
+        application { dulcetModule(ctx) }
+        suspend fun add(id:String,at:String) {
+            assertEquals(HttpStatusCode.OK,client.put("/dulcet/v1/me/library/$id") { bearerAuth(token);header("Dulcet-Action-Time",at) }.status)
+        }
+        suspend fun library(vararg params:Pair<String,String>)=client.rest("getDulcetLibrary","offline-reader","password",*params)["dulcetLibrary"]!!.jsonObject
+        try {
+            add(ids[0],"2020-01-01T00:00:00Z")
+            add(ids[2],"2020-01-03T00:00:00Z")
+            // The logical library clock can lead wall time after a clock adjustment or rapid writes.
+            ctx.db.write { execute("UPDATE meta SET value=? WHERE key=?",(System.currentTimeMillis()+120000).toString(),"library_changed:${user.id}") }
+            val held=library()
+            assertEquals(2,held["songCount"]!!.jsonPrimitive.int)
+            val since=java.time.Instant.parse(held["changed"]!!.jsonPrimitive.content).toEpochMilli()-60000
+            assertEquals(HttpStatusCode.NoContent,client.delete("/dulcet/v1/me/library/${ids[0]}") { bearerAuth(token) }.status)
+            add(ids[1],"2020-01-02T00:00:00Z")
+            // The probe sees only the already-held newest member; the delta must reveal its replacement.
+            val probe=library("size" to "1")
+            assertEquals(ids[2],probe["song"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
+            assertEquals(2,probe["songCount"]!!.jsonPrimitive.int)
+            // Receipt evidence must survive ordinary journal retention.
+            ctx.db.write { execute("DELETE FROM api_journal") }
+            val delta=library("since" to since.toString())
+            val listed=delta["song"]?.jsonArray.orEmpty().map { it.jsonObject["id"]!!.jsonPrimitive.content }.toSet()
+            assertTrue(ids[1] in listed,"The legacy delta must include the replayed old addition")
+            assertTrue(ids[0] !in listed)
+            val api=client.get("/dulcet/v1/me/library") { bearerAuth(token) }.obj()
+            val replayed=api["items"]!!.jsonArray.single { it.jsonObject["item"]!!.jsonObject["id"]!!.jsonPrimitive.content==ids[1] }.jsonObject
+            assertEquals("2020-01-02T00:00:00.000Z",replayed["libraryAddedAt"]!!.jsonPrimitive.content)
+        } finally { ctx.db.close() }
+    }
     @Test fun `catalog canonical path state ETags keyset deletes and sync cursor agree`() = testApplication {
         val ctx=fixture();val user=ctx.users.create("reader","password",false)
         val token=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read","user:read","user:write","media:read"))
