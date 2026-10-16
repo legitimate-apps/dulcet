@@ -6564,6 +6564,15 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 `services:`-based Navidrome cannot run in an Apple job. That is a statement about the Actions feature,
 and it is why the Apple leg runs Navidrome as a native pinned binary instead (§20.3).
 
+My Library (§29.9) adds a disposable JVM Dulcet Server built from the checkout to the existing
+conformance jobs. `tools/ci/with-my-library-fixture` owns fresh data, published fixture accounts,
+loopback-only listeners and finite proxy processes, and stops them when its command exits.
+Apple's shared UI suite runs on Mac/tvOS in `apple-conformance-core` and on iPhone/iPad in their
+existing matrix members. The job's disposable Navidrome supplies the no-extension control.
+The Android emulator members run both the ordinary Navidrome suite and a separate split-only
+My Library invocation, preserving both JUnit sets. These proofs feed the same required aggregators;
+Apple PR planning remains §21.6 (platform only), with all conformance legs on main and dispatch.
+
 Every workflow carries:
 
 ```yaml
@@ -7766,6 +7775,23 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
+The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
+automated writes to personal or production instances remain forbidden. The existing Apple
+conformance legs (§21.5–21.6) build `:server:installDist` and execute the shared My Library UI
+suite: Mac and tvOS in `apple-conformance-core`, iPhone and iPad in their device matrix members.
+Each run gets fresh server data, disposable accounts and loopback network proxies; the job's
+Navidrome remains the positive control for the absent split. Explicit selectors and individual
+result guards require passing membership/relaunch/offline-replay, fallback and visual cases;
+iPhone also requires its largest-text Add visibility case. Platform-specific JUnit class names
+keep the shared Swift methods distinct in the required `apple-ci` evidence resolver.
+The `android-emulator` phone and TV members retain the existing Navidrome invocation, preserve
+its results, then execute only their My Library proof with `dulcetExpectSplit=true` against the
+built Dulcet Server. The second invocation must report exactly one passing, non-skipped test;
+both result sets reach required `core-ci`. All fixture processes end with their command; no
+runner slot, trigger, external service, physical device or production account is added.
+
 
 **2026-10-15 — My Library stays coherent across both server protocols.**
 Dulcet API membership writes advance the same per-user `dulcetLibrary` clock that §29.9's clients

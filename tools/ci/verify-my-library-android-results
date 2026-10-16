@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Require one passing, non-skipped split testcase after the second instrumentation invocation."""
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+root, expected = sys.argv[1:]
+cases = [case for path in Path(root).rglob('*.xml') for case in ET.parse(path).getroot().iter('testcase')]
+assert len(cases) == 1, f'Expected exactly one split testcase, observed {len(cases)}'
+case = cases[0]
+assert (case.get('classname'), case.get('name')) == (expected, 'myLibrarySplit'), ET.tostring(case)
+assert not any(case.find(terminal) is not None for terminal in ['failure', 'error', 'skipped']), ET.tostring(case)
+print(f'MY LIBRARY ANDROID executed=1 passed=1 skipped=0 test={expected}/myLibrarySplit split=true')

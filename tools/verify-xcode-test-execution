@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require exactly one named, passing XCTest result in an xcresult bundle."""
+"""Require exactly the named, passing XCTest results in an xcresult bundle."""
 
 from __future__ import annotations
 
@@ -15,22 +15,29 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-if len(sys.argv) != 4:
+if len(sys.argv) < 4:
     fail(
         "usage: verify-xcode-test-execution "
-        "<bundle.xcresult> <expected-class> <expected-method>"
+        "<bundle.xcresult> <expected-class> <expected-method> [<expected-method> ...]"
     )
 
 bundle_path = Path(sys.argv[1])
 expected_class = sys.argv[2]
-expected_method = sys.argv[3]
+expected_methods = sys.argv[3:]
 try:
     cases = read_xcresult(bundle_path)
-    require_exact_test(cases, expected_class, expected_method)
+    if len(expected_methods) > 1 and (len(cases) != len(expected_methods) or len(set(expected_methods)) != len(expected_methods)):
+        raise EvidenceError(f"expected {len(expected_methods)} distinct tests, observed {len(cases)} results")
+    if len(expected_methods) == 1:
+        require_exact_test(cases, expected_class, expected_methods[0])
+    else:
+        for expected_method in expected_methods:
+            matching = [case for case in cases if case.name.removesuffix("()") == expected_method]
+            require_exact_test(matching, expected_class, expected_method)
 except EvidenceError as error:
     fail(str(error))
 
 print(
     "xcode test execution valid: "
-    f"test={expected_class}/{expected_method} terminal=Passed individual-results=1"
+    f"class={expected_class} methods={expected_methods} terminal=Passed individual-results={len(cases)}"
 )

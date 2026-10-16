@@ -97,7 +97,15 @@ under a disposable bundle identity. iPhone, iPad and TV use their normal simulat
 
 The core song facade currently lacks artist IDs and offline playability. Membership actions are
 available on unavailable tracks; this shell does not infer offline playback availability.
-`FEATURES.yml` remains partial until required CI runs provision and execute this runtime suite.
+Required CI provisions this recipe through `tools/ci/with-my-library-fixture` and executes it
+through `tools/ci/run-my-library-proofs`. The conformance-core job runs Mac and TV; the existing
+iPhone/iPad matrix runs each device separately. The helper uses the job's disposable Navidrome
+on 4533 through a loopback proxy on 4785 for the fallback control. `:server:installDist` supplies
+the server binary from the checkout; fresh data and all fixture processes live only for the proof.
+Explicit selectors exclude the iPhone-only visibility case on other devices. Each selected case
+must appear once, Passed, in the individual xcresult records before JUnit is generated. Each
+platform gets its own JUnit class name so the required aggregator resolves distinct UI evidence.
+`FEATURES.yml` remains partial until these required CI runs have executed successfully.
 Local runtime results, when recorded, do not assert that CI has executed the new tests.
 
 

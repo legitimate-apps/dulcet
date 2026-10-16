@@ -1,0 +1,101 @@
+#!/bin/bash
+# Run the shared My Library UI suite, with platform-specific evidence names. The caller supplies
+# the finite Dulcet Server/proxy fixture and disposable Navidrome (with-my-library-fixture).
+set -euo pipefail
+: "${RUNNER_TEMP:?}"
+mode="${1:?macos|tvos|iphone|ipad}"
+case "$mode" in macos|tvos|iphone|ipad) ;; *) exit 2 ;; esac
+
+if [ "$mode" = macos ]; then
+    xcodebuild test \
+        -project apple/Dulcet.xcodeproj -scheme DulcetMac -configuration Debug \
+        -destination "platform=macOS" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
+        -parallel-testing-enabled NO \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
+        -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
+        -only-testing:DulcetMacUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
+        CODE_SIGN_ENTITLEMENTS= \
+        2>&1 | tee "$RUNNER_TEMP/dulcet-macos-my-library.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
+        DulcetMacUITests.DulcetMyLibraryUITests \
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
+        "$RUNNER_TEMP/dulcet-macos-my-library-junit/TEST-MyLibrary.xml" \
+        DulcetMyLibraryMacUITests
+fi
+
+if [ "$mode" = tvos ]; then
+    python3 tools/ci/isolate-simulator --phase my-library-tvos --keep-name "Apple TV 4K (3rd generation)"
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+        -destination "platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
+        -parallel-testing-enabled NO \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
+        -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
+        -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        2>&1 | tee "$RUNNER_TEMP/dulcet-tvos-my-library.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
+        DulcetTVUITests.DulcetMyLibraryUITests \
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
+        "$RUNNER_TEMP/dulcet-tvos-my-library-junit/TEST-MyLibrary.xml" \
+        DulcetMyLibraryTVUITests
+fi
+
+if [ "$mode" = iphone ]; then
+    python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 17 Pro"
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+        -destination "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
+        -parallel-testing-enabled NO \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testAlbumAddRemainsVisibleAtLargestTextOnIPhone \
+        2>&1 | tee "$RUNNER_TEMP/dulcet-iphone-my-library.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
+        DulcetiOSUITests.DulcetMyLibraryUITests \
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText testAlbumAddRemainsVisibleAtLargestTextOnIPhone
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
+        "$RUNNER_TEMP/dulcet-iphone-my-library-junit/TEST-MyLibrary.xml" \
+        DulcetMyLibraryIPhoneUITests
+fi
+
+if [ "$mode" = ipad ]; then
+    python3 tools/ci/isolate-simulator --phase my-library-ipad --keep "${IPAD_UDID:?}"
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
+        -destination "platform=iOS Simulator,id=${IPAD_UDID:?}" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
+        -parallel-testing-enabled NO \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
+        -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
+        2>&1 | tee "$RUNNER_TEMP/dulcet-ipad-my-library.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
+        DulcetiOSUITests.DulcetMyLibraryUITests \
+        testBrowseAddRemoveRelaunchAndOfflineReplay testNonDulcetServerKeepsTheOriginalLibraryNavigation testLibraryBrowseAndAlbumInLightDarkAndLargestText
+    python3 tools/swift-testing-junit \
+        "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
+        "$RUNNER_TEMP/dulcet-ipad-my-library-junit/TEST-MyLibrary.xml" \
+        DulcetMyLibraryIPadUITests
+fi

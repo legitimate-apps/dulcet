@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Run a command against a fresh, finite loopback Dulcet Server and UI proxies.
+
+The caller owns the seeded music and disposable Navidrome on 4533. No external server URL is
+accepted. Server binaries come from :server:installDist in this checkout. All fixture children
+are reaped on success, command failure, SIGINT or SIGTERM; the caller keeps logs for diagnosis.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def rest(port: int, endpoint: str, **parameters: str) -> dict:
+    salt = 'ci-fixture'
+    query = urllib.parse.urlencode(dict(u='dulcet-admin', s=salt,
+        t=hashlib.md5(('dulcet-ci-canary-password' + salt).encode()).hexdigest(),
+        v='1.16.1', c='dulcet-ci-fixture', f='json', **parameters))
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/rest/{endpoint}?{query}', timeout=3) as response:
+        body = json.load(response)['subsonic-response']
+    if body['status'] != 'ok':
+        raise RuntimeError(f'{endpoint}: fixture returned an error envelope')
+    return body
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', required=True, type=Path)
+    parser.add_argument('--music', required=True, type=Path)
+    parser.add_argument('--ffmpeg', default='ffmpeg')
+    parser.add_argument('--ffprobe', default='ffprobe')
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if not command:
+        parser.error('a command is required after --')
+    # mkdir without exist_ok prevents accidentally reusing the state of a previous proof.
+    args.root.mkdir(parents=True)
+    if not (args.music / 'corpus-manifest.json').is_file():
+        parser.error('--music must be the generated disposable corpus')
+    for port in range(4783, 4789):
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', port))
+    # Positive fallback control, before launching anything. Never let an absent server prove no split.
+    if not rest(4533, 'getAlbumList2', type='alphabeticalByName', size='1')['albumList2'].get('album'):
+        raise RuntimeError('Navidrome fallback corpus is empty')
+    if any(e['name'] == 'dulcetLibrary' for e in rest(4533, 'getOpenSubsonicExtensions')['openSubsonicExtensions']):
+        raise RuntimeError('fallback control must not advertise dulcetLibrary')
+    binary = REPO / 'server/build/install/dulcet-server/bin/dulcet-server'
+    os.environ["JAVA_OPTS"] = "-Xmx256m"
+    settings = [f'--music={args.music.resolve()}', f'--data={args.root.resolve() / "data"}',
+        '--bind=127.0.0.1', '--port=4783', '--lrclib=off', '--scan-on-start=false',
+        f'--ffmpeg={args.ffmpeg}', f'--ffprobe={args.ffprobe}']
+    children: list[subprocess.Popen] = []
+    handles = []
+    def interrupted(signum, _frame):
+        raise SystemExit(128 + signum)
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
+    def start(name, argv):
+        handle = (args.root / f'{name}.log').open('w')
+        handles.append(handle)
+        child = subprocess.Popen(argv, stdout=handle, stderr=subprocess.STDOUT)
+        children.append(child)
+        return child
+    try:
+        with (args.root / 'setup.log').open('w') as log:
+            for user in ['apple-mac', 'apple-iphone', 'apple-ipad', 'apple-tv', 'dulcet-admin']:
+                password = 'dulcet-ci-canary-password' if user == 'dulcet-admin' else 'fixture-password'
+                subprocess.run([str(binary), 'user', 'add', user, password, *settings],
+                    stdout=log, stderr=subprocess.STDOUT, check=True)
+            subprocess.run([str(binary), 'scan', *settings], stdout=log, stderr=subprocess.STDOUT, check=True)
+        start('server', [str(binary), 'serve', *settings])
+        for port in range(4784, 4789):
+            start(f'proxy-{port}', [sys.executable, str(REPO / 'tools/my-library-ui-proxy'),
+                '--port', str(port), '--upstream-port', '4533' if port == 4785 else '4783'])
+        deadline = time.monotonic() + 60
+        while True:
+            if any(child.poll() is not None for child in children):
+                raise RuntimeError(f'fixture process exited; see {args.root}')
+            try:
+                for port in range(4783, 4789):
+                    body = rest(port, 'getAlbumList2', type='alphabeticalByName', size='1')
+                    if not body['albumList2'].get('album'):
+                        raise RuntimeError(f'fixture corpus empty on {port}')
+                advertised = rest(4783, 'getOpenSubsonicExtensions')['openSubsonicExtensions']
+                if not any(e['name'] == 'dulcetLibrary' and 1 in e['versions'] for e in advertised):
+                    raise RuntimeError('Dulcet Server must advertise dulcetLibrary v1')
+                break
+            except (OSError, ValueError, RuntimeError):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f'fixture readiness deadline expired; see {args.root}') from None
+                time.sleep(.2)
+        print('MY LIBRARY FIXTURE ready split=4783 fallback=4785 proxies=4784,4786,4787,4788', flush=True)
+        child = subprocess.Popen(command)
+        children.append(child)
+        return child.wait()
+    finally:
+        for child in reversed(children):
+            if child.poll() is None:
+                child.terminate()
+        for child in reversed(children):
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+        for handle in handles:
+            handle.close()
+        print('MY LIBRARY FIXTURE stopped', flush=True)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
