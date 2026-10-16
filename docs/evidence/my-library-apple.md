@@ -80,7 +80,10 @@ testing, and `-only-testing:<UI target>/DulcetMyLibraryUITests`. Simulator app s
 unsigned builds can reach the server but fail to save the account in Keychain. Use a local
 `CONFIGURATION_BUILD_DIR` if build products on removable storage trigger an OS access prompt.
 The Mac scheme uses its dedicated proof host; runtime automation still requires the host's normal
-XCTest authorization.
+XCTest authorization. The Mac driver recognizes the Python fixture's local-network permission
+prompt, allows it, and requires dismissal. It selects the identified sidebar row rather than a
+similarly named section heading, and uses the normal Zoom control if a restored window extends
+outside the hosted display. These helper paths retain every membership and server-read assertion.
 
 ## Limits
 

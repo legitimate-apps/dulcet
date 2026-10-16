@@ -12,6 +12,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
 #if os(macOS)
     private let accountFixtureNamespace = UUID().uuidString
+    private var installedFixtureNetworkMonitor = false
 #endif
     private var user: String {
 #if os(macOS)
@@ -185,9 +186,37 @@ final class DulcetMyLibraryUITests: XCTestCase {
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
 #endif
         app.launchArguments = launchArguments
+#if os(macOS)
+        if !installedFixtureNetworkMonitor {
+            installedFixtureNetworkMonitor = true
+            _ = addUIInterruptionMonitor(withDescription: "Allow the disposable Python fixture's local network") { dialog in
+                self.allowFixtureLocalNetwork(dialog)
+            }
+        }
+#endif
         app.launch()
 #if os(macOS)
+        // The fixture's Python process can trigger macOS's local-network permission dialog.
+        // Handle only that named fixture prompt, including when it predates this app's launch.
+        let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+        for dialog in notifications.dialogs.allElementsBoundByIndex {
+            _ = allowFixtureLocalNetwork(dialog)
+        }
         app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let screenWidth = try XCTUnwrap(NSScreen.main?.frame.width)
+        if window.frame.minX < 0 || window.frame.maxX > screenWidth {
+            // Hosted displays can be narrower than the restored window. Use its normal Zoom
+            // control only when it is off screen; repeatedly toggling Zoom would restore it.
+            let zoom = window.buttons[XCUIIdentifierZoomWindow]
+            XCTAssertTrue(zoom.exists)
+            zoom.click()
+            let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                window.frame.minX >= 0 && window.frame.maxX <= screenWidth
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed)
+        }
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome
@@ -202,11 +231,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
 #endif
     }
+#if os(macOS)
+    @MainActor private func allowFixtureLocalNetwork(_ dialog: XCUIElement) -> Bool {
+        let text = dialog.staticTexts.allElementsBoundByIndex.map {
+            $0.label + " " + ($0.value as? String ?? "")
+        }.joined(separator: " ")
+        guard text.contains("Python"), text.contains("local networks") else { return false }
+        let allow = dialog.buttons["Allow"].firstMatch
+        guard allow.exists else { return false }
+        allow.click()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: dialog)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        print("MY LIBRARY MAC fixture-local-network-prompt handled=Allow")
+        return true
+    }
+#endif
     @MainActor private func destination(_ section: String) -> XCUIElement {
 #if os(macOS)
-        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
-        return app.windows.firstMatch.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", title)).firstMatch
+        // Labels also match section headings and toolbar titles. The actual navigation row
+        // carries this identifier on its text in the macOS outline's accessibility tree.
+        return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
