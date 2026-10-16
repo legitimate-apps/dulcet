@@ -361,6 +361,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let current = focusedCell.exists ? focusedCell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
             guard current.exists else { XCUIRemote.shared.press(.down); continue }
             let a = current.frame, b = target.frame
+            // Album Add is centred beside the vertical Play/Shuffle stack. Its centre is
+            // below Play and above Shuffle, so centre-only steering oscillates Up/Down.
+            // Overlapping vertical spans identify the reachable horizontal neighbour.
+            if min(a.maxY, b.maxY) > max(a.minY, b.minY),
+               b.minX >= a.maxX || b.maxX <= a.minX {
+                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+                previousFrame = a
+                continue
+            }
             if previousFrame == a && abs(a.midX - b.midX) > 20 {
                 // A narrow first-column tile can have no Down neighbor from a wider section bar.
                 XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)

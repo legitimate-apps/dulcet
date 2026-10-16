@@ -51,39 +51,48 @@ DerivedData/build capacity leases released, and local app/package build products
 
 ## Required CI on 2026-10-16
 
-OBSERVED in `apple-ci` dispatch [38937643116](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116)
-at `4fcf0e64`: the [iPhone producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099690)
-passed all four My Library cases. Downloaded `TEST-MyLibrary.xml` contains four cases under
-`DulcetMyLibraryIPhoneUITests`, with zero failures, errors or skips. The exact execution guard
-reported `individual-results=4`, and the visual attachment export retained nine JPEGs. The
-largest-text album capture was inspected: Add is visible above the tabs. This resolves the
-My Library CI-execution promotion condition for iPhone. The producer later failed the unchanged
-account-connect state case at `DulcetAccountConnectStatesUITests.swift:1044`, with an XCTest
-snapshot-query timeout; its cause is unresolved. Neither that producer nor the full dispatch
-is claimed green.
+OBSERVED in `apple-ci` dispatch [38955313343](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343)
+at `d9c26b70`:
 
-The [platform job](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099609)
-is green. In the subsequent dispatch [38947781568](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568),
-the [Mac/TV producer](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568/job/117131265121)
-executed three Mac cases: visual and fallback passed; membership failed after Remove, at the
-empty-library assertion. The catalog-scoped helper fixed the earlier sidebar-scrolling failure:
-this run reached Add, a saved-account relaunch, durable membership and Remove. The failure
-hierarchy and recording show Library selected with the album detail and its Add control still
-visible. Clicking the already selected macOS List row did not pop that detail. The driver now
-uses the visible toolbar Back control to reach the selected destination's root, with a bounded
-loop and a root assertion, retaining all empty-state, persistence and server-read assertions.
-The shared suite typechecks on all five covered source groups; hosted runtime verification of
-this root navigation is pending. TV was not reached. Mac and TV remain partial pending complete
-passing My Library CI test records. The earlier light, dark and largest-text Mac album JPEGs
-were inspected with Add visible.
+| Platform | Required My Library execution | Producer result |
+| --- | --- | --- |
+| iPhone | Four passing `DulcetMyLibraryIPhoneUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=4`; nine visual JPEGs in the parity artifact | [Green complete producer](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663095) |
+| Mac | Three passing `DulcetMyLibraryMacUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEG attachments in the retained xcresult | [Producer](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663171) later failed the TV focus case |
+| Apple TV | Three cases executed: visual and Navidrome fallback passed; membership failed in remote focus navigation | Same Mac/TV producer; TV remains partial |
 
-The [iPad producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099654)
-is green, including its complete conformance script. Downloaded `TEST-MyLibrary.xml` contains
-three passing `DulcetMyLibraryIPadUITests` cases, with zero failures, errors or skips; its exact
-execution guard reports `individual-results=3`. The parity artifact retains nine visual JPEGs,
-and the largest-text album Add capture was inspected. This resolves iPad's My Library CI-execution
-condition. The full dispatch failed in its separate Mac and iPhone producers. The historical
-local results above are separate from these required CI records.
+The largest-text iPhone and Mac album captures were inspected with Add visible. Mac's behavior
+case now passes Add, durable relaunch, Remove, offline Add, offline relaunch and reconnect read-back.
+The driver returns through the visible toolbar Back control when the selected sidebar row leaves
+a retained album detail open. This fixes the observed failure in
+[38947781568/core](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568/job/117131265121),
+where Library was selected but its detail and Add control remained visible after Remove.
+Mac's required CI fixture-execution condition is resolved by the three passing records, with the
+proof-host account-store limit stated below; the whole Mac/TV producer is not claimed green.
+
+The complete iPhone producer also passed
+`DulcetAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone`
+(727.338 seconds). The earlier snapshot-query timeout in
+[38937643116/iPhone](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099690)
+did not recur. Its underlying cause remains unresolved; no timing diagnosis is claimed.
+The [platform producer](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663257)
+is green.
+
+The TV failure snapshot shows Play focused at y = 750–843, Add at y = 812–878 immediately to
+its right, and Shuffle below at y = 851–936. The helper alternated Down and Up because Add's
+centre lies between the two playback controls. The driver now chooses horizontal movement for
+adjacent controls whose vertical spans overlap, retaining the focus requirement before Select.
+Its hosted runtime proof is pending. The TV visual and fallback passes do not promote the cell.
+
+The iPad citation remains the [green complete producer in 38937643116](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099654)
+at `4fcf0e64`: downloaded JUnit contains three passing `DulcetMyLibraryIPadUITests` cases, zero
+failures/errors/skips, exact guard `individual-results=3`, and nine retained visual JPEGs. Its
+largest-text album Add capture was inspected. This resolves iPad's CI fixture-execution condition.
+The replacement iPad producer in 38955313343 also passed all three My Library cases and guard,
+but later failed the unchanged playlist-row drag proof before attempting the drag. A row-existence
+query stalled from approximately t = 138 to t = 181 seconds; the settling helper completed only
+one empty queue read before its 45-second loop deadline expired. The underlying accessibility
+delay is unresolved. The full replacement dispatch is not green. Historical local results above
+remain separate from these CI execution records.
 
 ## Runtime suite
 
