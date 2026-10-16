@@ -68,8 +68,15 @@ passed the Mac visual and fallback cases, with on-screen bounds after launch, bu
 membership case after the old album helper scrolled the sidebar and hid Library. The committed
 catalog-scoped helper fix has passed source typechecking; its hosted runtime proof is pending.
 The light, dark and largest-text Mac album JPEGs were inspected with Add visible. TV was not
-reached. iPad's producer remains in progress. Mac, iPad and TV remain partial pending their
-complete My Library CI test records; the historical local results above are separate.
+reached. Mac and TV remain partial pending complete passing My Library CI test records.
+
+The [iPad producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099654)
+is green, including its complete conformance script. Downloaded `TEST-MyLibrary.xml` contains
+three passing `DulcetMyLibraryIPadUITests` cases, with zero failures, errors or skips; its exact
+execution guard reports `individual-results=3`. The parity artifact retains nine visual JPEGs,
+and the largest-text album Add capture was inspected. This resolves iPad's My Library CI-execution
+condition. The full dispatch failed in its separate Mac and iPhone producers. The historical
+local results above are separate from these required CI records.
 
 ## Runtime suite
 
