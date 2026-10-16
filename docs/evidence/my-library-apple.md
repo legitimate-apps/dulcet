@@ -86,8 +86,10 @@ unsigned builds can reach the server but fail to save the account in Keychain. U
 The Mac scheme uses its dedicated proof host; runtime automation still requires the host's normal
 XCTest authorization. The Mac driver recognizes the Python fixture's local-network permission
 prompt, allows it, and requires dismissal. It selects the identified sidebar row rather than a
-similarly named section heading, and uses the normal Zoom control if a restored window extends
-outside the hosted display. These helper paths retain every membership and server-read assertion.
+similarly named section heading, and uses the standard Window menu to fit a restored window that extends
+outside the hosted display (Fill on current macOS, Zoom on older versions). The menu remains
+reachable when the title-bar controls are clipped off screen; the driver requires the resulting
+window bounds to fit before it proceeds. These helper paths retain every membership and server-read assertion.
 
 ## Limits
 

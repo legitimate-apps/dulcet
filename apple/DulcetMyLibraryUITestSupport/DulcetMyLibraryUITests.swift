@@ -219,11 +219,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         let screenWidth = try XCTUnwrap(NSScreen.main?.frame.width)
         if window.frame.minX < 0 || window.frame.maxX > screenWidth {
-            // Hosted displays can be narrower than the restored window. Use its normal Zoom
-            // control only when it is off screen; repeatedly toggling Zoom would restore it.
-            let zoom = window.buttons[XCUIIdentifierZoomWindow]
-            XCTAssertTrue(zoom.exists)
-            zoom.click()
+            // The restored window can put even its title-bar controls off screen. Its standard
+            // Window menu remains reachable. Fill (current macOS) or Zoom (older macOS) must
+            // actually bring the window into bounds before any content assertion proceeds.
+            let menu = app.menuBars.menuBarItems["Window"].firstMatch
+            XCTAssertTrue(menu.waitForExistence(timeout: 5))
+            menu.click()
+            let action = try XCTUnwrap(["Fill", "Fill Window", "Zoom"].map { app.menuItems[$0].firstMatch }
+                .first { $0.exists && $0.isEnabled },
+                "Missing window-fit action: \(app.menuItems.allElementsBoundByIndex.map(\.label))")
+            print("MY LIBRARY MAC window-fit action=\(action.label) before=\(window.frame)")
+            action.click()
             let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 window.frame.minX >= 0 && window.frame.maxX <= screenWidth
             }, object: nil)
