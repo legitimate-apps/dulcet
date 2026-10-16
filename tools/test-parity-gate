@@ -81,6 +81,9 @@ def materialize(root: Path) -> None:
         "apple/DulcetPlaybackIntegrationTests",
         "apple/DulcetAppleAppHostTests",
         "apple/DulcetiOSUITests",
+        # My Library's platform aliases cite methods from its shared UI suite. Include the
+        # declarations so the synthetic baseline remains valid when a platform is promoted.
+        "apple/DulcetMyLibraryUITestSupport",
         # library.sync/macos and the search cells cite the macOS app-host proofs, and the search
         # cells also cite the tvOS UI proof. The gate verifies every cited test NAME exists in
         # the tree, so without these the fixture rejects a correct FEATURES.yml for citing tests
@@ -1312,6 +1315,24 @@ passing_cases = """\
   <testcase classname="DulcetiOSUITests"
             name="testAKilledAppsDownloadIsReconciledByTheReplacementProcessOnIPadOS" time="0.1" />
 """
+# The fixed passing-report fixture includes each newly cited platform alias explicitly;
+# never derive these cases from FEATURES, which could make a bad citation prove itself.
+for alias, methods in (
+    ("DulcetMyLibraryIPhoneUITests", (
+        "testBrowseAddRemoveRelaunchAndOfflineReplay",
+        "testNonDulcetServerKeepsTheOriginalLibraryNavigation",
+        "testLibraryBrowseAndAlbumInLightDarkAndLargestText",
+        "testAlbumAddRemainsVisibleAtLargestTextOnIPhone",
+    )),
+    ("DulcetMyLibraryIPadUITests", (
+        "testBrowseAddRemoveRelaunchAndOfflineReplay",
+        "testNonDulcetServerKeepsTheOriginalLibraryNavigation",
+        "testLibraryBrowseAndAlbumInLightDarkAndLargestText",
+    )),
+):
+    for method in methods:
+        passing_cases += f'<testcase classname="{alias}" name="{method}" time="0.1" />\n'
+
 passing_report = (
     f'<testsuite tests="{passing_cases.count("<testcase")}" failures="0" errors="0" skipped="0">\n'
     + passing_cases
@@ -1429,6 +1450,18 @@ execution_rejections = {
         "evidence test did not pass",
     ),
 }
+for alias in ("DulcetMyLibraryIPhoneUITests", "DulcetMyLibraryIPadUITests"):
+    case = f'<testcase classname="{alias}" name="testBrowseAddRemoveRelaunchAndOfflineReplay" time="0.1" />'
+    assert passing_report.count(case) == 1
+    execution_rejections[f"{alias} My Library case did not execute"] = (
+        passing_report.replace(case, ""), "evidence test did not execute",
+    )
+    for terminal in ("failure", "skipped"):
+        execution_rejections[f"{alias} My Library case {terminal}"] = (
+            passing_report.replace(case, case.removesuffix(" />") + f'><{terminal} /></testcase>'),
+            "evidence test did not pass",
+        )
+
 for label, (report, expected) in execution_rejections.items():
     with tempfile.TemporaryDirectory(prefix="dulcet-parity-execution-") as directory:
         root = Path(directory)
