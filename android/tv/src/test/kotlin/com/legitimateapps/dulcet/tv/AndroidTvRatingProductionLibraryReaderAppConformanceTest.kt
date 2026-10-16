@@ -112,7 +112,8 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
     private fun dpadToStar(star: Int) {
         await("the player's own first focus on Play/Pause") { focused("tv.player.playpause") }
         remote(Key.DirectionUp)
-        assertTrue(focused("tv.player.scrubber"), "UP from Play/Pause reaches the scrubber")
+        assertTrue(focused("tv.player.scrubber"),
+            "UP from Play/Pause reaches the scrubber; reconnect-focused=${focused("tv.player.reconnect")}")
         remote(Key.DirectionUp)
         var at = (1..5).firstOrNull { focused("tv.player.rating.$it") }
         assertTrue(at != null, "UP from the scrubber reaches the stars")
@@ -124,12 +125,24 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
     @Test fun conf84TheTvRatesThePlayingTrackWithTheRemoteAndZeroClearsIt() {
         val song = environment.server.songId(RATED_TRACK)
         assertEquals(0, environment.server.songRating(song), "setup: the run starts with the song unrated")
+        // Keep startup in Connecting until the player has painted that state. The notice adds a
+        // real D-pad stop between Play/Pause and the scrubber; stars and first focus appear before
+        // the reader's reconnect finishes, so neither alone means the connected layout is ready.
+        environment.proxy.hold { it.endpoint == "getScanStatus" }
         startLibrary()
         val player = AndroidPlaybackController(RuntimeEnvironment.getApplication(),
             PlaybackEndpointAccount("provider:tv-rating", "http://127.0.0.1:9", "u", "p", true))
         controller = player
         compose.setContent { TvNowPlaying(account(), playing(song, RATED_TRACK), player) }
         await("the stars shown") { compose.onAllNodesWithTag("tv.player.rating.4").fetchSemanticsNodes().isNotEmpty() }
+        await("the player's connecting notice") {
+            compose.onAllNodesWithTag("tv.player.reconnect").fetchSemanticsNodes().isNotEmpty()
+        }
+        println("CONF-84 SETUP OBSERVED connecting-reconnect-shown=true")
+        environment.proxy.release()
+        await("the player's connected layout, with no Reconnect stop above Play/Pause") {
+            compose.onAllNodesWithTag("tv.player.reconnect").fetchSemanticsNodes().isEmpty()
+        }
         val mark = environment.proxy.log().size
         dpadToStar(4)
         remote(Key.DirectionCenter)
