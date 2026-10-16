@@ -511,7 +511,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         val sibling = server.createPlaylist(siblingName, songs.take(1))
         assertEquals(name, server.playlists()[id], "setup: the playlist is on the server")
 
-        if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
+        // Initial card focus can scroll the home section selector out of the lazy viewport.
+        // Wait for Library itself; press() reveals its sections with the remote before focusing.
+        await("the launch library") { exists("library.surface") }
         press("library.view.playlists")
         await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
         compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))

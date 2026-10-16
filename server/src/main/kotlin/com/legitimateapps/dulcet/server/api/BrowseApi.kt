@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.server.IGNORED_ARTICLES
 import com.legitimateapps.dulcet.server.ServerContext
 import com.legitimateapps.dulcet.server.fold
 import com.legitimateapps.dulcet.server.indexLetter
+import kotlinx.serialization.json.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.GlobalScope
@@ -48,8 +49,11 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
                 }
             }
         },
-        "getMusicFolders" to { _ ->
-            ok { child("musicFolders") { add("musicFolder") { this["id"] = 1; this["name"] = ctx.config.musicFolderName } } }
+        "getMusicFolders" to { call ->
+            ok { child("musicFolders") {
+                db.read { query("SELECT id,name FROM music_folder folder WHERE ${ctx.access.catalogPredicate(call.user.id,"source","folder")} ORDER BY id") { it.string("id") to it.string("name") } }
+                    .forEach { (id,name) -> add("musicFolder") { this["id"]=id; this["name"]=name } }
+            } }
         },
         "getArtists" to { call -> indexed(call, "artists", legacy = false) },
         "getIndexes" to { call -> indexed(call, "indexes", legacy = true) },
@@ -95,9 +99,9 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
                 else -> throw SubsonicError.notFound("Directory")
             }
         },
-        "getGenres" to { _ ->
+        "getGenres" to { call ->
             val genres = db.read {
-                query("SELECT g.genre, COUNT(DISTINCT g.track_id) AS songs, COUNT(DISTINCT t.album_id) AS albums FROM track_genre g JOIN track t ON t.id = g.track_id GROUP BY g.genre ORDER BY g.genre COLLATE NOCASE") {
+                query("SELECT g.genre, COUNT(DISTINCT g.track_id) AS songs, COUNT(DISTINCT t.album_id) AS albums FROM track_genre g JOIN track t ON t.id = g.track_id WHERE ${ctx.access.catalogPredicate(call.user.id,"track","t")} GROUP BY g.genre ORDER BY g.genre COLLATE NOCASE") {
                     Triple(it.string("genre"), it.int("songs"), it.int("albums"))
                 }
             }
@@ -127,32 +131,35 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
         "getStarred" to { call -> starred(ctx, call, "starred") },
         "search3" to { call -> search(ctx, call, "searchResult3") },
         "search2" to { call -> search(ctx, call, "searchResult2") },
-        "getScanStatus" to { _ -> ok { put(scanStatus(ctx)) } },
+        "getScanStatus" to { call -> ok { put(scanStatus(ctx, call.user.id)) } },
         "startScan" to { call ->
             if (!call.user.isAdmin) throw SubsonicError.notAuthorized()
             ctx.requestScan()
-            ok { put(scanStatus(ctx).also { it["scanning"] = true }) }
+            ok { put(scanStatus(ctx, call.user.id).also { it["scanning"] = true }) }
         },
         "getUser" to { call ->
             val name = call.param("username") ?: call.user.name
             if (!name.equals(call.user.name, ignoreCase = true) && !call.user.isAdmin) throw SubsonicError.notAuthorized()
             val user = ctx.users.find(name) ?: throw SubsonicError.notFound("User")
-            ok { put(userNode(user.name, user.isAdmin)) }
+            ok { put(userNode(user.name, user.isAdmin, ctx.access.download(user.id), ctx.access.sourceIds(user.id))) }
         },
         "getUsers" to { call ->
             if (!call.user.isAdmin) throw SubsonicError.notAuthorized()
-            ok { child("users") { ctx.users.all().forEach { add(userNode(it.name, it.isAdmin)) } } }
+            ok { child("users") { ctx.users.all().forEach { add(userNode(it.name, it.isAdmin, ctx.access.download(it.id), ctx.access.sourceIds(it.id))) } } }
         },
         "getNowPlaying" to { call ->
             val now = System.currentTimeMillis()
             val entries = db.read {
-                query("SELECT n.track_id, n.client, n.at, u.name FROM now_playing n JOIN user u ON u.id = n.user_id WHERE n.at > ? ORDER BY n.at DESC", now - 30 * 60_000) {
-                    listOf(it.string("track_id"), it.string("client"), it.long("at").toString(), it.string("name"))
+                query("SELECT n.track_id, n.client, n.at, u.name,n.user_id FROM now_playing n JOIN user u ON u.id = n.user_id WHERE n.at > ? ORDER BY n.at DESC", now - 30 * 60_000) {
+                    listOf(it.string("track_id"), it.string("client"), it.long("at").toString(), it.string("name"),it.string("user_id"))
                 }
             }
             ok {
                 child("nowPlaying") {
-                    entries.forEach { (trackId, client, at, name) ->
+                    entries.filter { entry ->
+                        val owner=entry[4]
+                        owner==call.user.id || call.user.isAdmin || (ctx.access.share(owner) && db.read { string("SELECT settings FROM api_profile WHERE user_id=?",owner) }?.let { kotlinx.serialization.json.Json.parseToJsonElement(it).jsonObject["shareNowPlaying"]?.jsonPrimitive?.booleanOrNull }==true)
+                    }.forEach { (trackId, client, at, name) ->
                         catalog.song(call.user.id, trackId, "entry")?.let { entry ->
                             entry["username"] = name
                             entry["minutesAgo"] = ((now - at.toLong()) / 60_000).toInt()
@@ -186,12 +193,12 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
     )
 }
 
-fun userNode(name: String, admin: Boolean): Node = Node("user").apply {
+fun userNode(name: String, admin: Boolean, download: Boolean = true, sources: List<String> = listOf("1")): Node = Node("user").apply {
     this["username"] = name
     this["scrobblingEnabled"] = true
     this["adminRole"] = admin
     this["settingsRole"] = true
-    this["downloadRole"] = true
+    this["downloadRole"] = download
     this["uploadRole"] = false
     this["playlistRole"] = true
     this["coverArtRole"] = true
@@ -201,13 +208,13 @@ fun userNode(name: String, admin: Boolean): Node = Node("user").apply {
     this["jukeboxRole"] = false
     this["shareRole"] = false
     this["videoConversionRole"] = false
-    add(Node("folder").apply { value = "1" })
+    sources.forEach { add(Node("folder").apply { value = it }) }
 }
 
-fun scanStatus(ctx: ServerContext): Node = Node("scanStatus").apply {
+fun scanStatus(ctx: ServerContext, userId: String): Node = Node("scanStatus").apply {
     this["scanning"] = ctx.scanner.isScanning
-    this["count"] = if (ctx.scanner.isScanning) ctx.scanner.scannedCount.toLong() else ctx.db.read { long("SELECT COUNT(*) FROM track") }
-    this["folderCount"] = ctx.db.read { string("SELECT value FROM meta WHERE key = 'folder_count'") }?.toLongOrNull() ?: 0L
+    this["count"] = ctx.db.read { long("SELECT COUNT(*) FROM track t WHERE ${ctx.access.catalogPredicate(userId,"track","t")}") }
+    this["folderCount"] = ctx.db.read { long("SELECT COUNT(DISTINCT parent_dir) FROM track t WHERE ${ctx.access.catalogPredicate(userId,"track","t")}") }
     ctx.db.read { string("SELECT value FROM meta WHERE key = 'last_scan'") }?.let { this["lastScan"] = it }
 }
 

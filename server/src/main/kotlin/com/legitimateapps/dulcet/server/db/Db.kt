@@ -2,6 +2,9 @@ package com.legitimateapps.dulcet.server.db
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
@@ -15,23 +18,92 @@ import kotlin.concurrent.withLock
  * single connection behind a lock: simple, and fast enough for a personal library. Every query goes
  * through [read] or [write]; a transaction is a [write] block.
  */
-class Db private constructor(private val connection: Connection) : AutoCloseable {
+class Db private constructor(private val connection: Connection, val file: Path? = null) : AutoCloseable {
     private val lock = ReentrantLock()
 
-    fun <T> read(block: Session.() -> T): T = lock.withLock { Session(connection).block() }
+    /** Coordinate operations that must span several transactions, such as a restore. */
+    fun <T> exclusive(block: () -> T): T = lock.withLock(block)
+
+    /** SQLite's online backup includes committed WAL pages without closing existing references. */
+    fun checkpoint(destination: Path) = lock.withLock {
+        check(connection.autoCommit) { "Cannot checkpoint during a transaction" }
+        val target = destination.toAbsolutePath().normalize()
+        require(file != target && (file == null || !Files.exists(target) || !Files.isSameFile(file, target))) { "Checkpoint must use a different file" }
+        Files.createDirectories(target.parent)
+        val temporary = Files.createTempFile(target.parent, ".checkpoint-", ".db")
+        try {
+            val sqlite = connection as org.sqlite.SQLiteConnection
+            val result = sqlite.database.backup("main", temporary.toString(), null)
+            if (result != org.sqlite.SQLiteErrorCode.SQLITE_OK.code) throw org.sqlite.core.DB.newSQLException(result, "Checkpoint failed")
+            FileChannel.open(temporary, StandardOpenOption.WRITE).use { it.force(true) }
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            FileChannel.open(target.parent, StandardOpenOption.READ).use { it.force(true) }
+        } finally { Files.deleteIfExists(temporary) }
+    }
+
+    /** Replace main through SQLite's backup API while keeping this connection and Db object. */
+    fun restore(source: Path) = lock.withLock {
+        check(connection.autoCommit) { "Cannot restore during a transaction" }
+        val backup = source.toAbsolutePath().normalize()
+        require(Files.isRegularFile(backup) && (file == null || !Files.isSameFile(file, backup))) { "Restore requires a separate database file" }
+        val config = org.sqlite.SQLiteConfig().apply { setReadOnly(true) }
+        DriverManager.getConnection("jdbc:sqlite:$backup", config.toProperties()).use { candidate ->
+            candidate.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA integrity_check").use { rows ->
+                    require(rows.next() && rows.getString(1) == "ok" && !rows.next()) { "Invalid checkpoint" }
+                }
+            }
+        }
+        val result = (connection as org.sqlite.SQLiteConnection).database.restore("main", backup.toString(), null)
+        if (result != org.sqlite.SQLiteErrorCode.SQLITE_OK.code) throw org.sqlite.core.DB.newSQLException(result, "Restore failed")
+    }
+
+    private val beforeCommit = ArrayList<(Session) -> Unit>()
+    fun beforeCommit(listener: (Session) -> Unit) = lock.withLock { beforeCommit.add(listener); Unit }
+
+    private val afterCommit = ArrayList<(Session) -> Unit>()
+    /** Observers run after commit with autoCommit restored; observer failure cannot undo committed data. */
+    fun afterCommit(listener: (Session) -> Unit) = lock.withLock { afterCommit.add(listener); Unit }
+
+    /** Nested reads share the enclosing snapshot; every outer read is one SQLite transaction. */
+    fun <T> read(block: Session.() -> T): T = lock.withLock {
+        if (!connection.autoCommit) Session(connection).block() else transaction(false, block)
+    }
 
     fun <T> write(block: Session.() -> T): T = lock.withLock {
-        val previous = connection.autoCommit
+        if (!connection.autoCommit) {
+            val savepoint = connection.setSavepoint()
+            try {
+                val result = Session(connection).block()
+                connection.releaseSavepoint(savepoint)
+                return@withLock result
+            } catch (error: Throwable) {
+                connection.rollback(savepoint)
+                connection.releaseSavepoint(savepoint)
+                throw error
+            }
+        }
+        transaction(true, block)
+    }
+
+    private fun <T> transaction(notify: Boolean, block: Session.() -> T): T {
         connection.autoCommit = false
         try {
-            val result = Session(connection).block()
+            val session = Session(connection)
+            val initialChanges = session.long("SELECT total_changes()")
+            val result = session.block()
+            // Some read helpers reconcile stored metadata. Those writes must commit through the
+            // journal hook too; a pure read must not trigger retention or alter the timeline.
+            if (notify || session.long("SELECT total_changes()") != initialChanges) beforeCommit.forEach { it(session) }
             connection.commit()
-            result
+            connection.autoCommit = true
+            if (notify || session.long("SELECT total_changes()") != initialChanges) afterCommit.forEach { listener -> runCatching { listener(session) } }
+            return result
         } catch (error: Throwable) {
             connection.rollback()
             throw error
         } finally {
-            connection.autoCommit = previous
+            connection.autoCommit = true
         }
     }
 
@@ -117,7 +189,7 @@ class Db private constructor(private val connection: Connection) : AutoCloseable
                 statement.execute("PRAGMA synchronous=NORMAL")
                 statement.execute("PRAGMA busy_timeout=5000")
             }
-            val db = Db(connection)
+            val db = Db(connection, file.toAbsolutePath().normalize())
             Schema.migrate(db)
             return db
         }

@@ -8,7 +8,7 @@ import java.time.Instant
  * OpenSubsonic `Child`, `AlbumID3` and `ArtistID3` elements. Field names follow the OpenSubsonic
  * spec; the extra `dulcetInLibrary` flag is the `dulcetLibrary` extension's membership marker.
  */
-class Catalog(private val db: Db) {
+class Catalog(private val db: Db, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess) {
 
     // ---- songs -------------------------------------------------------------------------------
 
@@ -23,7 +23,7 @@ class Catalog(private val db: Db) {
 
     fun songs(userId: String, where: String = "1=1", args: List<Any?> = emptyList(), order: String = "t.album, t.disc_no, t.track_no, t.path", limit: Int = -1, offset: Int = 0, elementName: String = "song"): List<Node> {
         val rows = db.read {
-            query("$songSelect WHERE $where ORDER BY $order LIMIT ? OFFSET ?", userId, userId, *args.toTypedArray(), limit, offset) { SongRow.from(it) }
+            query("$songSelect WHERE ($where) AND ${access.catalogPredicate(userId,"track","t")} ORDER BY $order LIMIT ? OFFSET ?", userId, userId, *args.toTypedArray(), limit, offset) { SongRow.from(it) }
         }
         return songNodes(rows, elementName)
     }
@@ -158,13 +158,13 @@ class Catalog(private val db: Db) {
     fun albums(userId: String, where: String = "1=1", args: List<Any?> = emptyList(), order: String = "al.sort_name COLLATE NOCASE, al.id", limit: Int = -1, offset: Int = 0, elementName: String = "album", legacyChild: Boolean = false): List<Node> {
         data class AlbumRow(val v: Map<String, Any?>)
         val rows = db.read {
-            query("$albumSelect WHERE $where ORDER BY $order LIMIT ? OFFSET ?", userId, userId, *args.toTypedArray(), limit, offset) { row ->
+            query("${albumSelect.replace("SELECT al.*", "SELECT al.*, (SELECT COUNT(*) FROM track vt WHERE vt.album_id=al.id AND ${access.catalogPredicate(userId,"track","vt")}) AS visible_count, (SELECT COALESCE(SUM(vt.duration),0) FROM track vt WHERE vt.album_id=al.id AND ${access.catalogPredicate(userId,"track","vt")}) AS visible_duration")} WHERE ($where) AND ${access.catalogPredicate(userId,"album","al")} ORDER BY $order LIMIT ? OFFSET ?", userId, userId, *args.toTypedArray(), limit, offset) { row ->
                 AlbumRow(
                     mapOf(
                         "id" to row.string("id"), "name" to row.string("name"), "sort_name" to row.string("sort_name"),
                         "album_artist" to row.string("album_artist"), "artist_id" to row.string("artist_id"), "year" to row.intOrNull("year"),
-                        "genre" to row.stringOrNull("genre"), "compilation" to row.bool("compilation"), "song_count" to row.int("song_count"),
-                        "duration" to row.double("duration"), "created" to row.long("created"), "mbz" to row.stringOrNull("mbz_album_id"),
+                        "genre" to row.stringOrNull("genre"), "compilation" to row.bool("compilation"), "song_count" to row.int("visible_count"),
+                        "duration" to row.double("visible_duration"), "created" to row.long("created"), "mbz" to row.stringOrNull("mbz_album_id"),
                         "u_starred" to row.longOrNull("u_starred"), "u_rating" to row.intOrNull("u_rating"), "u_play_count" to row.intOrNull("u_play_count"),
                         "u_played" to row.longOrNull("u_played"), "u_added" to row.longOrNull("u_added"),
                     ),
@@ -182,10 +182,10 @@ class Catalog(private val db: Db) {
                 query("SELECT album_id, artist_id, name FROM album_artist WHERE album_id IN ($marks) ORDER BY position", *chunk.toTypedArray()) {
                     artists.getOrPut(it.string("album_id")) { ArrayList() }.add(it.string("artist_id") to it.string("name"))
                 }
-                query("SELECT DISTINCT t.album_id, g.genre FROM track t JOIN track_genre g ON g.track_id = t.id WHERE t.album_id IN ($marks)", *chunk.toTypedArray()) {
+                query("SELECT DISTINCT t.album_id, g.genre FROM track t JOIN track_genre g ON g.track_id = t.id WHERE t.album_id IN ($marks) AND ${access.catalogPredicate(userId,"track","t")}", *chunk.toTypedArray()) {
                     genres.getOrPut(it.string("album_id")) { LinkedHashSet() }.add(it.string("genre"))
                 }
-                query("SELECT album_id, disc_no, MAX(disc_subtitle) AS sub FROM track WHERE album_id IN ($marks) AND disc_no IS NOT NULL GROUP BY album_id, disc_no", *chunk.toTypedArray()) {
+                query("SELECT album_id, disc_no, MAX(disc_subtitle) AS sub FROM track t WHERE album_id IN ($marks) AND ${access.catalogPredicate(userId,"track","t")} AND disc_no IS NOT NULL GROUP BY album_id, disc_no", *chunk.toTypedArray()) {
                     discs.getOrPut(it.string("album_id")) { sortedMapOf() }[it.int("disc_no")] = it.stringOrNull("sub")
                 }
             }
@@ -231,7 +231,7 @@ class Catalog(private val db: Db) {
     }
 
     fun countAlbums(userId: String, where: String, args: List<Any?>): Long = db.read {
-        long("SELECT COUNT(*) FROM ($albumSelect WHERE $where)", userId, userId, *args.toTypedArray())
+        long("SELECT COUNT(*) FROM ($albumSelect WHERE ($where) AND ${access.catalogPredicate(userId,"album","al")})", userId, userId, *args.toTypedArray())
     }
 
     fun album(userId: String, id: String): Node? = albums(userId, "al.id = ?", listOf(id)).firstOrNull()
@@ -240,22 +240,25 @@ class Catalog(private val db: Db) {
 
     fun artists(userId: String, where: String = "ar.album_count > 0", args: List<Any?> = emptyList(), order: String = "ar.sort_name COLLATE NOCASE, ar.id", limit: Int = -1, offset: Int = 0, elementName: String = "artist"): List<Node> = db.read {
         query(
-            """SELECT ar.*, a.starred AS u_starred, a.rating AS u_rating, li.added AS u_added FROM artist ar
+            """SELECT ar.*,
+               (SELECT COUNT(DISTINCT vt.album_id) FROM track vt WHERE vt.album_id IN (SELECT album_id FROM album_artist WHERE artist_id=ar.id) AND ${access.catalogPredicate(userId,"track","vt")}) AS visible_album_count,
+               (SELECT COUNT(DISTINCT vt.id) FROM track vt JOIN track_artist va ON va.track_id=vt.id WHERE va.artist_id=ar.id AND ${access.catalogPredicate(userId,"track","vt")}) AS visible_song_count,
+               a.starred AS u_starred, a.rating AS u_rating, li.added AS u_added FROM artist ar
                LEFT JOIN annotation a ON a.user_id = ? AND a.item_type = 'artist' AND a.item_id = ar.id
                LEFT JOIN library_item li ON li.user_id = ? AND li.item_type = 'artist' AND li.item_id = ar.id
-               WHERE $where ORDER BY $order LIMIT ? OFFSET ?""",
+               WHERE ($where) AND ${access.catalogPredicate(userId,"artist","ar")} ORDER BY $order LIMIT ? OFFSET ?""",
             userId, userId, *args.toTypedArray(), limit, offset,
         ) { row ->
             Node(elementName).apply {
                 this["id"] = row.string("id")
                 this["name"] = row.string("name")
                 this["coverArt"] = "ar-${row.string("id")}"
-                this["albumCount"] = row.int("album_count")
+                this["albumCount"] = row.int("visible_album_count")
                 row.longOrNull("u_starred")?.let { this["starred"] = iso(it) }
                 row.intOrNull("u_rating")?.takeIf { it > 0 }?.let { this["userRating"] = it }
                 this["musicBrainzId"] = row.stringOrNull("mbz_artist_id") ?: ""
                 this["sortName"] = row.string("sort_name")
-                strings("roles", buildList { if (row.int("album_count") > 0) add("albumartist"); if (row.int("song_count") > 0) add("artist") })
+                strings("roles", buildList { if (row.int("visible_album_count") > 0) add("albumartist"); if (row.int("visible_song_count") > 0) add("artist") })
                 if (row.longOrNull("u_added") != null) this["dulcetInLibrary"] = true
             }
         }

@@ -32,6 +32,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.sqlite.jdbc)
     implementation(libs.slf4j.simple)
+    implementation("at.favre.lib:bcrypt:0.10.2")
 
     testImplementation(kotlin("test"))
     testImplementation(libs.ktor.server.test.host)
@@ -52,5 +53,14 @@ tasks.test {
         showExceptions = true
         showCauses = true
         showStackTraces = true
+    }
+}
+
+tasks.processResources {
+    from(rootProject.file("docs/dulcet-api/mcp-tools.json")) {
+        into("dulcet-api")
+    }
+    from(rootProject.file("docs/dulcet-api/openapi.yaml")) {
+        into("dulcet-api")
     }
 }

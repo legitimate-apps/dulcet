@@ -7767,6 +7767,13 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-15 — My Library stays coherent across both server protocols.**
+Dulcet API membership writes advance the same per-user `dulcetLibrary` clock that §29.9's clients
+probe. Legacy `since` reads also include current members whose API additions were received after
+the cutoff, while the API preserves the original offline action time as `libraryAddedAt` (§30).
+Receipt times use the library clock and persist independently of journal retention, so an old
+offline addition cannot be hidden by an equal-count replacement or a wall-clock adjustment.
+
 **2026-10-14 — Bound silently paused Apple startup without inventing media errors.**
 OBSERVED in hosted run 38535897557: Play before byte delivery left a ready tvOS item paused at
 zero for 270 s without a failure notification, while the engine queue remained responsive.

@@ -30,34 +30,69 @@ class Scanner(
     private val log = LoggerFactory.getLogger(Scanner::class.java)
     private val running = AtomicBoolean(false)
     private val progress = AtomicInteger(0)
-    @Volatile private var rescanRequested = false
+    private val lifecycle = Any()
+    private var rescanRequested = false
+    private var active: Run? = null
+
+    /** One scan operation, including any rescan requested by the legacy scanner interface. */
+    data class Run(val id:String,val startedAt:Long,val force:Boolean,val completion:java.util.concurrent.CompletableFuture<ScanResult>)
 
     val isScanning: Boolean get() = running.get()
     val scannedCount: Int get() = progress.get()
+    fun currentRun():Run? = synchronized(lifecycle) { active }
+
+    /** Join the actual scanner operation, regardless of which interface started it. */
+    fun startOrJoin(force:Boolean=true,launch:(() -> Unit) -> Unit):Run {
+        val (run,created)=reserve(force,false)
+        if(created) {
+            try { launch {
+                try { executeRun(run) }
+                catch (_:Exception) { /* The asynchronous caller receives failure through completion. */ }
+            } }
+            catch(error:Throwable) { finish(run,null,error); throw error }
+        }
+        return run
+    }
 
     /**
-     * Runs a scan unless one is running, in which case the running one rescans once it ends.
-     * [force] false is the periodic check: it writes nothing, and leaves `lastScan` where it is,
-     * when no file, sidecar or folder image changed, because `lastScan` is the clients' scan clock.
+     * The legacy synchronous interface retains its behavior: a concurrent call requests a rescan
+     * and returns null. API callers instead use [startOrJoin], which joins without another scan.
      */
     fun scan(force: Boolean = true): ScanResult? {
-        if (!running.compareAndSet(false, true)) {
-            rescanRequested = true
-            return null
-        }
+        val (run,created)=reserve(force,true)
+        return if(created) executeRun(run) else null
+    }
+
+    private fun reserve(force:Boolean,rescan:Boolean):Pair<Run,Boolean> = synchronized(lifecycle) {
+        active?.let { if(rescan) rescanRequested=true; return@synchronized it to false }
+        val run=Run(java.util.UUID.randomUUID().toString(),clock(),force,java.util.concurrent.CompletableFuture())
+        rescanRequested=false
+        active=run
+        running.set(true)
+        run to true
+    }
+
+    private fun executeRun(run:Run):ScanResult {
         try {
-            var result: ScanResult
-            do {
-                rescanRequested = false
-                result = try { scanOnce(force) } catch (error: java.io.IOException) {
+            while(true) {
+                val result=try { scanOnce(run.force) } catch (_:java.io.IOException) {
                     log.warn("scan refused: music folder could not be read; catalog retained")
-                    ScanResult(0, 0, 0, 0, 1, "Music folder could not be read; catalog retained")
+                    ScanResult(0,0,0,0,1,"Music folder could not be read; catalog retained")
                 }
-            } while (rescanRequested)
-            return result
-        } finally {
-            running.set(false)
+                val repeat=synchronized(lifecycle) {
+                    if(rescanRequested) { rescanRequested=false; true }
+                    else { active=null; running.set(false); false }
+                }
+                if(!repeat) { run.completion.complete(result); return result }
+            }
+        } catch(error:Throwable) { finish(run,null,error); throw error }
+    }
+
+    private fun finish(run:Run,result:ScanResult?,error:Throwable?) {
+        synchronized(lifecycle) {
+            if(active === run) { active=null; running.set(false); rescanRequested=false }
         }
+        if(error!=null) run.completion.completeExceptionally(error) else run.completion.complete(result!!)
     }
 
     private fun scanOnce(force: Boolean): ScanResult {
@@ -81,13 +116,18 @@ class Scanner(
         val present = files.associateBy { it.relative }
         val removed = existing.keys.filter { it !in present }
         // Migration seeds old ids without fingerprints; fill them before an unchanged file moves.
-        val missingFingerprints = db.read { query("SELECT path FROM track_identity WHERE fingerprint IS NULL") { it.string("path") }.toSet() }
+        val missingFingerprints = db.read { query("SELECT path FROM track_identity WHERE fingerprint IS NULL OR fingerprint NOT LIKE 'packet-sha256:%'") { it.string("path") }.toSet() }
         val changed = files.filter { file ->
             val old = existing[file.relative]
             old == null || file.relative in missingFingerprints || old.mtime != file.mtime || old.size != file.size || old.sidecar != file.sidecar
         }
         val unchanged = files.size - changed.size
-        val artStamp = folderArt.toSortedMap().entries.joinToString("\n").hashCode().toString()
+        val artStamp = folderArt.toSortedMap().entries.joinToString("\n") { (dir,name) ->
+            val file = if(name.isEmpty()) null else com.legitimateapps.dulcet.server.musicFile(root, root.resolve(dir).resolve(name))
+            val attributes = file?.let { Files.readAttributes(it,java.nio.file.attribute.BasicFileAttributes::class.java) }
+            "$dir/$name:${attributes?.size()}:${attributes?.lastModifiedTime()?.toMillis()}"
+        }.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) } }
+        val artChanged = db.read { string("SELECT value FROM meta WHERE key='folder_art_stamp'") } != artStamp
         if (!force && changed.isEmpty() && removed.isEmpty() && db.read { string("SELECT value FROM meta WHERE key = 'folder_art_stamp'") } == artStamp) {
             return ScanResult(added = 0, updated = 0, removed = 0, unchanged = unchanged, failed = 0)
         }
@@ -101,12 +141,7 @@ class Scanner(
                     try {
                         val tags = probe.probe(com.legitimateapps.dulcet.server.musicFile(root, root.resolve(file.relative)) ?: error("File outside music folder or missing"))
                         val source = com.legitimateapps.dulcet.server.musicFile(root, root.resolve(file.relative)) ?: error("Missing file")
-                        val digest = java.security.MessageDigest.getInstance("SHA-256")
-                        Files.newInputStream(source).use { input ->
-                            val buffer = ByteArray(64 * 1024)
-                            while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
-                        }
-                        fingerprints[file.relative] = digest.digest().joinToString("") { "%02x".format(it) }
+                        fingerprints[file.relative] = probe.fingerprint(source,tags.sampleRate,tags.channels)
                         TrackInfo.from(file.relative, file.parent, file.name, file.mtime, file.size, tags, file.sidecar)
                     } catch (error: Exception) {
                         failures.incrementAndGet()
@@ -128,7 +163,19 @@ class Scanner(
         progress.addAndGet(unchanged)
         val now = clock()
         db.write {
+            // Issuance order must outlive journal retention and cannot be inferred from UUID order.
+            execute("CREATE TABLE IF NOT EXISTS api_album_issued (ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE)")
+            execute("INSERT OR IGNORE INTO api_album_issued(id) SELECT id FROM album ORDER BY created,rowid")
+            fun issued(id: String): Long = long("SELECT ordinal FROM api_album_issued WHERE id=?",id)
+            // Seed legacy group ids unchanged before minting any new random identities.
+            query("SELECT id FROM album") { it.string("id") }.forEach { execute("INSERT OR IGNORE INTO api_group_identity VALUES('album',?,?)", it, it) }
+            query("SELECT id,name FROM artist") { it.string("id") to it.string("name") }.forEach { (id,name) -> execute("INSERT OR IGNORE INTO api_group_identity VALUES('artist',?,?)", TrackInfo.artistId(name), id) }
             val oldGroups = query("SELECT id, album_id, album_artist_id FROM track") { Triple(it.string("id"), it.string("album_id"), it.string("album_artist_id")) }
+            data class OldCredit(val track:String,val role:String,val position:Int,val artist:String)
+            val oldCredits=query("SELECT track_id,role,position,artist_id FROM track_artist") { OldCredit(it.string("track_id"),it.string("role"),it.int("position"),it.string("artist_id")) }
+            val oldArtistMembers=oldCredits.groupBy { it.artist }
+            fun artistSuccessors(members:List<OldCredit>):List<String> = members.mapNotNull { string("SELECT artist_id FROM track_artist WHERE track_id=? AND role=? AND position=?",it.track,it.role,it.position) }.distinct()
+
             removed.forEach { path ->
                 val id = existing.getValue(path).id
                 execute("DELETE FROM track WHERE path = ?", path)
@@ -137,7 +184,9 @@ class Scanner(
             }
             val claimed = HashMap<String, String>()
             query("SELECT id, path FROM track") { it.string("id") to it.string("path") }.forEach { (id, path) -> claimed[id] = path }
-            for (track in probed) {
+            for (rawTrack in probed) {
+                fun credit(c: Credit): Credit = c.copy(id = groupId("artist", c.id))
+                val track = rawTrack.copy(artists=rawTrack.artists.map(::credit), albumArtists=rawTrack.albumArtists.map(::credit), composers=rawTrack.composers.map(::credit), albumId=string("SELECT id FROM api_group_identity WHERE type='album' AND key=?",rawTrack.albumId) ?: rawTrack.albumId)
                 val previous = existing[track.path]
                 if (previous != null) {
                     execute("DELETE FROM track WHERE path = ?", track.path)
@@ -146,27 +195,87 @@ class Scanner(
                     claimed.remove(previous.id)
                 }
                 val fingerprint = fingerprints.getValue(track.path)
-                val stored = string("SELECT track_id FROM track_identity WHERE path = ?", track.path)
+                val priorFingerprint=string("SELECT fingerprint FROM track_identity WHERE path=?",track.path)
+                val sameAudio=priorFingerprint == null || !priorFingerprint.startsWith("packet-sha256:") || priorFingerprint == fingerprint
+                val stored = if(sameAudio) string("SELECT track_id FROM track_identity WHERE path = ?", track.path) else null
                 val moved = query("SELECT path, track_id FROM track_identity WHERE fingerprint = ?", fingerprint) { it.string("path") to it.string("track_id") }
                     .filter { it.first !in present && it.second !in claimed }.map { it.second }.distinct().singleOrNull()
-                val legacyCandidate = track.candidateId()
+                val legacyCandidate = rawTrack.candidateId()
                 val legacy = query("SELECT path FROM track_identity WHERE track_id = ? AND fingerprint IS NULL", legacyCandidate) { it.string("path") }
                     .takeIf { paths -> paths.isNotEmpty() && paths.none { it in present } && legacyCandidate !in claimed }?.let { legacyCandidate }
-                var id = previous?.id ?: stored ?: moved ?: legacy ?: com.legitimateapps.dulcet.server.Ids.of("track-path", track.path)
+                var id = previous?.id?.takeIf { sameAudio } ?: stored ?: moved ?: legacy ?: java.util.UUID.randomUUID().toString()
                 val holder = claimed[id]
-                if (holder != null && holder != track.path) id = com.legitimateapps.dulcet.server.Ids.of("track", id, track.path)
+                if (holder != null && holder != track.path) id = java.util.UUID.randomUUID().toString()
                 claimed[id] = track.path
-                insertTrack(id, track, created = previous?.created ?: now, updated = now)
+                insertTrack(id, track, created = previous?.created?.takeIf { previous.id == id } ?: now, updated = now)
                 execute("INSERT INTO track_identity VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET track_id = excluded.track_id, fingerprint = excluded.fingerprint", track.path, id, fingerprint)
             }
-            regroup(folderArt)
-            for ((type, column, table) in listOf(Triple("album", "album_id", "album"), Triple("artist", "album_artist_id", "artist"))) {
-                val groups = oldGroups.groupBy { if (type == "album") it.second else it.third }
-                for ((oldId, members) in groups) {
-                    if (long("SELECT COUNT(*) FROM $table WHERE id = ?", oldId) > 0) continue
-                    val replacements = members.mapNotNull { string("SELECT $column FROM track WHERE id = ?", it.first) }.distinct()
-                    if (replacements.size == 1) remapUserItem(type, oldId, replacements.single())
+            // A full retag keeps the album identity. Many-to-one changes merge onto a
+            // deterministic survivor; a split gets separate random successors.
+            val oldAlbums = oldGroups.groupBy { it.second }
+            val unresolved = query("SELECT DISTINCT album_id FROM track") { it.string("album_id") }
+                .filter { id -> long("SELECT COUNT(*) FROM api_group_identity WHERE type='album' AND id=?",id) == 0L }
+            for (candidate in unresolved) {
+                val complete = oldAlbums.filter { (_, members) ->
+                    val next = members.mapNotNull { string("SELECT album_id FROM track WHERE id=?", it.first) }.distinct()
+                    next == listOf(candidate)
+                }.keys.sortedWith(compareBy(::issued).thenBy { it })
+                val id = complete.firstOrNull() ?: java.util.UUID.randomUUID().toString()
+                execute("INSERT OR IGNORE INTO api_album_issued(id) VALUES(?)",id)
+                execute("INSERT INTO api_group_identity(type,key,id) VALUES('album',?,?) ON CONFLICT(type,key) DO UPDATE SET id=excluded.id",candidate,id)
+                execute("UPDATE track SET album_id=? WHERE album_id=?",id,candidate)
+            }
+            // A release can acquire an existing key before a complete retag is considered above.
+            // Include the former complete groups too, so that the oldest issued id still wins.
+            val releaseGroups = query("SELECT DISTINCT album_id,mbz_album_id FROM track WHERE mbz_album_id IS NOT NULL AND mbz_album_id<>''") {
+                it.string("mbz_album_id") to it.string("album_id")
+            }.groupBy({ it.first }, { it.second })
+            val releaseMerges = LinkedHashMap<String,String>()
+            for ((release, current) in releaseGroups) {
+                val complete = oldAlbums.filter { (_,members) ->
+                    members.all { member -> string("SELECT mbz_album_id FROM track WHERE id=?",member.first) == release }
+                }.keys
+                val candidates = (current + complete).distinct()
+                candidates.forEach { execute("INSERT OR IGNORE INTO api_album_issued(id) VALUES(?)",it) }
+                val survivor = candidates.minWithOrNull(compareBy(::issued).thenBy { it }) ?: continue
+                for (loser in candidates.filter { it != survivor }) {
+                    execute("UPDATE track SET album_id=? WHERE album_id=?",survivor,loser)
+                    execute("UPDATE api_group_identity SET id=? WHERE type='album' AND id=?",survivor,loser)
+                    releaseMerges[loser] = survivor
                 }
+            }
+            // Preserve a completely renamed artist group, including all credit roles.
+            for ((oldId,members) in oldArtistMembers) {
+                if (long("SELECT COUNT(*) FROM track_artist WHERE artist_id=?",oldId)>0) continue
+                val next=artistSuccessors(members)
+                if(next.size == 1 && next.single() !in oldArtistMembers) {
+                    val replacement=next.single()
+                    execute("UPDATE track SET artist_id=? WHERE artist_id=?",oldId,replacement)
+                    execute("UPDATE track SET album_artist_id=? WHERE album_artist_id=?",oldId,replacement)
+                    execute("UPDATE track_artist SET artist_id=? WHERE artist_id=?",oldId,replacement)
+                    execute("UPDATE api_group_identity SET id=? WHERE type='artist' AND id=?",oldId,replacement)
+                }
+            }
+            regroup(folderArt)
+            // Track artwork can inherit a folder image, so image changes must invalidate the
+            // track representation as well as the album and artist representations.
+            if(artChanged) execute("INSERT INTO api_journal(type,id,op,at) SELECT 'track',id,'upsert',? FROM track",now)
+            for ((oldId,survivor) in releaseMerges) {
+                remapUserItem("album",oldId,survivor)
+                recordReplacement("album",oldId,listOf(survivor),"merged",now)
+            }
+            for ((oldId,members) in oldAlbums) {
+                if (oldId in releaseMerges) continue
+                if (long("SELECT COUNT(*) FROM album WHERE id=?",oldId)>0) continue
+                val next=members.mapNotNull { string("SELECT album_id FROM track WHERE id=?",it.first) }.distinct()
+                if(next.size == 1) { remapUserItem("album",oldId,next.single()); recordReplacement("album",oldId,next,"merged",now) }
+                else if(next.size > 1) recordReplacement("album",oldId,next,"split",now)
+            }
+            for ((oldId,members) in oldArtistMembers) {
+                if (long("SELECT COUNT(*) FROM artist WHERE id=?",oldId)>0) continue
+                val next=artistSuccessors(members)
+                if(next.size == 1) { remapUserItem("artist",oldId,next.single()); recordReplacement("artist",oldId,next,"merged",now) }
+                else if(next.size > 1) recordReplacement("artist",oldId,next,"split",now)
             }
             execute("INSERT INTO meta(key, value) VALUES('last_scan', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", Instant.ofEpochMilli(now).toString())
             execute("INSERT INTO meta(key, value) VALUES('folder_count', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", folderArt.size.toString())
@@ -178,16 +287,57 @@ class Scanner(
     }
 
     private fun Db.Session.remapUserItem(type: String, old: String, replacement: String) {
+        val clocksSuppressed = if(long("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='api_state_mutation'")>0) {
+            query("SELECT user_id FROM annotation WHERE item_id IN (?,?) UNION SELECT user_id FROM library_item WHERE item_id IN (?,?)",old,replacement,old,replacement) { it.string("user_id") }.flatMap { user ->
+                listOf(old,replacement).mapNotNull { item ->
+                    if(execute("INSERT OR IGNORE INTO api_state_mutation(user_id,item_id) VALUES(?,?)",user,item)>0) user to item else null
+                }
+            }
+        } else emptyList()
+        val ratings = if (long("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='api_rating'") > 0) {
+            query("""SELECT r.user_id,r.item_id,r.value,r.legacy_value,COALESCE(a.rating,0) AS survivor_rating
+                FROM api_rating r LEFT JOIN annotation a ON a.user_id=r.user_id AND a.item_id=? AND a.item_type=?
+                WHERE r.item_id IN (?,?) ORDER BY (r.item_id=?) DESC""",replacement,type,old,replacement,replacement) { r ->
+                if (r.string("item_id") == replacement || r.int("survivor_rating") == 0) listOf<Any?>(r.string("user_id"),replacement,r.int("value"),r.int("legacy_value")) else null
+            }.filterNotNull().distinctBy { it[0] }
+        } else emptyList()
+        if (long("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='api_state_clock'") > 0) {
+            execute("""INSERT INTO api_state_clock(user_id,item_id,field,at)
+                SELECT user_id,?,field,at FROM api_state_clock WHERE item_id=?
+                ON CONFLICT(user_id,item_id,field) DO UPDATE SET at=MAX(api_state_clock.at,excluded.at)""",replacement,old)
+            execute("DELETE FROM api_state_clock WHERE item_id=?",old)
+        }
         execute("""INSERT INTO annotation SELECT user_id, item_type, ?, starred, rating, play_count, played FROM annotation
             WHERE item_type = ? AND item_id = ?
             ON CONFLICT(user_id,item_type,item_id) DO UPDATE SET
-            starred = COALESCE(annotation.starred, excluded.starred),
+            starred = CASE WHEN annotation.starred IS NULL THEN excluded.starred WHEN excluded.starred IS NULL THEN annotation.starred ELSE MIN(annotation.starred,excluded.starred) END,
             rating = CASE WHEN annotation.rating > 0 THEN annotation.rating ELSE excluded.rating END,
-            play_count = MAX(annotation.play_count, excluded.play_count),
+            play_count = annotation.play_count + excluded.play_count,
             played = MAX(COALESCE(annotation.played,0), COALESCE(excluded.played,0))""", replacement, type, old)
-        execute("INSERT OR IGNORE INTO library_item SELECT user_id, item_type, ?, added FROM library_item WHERE item_type = ? AND item_id = ?", replacement, type, old)
+        execute("INSERT INTO library_item SELECT user_id, item_type, ?, added FROM library_item WHERE item_type = ? AND item_id = ? ON CONFLICT(user_id,item_type,item_id) DO UPDATE SET added=MIN(library_item.added,excluded.added)", replacement, type, old)
+        execute("UPDATE api_group_identity SET id=? WHERE type=? AND id=?",replacement,type,old)
         execute("DELETE FROM annotation WHERE item_type = ? AND item_id = ?", type, old)
         execute("DELETE FROM library_item WHERE item_type = ? AND item_id = ?", type, old)
+        if (long("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='api_rating'") > 0) {
+            execute("DELETE FROM api_rating WHERE item_id=?",old)
+            ratings.forEach { row -> execute("INSERT INTO api_rating(user_id,item_id,value,legacy_value) VALUES(?,?,?,?) ON CONFLICT(user_id,item_id) DO UPDATE SET value=excluded.value,legacy_value=excluded.legacy_value",*row.toTypedArray()) }
+        }
+        clocksSuppressed.forEach { (user,item) -> execute("DELETE FROM api_state_mutation WHERE user_id=? AND item_id=?",user,item) }
+    }
+
+    private fun Db.Session.groupId(type: String, key: String): String {
+        val known = string("SELECT id FROM api_group_identity WHERE type=? AND key=?",type,key)
+        if (known != null) return known
+        val id = java.util.UUID.randomUUID().toString()
+        execute("INSERT INTO api_group_identity VALUES(?,?,?)",type,key,id)
+        return id
+    }
+
+    private fun Db.Session.recordReplacement(type: String,id: String,next: List<String>,reason: String,at:Long) {
+        if (reason == "split") execute("DELETE FROM api_group_identity WHERE type=? AND id=?",type,id)
+        val replacements = kotlinx.serialization.json.JsonArray(next.map(::JsonPrimitive)).toString()
+        execute("INSERT INTO api_identity(type,id,reason,replaced_by,deleted_at) VALUES(?,?,?,?,?) ON CONFLICT(type,id) DO UPDATE SET reason=excluded.reason,replaced_by=excluded.replaced_by,deleted_at=excluded.deleted_at",type,id,reason,replacements,at)
+        execute("INSERT INTO api_journal(type,id,op,at,reason,replaced_by) VALUES(?,?,'delete',?,?,?)",type,id,at,reason,replacements)
     }
 
     private data class FileEntry(val relative: String, val parent: String, val name: String, val mtime: Long, val size: Long, val sidecar: String?)

@@ -165,7 +165,7 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
             val title = call.param("title").orEmpty()
             val id = ctx.db.read {
                 single(
-                    "SELECT t.id FROM track t WHERE lower(t.title) = lower(?) AND (? = '' OR t.id IN (SELECT track_id FROM track_artist WHERE artist_id IN (SELECT id FROM artist WHERE search = ?))) LIMIT 1",
+                    "SELECT t.id FROM track t WHERE ${ctx.access.catalogPredicate(call.user.id,"track","t")} AND lower(t.title) = lower(?) AND (? = '' OR t.id IN (SELECT track_id FROM track_artist WHERE artist_id IN (SELECT id FROM artist WHERE search = ?))) LIMIT 1",
                     title, artist, fold(artist),
                 ) { it.string("id") }
             }
