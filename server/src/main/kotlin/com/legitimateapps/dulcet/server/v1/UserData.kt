@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.server.v1
 
 import com.legitimateapps.dulcet.server.ServerContext
 import com.legitimateapps.dulcet.server.auth.PasswordVault
+import com.legitimateapps.dulcet.server.api.markLibraryChanged
 import com.legitimateapps.dulcet.server.db.Db
 import io.ktor.http.ContentType
 import io.ktor.server.application.*
@@ -256,6 +257,8 @@ class ApiUserData(private val ctx: ServerContext) {
             }
             execute("DELETE FROM api_state_mutation WHERE user_id=? AND item_id=?",p.user.id,id)
             execute("INSERT INTO api_state_clock VALUES (?,?,?,?) ON CONFLICT(user_id,item_id,field) DO UPDATE SET at=excluded.at",p.user.id,id,field,time)
+            // /rest readers probe this clock before deciding whether to refresh My Library.
+            if(field=="library") markLibraryChanged(p.user.id,System.currentTimeMillis())
             // An odd half-star may change while the rounded legacy value does not.
             if(op=="rate") journal("itemState",id,p.user.id,"upsert")
             JsonObject(itemState(id,p)+j("applied" to true))

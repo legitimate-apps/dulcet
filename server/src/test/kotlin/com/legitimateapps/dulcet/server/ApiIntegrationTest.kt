@@ -17,6 +17,32 @@ class ApiIntegrationTest {
         listOf("Alpha","Beta","Gamma","Delta").forEachIndexed { i,title -> Fixtures.track(ctx.config.musicFolder.resolve("$i.flac"),tags=mapOf("title" to title,"album" to "Album $title","artist" to "Artist $title","genre" to "Jazz","track" to "1")) }
         ctx.scanner.scan();return ctx
     }
+    @Test fun `API library writes advance the legacy clock and both protocols see the same members`() = testApplication {
+        val ctx=fixture()
+        val user=ctx.users.create("library-reader","password",false)
+        val token=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read","user:read","user:write","user:delete"))
+        val track=ctx.db.read { string("SELECT id FROM track ORDER BY id LIMIT 1")!! }
+        application { dulcetModule(ctx) }
+        suspend fun library()=client.rest("getDulcetLibrary","library-reader","password")["dulcetLibrary"]!!.jsonObject
+        try {
+            // Seed the clock through /rest so a missing invalidation cannot hide behind an absent clock.
+            client.rest("addToDulcetLibrary","library-reader","password","id" to track)
+            val before=library()["changed"]
+            assertNotNull(before)
+            assertEquals(HttpStatusCode.NoContent,client.delete("/dulcet/v1/me/library/$track") { bearerAuth(token) }.status)
+            val removed=library()
+            assertNotEquals(before,removed["changed"])
+            assertEquals(0,removed["songCount"]!!.jsonPrimitive.int)
+            assertEquals(HttpStatusCode.OK,client.put("/dulcet/v1/me/library/$track") { bearerAuth(token) }.status)
+            val added=library()
+            assertNotEquals(removed["changed"],added["changed"])
+            assertEquals(1,added["songCount"]!!.jsonPrimitive.int)
+            assertEquals(track,added["song"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
+            client.rest("removeFromDulcetLibrary","library-reader","password","id" to track)
+            val api=client.get("/dulcet/v1/me/library") { bearerAuth(token) }.obj()
+            assertTrue(api["items"]!!.jsonArray.isEmpty())
+        } finally { ctx.db.close() }
+    }
     @Test fun `catalog canonical path state ETags keyset deletes and sync cursor agree`() = testApplication {
         val ctx=fixture();val user=ctx.users.create("reader","password",false)
         val token=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read","user:read","user:write","media:read"))
