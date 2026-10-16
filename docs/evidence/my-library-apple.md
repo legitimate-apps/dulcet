@@ -6,7 +6,7 @@ optimistic membership, durable pending writes and their reconnect replay.
 
 ## Evidence status
 
-OBSERVED on the final product tree: `swift test --no-parallel` in `apple/DulcetKit` passed
+OBSERVED for the 2026-10-13 local proof: `swift test --no-parallel` in `apple/DulcetKit` passed
 299 tests across 10 suites, including capability/navigation and current-account membership tests.
 All 27 argument-free Python gates invoked by `apple-ci` passed; the host-pressure live control
 passed on retry with four samples. XcodeGen regeneration and its self-test passed.
@@ -38,7 +38,8 @@ The CI driver uses short, direction-aware drags with an end hold for this captur
 on the hosted iPhone moved Add from below the visible area to above it; continuing upward
 could not recover it. The bounded helper retains the hittable and above-tab-bar assertions and
 also requires Add below the navigation bar.
-Native app/UI targets compiled on all Apple platforms; Mac runtime remains unproven.
+Native app/UI targets compiled on all Apple platforms; Mac runtime was still unproven at that
+local proof stage. The dated CI record below covers subsequent hosted execution.
 After the DEBUG appearance change, the final DulcetKit run again passed all 299 tests across
 10 suites; the affected string-catalog and contrast source policies passed.
 
@@ -47,6 +48,28 @@ all seven owned simulator leases released (the interrupted unleased clone was re
 DerivedData/build capacity leases released, and local app/package build products deleted.
 `automationmodetool` reported Automation Mode disabled and authentication required to enable it.
 
+
+## Required CI on 2026-10-16
+
+OBSERVED in `apple-ci` dispatch [38937643116](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116)
+at `4fcf0e64`: the [iPhone producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099690)
+passed all four My Library cases. Downloaded `TEST-MyLibrary.xml` contains four cases under
+`DulcetMyLibraryIPhoneUITests`, with zero failures, errors or skips. The exact execution guard
+reported `individual-results=4`, and the visual attachment export retained nine JPEGs. The
+largest-text album capture was inspected: Add is visible above the tabs. This resolves the
+My Library CI-execution promotion condition for iPhone. The producer later failed the unchanged
+account-connect state case at `DulcetAccountConnectStatesUITests.swift:1044`, with an XCTest
+snapshot-query timeout; its cause is unresolved. Neither that producer nor the full dispatch
+is claimed green.
+
+The [platform job](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099609)
+is green. The [Mac/TV producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099725)
+passed the Mac visual and fallback cases, with on-screen bounds after launch, but failed the
+membership case after the old album helper scrolled the sidebar and hid Library. The committed
+catalog-scoped helper fix has passed source typechecking; its hosted runtime proof is pending.
+The light, dark and largest-text Mac album JPEGs were inspected with Add visible. TV was not
+reached. iPad's producer remains in progress. Mac, iPad and TV remain partial pending their
+complete My Library CI test records; the historical local results above are separate.
 
 ## Runtime suite
 
@@ -123,7 +146,8 @@ must appear once, Passed, in the individual xcresult records before JUnit is gen
 platform gets its own JUnit class name so the required aggregator resolves distinct UI evidence.
 The visual case's nine compressed JPEG attachments are exported to a separate capture directory
 and retained alongside the JUnit in the existing parity artifact.
-`FEATURES.yml` remains partial until these required CI runs have executed successfully.
+Each `FEATURES.yml` platform cell is promoted after its required My Library cases pass.
+The dated CI record above distinguishes those test passes from producer and aggregate failures.
 Local runtime results, when recorded, do not assert that CI has executed the new tests.
 
 
@@ -160,5 +184,5 @@ and is excluded from these counts; the validated bundle selected all four method
 **OBSERVED final gates:** all 27 argument-free apple-ci Python checks passed, and
 `swift test --no-parallel` passed 299 tests in 10 suites. Diagnostics and result bundles remain
 outside the repository. These are local results; a new apple-ci dispatch will establish CI results.
-The pending My Library Mac notification-dialog runtime proof and signed receipt renewals from
-Round 2 remain pending; this hosted Mac conformance proof does not replace them.
+Those Round 3 results did not establish the separate My Library proof; its current status is in
+the dated CI record above. Signed receipt renewals from Round 2 remain pending.

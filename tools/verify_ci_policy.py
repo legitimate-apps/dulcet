@@ -1525,8 +1525,8 @@ if apple_ci:
         # Emitting the cited class SOMEWHERE is necessary and not sufficient. Measured: reverting
         # one of three macOS emissions to the target name left this file passing, because the other
         # two still emitted the cited name -- while the bundle actually holding the cited test wrote
-        # unusable evidence. So pair each emission with the -only-testing it follows and require the
-        # emitted name to be one the rows use for THAT method.
+        # unusable evidence. Pair every cited name with the selector and emission for THAT method.
+        # Shared methods may also emit uncited platform aliases; those make no evidence claim.
         #
         # Deliberately not "emitted name == Swift class": this repository legitimately cites some
         # tests by TARGET (DulcetKeychainIOSTests) where the Swift class is different
@@ -1567,7 +1567,12 @@ if apple_ci:
                     candidate = source_lines[index + offset].strip()
                     if candidate.endswith("\\"):
                         continue
-                    if candidate not in allowed:
+                    # A shared suite can emit other platform aliases before those cells are
+                    # promoted or cite this method. Those emissions make no FEATURES claim.
+                    # Every cited alias must still have its own resolved selector/emission pair;
+                    # emitting that alias for another method cannot satisfy this requirement.
+                    unresolved = {name for name in allowed if (name, method) not in resolved_associations}
+                    if candidate not in allowed and unresolved:
                         errors.append(
                             f"{label}: the JUnit for {method} is emitted as "
                             f"{candidate!r}, but FEATURES.yml cites it as "

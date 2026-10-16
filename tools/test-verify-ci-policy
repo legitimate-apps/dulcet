@@ -433,7 +433,7 @@ PAIRED_EMISSION_FEATURES = json.dumps({
 })
 
 
-def run_paired_emission_case(emitted: str, expected_returncode: int, label: str) -> None:
+def run_paired_emission_case(emitted: str, expected_returncode: int, label: str, *, uncited_alias: bool = False) -> None:
     """The cited class is emitted for another method, so only the per-method pairing can object."""
     with tempfile.TemporaryDirectory(prefix="dulcet-paired-policy-") as temporary_directory:
         root = Path(temporary_directory)
@@ -447,7 +447,15 @@ def run_paired_emission_case(emitted: str, expected_returncode: int, label: str)
         )
         scripts = root / "tools" / "ci"
         scripts.mkdir(parents=True)
-        (scripts / "produce-evidence").write_text(PAIRED_EMISSION_SCRIPT % {"emitted": emitted})
+        script = PAIRED_EMISSION_SCRIPT % {"emitted": emitted}
+        if uncited_alias:
+            script += """
+xcodebuild test-without-building -only-testing:OtherTarget/Example/exampleMethod
+python3 tools/swift-testing-junit "$RUNNER_TEMP/other.xcresult" \\
+  "$RUNNER_TEMP/dulcet-example-junit/TEST-Uncited.xml" \\
+  OtherPlatformAlias
+"""
+        (scripts / "produce-evidence").write_text(script)
         (root / "FEATURES.yml").write_text(PAIRED_EMISSION_FEATURES)
         result = subprocess.run(
             [sys.executable, str(VERIFIER)], cwd=root, text=True, capture_output=True, check=False,
@@ -806,6 +814,14 @@ run_paired_emission_case(
 run_paired_emission_case(
     "ExampleTarget", 1,
     "a wrong emission is rejected even though the cited class is emitted elsewhere",
+)
+
+run_paired_emission_case(
+    "Example", 0, "a shared method may emit an uncited platform alias", uncited_alias=True,
+)
+run_paired_emission_case(
+    "ExampleTarget", 1,
+    "an uncited parallel alias does not excuse a missing cited method/emission pair", uncited_alias=True,
 )
 
 run_required_association_case("deleted-emission")

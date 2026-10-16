@@ -1216,8 +1216,8 @@
           }
         },
         "ios": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "status": "shipped",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38937643116, iPhone producer: https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099690. All four shared My Library UI cases passed against checkout-built disposable Dulcet Server and the positive Navidrome fallback, with four passing JUnit cases, zero failures/errors/skips, the exact execution guard reporting individual-results=4, and nine exported visual JPEGs. The largest-text Add capture was inspected. This satisfies the required My Library fixture-execution condition. The producer later failed the unchanged account-connect state case with an XCTest snapshot-query timeout; this is passing My Library test evidence, not a claim that the producer or full workflow was green. Its cause remains unresolved.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1230,13 +1230,32 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            },
+            {
+              "observes": "the production iPhone app on iPhone 17 Pro against real disposable Dulcet Server: Browse Add, My Library membership and direct server read-back, saved-account relaunch, Remove, offline Add, pending membership surviving offline relaunch, and server membership after reconnect",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation"
+            },
+            {
+              "observes": "the iPhone Library, Browse and album Add screens captured as nine compressed JPEGs in light, dark and largest Dynamic Type variants",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText"
+            },
+            {
+              "observes": "the album Add control is hittable and visible below the navigation bar and above the tab bar at the largest iPhone Dynamic Type size",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testAlbumAddRemainsVisibleAtLargestTextOnIPhone"
             }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
+          ]
         },
         "ipados": {
           "status": "partial",

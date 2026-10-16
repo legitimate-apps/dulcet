@@ -7787,6 +7787,9 @@ Navidrome remains the positive control for the absent split. Explicit selectors 
 result guards require passing membership/relaunch/offline-replay, fallback and visual cases;
 iPhone also requires its largest-text Add visibility case. Platform-specific JUnit class names
 keep the shared Swift methods distinct in the required `apple-ci` evidence resolver.
+The policy requires every cited class/method pair to resolve to its own selector and JUnit
+emission; uncited parallel platform aliases do not satisfy a citation or prevent a verified
+platform from being promoted independently.
 The `android-emulator` phone and TV members retain the existing Navidrome invocation, preserve
 its results, then execute only their My Library proof with `dulcetExpectSplit=true` against the
 built Dulcet Server. The second invocation must report exactly one passing, non-skipped test;
