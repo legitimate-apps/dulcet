@@ -1194,7 +1194,7 @@
       "platforms": {
         "macos": {
           "status": "shipped",
-          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38955313343, Mac execution: https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663171. All three shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains three passing DulcetMyLibraryMacUITests cases, zero failures/errors/skips; the exact guard reports individual-results=3. Nine visual JPEG attachments were retained in the xcresult diagnostics; the largest-text album Add capture was inspected. This resolves the required CI fixture-execution condition. The producer later failed the separate TV focus case; this is passing Mac test evidence, not a green producer claim. The Mac proof host compiles production app sources, is signed ad hoc with entitlements cleared, and uses the DEBUG per-test disk account store; no entitled Keychain-persistence claim is made.",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685. All 3 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 3 passing DulcetMyLibraryMacUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition. The Mac proof host compiles production app sources, is signed ad hoc with entitlements cleared, and uses the DEBUG per-test disk account store; no entitled Keychain-persistence claim is made.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1230,7 +1230,7 @@
         },
         "ios": {
           "status": "shipped",
-          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38955313343, green complete iPhone producer: https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663095. All four shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains four passing DulcetMyLibraryIPhoneUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=4. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The later account-connect state case also passed (727.338 seconds), so this citation covers a wholly green producer. The earlier snapshot-query timeout did not recur; its underlying cause remains unresolved. This satisfies the required My Library CI fixture-execution condition.",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813681. All 4 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 4 passing DulcetMyLibraryIPhoneUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=4. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition. The later account-connect state case also passed (513.216 seconds); the earlier snapshot-query timeout did not recur, and its underlying cause remains unresolved.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1272,7 +1272,7 @@
         },
         "ipados": {
           "status": "shipped",
-          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38937643116, green iPad producer: https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099654. All three shared My Library UI cases passed against checkout-built disposable Dulcet Server and the positive Navidrome fallback. Downloaded JUnit contains three passing DulcetMyLibraryIPadUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were exported and retained in the parity artifact; the largest-text album Add capture was inspected. This resolves the required My Library CI fixture-execution condition. The full dispatch failed in the separate Mac and iPhone producers; the iPad producer and its complete conformance script are green.",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813544. All 3 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 3 passing DulcetMyLibraryIPadUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1307,8 +1307,8 @@
           ]
         },
         "tvos": {
-          "status": "partial",
-          "reason": "The shared TV My Library suite executed against the required disposable CI fixtures in apple-ci run 38955313343: https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663171. Visual and Navidrome fallback cases passed, but membership failed when the remote focus helper alternated between Play and Shuffle instead of moving right to Add. The geometry-based driver correction typechecks; a complete passing three-case hosted record is still required for promotion.",
+          "status": "shipped",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685. All 3 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 3 passing DulcetMyLibraryTVUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1321,13 +1321,26 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            },
+            {
+              "observes": "the production Apple TV app driven by remote against real disposable Dulcet Server: press-and-hold membership, album Add, My Library membership and direct server read-back, saved-account relaunch, Remove, offline Add, pending membership surviving offline relaunch, and server membership after reconnect",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryTVUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryTVUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation"
+            },
+            {
+              "observes": "the TV Library, Browse and album Add screens captured as nine compressed JPEGs in light, dark and largest-text launch variants",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryTVUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText"
             }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Complete passing required-CI TV My Library suite",
-            "reason": "Disposable Dulcet Server, Navidrome and the controllable proxy now execute in required CI. The observed TV focus failure has a compile-checked driver correction; all three cases must pass in a new hosted execution record before promotion."
-          }
+          ]
         },
         "android": {
           "status": "shipped",

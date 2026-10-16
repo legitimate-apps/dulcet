@@ -51,48 +51,48 @@ DerivedData/build capacity leases released, and local app/package build products
 
 ## Required CI on 2026-10-16
 
-OBSERVED in `apple-ci` dispatch [38955313343](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343)
-at `d9c26b70`:
+OBSERVED in the wholly green `apple-ci` dispatch [38966677965](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965)
+at `62611575`:
 
-| Platform | Required My Library execution | Producer result |
+| Platform | Required My Library execution | Complete producer result |
 | --- | --- | --- |
-| iPhone | Four passing `DulcetMyLibraryIPhoneUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=4`; nine visual JPEGs in the parity artifact | [Green complete producer](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663095) |
-| Mac | Three passing `DulcetMyLibraryMacUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEG attachments in the retained xcresult | [Producer](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663171) later failed the TV focus case |
-| Apple TV | Three cases executed: visual and Navidrome fallback passed; membership failed in remote focus navigation | Same Mac/TV producer; TV remains partial |
+| iPhone | Four passing `DulcetMyLibraryIPhoneUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=4`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813681) |
+| iPad | Three passing `DulcetMyLibraryIPadUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813544) |
+| Mac | Three passing `DulcetMyLibraryMacUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685) |
+| Apple TV | Three passing `DulcetMyLibraryTVUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685) |
 
-The largest-text iPhone and Mac album captures were inspected with Add visible. Mac's behavior
-case now passes Add, durable relaunch, Remove, offline Add, offline relaunch and reconnect read-back.
-The driver returns through the visible toolbar Back control when the selected sidebar row leaves
-a retained album detail open. This fixes the observed failure in
+All four downloaded JUnit suites were checked, and each platform's largest-text album capture
+was inspected with Add visible. This resolves each Apple cell's required CI fixture-execution
+condition. Mac now cites a wholly green producer; the proof-host account-store limit remains
+stated below. Historical local results above remain separate from these CI execution records.
+
+The TV behavior case passed in 88.872 seconds, including remote press-and-hold membership,
+album Add, durable relaunch, Remove, offline Add, offline relaunch and reconnect server read-back.
+The prior [38955313343/core](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663171)
+failure snapshot showed Play focused at y = 750–843, Add at y = 812–878 immediately to its
+right, and Shuffle below at y = 851–936. The helper alternated Down and Up because Add's
+centre lay between the playback controls. The corrected driver chooses horizontal movement
+for adjacent controls whose vertical spans overlap, still requiring actual focus before Select.
+All three TV cases now pass with every behavior assertion retained; TV is promoted to shipped.
+
+Mac's behavior case also passes Add, durable relaunch, Remove and offline replay. The driver
+returns through the visible toolbar Back control when the selected sidebar row leaves a retained
+album detail open. This fixes the observed failure in
 [38947781568/core](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568/job/117131265121),
 where Library was selected but its detail and Add control remained visible after Remove.
-Mac's required CI fixture-execution condition is resolved by the three passing records, with the
-proof-host account-store limit stated below; the whole Mac/TV producer is not claimed green.
 
 The complete iPhone producer also passed
 `DulcetAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone`
-(727.338 seconds). The earlier snapshot-query timeout in
+(513.216 seconds). The earlier snapshot-query timeout in
 [38937643116/iPhone](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099690)
 did not recur. Its underlying cause remains unresolved; no timing diagnosis is claimed.
-The [platform producer](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663257)
-is green.
 
-The TV failure snapshot shows Play focused at y = 750–843, Add at y = 812–878 immediately to
-its right, and Shuffle below at y = 851–936. The helper alternated Down and Up because Add's
-centre lies between the two playback controls. The driver now chooses horizontal movement for
-adjacent controls whose vertical spans overlap, retaining the focus requirement before Select.
-Its hosted runtime proof is pending. The TV visual and fallback passes do not promote the cell.
-
-The iPad citation remains the [green complete producer in 38937643116](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099654)
-at `4fcf0e64`: downloaded JUnit contains three passing `DulcetMyLibraryIPadUITests` cases, zero
-failures/errors/skips, exact guard `individual-results=3`, and nine retained visual JPEGs. Its
-largest-text album Add capture was inspected. This resolves iPad's CI fixture-execution condition.
-The replacement iPad producer in 38955313343 also passed all three My Library cases and guard,
-but later failed the unchanged playlist-row drag proof before attempting the drag. A row-existence
-query stalled from approximately t = 138 to t = 181 seconds; the settling helper completed only
-one empty queue read before its 45-second loop deadline expired. The underlying accessibility
-delay is unresolved. The full replacement dispatch is not green. Historical local results above
-remain separate from these CI execution records.
+The unchanged iPad playlist-row drag proof passed in 107.920 seconds. Its previous
+[38955313343/iPad](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663083)
+failure happened before attempting the drag: a row-existence query stalled from approximately
+t = 138 to t = 181 seconds, and the settling helper completed only one empty queue read before
+its 45-second loop deadline expired. The underlying accessibility delay remains unresolved;
+the new green result is not claimed as a fix for that delay.
 
 ## Runtime suite
 

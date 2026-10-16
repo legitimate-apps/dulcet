@@ -1334,6 +1334,11 @@ for alias, methods in (
         "testNonDulcetServerKeepsTheOriginalLibraryNavigation",
         "testLibraryBrowseAndAlbumInLightDarkAndLargestText",
     )),
+    ("DulcetMyLibraryTVUITests", (
+        "testBrowseAddRemoveRelaunchAndOfflineReplay",
+        "testNonDulcetServerKeepsTheOriginalLibraryNavigation",
+        "testLibraryBrowseAndAlbumInLightDarkAndLargestText",
+    )),
 ):
     for method in methods:
         passing_cases += f'<testcase classname="{alias}" name="{method}" time="0.1" />\n'
@@ -1455,7 +1460,7 @@ execution_rejections = {
         "evidence test did not pass",
     ),
 }
-for alias in ("DulcetMyLibraryIPhoneUITests", "DulcetMyLibraryIPadUITests", "DulcetMyLibraryMacUITests"):
+for alias in ("DulcetMyLibraryIPhoneUITests", "DulcetMyLibraryIPadUITests", "DulcetMyLibraryMacUITests", "DulcetMyLibraryTVUITests"):
     case = f'<testcase classname="{alias}" name="testBrowseAddRemoveRelaunchAndOfflineReplay" time="0.1" />'
     assert passing_report.count(case) == 1
     execution_rejections[f"{alias} My Library case did not execute"] = (
