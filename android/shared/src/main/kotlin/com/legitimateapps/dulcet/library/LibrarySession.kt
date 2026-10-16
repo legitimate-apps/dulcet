@@ -209,6 +209,22 @@ public class LibrarySession internal constructor(
     internal fun lyricsFacade(preferredLanguages: List<String>): AndroidLibraryLyrics =
         lyricsFacade ?: AndroidLibraryLyrics(reader, preferredLanguages).also { lyricsFacade = it }
 
+    private var myLibrarySession: MyLibrarySession? = null
+
+    /**
+     * The account's My Library (spec §29.4, §29.9): what this account added on a server advertising
+     * `dulcetLibrary`, beside the whole catalog the reader windows — the core's `AndroidMyLibrary`
+     * over this session's reader. On any other server every publication says Unavailable, so nothing
+     * splits and no library endpoint is ever called. Closed with this session.
+     */
+    public val myLibrary: MyLibrarySession
+        get() = myLibrarySession ?: MyLibrarySession(CoreMyLibrarySource(reader)).also {
+            myLibrarySession = it
+            // Availability begins unknown: detection must precede the shell's Library/Browse split.
+            // A restored account stays local until start() begins its automatic reconnect.
+            it.refresh()
+        }
+
     internal val isClosed: Boolean get() = closed
 
     private val surfaces = mutableListOf<LibrarySurface>()
@@ -571,6 +587,7 @@ public class LibrarySession internal constructor(
         releaseHeldLoss()
         closed = true
         reconnectRegistration.close()
+        myLibrarySession?.close()
         outcomeRegistration.close()
         playlistRegistration.close()
         playlistQuestions.close()

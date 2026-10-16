@@ -118,6 +118,15 @@
     <string name="library_favourites_albums">Albums</string>
     <string name="library_favourites_artists">Artists</string>
     <string name="library_favourites_empty">No favourites yet. Choose the heart on a song, album or artist to keep it here.</string>
+
+    <!-- My Library (the `dulcetLibrary` extension): what this account added, beside Browse. -->
+    <string name="library_browse">Browse</string>
+    <string name="library_add_to_library">Add to Library</string>
+    <string name="library_remove_from_library">Remove from Library</string>
+    <string name="library_in_library">In your library</string>
+    <string name="library_my_library_empty">Nothing in your library yet.</string>
+    <string name="library_my_library_empty_hint">Albums, artists and songs you add are kept here, for this account.</string>
+    <string name="library_sort_az">A to Z</string>
     <string name="library_change_not_saved">Couldn\'t save that change — %1$s</string>
     <string name="library_change_held_busy">That change isn\'t sent yet — your server is busy. It will be sent later.</string>
     <string name="library_change_held_refused">That change isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>

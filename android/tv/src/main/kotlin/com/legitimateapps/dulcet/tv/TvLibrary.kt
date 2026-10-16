@@ -123,6 +123,8 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.LibrarySubject
 import com.legitimateapps.dulcet.library.LibrarySurface
 import com.legitimateapps.dulcet.library.hasConnectionNotice
+import com.legitimateapps.dulcet.library.MyLibraryAvailability
+import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -180,6 +182,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 internal const val ROUTE_SEARCH = "search"
 internal const val ROUTE_LIBRARY = "library"
+internal const val ROUTE_BROWSE = "browse"
+internal const val ROUTE_MY_ARTISTS = "mylibrary.artists"
+internal const val ROUTE_MY_ALBUMS = "mylibrary.albums"
+internal const val ROUTE_MY_SONGS = "mylibrary.songs"
 internal const val ROUTE_ALBUMS = "albums"
 internal const val ROUTE_ARTISTS = "artists"
 internal const val ROUTE_GENRES = "genres"
@@ -204,6 +210,8 @@ internal class TvNavigator(
     val replace: (from: String, to: String) -> Unit = { _, _ -> },
     /** Back from [route] only while it is the one showing: an answer that comes after Back was pressed moves nothing. */
     val leave: (route: String) -> Unit = { back() },
+    /** Switches the root, as a tab press does: My Library's empty state points to Browse. */
+    val showRoot: (String) -> Unit = {},
 ) {
     fun openAlbum(rawId: String) = open(ALBUM + rawId)
     fun openArtist(rawId: String) = open(ARTIST + rawId)
@@ -224,11 +232,20 @@ internal fun TvLibraryEntry(
      * process (spec §13.1, CONF-10b); the app's entry passes true.
      */
     restoredAccount: Boolean = false,
+    /** The account's My Library; the session's own unless a test seats one. */
+    myLibrary: MyLibrarySession? = null,
     search: @Composable (TvNavigator, AndroidPlaybackController?) -> Unit,
 ) {
     val context = LocalContext.current
     val foreground = hostInForeground()
     val session = remember(account) { LibrarySession(context, account, foreground, restoredAccount) }
+    // My Library (spec §29.4): with `dulcetLibrary` advertised, Library is the account's own library
+    // and the catalog moves to Browse; without it, everything is exactly as it always was.
+    val myLibrarySession = myLibrary ?: session.myLibrary
+    val myLibraryPublication by myLibrarySession.state.collectAsState()
+    val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
+    // The split says the server advertises the extension; bring the device's library up to its.
+    LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
     val routes = rememberSaveable(saver = routeSaver) { mutableStateListOf(ROUTE_LIBRARY) }
     val memory = remember { TvFocusMemory() }
     val states = rememberSaveableStateHolder()
@@ -250,7 +267,8 @@ internal fun TvLibraryEntry(
                 routes[index] = to
                 if (from !in routes) { states.removeState(from); memory.forget(from) }
             }
-        }, leave = { route -> if (routes.last() == route) back() })
+        }, leave = { route -> if (routes.last() == route) back() },
+            showRoot = { route -> show(routes, states, memory, route) })
     }
     // Back walks down the routes, then from the search root to the library, the screen the app opens
     // on; from the library it leaves the app.
@@ -266,11 +284,13 @@ internal fun TvLibraryEntry(
                 onSearch = { show(routes, states, memory, ROUTE_SEARCH) },
                 onLibrary = { show(routes, states, memory, ROUTE_LIBRARY) },
                 onNowPlaying = { context.startActivity(PlaybackIntents.showNowPlaying(context)) },
-                onAccount = { if (routes.last() != ROUTE_ACCOUNT) routes += ROUTE_ACCOUNT })
+                onAccount = { if (routes.last() != ROUTE_ACCOUNT) routes += ROUTE_ACCOUNT },
+                browse = split,
+                onBrowse = { show(routes, states, memory, ROUTE_BROWSE) })
             // Under the bar on the library's home, the screen that offers to reconnect the saved account:
             // DOWN from the bar and UP out of the screen below both reach it, wherever the remote is
             // along them, so its place does not depend on how wide the bar's tabs happen to be.
-            if (top == ROUTE_LIBRARY) TvSavedAccountNotice(session, account, navigation)
+            if (top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation)
             Box(Modifier.fillMaxWidth().weight(1f).focusProperties {
                 onExit = {
                     if (navigation.reconnectShown && requestedFocusDirection == FocusDirection.Up) {
@@ -288,21 +308,30 @@ internal fun TvLibraryEntry(
                     val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                     when {
                         top == ROUTE_SEARCH -> search(navigator, playback)
+                        top == ROUTE_LIBRARY && split ->
+                            TvMyLibraryHome(account, session, myLibrarySession, playback, navigator)
                         top == ROUTE_LIBRARY -> TvLibraryHome(account, session, playback, navigator)
+                        top == ROUTE_BROWSE -> TvLibraryHome(account, session, playback, navigator)
                         top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator)
                         top == ROUTE_ARTISTS -> TvArtistsGrid(account, session, navigator)
                         top == ROUTE_GENRES -> TvGenresGrid(account, session, navigator)
                         top == ROUTE_FAVOURITES -> TvFavouritesScreen(account, session, playback, playingRawId, navigator)
                         top == ROUTE_PLAYLISTS -> TvPlaylistsGrid(account, session, navigator)
+                        top == ROUTE_MY_ARTISTS -> TvMyArtistsGrid(account, myLibrarySession, navigator)
+                        top == ROUTE_MY_ALBUMS -> TvMyAlbumsGrid(account, myLibrarySession, navigator)
+                        top == ROUTE_MY_SONGS -> TvMySongsList(account, myLibrarySession, playback, playingRawId, navigator)
                         top == ROUTE_ACCOUNT -> TvAccountScreen(account, navigator)
                         top.startsWith(PLAYLIST) ->
                             TvPlaylistScreen(account, session, playback, playingRawId, top.removePrefix(PLAYLIST), navigator)
                         top.startsWith(ALBUM) ->
-                            TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator)
+                            TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator,
+                                myLibrary = myLibrarySession.takeIf { split })
                         top.startsWith(ARTIST) ->
-                            TvArtistScreen(account, session, playback, top.removePrefix(ARTIST), navigator)
+                            TvArtistScreen(account, session, playback, top.removePrefix(ARTIST), navigator,
+                                myLibrary = myLibrarySession.takeIf { split })
                         top.startsWith(GENRE) ->
-                            TvGenreScreen(account, session, playback, playingRawId, top.removePrefix(GENRE), navigator)
+                            TvGenreScreen(account, session, playback, playingRawId, top.removePrefix(GENRE), navigator,
+                                myLibrary = myLibrarySession.takeIf { split })
                     }
                 }
             }
@@ -338,6 +367,7 @@ private fun show(routes: SnapshotStateList<String>, states: androidx.compose.run
 internal class TvNavigationFocus {
     val search = FocusRequester()
     val library = FocusRequester()
+    val browse = FocusRequester()
     val account = FocusRequester()
     var current: FocusRequester = library
 
@@ -399,15 +429,20 @@ internal fun TvTopBar(
     onLibrary: () -> Unit,
     onNowPlaying: () -> Unit,
     onAccount: () -> Unit,
+    /** With `dulcetLibrary` advertised, the catalog is its own root beside My Library (spec §29.4). */
+    browse: Boolean = false,
+    onBrowse: () -> Unit = {},
 ) {
     focus.current = when {
         top == ROUTE_ACCOUNT -> focus.account
         root == ROUTE_LIBRARY -> focus.library
+        root == ROUTE_BROWSE -> focus.browse
         else -> focus.search
     }
     focus.currentTag = when {
         top == ROUTE_ACCOUNT -> "tv.account.open"
         root == ROUTE_LIBRARY -> "library.open"
+        root == ROUTE_BROWSE -> "browse.open"
         else -> "search.open"
     }
     Row(
@@ -425,6 +460,8 @@ internal fun TvTopBar(
             onClick = onSearch)
         TvTab(stringResource(R.string.tv_nav_library), root == ROUTE_LIBRARY, "library.open", focus.library, focus,
             Modifier.padding(start = 8.dp), onLibrary)
+        if (browse) TvTab(stringResource(SharedR.string.library_browse), root == ROUTE_BROWSE, "browse.open", focus.browse, focus,
+            Modifier.padding(start = 8.dp), onBrowse, icon = DulcetIcons.Browse)
         Spacer(Modifier.weight(1f))
         if (playing) {
             Button(onClick = onNowPlaying, modifier = Modifier
@@ -739,7 +776,7 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
 
 /** The phone's `ConnectionNotices`, in the TV's type: the same statements, from the same copy. */
 @Composable
-private fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
+internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean) {
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
@@ -964,6 +1001,7 @@ private fun TvAlbumScreen(
     rawId: String,
     navigator: TvNavigator,
     downloadRequests: DownloadRequests? = null,
+    myLibrary: MyLibrarySession? = null,
 ) {
     EnterRoute()
     val surface = rememberSurface(session, ALBUM + rawId) { openAlbum(rawId) }
@@ -1051,6 +1089,14 @@ private fun TvAlbumScreen(
                                         if (favourite) SharedR.string.library_favourite_on else SharedR.string.library_favourite_add),
                                     icon = if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
                                 ) { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId)) }
+                                // Add to Library / Remove from Library, beside the heart (spec §29.4).
+                                TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))?.let { toggle ->
+                                    TvAction(
+                                        resources.getString(if (toggle.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library),
+                                        "album.library",
+                                        icon = if (toggle.added) DulcetIcons.Check else DulcetIcons.Add,
+                                    ) { toggle.toggle() }
+                                }
                                 if (current.itemsState == AndroidLibraryItemsState.Present) {
                                     val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
                                     val state = AlbumDownloads.of(tracks, downloads)
@@ -1118,6 +1164,7 @@ private fun TvAlbumScreen(
                         else -> null
                     },
                     onQueue = tvTrackAddition(context, playback, provider, item, album)?.let { addition -> { adding = addition } },
+                    library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)),
                 )
             }
         }
@@ -1319,8 +1366,8 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
                        onUnavailable: () -> Unit, onFavourite: (() -> Unit)? = null, tagPrefix: String = "album.track",
                        default: Boolean = false, byPosition: Boolean = false,
                        download: AndroidDownloadStatus? = null, onDownloadToggle: (() -> Unit)? = null,
-                       onQueue: (() -> Unit)? = null) {
-    if (onFavourite == null && onQueue == null) {
+                       onQueue: (() -> Unit)? = null, library: TvLibraryToggle? = null) {
+    if (onFavourite == null && onQueue == null && library == null) {
         TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default, Modifier.fillMaxWidth(), byPosition, download)
         return
     }
@@ -1331,6 +1378,8 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
         if (onFavourite != null) TvFavouriteButton(track.isFavourite(), "$tagPrefix.$position.favourite", onFavourite)
         // The track's own download, one more focus target to the right (spec §14.5).
         if (onDownloadToggle != null) TvDownloadButton(download != null, "$tagPrefix.$position.download", onDownloadToggle)
+        // In the library or not, one target beside the download (spec §29.4).
+        if (library != null) TvLibraryButton(library.added, "$tagPrefix.$position.library", library.toggle)
         // Play Next and Add to Queue, the last target to the right (spec §14.1).
         if (onQueue != null) TvQueueButton("$tagPrefix.$position.queue", onQueue)
     }
@@ -1561,6 +1610,7 @@ private fun TvGenreScreen(
     playingRawId: String?,
     name: String,
     navigator: TvNavigator,
+    myLibrary: MyLibrarySession? = null,
 ) {
     EnterRoute()
     val surface = rememberSurface(session, GENRE + name) { openGenre(name) }
@@ -1631,6 +1681,7 @@ private fun TvGenreScreen(
                 tagPrefix = "genre.track",
                 byPosition = true,
                 onQueue = tvTrackAddition(context, playback, provider, track, null)?.let { addition -> { adding = addition } },
+                library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)),
             )
         }
     }
@@ -1648,6 +1699,7 @@ private fun TvArtistScreen(
     playback: AndroidPlaybackController?,
     rawId: String,
     navigator: TvNavigator,
+    myLibrary: MyLibrarySession? = null,
 ) {
     EnterRoute()
     val surface = rememberSurface(session, ARTIST + rawId) { openArtist(rawId) }
@@ -1723,6 +1775,14 @@ private fun TvArtistScreen(
                                 if (favourite) SharedR.string.library_favourite_on else SharedR.string.library_favourite_add),
                             icon = if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
                         ) { session.toggleFavourite(target) }
+                        // Add to Library / Remove from Library, beside the heart (spec §29.4).
+                        TvMembershipAction(myLibrary, target)?.let { toggle ->
+                            TvAction(
+                                resources.getString(if (toggle.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library),
+                                "artist.library",
+                                icon = if (toggle.added) DulcetIcons.Check else DulcetIcons.Add,
+                            ) { toggle.toggle() }
+                        }
                     }
                     note?.let { TvStatement(it, "artist.note") }
                     TvOutcomeLines(outcomeLines, target, "artist.outcome")
@@ -1746,7 +1806,7 @@ private fun showNowPlaying(context: Context) = context.startActivity(PlaybackInt
 
 /** A card with its cover: an album, an artist, or a track in a home row. One focus target. */
 @Composable
-private fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String, default: Boolean = false,
+internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String, default: Boolean = false,
                    width: Int? = 200, onClick: () -> Unit) {
     val placeholder = when (item) {
         is AndroidLibraryItem.Artist -> DulcetIcons.Person

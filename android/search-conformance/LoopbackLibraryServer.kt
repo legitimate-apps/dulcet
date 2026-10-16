@@ -50,6 +50,17 @@ class LoopbackLibraryServer : AutoCloseable {
 
     fun releaseSongs() = songsReleased.countDown()
 
+    /**
+     * When set, the server advertises `dulcetLibrary` v1 and answers its endpoints: the membership
+     * below, `addToDulcetLibrary`/`removeFromDulcetLibrary` (an album's remove takes its member
+     * songs, as the contract says), and `dulcetInLibrary` on every ordinary element it returns.
+     */
+    @Volatile var dulcetLibrary = false
+    private val libraryAlbumIds = LinkedHashMap<String, Long>()
+    private val libraryArtistIds = LinkedHashMap<String, Long>()
+    private val librarySongIds = LinkedHashMap<String, Long>()
+    private var libraryClock = 0L
+
     /** When set, `stream` is not answered until the server closes: a play stays on the song it started. */
     @Volatile var holdStreams = false
     private val streamsReleased = CountDownLatch(1)
@@ -118,6 +129,11 @@ class LoopbackLibraryServer : AutoCloseable {
             respond(client, 404, "")
             return@use
         }
+        if (endpoint == "addToDulcetLibrary" || endpoint == "removeFromDulcetLibrary") {
+            libraryWrite(endpoint, parameters)
+            respond(client, 200, envelope(endpoint, parameters))
+            return@use
+        }
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "stream" && holdStreams) streamsReleased.await(30, TimeUnit.SECONDS)
@@ -131,11 +147,15 @@ class LoopbackLibraryServer : AutoCloseable {
         val payload = when (endpoint) {
             "getScanStatus" -> """"scanStatus":{"scanning":false,"count":6,"lastScan":"2026-09-01T00:00:00Z"}"""
             "getMusicFolders" -> """"musicFolders":{"musicFolder":[{"id":1,"name":"Music"}]}"""
+            "getStarred2" -> """"starred2":{}"""
+            "getOpenSubsonicExtensions" -> if (dulcetLibrary)
+                """"openSubsonicExtensions":[{"name":"dulcetLibrary","versions":[1]}]""" else null
+            "getDulcetLibrary" -> dulcetLibraryRead()
             "getAlbumList2" -> {
                 val type = parameters["type"].orEmpty()
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
                 val albums = if (offset > 0) "" else (1..2).joinToString(",") { index ->
-                    """{"id":"$type-$index","name":${quote(albumTitle(type, index))},"artist":"Fixture Artist","artistId":"artist-1","songCount":1}"""
+                    """{"id":"$type-$index","name":${quote(albumTitle(type, index))},"artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("$type-$index")}}"""
                 }
                 """"albumList2":{"album":[$albums]}"""
             }
@@ -146,12 +166,15 @@ class LoopbackLibraryServer : AutoCloseable {
                 }
                 """"genres":{"genre":[$list]}"""
             }
+            "getArtists" -> """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}]}]}"""
+            "getArtist" -> """"artist":{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")},""" +
+                """"album":[{"id":"artistAlbum-1","name":"Artist Album One","artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("artistAlbum-1")}}]}"""
             "getAlbum" -> {
                 val id = parameters["id"].orEmpty()
                 val title = quote(albumTitle(id.substringBeforeLast('-'), id.substringAfterLast('-').toIntOrNull() ?: 1))
-                """"album":{"id":${quote(id)},"name":$title,"artist":"Fixture Artist","artistId":"artist-1","songCount":1,""" +
+                """"album":{"id":${quote(id)},"name":$title,"artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum(id)},""" +
                     """"song":[{"id":${quote("$id-song-1")},"title":"Opening","album":$title,"albumId":${quote(id)},""" +
-                    """"artist":"Fixture Artist","track":1,"duration":120,"suffix":"mp3","contentType":"audio/mpeg"}]}"""
+                    """"artist":"Fixture Artist","track":1,"duration":120,"suffix":"mp3","contentType":"audio/mpeg"${flagSong("$id-song-1")}}]}"""
             }
             "getSongsByGenre" -> {
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
@@ -199,7 +222,61 @@ class LoopbackLibraryServer : AutoCloseable {
     }
 
     private fun genreSong(id: String, title: String) =
-        """{"id":"$id","title":${quote(title)},"album":"Genre Album","albumId":"genre-album","artist":"Fixture Artist","duration":120,"suffix":"mp3","contentType":"audio/mpeg"}"""
+        """{"id":"$id","title":${quote(title)},"album":"Genre Album","albumId":"genre-album","artist":"Fixture Artist","duration":120,"suffix":"mp3","contentType":"audio/mpeg"${flagSong(id)}}"""
+
+    // ---- dulcetLibrary (the extension this fixture optionally advertises) ----------------------------------
+
+    private fun flagAlbum(id: String): String = if (dulcetLibrary && synchronized(this) { libraryAlbumIds.containsKey(id) }) """,""dulcetInLibrary":true""" else ""
+    private fun flagArtist(id: String): String = if (dulcetLibrary && synchronized(this) { libraryArtistIds.containsKey(id) }) """,""dulcetInLibrary":true""" else ""
+    private fun flagSong(id: String): String = if (dulcetLibrary && synchronized(this) { librarySongIds.containsKey(id) }) """,""dulcetInLibrary":true""" else ""
+
+    @Synchronized
+    private fun libraryWrite(endpoint: String, parameters: Map<String, String>) {
+        if (!dulcetLibrary) return
+        val add = endpoint == "addToDulcetLibrary"
+        val ids = listOfNotNull(parameters["id"], parameters["albumId"], parameters["artistId"])
+        for (id in ids) {
+            // The server works out which kind an id is; this fixture knows its own ids.
+            val set = when {
+                parameters["artistId"] != null -> libraryArtistIds
+                parameters["albumId"] != null -> libraryAlbumIds
+                id == "artist-1" -> libraryArtistIds
+                id.contains("-song-") || songsByGenre.values.flatten().any { it.first == id } -> librarySongIds
+                else -> libraryAlbumIds
+            }
+            if (add) {
+                if (!set.containsKey(id)) set[id] = ++libraryClock
+            } else if (set === libraryAlbumIds) {
+                // Removing an album takes its member songs with it (the extension's semantics).
+                libraryAlbumIds.remove(id)
+                librarySongIds.entries.removeIf { it.key.startsWith("$id-song-") }
+            } else {
+                set.remove(id)
+            }
+            libraryClock += 1
+        }
+    }
+
+    /** `getDulcetLibrary`: every member, newest addition first, with whole-library totals and the clock. */
+    @Synchronized
+    private fun dulcetLibraryRead(): String? {
+        if (!dulcetLibrary) return null
+        val albums = libraryAlbumIds.entries.sortedByDescending { it.value }.joinToString(",") { (id) ->
+            """{"id":${quote(id)},"name":${quote(albumTitle(id.substringBeforeLast('-'), id.substringAfterLast('-').toIntOrNull() ?: 1))},""" +
+                """"artist":"Fixture Artist","artistId":"artist-1","songCount":1,"dulcetInLibrary":true}"""
+        }
+        val artists = libraryArtistIds.entries.sortedByDescending { it.value }.joinToString(",") { (id) ->
+            """{"id":${quote(id)},"name":"Fixture Artist","dulcetInLibrary":true}"""
+        }
+        val songs = librarySongIds.entries.sortedByDescending { it.value }.joinToString(",") { (id) ->
+            val albumId = id.substringBefore("-song-")
+            """{"id":${quote(id)},"title":"Opening","albumId":${quote(albumId)},"album":${quote(albumTitle(albumId.substringBeforeLast('-'), 1))},""" +
+                """"artist":"Fixture Artist","duration":120,"suffix":"mp3","contentType":"audio/mpeg","dulcetInLibrary":true}"""
+        }
+        val clock = if (libraryClock == 0L) "" else """"changed":"2026-10-12T00:00:00.${(libraryClock % 1000).toString().padStart(3, '0')}Z","""
+        return """"dulcetLibrary":{$clock"artistCount":${libraryArtistIds.size},"albumCount":${libraryAlbumIds.size},""" +
+            """"songCount":${librarySongIds.size},"artist":[$artists],"album":[$albums],"song":[$songs]}"""
+    }
 
     private fun quote(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
