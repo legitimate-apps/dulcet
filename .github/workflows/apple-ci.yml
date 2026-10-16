@@ -2149,6 +2149,7 @@ jobs:
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
           DULCET_CONFORMANCE_DISPOSABLE: "true"
           DULCET_DEVICE: ${{ matrix.device }}
+          IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
           set -o pipefail
           case "$DULCET_DEVICE" in
@@ -2186,7 +2187,6 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
-          export IPAD_UDID="${{ steps.ipados_conformance_destination.outputs.udid }}"
           if [ "$DULCET_DEVICE" = ipad ]; then
             tools/ci/with-my-library-fixture --root "$ROOT/my-library-ipad" --music "$ROOT/music" \
               --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
