@@ -1318,13 +1318,13 @@
               "test": "TvMyLibraryTest/aServerWithMyLibrarySplitsTheBarAndBrowseKeepsTheCatalog"
             },
             {
-              "observes": "the production TV app by remote keys on an Android 34 emulator against a real disposable Dulcet Server built from the checkout: asserts dulcetLibrary v1 advertisement, splits Library and Browse, adds an album from Browse, requires the server's getDulcetLibrary read-back and its appearance in My Library, then removes it and requires server absence; the separately preserved Navidrome execution loads a positive catalog and requires the original single Library destination and absent membership control",
+              "observes": "the production TV app by remote keys on an Android 34 emulator against a real disposable Dulcet Server built from the checkout: asserts dulcetLibrary v1 advertisement, splits Library and Browse, adds an album from Browse, requires the server's getDulcetLibrary read-back and its appearance in My Library; the separately preserved Navidrome execution loads a positive catalog and requires the original single Library destination and absent membership control",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvMyLibraryProofTest/myLibrarySplit"
             }
           ],
-          "reason": "Library and Browse split only when the current account advertises dulcetLibrary v1 (spec 29.9); membership uses the core publication and optimistic, durable, idempotent outbox. Existing host tests remain required. OBSERVED 2026-10-16 in required core-ci run 38918668360, android-emulator (tv): https://github.com/legitimate-apps/dulcet/actions/runs/38918668360/job/117032634873. Downloaded JUnit has one passing myLibrarySplit testcase in the Navidrome fallback reports and one in the separate Dulcet Server split reports, with zero skips or failures in those cases. The split invocation uses dulcetExpectSplit=true and its executed-test guard reports executed=1 passed=1 skipped=0; the required core-ci aggregator is green. The emulator proof covers add/remove and the split; the existing host suite supplies its broader state and persistence controls."
+          "reason": "Library and Browse split only when the current account advertises dulcetLibrary v1 (spec 29.9); membership uses the core publication and optimistic, durable, idempotent outbox. Existing host tests remain required. OBSERVED 2026-10-16 in required core-ci run 38918668360, android-emulator (tv): https://github.com/legitimate-apps/dulcet/actions/runs/38918668360/job/117032634873. Downloaded JUnit has one passing myLibrarySplit testcase in the Navidrome fallback reports and one in the separate Dulcet Server split reports, with zero skips or failures in those cases. The split invocation uses dulcetExpectSplit=true and its executed-test guard reports executed=1 passed=1 skipped=0; the required core-ci aggregator is green. The TV emulator proof covers the split, remote Add and server read-back; the existing host suite supplies its removal and broader state controls."
         }
       }
     },
