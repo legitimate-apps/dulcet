@@ -34,6 +34,10 @@ were inspected to confirm dark rendering. Nine compressed app JPEGs per platform
 outside the repository, with Library, Browse and album Add captures in the three variants.
 The additional iPhone largest-text visibility case passed (21.375 seconds); it scrolls the album
 to keep Add above the tab bar, asserts the visible button bounds, and replaces that capture.
+The CI driver uses short, direction-aware drags with an end hold for this capture. A full swipe
+on the hosted iPhone moved Add from below the visible area to above it; continuing upward
+could not recover it. The bounded helper retains the hittable and above-tab-bar assertions and
+also requires Add below the navigation bar.
 Native app/UI targets compiled on all Apple platforms; Mac runtime remains unproven.
 After the DEBUG appearance change, the final DulcetKit run again passed all 299 tests across
 10 suites; the affected string-catalog and contrast source policies passed.

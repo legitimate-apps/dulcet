@@ -165,10 +165,22 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func captureAlbumAdd(_ name: String, button: XCUIElement) throws {
 #if os(iOS)
         for _ in 0..<5 {
-            if button.isHittable && button.frame.maxY < app.frame.maxY - 100 { break }
-            app.scrollViews.firstMatch.swipeUp()
+            let window = app.frame
+            let target = button.frame
+            let top = window.minY + 120
+            let bottom = window.maxY - 100
+            if button.isHittable && target.minY >= top && target.maxY < bottom { break }
+            // A full swipe can move this header from under the tab bar to above the viewport
+            // at the largest text size. Make a short drag toward the target, and hold its end
+            // to avoid inertial overshoot. If it is already above the viewport, scroll back.
+            let downward = target.minY < top
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: downward ? 0.45 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: downward ? 0.65 : 0.45))
+            print("MY LIBRARY CAPTURE \(name) add=\(target) viewport=\(top)...\(bottom) downward=\(downward)")
+            start.press(forDuration: 0.01, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         XCTAssertTrue(button.isHittable)
+        XCTAssertGreaterThanOrEqual(button.frame.minY, app.frame.minY + 120, "The Add action must be below the navigation bar in the capture")
         XCTAssertLessThan(button.frame.maxY, app.frame.maxY - 100, "The Add action must be above the tab bar in the capture")
 #endif
         try capture(name)
