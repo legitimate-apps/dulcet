@@ -1880,7 +1880,7 @@ jobs:
           # exits non-zero when EITHER pattern fails to expand, which printed the files it found and
           # then reported "NONE" underneath them.
           shopt -s nullglob
-          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log)
+          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log "$RUNNER_TEMP"/*/my-library-*/*.log)
           echo "APPLE FAILURE DIAGNOSTICS count=${#found[@]}"
           if [ "${#found[@]}" -eq 0 ]; then
             echo "  NONE - nothing was written before the job stopped"
@@ -1897,6 +1897,7 @@ jobs:
             ${{ runner.temp }}/*.log
             ${{ runner.temp }}/dulcet-*-junit
             ${{ runner.temp }}/*/logs/*.log
+            ${{ runner.temp }}/*/my-library-*/*.log
           if-no-files-found: warn
           # .xcresult payload is already-compressed media; the three sibling binary uploads in this
           # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
@@ -2652,7 +2653,7 @@ jobs:
           # exits non-zero when EITHER pattern fails to expand, which printed the files it found and
           # then reported "NONE" underneath them.
           shopt -s nullglob
-          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log)
+          found=("$RUNNER_TEMP"/*.xcresult "$RUNNER_TEMP"/*.log "$RUNNER_TEMP"/dulcet-*-junit "$RUNNER_TEMP"/*/logs/*.log "$RUNNER_TEMP"/*/my-library-*/*.log)
           echo "APPLE FAILURE DIAGNOSTICS count=${#found[@]}"
           if [ "${#found[@]}" -eq 0 ]; then
             echo "  NONE - nothing was written before the job stopped"
@@ -2669,6 +2670,7 @@ jobs:
             ${{ runner.temp }}/*.log
             ${{ runner.temp }}/dulcet-*-junit
             ${{ runner.temp }}/*/logs/*.log
+            ${{ runner.temp }}/*/my-library-*/*.log
           if-no-files-found: warn
           # .xcresult payload is already-compressed media; the three sibling binary uploads in this
           # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
