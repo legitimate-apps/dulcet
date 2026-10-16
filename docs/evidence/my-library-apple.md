@@ -63,12 +63,19 @@ snapshot-query timeout; its cause is unresolved. Neither that producer nor the f
 is claimed green.
 
 The [platform job](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099609)
-is green. The [Mac/TV producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099725)
-passed the Mac visual and fallback cases, with on-screen bounds after launch, but failed the
-membership case after the old album helper scrolled the sidebar and hid Library. The committed
-catalog-scoped helper fix has passed source typechecking; its hosted runtime proof is pending.
-The light, dark and largest-text Mac album JPEGs were inspected with Add visible. TV was not
-reached. Mac and TV remain partial pending complete passing My Library CI test records.
+is green. In the subsequent dispatch [38947781568](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568),
+the [Mac/TV producer](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568/job/117131265121)
+executed three Mac cases: visual and fallback passed; membership failed after Remove, at the
+empty-library assertion. The catalog-scoped helper fixed the earlier sidebar-scrolling failure:
+this run reached Add, a saved-account relaunch, durable membership and Remove. The failure
+hierarchy and recording show Library selected with the album detail and its Add control still
+visible. Clicking the already selected macOS List row did not pop that detail. The driver now
+uses the visible toolbar Back control to reach the selected destination's root, with a bounded
+loop and a root assertion, retaining all empty-state, persistence and server-read assertions.
+The shared suite typechecks on all five covered source groups; hosted runtime verification of
+this root navigation is pending. TV was not reached. Mac and TV remain partial pending complete
+passing My Library CI test records. The earlier light, dark and largest-text Mac album JPEGs
+were inspected with Add visible.
 
 The [iPad producer](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099654)
 is green, including its complete conformance script. Downloaded `TEST-MyLibrary.xml` contains
@@ -124,6 +131,9 @@ oversized preferred window must not make the sidebar or title-bar controls unrea
 The album helper waits for the catalog scroll view containing album cards before it scrolls.
 The first Mac scroll view is the sidebar: scrolling it while catalog publication was pending
 hid Library above the viewport and caused the subsequent membership navigation to fail.
+On macOS, the selected List row does not reassign its selection when clicked again. The driver
+uses the visible toolbar Back control to reach the selected Library or Browse root, matching
+the TV helper's explicit Menu navigation rather than expecting the row to pop retained details.
 
 ## Limits
 

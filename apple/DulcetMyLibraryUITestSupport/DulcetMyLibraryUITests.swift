@@ -290,6 +290,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("Remote could not reach \(section)")
 #else
         activate(control)
+#if os(macOS)
+        // A macOS List does not write its selection binding when its selected row is clicked
+        // again. Return through the visible navigation controls, just as Menu pops on tvOS,
+        // so a retained album detail cannot hide the Library root's membership/empty state.
+        if section == "library" || section == "browse" {
+            let back = app.toolbars.buttons["chevron.backward"].firstMatch
+            for _ in 0..<6 {
+                if !back.exists { break }
+                activate(back)
+            }
+            XCTAssertFalse(back.exists, "The selected destination must reach its root")
+        }
+#endif
 #endif
     }
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
