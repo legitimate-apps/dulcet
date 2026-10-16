@@ -1005,6 +1005,10 @@ passing_cases = """\
   <testcase classname="DulcetKitTests"
             name="accountPresentationTransitionsGivenConnectorOutcomes" time="0.1" />
   <testcase classname="DulcetKitTests"
+            name="myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack" time="0.1" />
+  <testcase classname="DulcetKitTests"
+            name="myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication" time="0.1" />
+  <testcase classname="DulcetKitTests"
             name="fixtureRendersEveryDeclaredDistinctState" time="0.1" />
   <testcase classname="DulcetKitTests"
             name="accountDomainErrorsHaveATotalActionablePresentation" time="0.1" />

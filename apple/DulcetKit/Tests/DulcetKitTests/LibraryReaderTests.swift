@@ -12,7 +12,23 @@ import Testing
 // MARK: - Fakes
 
 @MainActor
-private class RecordingReader: DulcetLibraryReading {
+private class RecordingReader: DulcetLibraryReading, DulcetMyLibraryReading {
+    var libraryHandler: (@MainActor (DulcetMyLibrarySnapshot) -> Void)?
+    var libraryMembership: DulcetMyLibraryMembership = .notAdded
+    var libraryChanges: [(DulcetFavouriteTarget, Bool)] = []
+    var libraryRefreshes = 0
+    var libraryCancelled = false
+    func subscribeMyLibrary(_ handler: @escaping @MainActor (DulcetMyLibrarySnapshot) -> Void) -> any DulcetLibraryReaderCancellable {
+        libraryHandler = handler
+        return RecordingCancellable { [weak self] in self?.libraryCancelled = true }
+    }
+    func refreshMyLibrary() { libraryRefreshes += 1 }
+    func myLibraryMembership(_ target: DulcetFavouriteTarget) -> DulcetMyLibraryMembership { libraryMembership }
+    func setMyLibraryMembership(_ target: DulcetFavouriteTarget, added: Bool) -> Bool {
+        libraryChanges.append((target, added)); libraryMembership = added ? .added : .notAdded
+        libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+        return true
+    }
     let account: DulcetLibraryReaderAccount
     private(set) var events: [String] = []
     private(set) var windows: [RecordingWindow] = []
@@ -2035,4 +2051,67 @@ func editingASavedAccountPausesAutomaticRetriesAndRejectsLateCompletion() {
     store.accountPassword = "another-draft"
     delays.advance(by: .seconds(60))
     #expect(connector.requests.count == 3, "editing cancels any pending or active attempt")
+}
+
+@Test @MainActor
+func myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, session, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    let reader = try #require(factory.made.first)
+    let baseline: [DulcetSidebarDestination] = [.library, .search, .settings]
+    #expect(store.destinations(baseline) == baseline)
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .unavailable))
+    #expect(store.destinations(baseline) == baseline)
+    #expect(!session.toggleMyLibrary(DulcetFavouriteTarget(kind: .album, id: DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album"))))
+    #expect(reader.libraryChanges.isEmpty)
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    #expect(store.destinations(baseline) == [.library, .browse, .search, .settings])
+    store.navigate(to: .browse)
+    let album = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album"))
+    store.pushReaderPage(album)
+    #expect(store.selectedDestination == .browse)
+    #expect(store.readerPath == [album])
+    store.navigate(to: .library)
+    #expect(store.readerPath.isEmpty)
+    store.navigate(to: .browse)
+    #expect(store.readerPath == [album])
+    store.navigate(to: .browse)
+    #expect(store.readerPath.isEmpty)
+    store.navigate(to: .search)
+    store.showReaderPage(album)
+    #expect(store.selectedDestination == .library)
+    #expect(store.readerPath == [album])
+    store.resetReaderNavigation()
+    #expect(store.readerPath.isEmpty)
+    store.navigate(to: .browse)
+    #expect(store.readerPath.isEmpty)
+}
+
+@Test @MainActor
+func myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .deviceOnly)
+    let reader = try #require(factory.made.first)
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    let target = DulcetFavouriteTarget(kind: .album, id: DulcetProviderItemID(providerInstanceID: readerAccount.providerInstanceID, rawID: "album"))
+    #expect(session.toggleMyLibrary(target))
+    #expect(reader.libraryChanges.last?.1 == true)
+    #expect(session.myLibraryMembership(target) == .added)
+    #expect(session.toggleMyLibrary(target))
+    #expect(reader.libraryChanges.last?.1 == false)
+    reader.libraryMembership = .partial
+    #expect(session.toggleMyLibrary(target))
+    #expect(reader.libraryChanges.last?.1 == true)
+    let foreign = DulcetFavouriteTarget(kind: .album, id: DulcetProviderItemID(providerInstanceID: "another-account", rawID: "album"))
+    #expect(!session.toggleMyLibrary(foreign))
+    #expect(!session.setMyLibraryMembership(foreign, added: false))
+    #expect(reader.libraryChanges.count == 3)
+    session.close()
+    #expect(reader.libraryCancelled)
+    #expect(session.myLibrary.availability == .unknown)
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    #expect(session.myLibrary.availability == .unknown)
+    #expect(DulcetFavouriteOutcome(kind: "notSaved", targetKind: "album", rawID: "album", field: "inLibrary", errorKind: "forbidden").field == .inLibrary)
 }

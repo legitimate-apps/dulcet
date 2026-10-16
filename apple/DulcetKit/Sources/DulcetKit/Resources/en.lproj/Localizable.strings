@@ -376,3 +376,12 @@
 "reader.favorite.accessibility" = "%@, Favorite";
 "reader.seeAll" = "See All";
 "reader.signOut.title" = "Changes Not Sent";
+
+"action.library.add" = "Add to Library";
+"action.library.remove" = "Remove from Library";
+"myLibrary.songs" = "Songs";
+"myLibrary.empty.title" = "Your library starts here";
+"myLibrary.empty.body" = "Find music in Browse and add the albums, artists and songs you want to keep here.";
+
+"myLibrary.refresh" = "Refresh Library";
+"myLibrary.refreshFailed" = "Couldn’t refresh your library. %@";

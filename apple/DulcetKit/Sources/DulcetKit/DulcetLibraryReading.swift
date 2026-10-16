@@ -210,6 +210,9 @@ public final class DulcetLibrarySession {
     /// account: a create in doubt deleted here is not in the core's outbox to be asked again.
     @ObservationIgnored private var carriedPlaylistQuestions: (account: DulcetLibraryReaderAccount, questions: [DulcetPlaylistQuestion])?
 
+    public private(set) var myLibrary = DulcetMyLibrarySnapshot()
+    @ObservationIgnored private var myLibrarySubscription: (any DulcetLibraryReaderCancellable)?
+
     public private(set) var reader: (any DulcetLibraryReading)?
     public private(set) var account: DulcetLibraryReaderAccount?
     public private(set) var mode: DulcetLibraryReaderMode = .none
@@ -384,6 +387,13 @@ public final class DulcetLibrarySession {
         readerGeneration += 1
         readerSetupFailed = false
         let generation = readerGeneration
+        myLibrary = DulcetMyLibrarySnapshot()
+        if let library = made as? any DulcetMyLibraryReading {
+            myLibrarySubscription = library.subscribeMyLibrary { [weak self] publication in
+                guard let self, self.readerGeneration == generation else { return }
+                self.myLibrary = publication
+            }
+        }
         setupCheck = made.setupFailed { [weak self] failed in
             guard failed, let self, self.readerGeneration == generation, self.reader === made else { return }
             self.readerSetupFailed = true
@@ -453,6 +463,9 @@ public final class DulcetLibrarySession {
 
     private func detachReader(_ reader: any DulcetLibraryReading, completion: @escaping @MainActor () -> Void) {
         stopReachability()
+        myLibrarySubscription?.cancel()
+        myLibrarySubscription = nil
+        myLibrary = DulcetMyLibrarySnapshot()
         setupCheck?.cancel()
         setupCheck = nil
         outcomeSubscription?.cancel()
@@ -592,6 +605,7 @@ public final class DulcetLibrarySession {
     }
 
     private func receive(_ connection: DulcetReaderConnection) {
+        if connection.error == nil { (reader as? any DulcetMyLibraryReading)?.refreshMyLibrary() }
         if connection.epochKnown {
             connectionFailure = nil
             serverReportsNoEpoch = connection.serverReportsNoEpoch
@@ -791,6 +805,16 @@ public final class DulcetLibrarySession {
     }
 
     private func receive(_ outcome: DulcetFavouriteOutcome) {
+        if outcome.field == .inLibrary {
+            switch outcome.kind {
+            case .saved: break
+            case let .notSaved(error): post(DulcetStrings.readerChangeNotSaved(DulcetStrings.readerErrorPhrase(error)))
+            case let .held(error): post(error == .serverBusy ? DulcetStrings.readerChangeHeldBusy : DulcetStrings.readerChangeHeldRefused(DulcetStrings.readerHeldPhrase(error)))
+            case .superseded: post(DulcetStrings.readerChangeSuperseded)
+            case .notRecorded: post(DulcetStrings.readerChangeNotRecorded)
+            }
+            return
+        }
         if outcome.field == .rating, let targetKind = outcome.targetKind,
            let providerInstanceID = account?.providerInstanceID {
             receiveRating(

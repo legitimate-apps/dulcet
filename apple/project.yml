@@ -492,11 +492,60 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.ios.dev.keychain-tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dulcet DEV.app/Dulcet DEV"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  # Disposable identity for the production UI proof; installed DEV apps stay independent.
+  DulcetMyLibraryMacHost:
+    type: application
+    platform: macOS
+    sources:
+      - DulcetMac
+      - DulcetAppleShared
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        OTHER_LDFLAGS: "$(inherited) -Wl,-export_dynamic"
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.dev.my-library-proof
+        PRODUCT_MODULE_NAME: DulcetMyLibraryMacHost
+        PRODUCT_NAME: Dulcet My Library Proof
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+    info:
+      path: DulcetMyLibraryMacHost/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Dulcet My Library Proof
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.music
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSLocalNetworkUsageDescription: "Dulcet connects to the music server you choose, which may be on your local network."
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+  DulcetMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - DulcetMyLibraryUITestSupport
+    dependencies:
+      - target: DulcetMyLibraryMacHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.macos.dev.ui-tests
+        TEST_TARGET_NAME: DulcetMyLibraryMacHost
   DulcetiOSUITests:
     type: bundle.ui-testing
     platform: iOS
     sources:
       - DulcetiOSUITests
+      - DulcetMyLibraryUITestSupport
     dependencies:
       - target: DulcetiOS
     settings:
@@ -508,6 +557,7 @@ targets:
     platform: tvOS
     sources:
       - DulcetTVUITests
+      - DulcetMyLibraryUITestSupport
     dependencies:
       - target: DulcetTV
     settings:
@@ -650,6 +700,7 @@ schemes:
     test:
       targets:
         - DulcetMacTests
+        - DulcetMacUITests
         - DulcetPlaybackIntegrationTests
       environmentVariables:
         - variable: DULCET_CONFORMANCE_BASE_URL

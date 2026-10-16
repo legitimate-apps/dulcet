@@ -503,6 +503,14 @@ final class HostedApp {
         _ = object.perform(press)
     }
 
+    /// SwiftUI accessibility nodes implement the getter without declaring protocol conformance.
+    /// KVC boxes its scalar BOOL; `perform` is only suitable for object-valued getters.
+    func isAccessibilityEnabled(_ element: Any) -> Bool {
+        guard let object = element as? NSObject,
+              object.responds(to: #selector(NSAccessibilityProtocol.isAccessibilityEnabled)) else { return false }
+        return object.value(forKey: "accessibilityEnabled") as? Bool ?? false
+    }
+
     /// The window's content area in screen coordinates, the space `frame(_:)` reports in.
     var contentScreenFrame: NSRect { window.convertToScreen(window.contentLayoutRect) }
 

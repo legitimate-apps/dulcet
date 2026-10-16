@@ -225,7 +225,17 @@ final class DulcetDebugHandoffCredentialStore: DulcetProviderInstanceCredentialS
     private(set) var credentialGeneration: Int64 = 0
 
     static func whenProbing() -> DulcetDebugHandoffCredentialStore? {
-        DulcetDownloadHandoffProbe.directoryURL.map {
+        // The unsigned Mac UI fixture needs durable account storage without claiming
+        // a signed Keychain proof. The UUID names only this disposable test account.
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-dulcet-debug-account-fixture"),
+           arguments.indices.contains(index + 1), UUID(uuidString: arguments[index + 1]) != nil {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("dulcet-account-fixture-" + arguments[index + 1], isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return DulcetDebugHandoffCredentialStore(fileURL: directory.appendingPathComponent("account.json"))
+        }
+        return DulcetDownloadHandoffProbe.directoryURL.map {
             DulcetDebugHandoffCredentialStore(fileURL: $0.appendingPathComponent("account.json"))
         }
     }

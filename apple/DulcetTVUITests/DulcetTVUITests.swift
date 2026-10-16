@@ -1177,9 +1177,13 @@ final class DulcetTVUITests: XCTestCase {
         while !play.isEnabled, ContinuousClock.now < enabled { Thread.sleep(forTimeInterval: 0.25) }
         XCTAssertTrue(play.isEnabled, "Play must be offered for an album of playable tracks: " + app.debugDescription)
 
-        // Down walks the tracks in the server's order to the one played; Select plays from it.
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.reader.track" },
-            "Down from the album's header must reach its tracks: " + app.debugDescription)
+        // The wide album page lays out art and actions left, tracks right: Right walks from the
+        // header's actions into the track column, Up to its first row, and Down walks the tracks
+        // in the server's order to the one played; Select plays from it.
+        XCTAssertTrue(pressUntilFocus(app, .right, limit: 6) { $0.id == "dulcet.reader.track" },
+            "Right from the album's header must reach its tracks: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 6) { $0.id == "dulcet.reader.track" && Self.names($0.label, tracks[0]) },
+            "Up must reach the track column's first row: " + app.debugDescription)
         for index in 0...playedIndex {
             let focus = try XCTUnwrap(focusedElement(app), "A track row must hold focus: " + app.debugDescription)
             XCTAssertTrue(focus.id == "dulcet.reader.track" && Self.names(focus.label, tracks[index]),
@@ -1983,8 +1987,12 @@ final class DulcetTVUITests: XCTestCase {
         let rowsDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while trackRows.count < album.songs.count, ContinuousClock.now < rowsDeadline { Thread.sleep(forTimeInterval: 0.25) }
         XCTAssertEqual(trackRows.count, album.songs.count, "The page must list every track the server holds: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.reader.track" },
-            "Down from the album's header must reach its tracks: " + app.debugDescription)
+        // The album page lays out art and actions left, tracks right: Right enters the track
+        // column, then Up walks to its first row.
+        XCTAssertTrue(pressUntilFocus(app, .right, limit: 6) { $0.id == "dulcet.reader.track" },
+            "Right from the album's header must reach its tracks: " + app.debugDescription)
+        XCTAssertTrue(pressUntilFocus(app, .up, limit: 6) { $0.id == "dulcet.reader.track" && Self.names($0.label, album.songs[0].title) },
+            "Up must reach the track column's first row: " + app.debugDescription)
     }
 
     /// `track`'s menu, Add to Playlist…, New Playlist…, `name` typed, Create; the chooser closes.

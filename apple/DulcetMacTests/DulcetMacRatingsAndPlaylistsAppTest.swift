@@ -145,10 +145,17 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password, toolbar: true)
         defer { app.close() }
         try await openPlaylist(name, in: app)
-        let play = try await app.element(identifiedBy: "dulcet.playlist.play", timeout: .seconds(10))
+        // The redesigned reader can publish the header before its entries. SwiftUI's AX
+        // nodes answer the enabled getter without conforming to NSAccessibilityProtocol;
+        // query the current node until it is enabled, rather than retaining the loading node.
+        var readyPlay: Any?
         try await waitUntil(timeout: .seconds(15), "Play must be enabled once the entries are read") {
-            (play as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
+            guard let candidate = app.windowFirstElement(where: { app.identifier($0) == "dulcet.playlist.play" }),
+                  app.isAccessibilityEnabled(candidate) else { return false }
+            readyPlay = candidate
+            return true
         }
+        let play = try XCTUnwrap(readyPlay)
         XCTAssertNil(app.store.snapshot.nowPlaying, "The control: nothing plays before Play is pressed")
         try app.press(play, named: "dulcet.playlist.play")
         try await waitUntil(timeout: .seconds(20), "Play must start \(order[0]); now playing=\(String(describing: app.store.snapshot.nowPlaying?.current.title))") {
