@@ -7792,6 +7792,9 @@ its results, then execute only their My Library proof with `dulcetExpectSplit=tr
 built Dulcet Server. The second invocation must report exactly one passing, non-skipped test;
 both result sets reach required `core-ci`. All fixture processes end with their command; no
 runner slot, trigger, external service, physical device or production account is added.
+The hosted Mac proof also exposed an oversized default window on a small display. The preferred
+window size now fits the visible display; every UI-proof relaunch requires on-screen bounds.
+The visual cases' compressed JPEG attachments travel beside the JUnit in the parity artifacts.
 
 
 **2026-10-15 — My Library stays coherent across both server protocols.**

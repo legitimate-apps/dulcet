@@ -28,6 +28,10 @@ if [ "$mode" = macos ]; then
         "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-macos-my-library-junit/TEST-MyLibrary.xml" \
         DulcetMyLibraryMacUITests
+    xcrun xcresulttool export attachments \
+        --test-id 'DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText()' \
+        --path "$RUNNER_TEMP/dulcet-macos-my-library.xcresult" \
+        --output-path "$RUNNER_TEMP/dulcet-macos-my-library-captures"
 fi
 
 if [ "$mode" = tvos ]; then
@@ -51,6 +55,10 @@ if [ "$mode" = tvos ]; then
         "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-tvos-my-library-junit/TEST-MyLibrary.xml" \
         DulcetMyLibraryTVUITests
+    xcrun xcresulttool export attachments \
+        --test-id 'DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText()' \
+        --path "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
+        --output-path "$RUNNER_TEMP/dulcet-tvos-my-library-captures"
 fi
 
 if [ "$mode" = iphone ]; then
@@ -75,6 +83,10 @@ if [ "$mode" = iphone ]; then
         "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-iphone-my-library-junit/TEST-MyLibrary.xml" \
         DulcetMyLibraryIPhoneUITests
+    xcrun xcresulttool export attachments \
+        --test-id 'DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText()' \
+        --path "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
+        --output-path "$RUNNER_TEMP/dulcet-iphone-my-library-captures"
 fi
 
 if [ "$mode" = ipad ]; then
@@ -98,4 +110,8 @@ if [ "$mode" = ipad ]; then
         "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
         "$RUNNER_TEMP/dulcet-ipad-my-library-junit/TEST-MyLibrary.xml" \
         DulcetMyLibraryIPadUITests
+    xcrun xcresulttool export attachments \
+        --test-id 'DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText()' \
+        --path "$RUNNER_TEMP/dulcet-ipad-my-library.xcresult" \
+        --output-path "$RUNNER_TEMP/dulcet-ipad-my-library-captures"
 fi

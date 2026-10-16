@@ -218,23 +218,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         let screenWidth = try XCTUnwrap(NSScreen.main?.frame.width)
-        if window.frame.minX < 0 || window.frame.maxX > screenWidth {
-            // The restored window can put even its title-bar controls off screen. Its standard
-            // Window menu remains reachable. Fill (current macOS) or Zoom (older macOS) must
-            // actually bring the window into bounds before any content assertion proceeds.
-            let menu = app.menuBars.menuBarItems["Window"].firstMatch
-            XCTAssertTrue(menu.waitForExistence(timeout: 5))
-            menu.click()
-            let action = try XCTUnwrap(["Fill", "Fill Window", "Zoom"].map { app.menuItems[$0].firstMatch }
-                .first { $0.exists && $0.isEnabled },
-                "Missing window-fit action: \(app.menuItems.allElementsBoundByIndex.map(\.label))")
-            print("MY LIBRARY MAC window-fit action=\(action.label) before=\(window.frame)")
-            action.click()
-            let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                window.frame.minX >= 0 && window.frame.maxX <= screenWidth
-            }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed)
-        }
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.minX >= 0 && window.frame.maxX <= screenWidth
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 10), .completed,
+                       "The Mac window must remain on screen after every launch: \(window.frame)")
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome

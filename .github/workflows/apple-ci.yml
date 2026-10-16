@@ -1844,7 +1844,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-apple-parity-evidence-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dulcet-*-junit
+          path: |
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/dulcet-*-my-library-captures
           if-no-files-found: error
           retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
@@ -2617,7 +2619,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dulcet-apple-parity-evidence-${{ github.job }}-${{ matrix.device }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/dulcet-*-junit
+          path: |
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/dulcet-*-my-library-captures
           if-no-files-found: error
           retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
