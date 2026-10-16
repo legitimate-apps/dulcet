@@ -62,7 +62,7 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   tokens ride only in the `Authorization` header, and signed media URLs are redacted the same way.
 - **IDs are opaque strings.** **Two clocks**: monotonic for durations, wall clock for timestamps;
   never persist a monotonic value.
-- **Automated runs** (CI, conformance, any test suite) target the **local disposable Navidrome**,
+- **Automated runs** (CI, conformance, any test suite) target **local disposable Navidrome or Dulcet Server fixtures**,
   always. **Automated writes to a personal or production instance are forbidden in every case.** A
   person using a DEV build against their own library is expected.
 - **No physical-device automation** unless the maintainer says so for that session.

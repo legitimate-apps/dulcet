@@ -6,7 +6,7 @@ optimistic membership, durable pending writes and their reconnect replay.
 
 ## Evidence status
 
-OBSERVED on the final product tree: `swift test --no-parallel` in `apple/DulcetKit` passed
+OBSERVED for the 2026-10-13 local proof: `swift test --no-parallel` in `apple/DulcetKit` passed
 299 tests across 10 suites, including capability/navigation and current-account membership tests.
 All 27 argument-free Python gates invoked by `apple-ci` passed; the host-pressure live control
 passed on retry with four samples. XcodeGen regeneration and its self-test passed.
@@ -34,7 +34,12 @@ were inspected to confirm dark rendering. Nine compressed app JPEGs per platform
 outside the repository, with Library, Browse and album Add captures in the three variants.
 The additional iPhone largest-text visibility case passed (21.375 seconds); it scrolls the album
 to keep Add above the tab bar, asserts the visible button bounds, and replaces that capture.
-Native app/UI targets compiled on all Apple platforms; Mac runtime remains unproven.
+The CI driver uses short, direction-aware drags with an end hold for this capture. A full swipe
+on the hosted iPhone moved Add from below the visible area to above it; continuing upward
+could not recover it. The bounded helper retains the hittable and above-tab-bar assertions and
+also requires Add below the navigation bar.
+Native app/UI targets compiled on all Apple platforms; Mac runtime was still unproven at that
+local proof stage. The dated CI record below covers subsequent hosted execution.
 After the DEBUG appearance change, the final DulcetKit run again passed all 299 tests across
 10 suites; the affected string-catalog and contrast source policies passed.
 
@@ -43,6 +48,51 @@ all seven owned simulator leases released (the interrupted unleased clone was re
 DerivedData/build capacity leases released, and local app/package build products deleted.
 `automationmodetool` reported Automation Mode disabled and authentication required to enable it.
 
+
+## Required CI on 2026-10-16
+
+OBSERVED in the wholly green `apple-ci` dispatch [38966677965](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965)
+at `62611575`:
+
+| Platform | Required My Library execution | Complete producer result |
+| --- | --- | --- |
+| iPhone | Four passing `DulcetMyLibraryIPhoneUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=4`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813681) |
+| iPad | Three passing `DulcetMyLibraryIPadUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813544) |
+| Mac | Three passing `DulcetMyLibraryMacUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685) |
+| Apple TV | Three passing `DulcetMyLibraryTVUITests` JUnit cases; zero failures, errors or skips; exact guard `individual-results=3`; nine visual JPEGs | [Green](https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685) |
+
+All four downloaded JUnit suites were checked, and each platform's largest-text album capture
+was inspected with Add visible. This resolves each Apple cell's required CI fixture-execution
+condition. Mac now cites a wholly green producer; the proof-host account-store limit remains
+stated below. Historical local results above remain separate from these CI execution records.
+
+The TV behavior case passed in 88.872 seconds, including remote press-and-hold membership,
+album Add, durable relaunch, Remove, offline Add, offline relaunch and reconnect server read-back.
+The prior [38955313343/core](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663171)
+failure snapshot showed Play focused at y = 750–843, Add at y = 812–878 immediately to its
+right, and Shuffle below at y = 851–936. The helper alternated Down and Up because Add's
+centre lay between the playback controls. The corrected driver chooses horizontal movement
+for adjacent controls whose vertical spans overlap, still requiring actual focus before Select.
+All three TV cases now pass with every behavior assertion retained; TV is promoted to shipped.
+
+Mac's behavior case also passes Add, durable relaunch, Remove and offline replay. The driver
+returns through the visible toolbar Back control when the selected sidebar row leaves a retained
+album detail open. This fixes the observed failure in
+[38947781568/core](https://github.com/legitimate-apps/dulcet/actions/runs/38947781568/job/117131265121),
+where Library was selected but its detail and Add control remained visible after Remove.
+
+The complete iPhone producer also passed
+`DulcetAccountConnectStatesUITests/testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone`
+(513.216 seconds). The earlier snapshot-query timeout in
+[38937643116/iPhone](https://github.com/legitimate-apps/dulcet/actions/runs/38937643116/job/117097099690)
+did not recur. Its underlying cause remains unresolved; no timing diagnosis is claimed.
+
+The unchanged iPad playlist-row drag proof passed in 107.920 seconds. Its previous
+[38955313343/iPad](https://github.com/legitimate-apps/dulcet/actions/runs/38955313343/job/117156663083)
+failure happened before attempting the drag: a row-existence query stalled from approximately
+t = 138 to t = 181 seconds, and the settling helper completed only one empty queue read before
+its 45-second loop deadline expired. The underlying accessibility delay remains unresolved;
+the new green result is not claimed as a fix for that delay.
 
 ## Runtime suite
 
@@ -80,7 +130,19 @@ testing, and `-only-testing:<UI target>/DulcetMyLibraryUITests`. Simulator app s
 unsigned builds can reach the server but fail to save the account in Keychain. Use a local
 `CONFIGURATION_BUILD_DIR` if build products on removable storage trigger an OS access prompt.
 The Mac scheme uses its dedicated proof host; runtime automation still requires the host's normal
-XCTest authorization.
+XCTest authorization. The Mac driver recognizes the Python fixture's local-network permission
+prompt, allows it, and requires dismissal. It selects the identified sidebar row rather than a
+similarly named section heading. The app clamps its preferred 1180 × 760 window size to the
+visible display with room for window chrome. The driver requires each launched or relaunched
+window to stay on screen before it proceeds, retaining every membership and server-read assertion.
+The hosted failure had restored a 1180-point window at x = -78 on a 1024-point display; an
+oversized preferred window must not make the sidebar or title-bar controls unreachable.
+The album helper waits for the catalog scroll view containing album cards before it scrolls.
+The first Mac scroll view is the sidebar: scrolling it while catalog publication was pending
+hid Library above the viewport and caused the subsequent membership navigation to fail.
+On macOS, the selected List row does not reassign its selection when clicked again. The driver
+uses the visible toolbar Back control to reach the selected Library or Browse root, matching
+the TV helper's explicit Menu navigation rather than expecting the row to pop retained details.
 
 ## Limits
 
@@ -90,14 +152,28 @@ they are historical evidence. The Round 3 functional checks below do not claim a
 The earlier iPhone album capture is scrolled to show Add at the largest size.
 
 
-The unsigned Mac fixture uses the existing DEBUG disk credential store under a per-test UUID.
+The CI Mac proof host is signed ad hoc with entitlements cleared and uses the existing DEBUG
+disk credential store under a per-test UUID.
 Its relaunch proves durable My Library and outbox behavior with that account store; it does not
-claim signed, entitled Keychain persistence. The test host compiles the production app sources
+claim entitled Keychain persistence. The test host compiles the production app sources
 under a disposable bundle identity. iPhone, iPad and TV use their normal simulator app targets.
 
 The core song facade currently lacks artist IDs and offline playability. Membership actions are
 available on unavailable tracks; this shell does not infer offline playback availability.
-`FEATURES.yml` remains partial until required CI runs provision and execute this runtime suite.
+Required CI provisions this recipe through `tools/ci/with-my-library-fixture` and executes it
+through `tools/ci/run-my-library-proofs`. The conformance-core job runs Mac and TV; the existing
+iPhone/iPad matrix runs each device separately. The helper uses the job's disposable Navidrome
+on 4533 through a loopback proxy on 4785 for the fallback control. `:server:installDist` supplies
+the server binary from the checkout; fresh data and all fixture processes live only for the proof.
+The iPad driver waits directly on the identified sidebar text, including during the initial
+account publication; choosing a label-based cell before publication can leave a wait on an
+unlabeled cell query. Explicit selectors exclude the iPhone-only visibility case on other devices. Each selected case
+must appear once, Passed, in the individual xcresult records before JUnit is generated. Each
+platform gets its own JUnit class name so the required aggregator resolves distinct UI evidence.
+The visual case's nine compressed JPEG attachments are exported to a separate capture directory
+and retained alongside the JUnit in the existing parity artifact.
+Each `FEATURES.yml` platform cell is promoted after its required My Library cases pass.
+The dated CI record above distinguishes those test passes from producer and aggregate failures.
 Local runtime results, when recorded, do not assert that CI has executed the new tests.
 
 
@@ -134,5 +210,5 @@ and is excluded from these counts; the validated bundle selected all four method
 **OBSERVED final gates:** all 27 argument-free apple-ci Python checks passed, and
 `swift test --no-parallel` passed 299 tests in 10 suites. Diagnostics and result bundles remain
 outside the repository. These are local results; a new apple-ci dispatch will establish CI results.
-The pending My Library Mac notification-dialog runtime proof and signed receipt renewals from
-Round 2 remain pending; this hosted Mac conformance proof does not replace them.
+Those Round 3 results did not establish the separate My Library proof; its current status is in
+the dated CI record above. Signed receipt renewals from Round 2 remain pending.

@@ -6564,6 +6564,15 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 `services:`-based Navidrome cannot run in an Apple job. That is a statement about the Actions feature,
 and it is why the Apple leg runs Navidrome as a native pinned binary instead (§20.3).
 
+My Library (§29.9) adds a disposable JVM Dulcet Server built from the checkout to the existing
+conformance jobs. `tools/ci/with-my-library-fixture` owns fresh data, published fixture accounts,
+loopback-only listeners and finite proxy processes, and stops them when its command exits.
+Apple's shared UI suite runs on Mac/tvOS in `apple-conformance-core` and on iPhone/iPad in their
+existing matrix members. The job's disposable Navidrome supplies the no-extension control.
+The Android emulator members run both the ordinary Navidrome suite and a separate split-only
+My Library invocation, preserving both JUnit sets. These proofs feed the same required aggregators;
+Apple PR planning remains §21.6 (platform only), with all conformance legs on main and dispatch.
+
 Every workflow carries:
 
 ```yaml
@@ -7103,9 +7112,10 @@ testing a different program.
 
 Two different activities that must not be conflated:
 
-- **Automated testing — CI, the conformance suite, every test run — targets the local, disposable
-  Navidrome pinned to 0.63.2, and never a personal or production server.** Unchanged and still
-  normative (§20.2, OQ-8).
+- **Automated testing — CI, the conformance suite, every test run — targets local disposable
+  fixtures: Navidrome pinned to 0.63.2, or Dulcet Server built from the checkout for its own
+  capabilities (§21, §29.9). Never a personal or production server.** The disposable-instance
+  boundary remains normative (§20.2, OQ-8).
 - **Manual dogfooding of DEV builds targets the maintainer's own real music library**, which is the
   entire reason DEV exists. A library of ~31,500 tracks surfaces sync, paging, artwork-cache and
   scroll-performance problems that a synthetic corpus never will.
@@ -7715,7 +7725,7 @@ argue against the recorded rationale — not as filling in a blank.
 | **OQ-5** | **Approved in principle, pending the identity-disclosure finding.** Proceed toward a Google Play **organization** account for Legitimate LLC, registered with business documents. | Hard constraints: no individual's legal name on any public-facing surface; the LLC's registered-agent address in preference to any residential one; **full compliance with Play's legal and verification requirements — never evasion of them**; credentials stored in the secret broker with the accounts ledger updated. Research is establishing what Play actually requires for an organization account and whether an individual's legal name can be kept off public surfaces. **That finding gates signup**: if Play would publish an individual's name, the decision returns to the maintainer before an account is created. GitHub Releases with a signed APK remains the Phase-4 path regardless (§23.4). |
 | **OQ-6** | **Deferred. One active account in v1.** | Queues stay per-account with a single active account (§11.2). The cache and IDs are already namespaced per server, so multi-account browsing remains addable without a migration. |
 | **OQ-7** | **`getdulcet.com` — chosen, not yet purchased.** | $11.08 register and renew, verified available. **Blocks nothing**: `${BUNDLE_PREFIX}` is decoupled from it (header), so it reaches only support/privacy URLs, the review demo server and marketing. Purchase needs a person because the registrar's web login requires a passkey and its API has no add-funds endpoint. |
-| **OQ-8** | **A local, disposable Navidrome pinned to 0.63.2 is the development and CI target.** | **Normative: conformance and CI run against the local instance, never against a personal or production server.** The complementary rule — that a person manually dogfooding a DEV build against their own real library is expected, because the line is *automation*, not the server — is set out in **§22.4**, which reconciles the two. Automated writes to a personal instance are forbidden in all cases, and a new sync generation's first pass always goes to the local instance. Machine-specific paths belong in maintainer-local operational notes, not in this repository (§28 revision 5). |
+| **OQ-8** | **Local disposable fixtures are the development and CI targets: Navidrome pinned to 0.63.2 is the compatibility reference; checkout-built Dulcet Server exercises its own capabilities (§21, §29.9).** | **Normative: conformance and CI run against the local instance, never against a personal or production server.** The complementary rule — that a person manually dogfooding a DEV build against their own real library is expected, because the line is *automation*, not the server — is set out in **§22.4**, which reconciles the two. Automated writes to a personal instance are forbidden in all cases, and a new sync generation's first pass always goes to the local instance. Machine-specific paths belong in maintainer-local operational notes, not in this repository (§28 revision 5). |
 | **OQ-9** | **OS-trusted TLS only in v1.** Self-signed certificates and private CAs are refused. | **The user-facing consequence, stated honestly: some self-hosters will not be able to connect** — private-CA and self-signed deployments are common in this audience, and for them Dulcet v1 will fail at login with `TlsUntrusted`. The documented remedy is to install the CA at OS level. **Known v1 limitation.** Candidate v2 story: explicit per-server pinning of a user-supplied certificate, shown and confirmed once, stored per account — **never** a trust-all toggle, which would silently defeat the protection for every server (§13.5). |
 | **OQ-10** | **RESOLVED by measurement: refuse Apple `protocol: "hls"` plans and force Path A to a progressive container.** | Revision 12's one-segment callback did not answer the general routing question. **OBSERVED 2026-08-21:** the strengthened `apple-ci` leg rewrote two absolute cross-origin segment references. The manifest and first segment reached the delegate, but playback surfaced `CoreMediaErrorDomain -12881` before the second segment request and before the boundary. The `all-routed` assertion rejects that state. This does not prove escape; it proves the required complete-routing/playback contract was not established, which selects the documented fallback (§12.4; `docs/COMPATIBILITY.md`). |
 
@@ -7766,6 +7776,29 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
+The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
+automated writes to personal or production instances remain forbidden. The existing Apple
+conformance legs (§21.5–21.6) build `:server:installDist` and execute the shared My Library UI
+suite: Mac and tvOS in `apple-conformance-core`, iPhone and iPad in their device matrix members.
+Each run gets fresh server data, disposable accounts and loopback network proxies; the job's
+Navidrome remains the positive control for the absent split. Explicit selectors and individual
+result guards require passing membership/relaunch/offline-replay, fallback and visual cases;
+iPhone also requires its largest-text Add visibility case. Platform-specific JUnit class names
+keep the shared Swift methods distinct in the required `apple-ci` evidence resolver.
+The policy requires every cited class/method pair to resolve to its own selector and JUnit
+emission; uncited parallel platform aliases do not satisfy a citation or prevent a verified
+platform from being promoted independently.
+The `android-emulator` phone and TV members retain the existing Navidrome invocation, preserve
+its results, then execute only their My Library proof with `dulcetExpectSplit=true` against the
+built Dulcet Server. The second invocation must report exactly one passing, non-skipped test;
+both result sets reach required `core-ci`. All fixture processes end with their command; no
+runner slot, trigger, external service, physical device or production account is added.
+The hosted Mac proof also exposed an oversized default window on a small display. The preferred
+window size now fits the visible display; every UI-proof relaunch requires on-screen bounds.
+The visual cases' compressed JPEG attachments travel beside the JUnit in the parity artifacts.
+
 
 **2026-10-15 — My Library stays coherent across both server protocols.**
 Dulcet API membership writes advance the same per-user `dulcetLibrary` clock that §29.9's clients

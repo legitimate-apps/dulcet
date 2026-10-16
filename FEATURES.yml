@@ -1193,8 +1193,8 @@
       ],
       "platforms": {
         "macos": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetMacUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "status": "shipped",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685. All 3 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 3 passing DulcetMyLibraryMacUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition. The Mac proof host compiles production app sources, is signed ad hoc with entitlements cleared, and uses the DEBUG per-test disk account store; no entitled Keychain-persistence claim is made.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1207,17 +1207,30 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            },
+            {
+              "observes": "the production Mac app sources in the dedicated Mac UI proof host against real disposable Dulcet Server: Browse Add, My Library membership and direct server read-back, saved-account relaunch, Remove, offline Add, pending membership surviving offline relaunch, and server membership after reconnect",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation"
+            },
+            {
+              "observes": "the Mac Library, Browse and album Add screens captured as nine compressed JPEGs in light, dark and largest Dynamic Type variants",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryMacUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText"
             }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
+          ]
         },
         "ios": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "status": "shipped",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813681. All 4 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 4 passing DulcetMyLibraryIPhoneUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=4. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition. The later account-connect state case also passed (513.216 seconds); the earlier snapshot-query timeout did not recur, and its underlying cause remains unresolved.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1230,17 +1243,36 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            },
+            {
+              "observes": "the production iPhone app on iPhone 17 Pro against real disposable Dulcet Server: Browse Add, My Library membership and direct server read-back, saved-account relaunch, Remove, offline Add, pending membership surviving offline relaunch, and server membership after reconnect",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation"
+            },
+            {
+              "observes": "the iPhone Library, Browse and album Add screens captured as nine compressed JPEGs in light, dark and largest Dynamic Type variants",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText"
+            },
+            {
+              "observes": "the album Add control is hittable and visible below the navigation bar and above the tab bar at the largest iPhone Dynamic Type size",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testAlbumAddRemainsVisibleAtLargestTextOnIPhone"
             }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
+          ]
         },
         "ipados": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetiOSUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "status": "shipped",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813544. All 3 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 3 passing DulcetMyLibraryIPadUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1253,17 +1285,30 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            },
+            {
+              "observes": "the production iPad app on the resolved iPadOS simulator against real disposable Dulcet Server: Browse Add, My Library membership and direct server read-back, saved-account relaunch, Remove, offline Add, pending membership surviving offline relaunch, and server membership after reconnect",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation"
+            },
+            {
+              "observes": "the iPad Library, Browse and album Add screens captured as nine compressed JPEGs in light, dark and largest Dynamic Type variants",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPadUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText"
             }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
+          ]
         },
         "tvos": {
-          "status": "partial",
-          "reason": "Capability-gated Apple Library/Browse and membership controls are implemented. Local runtime proof and JPEG captures are recorded in docs/evidence/my-library-apple.md; the platform UI suite is DulcetTVUITests/DulcetMyLibraryUITests. Required CI fixture execution remains the promotion condition.",
+          "status": "shipped",
+          "reason": "OBSERVED 2026-10-16 in required apple-ci run 38966677965 at 62611575, green complete producer: https://github.com/legitimate-apps/dulcet/actions/runs/38966677965/job/117194813685. All 3 shared My Library UI cases passed against checkout-built disposable Dulcet Server and the populated Navidrome fallback. Downloaded JUnit contains 3 passing DulcetMyLibraryTVUITests cases, zero failures/errors/skips; the exact execution guard reports individual-results=3. Nine visual JPEGs were retained in the parity artifact, and the largest-text album Add capture was inspected. The complete dispatch and required apple-ci aggregator are green. This resolves the required My Library CI fixture-execution condition.",
           "evidence": [
             {
               "observes": "a capable account gets Browse and separate navigation stacks; selecting a requested reader detail and resetting account navigation preserves the requested route and clears retained paths",
@@ -1276,31 +1321,68 @@
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetKitTests/myLibraryMembershipUsesOnlyTheCurrentAccountAndClosesItsPublication"
+            },
+            {
+              "observes": "the production Apple TV app driven by remote against real disposable Dulcet Server: press-and-hold membership, album Add, My Library membership and direct server read-back, saved-account relaunch, Remove, offline Add, pending membership surviving offline relaunch, and server membership after reconnect",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryTVUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
+            },
+            {
+              "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryTVUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation"
+            },
+            {
+              "observes": "the TV Library, Browse and album Add screens captured as nine compressed JPEGs in light, dark and largest-text launch variants",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryTVUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText"
             }
-          ],
-          "promotion_condition": {
-            "status": "blocked",
-            "blocked_on": "Required Apple CI My Library server fixture execution",
-            "reason": "The shared UI tests require a disposable Dulcet Server, Navidrome and per-platform controllable network proxy. Local proof is separate from a required CI execution record."
-          }
+          ]
         },
         "android": {
           "status": "shipped",
           "evidence": [
-            {"observes": "the phone app over the production session, reader and core AndroidMyLibrary, with only the server a loopback fixture advertising dulcetLibrary: the Browse tab appears once the extension is detected, an album added from Browse is sent by addToDulcetLibrary and shows in My Library at once, a relaunch with the account's data kept still shows it, an add made with no network waits in the outbox and is sent on reconnect, and a remove is sent by removeFromDulcetLibrary and takes the album out; against a server without the extension nothing splits and getDulcetLibrary, addToDulcetLibrary and removeFromDulcetLibrary are never called",
-             "workflow": "core-ci", "job": "core-ci", "test": "PhoneMyLibraryIntegrationTest/theSplitFollowsTheExtensionAndAnAddFromBrowseShowsInLibraryAndOnTheServer"},
-            {"observes": "the phone's My Library screens and controls in Robolectric compositions with the source seated from a fixture of the core's contract: Recently Added, Artists, Albums, Songs and Playlists sections, the sort control, the empty state that opens Browse, the +/checkmark on album and artist headers, the track context-menu item, and the long-press menu on cards, each adding or removing through the source; and with the extension absent, no Browse tab and no membership control anywhere",
-             "workflow": "core-ci", "job": "core-ci", "test": "PhoneMyLibraryTest/aServerWithMyLibrarySplitsTheTabsAndBrowseKeepsTheCatalog"}
+            {
+              "observes": "the phone app over the production session, reader and core AndroidMyLibrary, with only the server a loopback fixture advertising dulcetLibrary: the Browse tab appears once the extension is detected, an album added from Browse is sent by addToDulcetLibrary and shows in My Library at once, a relaunch with the account's data kept still shows it, an add made with no network waits in the outbox and is sent on reconnect, and a remove is sent by removeFromDulcetLibrary and takes the album out; against a server without the extension nothing splits and getDulcetLibrary, addToDulcetLibrary and removeFromDulcetLibrary are never called",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PhoneMyLibraryIntegrationTest/theSplitFollowsTheExtensionAndAnAddFromBrowseShowsInLibraryAndOnTheServer"
+            },
+            {
+              "observes": "the phone's My Library screens and controls in Robolectric compositions with the source seated from a fixture of the core's contract: Recently Added, Artists, Albums, Songs and Playlists sections, the sort control, the empty state that opens Browse, the +/checkmark on album and artist headers, the track context-menu item, and the long-press menu on cards, each adding or removing through the source; and with the extension absent, no Browse tab and no membership control anywhere",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "PhoneMyLibraryTest/aServerWithMyLibrarySplitsTheTabsAndBrowseKeepsTheCatalog"
+            },
+            {
+              "observes": "the production phone app by touch on an Android 34 emulator against a real disposable Dulcet Server built from the checkout: asserts dulcetLibrary v1 advertisement, splits Library and Browse, adds an album from Browse, requires the server's getDulcetLibrary read-back and its appearance in My Library, then removes it and requires server absence; the separately preserved Navidrome execution loads a positive catalog and requires the original single Library destination and absent membership control",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidEmulatorMyLibraryProofTest/myLibrarySplit"
+            }
           ],
-          "reason": "The phone app splits Library and Browse only when the account's server advertises dulcetLibrary v1 (spec 29.9), detected by the core on each connect and reconnect and kept per account. My Library's sections draw the core's publication; add and remove are the core's optimistic, durable, idempotent outbox writes. The Robolectric integration suite drives the production stack against a loopback fixture implementing the wire contract, and runs in core-ci. OBSERVED locally on 2026-10-13, not in CI (the emulator legs have no Dulcet Server target yet): AndroidEmulatorMyLibraryProofTest drove the DEV app on an Android 34 arm64 emulator against a local Dulcet Server with the seeded corpus — the tabs split, an album's + filled to a check and the server's own getDulcetLibrary read the album back, My Library listed it, and Remove took it out on the server; against the disposable Navidrome the app kept today's single Library tab; one testcase with no failure and none skipped per leg, photographed in light, dark and largest text (JPEGs under the leg's evidence directory)."
+          "reason": "Library and Browse split only when the current account advertises dulcetLibrary v1 (spec 29.9); membership uses the core publication and optimistic, durable, idempotent outbox. Existing host tests remain required. OBSERVED 2026-10-16 in required core-ci run 38948697987 at ca108fa1, android-emulator (phone): https://github.com/legitimate-apps/dulcet/actions/runs/38948697987/job/117134521403. Downloaded JUnit has one passing myLibrarySplit testcase in the Navidrome fallback reports and one in the separate Dulcet Server split reports, with zero skips or failures in those cases. The split invocation uses dulcetExpectSplit=true and its executed-test guard reports executed=1 passed=1 skipped=0; the required core-ci aggregator is green. The emulator proof covers add/remove and the split; the existing host suite supplies its broader state and persistence controls."
         },
         "androidtv": {
           "status": "shipped",
           "evidence": [
-            {"observes": "the TV app over the production session and reader with the source seated from a fixture of the core's contract, driven by remote keys alone: the top bar splits Library and Browse, My Library's section buttons open its Artists, Albums and Songs routes and Playlists stays the reader's own screen, the empty library's Browse action switches root, the album screen's Add to Library is reached RIGHT from Play and pressed with the centre key, a song row's library button removes it, and with the extension absent the bar is as before",
-             "workflow": "core-ci", "job": "core-ci", "test": "TvMyLibraryTest/aServerWithMyLibrarySplitsTheBarAndBrowseKeepsTheCatalog"}
+            {
+              "observes": "the TV app over the production session and reader with the source seated from a fixture of the core's contract, driven by remote keys alone: the top bar splits Library and Browse, My Library's section buttons open its Artists, Albums and Songs routes and Playlists stays the reader's own screen, the empty library's Browse action switches root, the album screen's Add to Library is reached RIGHT from Play and pressed with the centre key, a song row's library button removes it, and with the extension absent the bar is as before",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "TvMyLibraryTest/aServerWithMyLibrarySplitsTheBarAndBrowseKeepsTheCatalog"
+            },
+            {
+              "observes": "the production TV app by remote keys on an Android 34 emulator against a real disposable Dulcet Server built from the checkout: asserts dulcetLibrary v1 advertisement, splits Library and Browse, adds an album from Browse, requires the server's getDulcetLibrary read-back and its appearance in My Library; the separately preserved Navidrome execution loads a positive catalog and requires the original single Library destination and absent membership control",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidTvMyLibraryProofTest/myLibrarySplit"
+            }
           ],
-          "reason": "The TV app splits Library and Browse in its top bar on the same core availability as the phone (spec 29.9), with every membership control a D-pad focus target. The Robolectric suite drives TvLibraryEntry by remote keys alone over the production session and reader with the source seated from a fixture; the emulator proof drives the production TV app by remote key events against a local Dulcet Server, reading the server's own getDulcetLibrary back after the add; it executed and passed, one testcase with no failure and none skipped per leg, locally on 2026-10-13, and is not in CI for the same reason as the phone's. A fresh-AVD note: the repo's pinned dulcet-phone/dulcet-tv AVDs live on an external volume that was unmounted, so the proofs ran on fresh android-34 AVDs (mylib-phone, mylib-tv) created from the same system images."
+          "reason": "Library and Browse split only when the current account advertises dulcetLibrary v1 (spec 29.9); membership uses the core publication and optimistic, durable, idempotent outbox. Existing host tests remain required. OBSERVED 2026-10-16 in required core-ci run 38948697987 at ca108fa1, android-emulator (tv): https://github.com/legitimate-apps/dulcet/actions/runs/38948697987/job/117134520990. Downloaded JUnit has one passing myLibrarySplit testcase in the Navidrome fallback reports and one in the separate Dulcet Server split reports, with zero skips or failures in those cases. The split invocation uses dulcetExpectSplit=true and its executed-test guard reports executed=1 passed=1 skipped=0; the required core-ci aggregator is green. The TV emulator proof covers the split, remote Add and server read-back; the existing host suite supplies its removal and broader state controls."
         }
       }
     },

@@ -127,12 +127,14 @@ def swift_language_version() -> str:
 
 def deployment_targets() -> dict[str, str]:
     versions = tomllib.loads(VERSIONS.read_text())["versions"]
-    return {"ios": versions["ios-deployment"], "tvos": versions["tvos-deployment"]}
+    return {"ios": versions["ios-deployment"], "tvos": versions["tvos-deployment"], "macos": versions["macos-deployment"]}
 
 
 def platforms() -> dict[str, Platform]:
     floors = deployment_targets()
     return {
+        # This shared source directory is the Mac UI target's entire suite.
+        "DulcetMyLibraryUITestSupport": Platform("macosx", "MacOSX", f"arm64-apple-macos{floors['macos']}"),
         "DulcetiOSUITests": Platform(
             "iphonesimulator",
             "iPhoneSimulator",
@@ -278,7 +280,8 @@ def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
     covered: list[tuple[str, Platform, list[Path]]] = []
     uncovered: list[str] = []
     directories = sorted(
-        item for item in APPLE.iterdir() if item.is_dir() and item.name.endswith("UITests")
+        item for item in APPLE.iterdir() if item.is_dir()
+        and (item.name.endswith("UITests") or item.name == "DulcetMyLibraryUITestSupport")
     )
     if not directories:
         fail(f"no *UITests directory under {APPLE}")
@@ -286,6 +289,8 @@ def discover() -> tuple[list[tuple[str, Platform, list[Path]]], list[str]]:
         sources = sorted(directory.glob("*.swift"))
         if directory.name in {"DulcetSignedIPadUITests", "DulcetSignedIPhoneUITests"}:
             sources += sorted((APPLE / "DulcetSignedDeviceUITestSupport").glob("*.swift"))
+        if directory.name in {"DulcetiOSUITests", "DulcetTVUITests"}:
+            sources += sorted((APPLE / "DulcetMyLibraryUITestSupport").glob("*.swift"))
         if not sources:
             uncovered.append(f"{directory.name}: no Swift sources")
             continue

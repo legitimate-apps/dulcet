@@ -294,6 +294,7 @@ jobs:
             build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
             task: :android:app:connectedDevDebugAndroidTest
             conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidPhoneConformanceTest
+            my_library: com.legitimateapps.dulcet.AndroidEmulatorMyLibraryProofTest
             results: android/app/build/outputs/androidTest-results/connected
           - surface: tv
             target: android-tv
@@ -302,6 +303,7 @@ jobs:
             build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
             task: :android:tv:connectedDebugAndroidTest
             conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidTvConformanceTest
+            my_library: com.legitimateapps.dulcet.tv.AndroidTvMyLibraryProofTest
             results: android/tv/build/outputs/androidTest-results/connected
     env:
       TZ: UTC
@@ -329,8 +331,15 @@ jobs:
           sudo udevadm settle --timeout=30
           test -w /dev/kvm
       # Built before the emulator boots, so emulator time is spent only on the proof.
-      - name: Build the app and its instrumented tests
-        run: ./gradlew --no-daemon --max-workers=2 ${{ matrix.build }}
+      - name: Install pinned media tools for the disposable Dulcet Server
+        run: |
+          . /etc/os-release
+          test "$ID:$VERSION_ID" = "ubuntu:24.04"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
+          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
+      - name: Build the app, instrumented tests and disposable Dulcet Server
+        run: ./gradlew --no-daemon --max-workers=2 ${{ matrix.build }} :server:installDist
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label android-emulator-${{ matrix.surface }})" >> "$GITHUB_OUTPUT"
@@ -359,6 +368,11 @@ jobs:
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
             ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }} -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4533 -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true
+            mkdir -p "$RUNNER_TEMP/my-library-fallback"
+            cp -R ${{ matrix.results }} "$RUNNER_TEMP/my-library-fallback/"
+            tools/ci/with-my-library-fixture --root "${{ steps.root.outputs.path }}/my-library" --music "${{ steps.root.outputs.path }}/music" -- ./gradlew --no-daemon --max-workers=2 ${{ matrix.task }} -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.my_library }} -Pandroid.testInstrumentationRunnerArguments.dulcetServerUrl=http://10.0.2.2:4783 -Pandroid.testInstrumentationRunnerArguments.dulcetServerDisposable=true -Pandroid.testInstrumentationRunnerArguments.dulcetExpectSplit=true
+            python3 tools/ci/verify-my-library-android-results ${{ matrix.results }} ${{ matrix.my_library }}
+
       - name: Stop the disposable server
         if: ${{ always() }}
         run: tools/conformance-env/linux-local --root "${{ steps.root.outputs.path }}" down || true
@@ -369,6 +383,8 @@ jobs:
           name: dulcet-android-emulator-${{ matrix.surface }}${{ matrix.rep != 1 && format('-rep{0}', matrix.rep) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ matrix.results }}
+            ${{ runner.temp }}/my-library-fallback
+            ${{ steps.root.outputs.path }}/my-library/*.log
             core-conformance/build/outputs/androidTest-results/connected
           if-no-files-found: error
           retention-days: 7

@@ -12,6 +12,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
 #if os(macOS)
     private let accountFixtureNamespace = UUID().uuidString
+    private var installedFixtureNetworkMonitor = false
 #endif
     private var user: String {
 #if os(macOS)
@@ -164,10 +165,22 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func captureAlbumAdd(_ name: String, button: XCUIElement) throws {
 #if os(iOS)
         for _ in 0..<5 {
-            if button.isHittable && button.frame.maxY < app.frame.maxY - 100 { break }
-            app.scrollViews.firstMatch.swipeUp()
+            let window = app.frame
+            let target = button.frame
+            let top = window.minY + 120
+            let bottom = window.maxY - 100
+            if button.isHittable && target.minY >= top && target.maxY < bottom { break }
+            // A full swipe can move this header from under the tab bar to above the viewport
+            // at the largest text size. Make a short drag toward the target, and hold its end
+            // to avoid inertial overshoot. If it is already above the viewport, scroll back.
+            let downward = target.minY < top
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: downward ? 0.45 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: downward ? 0.65 : 0.45))
+            print("MY LIBRARY CAPTURE \(name) add=\(target) viewport=\(top)...\(bottom) downward=\(downward)")
+            start.press(forDuration: 0.01, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
         }
         XCTAssertTrue(button.isHittable)
+        XCTAssertGreaterThanOrEqual(button.frame.minY, app.frame.minY + 120, "The Add action must be below the navigation bar in the capture")
         XCTAssertLessThan(button.frame.maxY, app.frame.maxY - 100, "The Add action must be above the tab bar in the capture")
 #endif
         try capture(name)
@@ -185,9 +198,31 @@ final class DulcetMyLibraryUITests: XCTestCase {
         launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
 #endif
         app.launchArguments = launchArguments
+#if os(macOS)
+        if !installedFixtureNetworkMonitor {
+            installedFixtureNetworkMonitor = true
+            _ = addUIInterruptionMonitor(withDescription: "Allow the disposable Python fixture's local network") { dialog in
+                self.allowFixtureLocalNetwork(dialog)
+            }
+        }
+#endif
         app.launch()
 #if os(macOS)
+        // The fixture's Python process can trigger macOS's local-network permission dialog.
+        // Handle only that named fixture prompt, including when it predates this app's launch.
+        let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+        for dialog in notifications.dialogs.allElementsBoundByIndex {
+            _ = allowFixtureLocalNetwork(dialog)
+        }
         app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        let screenWidth = try XCTUnwrap(NSScreen.main?.frame.width)
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.minX >= 0 && window.frame.maxX <= screenWidth
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 10), .completed,
+                       "The Mac window must remain on screen after every launch: \(window.frame)")
 #elseif os(iOS)
         if connect {
             let connected = server == navidrome
@@ -202,20 +237,36 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
 #endif
     }
+#if os(macOS)
+    @MainActor private func allowFixtureLocalNetwork(_ dialog: XCUIElement) -> Bool {
+        let text = dialog.staticTexts.allElementsBoundByIndex.map {
+            $0.label + " " + ($0.value as? String ?? "")
+        }.joined(separator: " ")
+        guard text.contains("Python"), text.contains("local networks") else { return false }
+        let allow = dialog.buttons["Allow"].firstMatch
+        guard allow.exists else { return false }
+        allow.click()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: dialog)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        print("MY LIBRARY MAC fixture-local-network-prompt handled=Allow")
+        return true
+    }
+#endif
     @MainActor private func destination(_ section: String) -> XCUIElement {
 #if os(macOS)
-        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
-        return app.windows.firstMatch.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", title)).firstMatch
+        // Labels also match section headings and toolbar titles. The actual navigation row
+        // carries this identifier on its text in the macOS outline's accessibility tree.
+        return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
 #elseif os(tvOS)
         return app.buttons["dulcet.tab.\(section)"].firstMatch
 #else
-        let sidebar = app.cells.containing(.any, identifier: "dulcet.sidebar.\(section)").firstMatch
-        if sidebar.exists { return sidebar }
-        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         if UIDevice.current.userInterfaceIdiom == .pad {
-            return app.cells.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            // Construct the identified query even before the account publishes its sidebar.
+            // Choosing a label-based Cell fallback before it exists leaves the wait on cells
+            // with no label; SwiftUI exposes the destination label on their StaticText child.
+            return app.staticTexts["dulcet.sidebar.\(section)"].firstMatch
         }
+        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
@@ -239,6 +290,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("Remote could not reach \(section)")
 #else
         activate(control)
+#if os(macOS)
+        // A macOS List does not write its selection binding when its selected row is clicked
+        // again. Return through the visible navigation controls, just as Menu pops on tvOS,
+        // so a retained album detail cannot hide the Library root's membership/empty state.
+        if section == "library" || section == "browse" {
+            let back = app.toolbars.buttons["chevron.backward"].firstMatch
+            for _ in 0..<6 {
+                if !back.exists { break }
+                activate(back)
+            }
+            XCTAssertFalse(back.exists, "The selected destination must reach its root")
+        }
+#endif
 #endif
     }
     @MainActor private func albumTile(_ title: String) -> XCUIElement {
@@ -250,11 +314,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         if all.exists { activate(all) }
 #endif
         let tile = albumTile(title)
+#if os(macOS)
+        // The sidebar is also a scroll view. Wait for catalog publication and scroll only the
+        // album page; scrolling firstMatch can hide Library before the catalog finishes loading.
+        let albumPage = app.scrollViews.containing(.button, identifier: "dulcet.library.album").firstMatch
+        XCTAssertTrue(albumPage.waitForExistence(timeout: 30), "The album page must load before scrolling")
+#endif
 #if !os(tvOS)
         for _ in 0..<6 {
             if tile.exists && tile.isHittable { break }
 #if os(macOS)
-            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -450)
+            albumPage.scroll(byDeltaX: 0, deltaY: -450)
 #else
             app.scrollViews.firstMatch.swipeUp()
 #endif
@@ -291,6 +361,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let current = focusedCell.exists ? focusedCell : app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
             guard current.exists else { XCUIRemote.shared.press(.down); continue }
             let a = current.frame, b = target.frame
+            // Album Add is centred beside the vertical Play/Shuffle stack. Its centre is
+            // below Play and above Shuffle, so centre-only steering oscillates Up/Down.
+            // Overlapping vertical spans identify the reachable horizontal neighbour.
+            if min(a.maxY, b.maxY) > max(a.minY, b.minY),
+               b.minX >= a.maxX || b.maxX <= a.minX {
+                XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)
+                previousFrame = a
+                continue
+            }
             if previousFrame == a && abs(a.midX - b.midX) > 20 {
                 // A narrow first-column tile can have no Down neighbor from a wider section bar.
                 XCUIRemote.shared.press(b.midX > a.midX ? .right : .left)

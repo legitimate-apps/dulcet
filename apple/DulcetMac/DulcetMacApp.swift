@@ -1,4 +1,5 @@
 import DulcetKit
+import AppKit
 import SwiftUI
 
 @main
@@ -41,7 +42,7 @@ struct DulcetMacApp: App {
                 }
 #endif
         }
-        .defaultSize(width: 1180, height: 760)
+        .defaultSize(width: initialWindowSize.width, height: initialWindowSize.height)
         .windowToolbarStyle(.unifiedCompact)
         .commands {
             DulcetPlaybackCommands(store: presentation)
@@ -59,6 +60,15 @@ struct DulcetMacApp: App {
         Settings {
             DulcetSettingsView(store: presentation)
         }
+    }
+
+    private var initialWindowSize: CGSize {
+        let preferred = CGSize(width: 1180, height: 760)
+        guard let visible = NSScreen.main?.visibleFrame.size else { return preferred }
+        // Keep the preferred desktop size on larger displays, while leaving space for window
+        // chrome and placement on smaller ones. An oversized default can restore off screen.
+        return CGSize(width: min(preferred.width, visible.width - 32),
+                      height: min(preferred.height, visible.height - 32))
     }
 }
 

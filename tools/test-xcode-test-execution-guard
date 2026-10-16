@@ -73,7 +73,7 @@ def count_cases(document: dict) -> tuple[int, dict[str, int]]:
     }
 
 
-def invoke(document: dict, *, summary: dict | None = None) -> subprocess.CompletedProcess[str]:
+def invoke(document: dict, *, summary: dict | None = None, methods: list[str] | None = None) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="dulcet-xcode-execution-") as directory:
         root = Path(directory)
         bundle = root / "tests.xcresult"
@@ -97,7 +97,7 @@ def invoke(document: dict, *, summary: dict | None = None) -> subprocess.Complet
         environment["DULCET_XCRESULT_TESTS"] = str(fixture)
         environment["DULCET_XCRESULT_SUMMARY"] = str(summary_fixture)
         return subprocess.run(
-            [sys.executable, str(VERIFY), str(bundle), EXPECTED_CLASS, EXPECTED_METHOD],
+            [sys.executable, str(VERIFY), str(bundle), EXPECTED_CLASS, *(methods or [EXPECTED_METHOD])],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -154,3 +154,17 @@ print(
     "xcresult execution guard rejects summary-only, zero, wrong, skipped, failed, missing, and "
     "duplicate individual controls; transcript regression fixtures retained"
 )
+
+# The My Library runner selects several methods in one bundle. Every one must execute exactly
+# once and pass; a different test, duplicate, skip or missing method cannot fill a slot.
+multiple = test_case()
+other = test_case("testOtherMethod")["testNodes"][0]["children"][0]["children"][0]
+multiple["testNodes"][0]["children"][0]["children"].append(other)
+methods = [EXPECTED_METHOD, "testOtherMethod"]
+assert invoke(multiple, methods=methods).returncode == 0
+assert invoke(multiple, methods=[EXPECTED_METHOD, "testAbsent"]).returncode != 0
+assert invoke(multiple, methods=[EXPECTED_METHOD, EXPECTED_METHOD]).returncode != 0
+assert invoke(test_case(), methods=methods).returncode != 0
+other["result"] = "Skipped"
+assert invoke(multiple, methods=methods).returncode != 0
+print("multi-method execution guard controls passed: exact set, missing, duplicate, wrong and skipped")

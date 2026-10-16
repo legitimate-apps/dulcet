@@ -436,3 +436,11 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     recordings showed Library with Home focused. Read focus attributes from one immutable
     `app.snapshot()` hierarchy; read the section title from that same hierarchy when pairing
     section and focus. An `exists` check before a live attribute read leaves the same race.
+
+55. **An expression inside a large `run` scalar can prevent the workflow from starting.**
+    OBSERVED 2026-10-16: apple-ci [38918627931](https://github.com/legitimate-apps/dulcet/actions/runs/38918627931)
+    was rejected before creating jobs when the iPad My Library command added a GitHub expression
+    inside the long conformance script. The scalar exceeded GitHub's expression-length limit.
+    Pass the destination through the step's `env` and read `$IPAD_UDID` in the shell instead;
+    the accepted replacement [38918766366](https://github.com/legitimate-apps/dulcet/actions/runs/38918766366)
+    started its jobs. A passing local CI policy check alone does not prove GitHub accepted a workflow.
