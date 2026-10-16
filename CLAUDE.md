@@ -49,14 +49,17 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 
 ## Product lines that do not move
 
-- **OpenSubsonic `/rest` only**, never anything else.
+- **Dulcet API with Dulcet Server, OpenSubsonic `/rest` with every other server**, never anything
+  else. Dulcet API (`docs/dulcet-api/`, spec §30) is used only where `/.well-known/dulcet`
+  advertises it; Dulcet Server keeps serving `/rest` in full.
 - **Validate binary `/rest` responses** (`stream`, `getCoverArt`): detect an XML/JSON Subsonic error
   envelope first (skip whitespace and BOM), then require a positive endpoint-specific signature —
   "not an envelope" is never sufficient. Validate inline in the engine's own request, not by preflight.
   Offsets and tables: `docs/TRAPS.md` 4–5.
-- **Credentials ride in the query string.** Redact the whole query before anything reaches a log,
-  error or diagnostic; wrap engine errors that can carry the URL; strip credentials on cross-origin
-  redirects; never follow HTTPS→HTTP. Test with canary values.
+- **On `/rest`, credentials ride in the query string.** Redact the whole query before anything
+  reaches a log, error or diagnostic; wrap engine errors that can carry the URL; strip credentials
+  on cross-origin redirects; never follow HTTPS→HTTP. Test with canary values. On Dulcet API,
+  tokens ride only in the `Authorization` header, and signed media URLs are redacted the same way.
 - **IDs are opaque strings.** **Two clocks**: monotonic for durations, wall clock for timestamps;
   never persist a monotonic value.
 - **Automated runs** (CI, conformance, any test suite) target the **local disposable Navidrome**,

@@ -24,10 +24,12 @@ Navidrome.*
 
 Surfaces: iOS, iPadOS, macOS, tvOS (SwiftUI) and Android + Android TV (Compose). macOS ships first.
 
-**Dulcet Server** (spec §29) is the project's own OpenSubsonic server. To the apps it is one more
-OpenSubsonic server: they speak only `/rest` to it, and anything extra it offers, such as the
-per-user My Library (`dulcetLibrary`), is an advertised extension the apps adopt only where a server
-advertises it. People keep using whatever server they already run.
+**Dulcet Server** (spec §29) is the project's own music server, and the reference implementation
+of **Dulcet API** (spec §30, `docs/dulcet-api/`), a public, open standard for music servers and
+clients. The apps speak Dulcet API to a server that advertises it at `/.well-known/dulcet`, and
+OpenSubsonic `/rest` to every other server. Dulcet Server also serves OpenSubsonic `/rest` in full,
+including the `dulcetLibrary` extension, for every other client. People keep using whatever server
+they already run.
 
 ## 2 · The thesis
 
@@ -51,15 +53,18 @@ and a thumb are not the same input.
    extensions.
 4. **`v=1.16.1`** — the Subsonic REST **schema version the client implements**. Not the Navidrome
    version, not an OpenSubsonic version, not a feature bitset.
-5. **Dulcet is not a "Navidrome client."** We use `/rest` only. Touching Navidrome's private `/api`
-   would silently make that label true.
+5. **Dulcet is not a "Navidrome client."** With every server other than Dulcet Server we use
+   OpenSubsonic `/rest` only. Touching Navidrome's private `/api` would silently make that label
+   true.
 
 ## 4 · The lines we never cross
 
 Binding. A violation is a stop-work, not a style note.
 
-1. **`/rest` only.** Never the server's private API, never its web UI, never an undocumented behavior
-   that is not registered as a named quirk with a conformance test pinning it.
+1. **Dulcet API with Dulcet Server; OpenSubsonic `/rest` with every other server.** Only those two
+   public contracts, never anything else: never a server's private API, never its web UI, never an
+   undocumented behavior that is not registered as a named quirk with a conformance test pinning
+   it. Dulcet API is used only where a server advertises it through its discovery document.
 2. **HTTP 200 is not proof of binary success.** `/rest/stream` and `/rest/getCoverArt` return binary
    on success and may return an XML or JSON error envelope on failure, and real servers and proxies
    mislabel content types. Validation is **unconditional and ordered**: envelope detection first
@@ -77,7 +82,8 @@ Binding. A violation is a stop-work, not a style note.
    bytes, 32 hex chars) per request; password only in Keychain/Keystore; the whole query string
    redacted before anything reaches a log, an error or a diagnostic. `DomainError` has no field capable
    of holding a raw URL. Credentials are **stripped** on any cross-origin redirect, and an
-   HTTPS-to-HTTP downgrade is never followed.
+   HTTPS-to-HTTP downgrade is never followed. On Dulcet API, credentials ride only in the
+   `Authorization` header, and its signed media URLs get the same redaction as a `/rest` query.
 6. **No telemetry, no analytics, no third-party crash reporter.** The likeliest way a signed stream URL
    leaves a device is inside a crash report.
 7. **Capability gates are conjunctions, never a single check:** protocol AND extension AND user

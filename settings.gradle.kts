@@ -18,6 +18,7 @@ rootProject.name = "Dulcet"
 include(":core")
 include(":core-conformance")
 include(":server")
+include(":dulcet-api-conformance")
 include(":android:shared")
 include(":android:app")
 include(":android:tv")
