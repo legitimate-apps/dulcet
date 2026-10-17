@@ -7777,6 +7777,18 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-16 — Listen Now home and optional recommendations contract.**
+Dulcet API v1 adds `dulcet.home` version 1 and `GET /recommendations/home` (§30,
+`docs/dulcet-api/openapi.yaml`); the Home conformance profile covers its bounded, per-user shelves.
+Dulcet Server computes them from live and imported annotations (§29.4). The same picks are
+available to current OpenSubsonic-authenticated apps through advertised `dulcetHome` version 1,
+`getDulcetHome(shelf,size)`. Core `ListenNowShelf` queries use the persistent reader seen-cache,
+including cached first paint, freshness, account binding and failure retention. Plain servers use
+only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
+are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
+play through the existing queue-entry surface. Reading a home never records a play.
+
+
 **2026-10-16 — Required CI exercises My Library against disposable Dulcet Server.**
 The automated-server boundary includes local disposable Dulcet Server as well as Navidrome;
 automated writes to personal or production instances remain forbidden. The existing Apple
@@ -13512,6 +13524,23 @@ them.
   (`docs/dulcet-server/dulcet-library-extension.md`). The apps' split per account is My Library
   plus Browse. Browse is the whole catalog, which every server already offers. My Library is
   served by the extension where a server advertises it.
+
+### 29.4.1 Listen Now
+
+Recent playlist picks use only playlist contexts recorded in that user's play history, with playlist visibility and catalog permissions applied. The app's Continue Listening action resumes the existing queue and its position. Plain REST has no playlist play history; it does not fabricate one.
+
+`HomeRecommendations` computes bounded, explainable shelves from the authenticated user's
+annotations. Imported song-only play counts and last-played times contribute to album shelves;
+`MAX(album plays, sum of song plays)` avoids counting each scrobble twice. Rediscover requires
+a favourite, rating >=4 or at least three plays and no play in 30 days. Daily and station shelves
+have no candidates until that user has an affinity signal. Every candidate is filtered through
+catalog access before selection; no other user's annotations participate.
+
+`dulcet.home` v1 advertises the Dulcet API endpoint. Current `/rest` clients negotiate
+`dulcetHome` v1 before calling `getDulcetHome` with a shelf id and `size` (1–50, default 20).
+Its `dulcetHome` response contains normal `album`, `playlist` and `song` arrays. Both contracts use the same
+selection function. Unknown shelf ids fail with 70. Reading recommendations changes no user data.
+The core's public shelf ids are available to shells and future system surfaces.
 
 ### 29.5 Lyrics
 
