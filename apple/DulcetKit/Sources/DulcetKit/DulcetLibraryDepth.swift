@@ -125,13 +125,13 @@ struct DulcetLibraryDepthHome: View {
                 Text(DulcetStrings.libraryPinsDevice)
                     .font(.caption).dulcetForeground(.secondaryTextOnWindow)
             }
-            DulcetReaderHomeLink(title: DulcetStrings.librarySongs, symbolName: "music.note", identifier: "dulcet.library.songs") {
+            DulcetReaderHomeLink(title: store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs, symbolName: "music.note", identifier: "dulcet.library.songs") {
                 store.pushReaderPage(.songs)
             }
             DulcetReaderHomeLink(title: DulcetStrings.libraryDownloaded, symbolName: "arrow.down.circle", identifier: "dulcet.library.downloaded") {
                 store.pushReaderPage(.downloaded)
             }
-            Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+            Button(store.myLibraryAvailable ? DulcetStrings.libraryShuffleServer : DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
                 store.librarySession?.shuffleLibrarySongs(using: store)
             }
             .buttonStyle(.borderedProminent)
@@ -205,7 +205,7 @@ struct DulcetLibraryCategoryControls: View {
 struct DulcetLibrarySongsPage: View {
     @Environment(DulcetPresentationStore.self) private var store
     let downloaded: Bool
-    private var title: String { downloaded ? DulcetStrings.libraryDownloaded : DulcetStrings.librarySongs }
+    private var title: String { downloaded ? DulcetStrings.libraryDownloaded : store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs }
 
     var body: some View {
         DulcetReaderScreen(query: downloaded ? .downloaded : .songs) { model in

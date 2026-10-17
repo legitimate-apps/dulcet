@@ -425,5 +425,7 @@
 "libraryDepth.searchSeeAll" = "%@ (%ld) · See All";
 "libraryDepth.undatedAlbums" = "Release Date uses the server’s year ordering. Albums without a year are available in Title order.";
 "libraryDepth.localOrder" = "Sorted and filtered on this device";
+"libraryDepth.serverSongs" = "Server Songs";
+"libraryDepth.shuffleServer" = "Shuffle Server Songs";
 "libraryDepth.loadMore" = "Load More";
 "libraryDepth.loadedScope" = "Showing %ld loaded items. Scroll or choose Load More to continue.";

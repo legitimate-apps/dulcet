@@ -153,7 +153,9 @@ struct DulcetMyLibrarySectionPage: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
-                                DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                                if section != .recent {
+                                    DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                                }
                                 DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                                 if section == .songs { DulcetMyLibraryShuffle(songs: library.songs) }
                                 if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
@@ -312,7 +314,9 @@ struct DulcetMyLibraryView: View {
                             .accessibilityIdentifier("dulcet.myLibrary.refresh")
 #endif
                         DulcetLibraryDepthHome(width: geometry.size.width)
-                        DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                        if section != .recent {
+                            DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
+                        }
                         if let library = store.librarySession?.myLibrary {
                             if section == .songs || section == .recent { DulcetMyLibraryShuffle(songs: library.songs) }
                             DulcetMyLibraryStatusLines(library: library, onRetry: refresh)

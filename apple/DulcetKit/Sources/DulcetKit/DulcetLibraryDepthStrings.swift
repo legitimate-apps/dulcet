@@ -13,6 +13,8 @@ extension DulcetStrings {
     static let libraryUnpin = dynamicText("libraryDepth.libraryUnpin", fallback: "Unpin from Library")
     static let libraryPinsDevice = dynamicText("libraryDepth.libraryPinsDevice", fallback: "Pins are saved on this device for this account.")
     static let librarySongs = dynamicText("libraryDepth.librarySongs", fallback: "Songs")
+    static let libraryServerSongs = dynamicText("libraryDepth.serverSongs", fallback: "Server Songs")
+    static let libraryShuffleServer = dynamicText("libraryDepth.shuffleServer", fallback: "Shuffle Server Songs")
     static let libraryDownloaded = dynamicText("libraryDepth.libraryDownloaded", fallback: "Downloaded")
     static let libraryShuffleAll = dynamicText("libraryDepth.libraryShuffleAll", fallback: "Shuffle All")
     static let libraryReleaseDate = dynamicText("libraryDepth.libraryReleaseDate", fallback: "Release Date")
