@@ -3792,7 +3792,12 @@ final class DulcetiOSUITests: XCTestCase {
         }
         capturePrevious?(previous == "1")
         let expected = enabled ? "1" : "0"
-        if previous != expected { toggle.tap() }
+        if previous != expected {
+            // The native Switch's AX frame includes its label and the gap before the thumb.
+            // A center tap landed in that gap (x=201 in a 370-point row) and left it on.
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+                .withOffset(CGVector(dx: -24, dy: 0)).tap()
+        }
         let chosen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: toggle)
         guard XCTWaiter.wait(for: [chosen], timeout: 10) == .completed else {
             XCTFail("The real AutoPlay switch must acknowledge \(expected); value=\(String(describing: toggle.value))")
