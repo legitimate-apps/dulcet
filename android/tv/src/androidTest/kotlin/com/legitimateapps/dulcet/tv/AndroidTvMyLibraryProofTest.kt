@@ -81,7 +81,7 @@ class AndroidTvMyLibraryProofTest {
                     return@activity
                 }
                 step(shots, "mylibrary") {
-                    awaitTag("browse.open") && awaitTag("mylibrary.view.albums") && shots.settle(2_000)
+                    select("library.open") && awaitTag("browse.open") && awaitTag("mylibrary.view.albums") && shots.settle(2_000)
                 }
                 // Browse is the catalog; its Albums view's first card opens an album.
                 step(shots, "browse") {

@@ -808,6 +808,13 @@ implementation tests, not requirements on another server's algorithm.
 
 Recently Played Playlists uses actual playlist contexts in the user’s submitted play history.
 Servers do not infer playlist listens from membership, modification dates, or album plays.
+The advertised `dulcetHome` v1 REST bridge accepts optional `dulcetContextType=playlist` and
+`dulcetContextId=<playlist id>` on **submitted** `scrobble` calls. Clients send them only when
+that extension is offered and the actual queue source is the playlist. The server records the
+latest submitted timestamp only when the song belongs to that visible playlist; missing,
+private, deleted or unrelated contexts are ignored without failing the ordinary scrobble.
+Reading a playlist and `submission=false` do not record playlist history. Retrying or submitting
+an older timestamp cannot move the playlist backwards or create a playlist play count.
 Continue Listening in the app resumes its existing queue at the current position.
 
 ## 16. Capabilities and extensions

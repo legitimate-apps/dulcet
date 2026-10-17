@@ -67,4 +67,52 @@ class HomeRecommendationsTest {
             assertTrue(extensions.any { it.jsonObject["name"]!!.jsonPrimitive.content=="dulcetHome" })
         } finally { ctx.db.close() }
     }
+    @Test fun `REST playlist context records only submitted member plays and merges with API history`() = testApplication {
+        val ctx = Fixtures.context(Files.createTempDirectory("home-context"))
+        repeat(2) { i -> Fixtures.track(ctx.config.musicFolder.resolve("$i.flac"), tags=mapOf("title" to "Track $i", "album" to "Album")) }
+        ctx.scanner.scan()
+        val alice = ctx.users.create("alice", "password", false)
+        val bob = ctx.users.create("bob", "password", false)
+        val ids = ctx.db.read { query("SELECT id FROM track ORDER BY title") { it.string("id") } }
+        val at = System.currentTimeMillis()
+        ctx.db.write {
+            for ((id, owner, track) in listOf(Triple("played", alice.id, ids[0]), Triple("unrelated", alice.id, ids[1]), Triple("private", bob.id, ids[0]))) {
+                execute("INSERT INTO playlist(id,owner_id,name,public,created,changed) VALUES (?,?,?,0,?,?)",id,owner,id,at,at)
+                execute("INSERT INTO playlist_track(playlist_id,position,track_id) VALUES (?,0,?)",id,track)
+            }
+        }
+        application { dulcetModule(ctx) }
+        fun recent(user: String) = ctx.home.shelves(user, only="recentPlaylists").single().ids
+        suspend fun submit(playlist: String, time: Long = at, submission: Boolean = true) =
+            client.rest("scrobble", "alice", "password", "id" to ids[0], "time" to time.toString(),
+                "submission" to submission.toString(), "dulcetContextType" to "playlist", "dulcetContextId" to playlist)
+        try {
+            client.rest("getPlaylist", "alice", "password", "id" to "played")
+            assertTrue(recent(alice.id).isEmpty(), "Reading a playlist is not playing it")
+            submit("played", submission=false)
+            assertTrue(recent(alice.id).isEmpty(), "Now playing is not an eligible submitted play")
+            submit("private")
+            submit("unrelated")
+            assertTrue(recent(alice.id).isEmpty(), "Private or unrelated context must be ignored")
+            assertTrue(recent(bob.id).isEmpty(), "No other user's playlist annotation is written")
+            submit("played")
+            submit("played")
+            submit("played", at-1000)
+            assertEquals(listOf("played"), recent(alice.id))
+            ctx.db.read {
+                assertEquals(at, long("SELECT played FROM annotation WHERE user_id=? AND item_type='playlist' AND item_id='played'",alice.id))
+                assertEquals(0L, long("SELECT play_count FROM annotation WHERE user_id=? AND item_type='playlist' AND item_id='played'",alice.id))
+            }
+            ctx.db.write {
+                execute("INSERT INTO api_play(user_id,id,track_id,started_at,payload,recorded_at) VALUES (?,?,?,?,?,?)",alice.id,"same-playlist",ids[0],at,
+                    """{"context":{"type":"playlist","id":"played"}}""",at)
+            }
+            assertEquals(listOf("played"), recent(alice.id), "API and REST history share one shelf item")
+            val home = client.rest("getDulcetHome", "alice", "password", "shelf" to "recentPlaylists")["dulcetHome"]!!.jsonObject
+            assertEquals("played", home["playlist"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
+            ctx.db.write { execute("INSERT OR REPLACE INTO api_user_access(user_id,source_ids) VALUES (?,'[]')",alice.id) }
+            assertTrue(recent(alice.id).isEmpty(), "Catalog permission still applies to recorded playlist history")
+        } finally { ctx.db.close() }
+    }
+
 }

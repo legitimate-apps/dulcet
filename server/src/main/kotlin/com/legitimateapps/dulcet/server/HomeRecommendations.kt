@@ -52,11 +52,14 @@ class HomeRecommendations(private val ctx: ServerContext) {
             pick("recent", "Recently Played", "Albums you played most recently", "album") { albumIds("played>0", "played DESC") }
             pick("recentPlaylists", "Recently Played Playlists", "Playlists named in your listening history", "playlist") {
                 ctx.db.read {
-                    query("""SELECT p.id FROM api_play h JOIN playlist p ON p.id=json_extract(h.payload,'$.context.id')
-                        WHERE h.user_id=? AND h.payload IS NOT NULL AND json_extract(h.payload,'$.context.type')='playlist'
-                        AND (p.owner_id=? OR p.public=1)
+                    query("""SELECT p.id FROM (
+                        SELECT json_extract(payload,'$.context.id') AS playlist_id,started_at AS played FROM api_play
+                        WHERE user_id=? AND payload IS NOT NULL AND json_extract(payload,'$.context.type')='playlist'
+                        UNION ALL SELECT item_id,played FROM annotation WHERE user_id=? AND item_type='playlist' AND played>0
+                        ) h JOIN playlist p ON p.id=h.playlist_id
+                        WHERE (p.owner_id=? OR p.public=1)
                         AND EXISTS (SELECT 1 FROM playlist_track pt JOIN track t ON t.id=pt.track_id WHERE pt.playlist_id=p.id AND $visible)
-                        GROUP BY p.id ORDER BY MAX(h.started_at) DESC,p.id LIMIT ?""", user,user,limit) { it.string("id") }
+                        GROUP BY p.id ORDER BY MAX(h.played) DESC,p.id LIMIT ?""", user,user,user,limit) { it.string("id") }
                 }
             }
             pick("frequent", "Heavy Rotation", "Albums with the most plays", "album") { albumIds("plays>0", "plays DESC, played DESC") }

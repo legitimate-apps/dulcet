@@ -57,6 +57,9 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
             val ids = call.params("id").filter(String::isNotEmpty).ifEmpty { throw SubsonicError.missing("id") }
             val times = call.params("time").map { it.toLongOrNull() }
             val submission = call.bool("submission", true)
+            val playlistContext = call.param("dulcetContextId")?.takeIf {
+                call.param("dulcetContextType") == "playlist" && it.isNotEmpty()
+            }
             val now = System.currentTimeMillis()
             val client = call.param("c") ?: ""
             db.write {
@@ -73,6 +76,21 @@ fun userDataHandlers(ctx: ServerContext): Map<String, Handler> {
                                 "UPDATE annotation SET play_count = play_count + 1, played = MAX(COALESCE(played, 0), ?) WHERE user_id = ? AND item_type = ? AND item_id = ?",
                                 at, call.user.id, type, itemId,
                             )
+                        }
+                        // Optional dulcetHome context accompanies an actual submitted play. A
+                        // deleted/private playlist or an unrelated queued song drops only this
+                        // context, preserving ordinary REST scrobble delivery and its response.
+                        val playlist = playlistContext?.let { context ->
+                            string("""SELECT p.id FROM playlist p JOIN playlist_track pt ON pt.playlist_id=p.id
+                                WHERE p.id=? AND pt.track_id=? AND (p.owner_id=? OR p.public=1) LIMIT 1""",
+                                context, id, call.user.id)
+                        }
+                        if (playlist != null) {
+                            ensureAnnotation(call.user.id, "playlist", playlist)
+                            // MAX makes ranking stable on durable retries, without claiming a
+                            // playlist play count or changing track scrobble deduplication.
+                            execute("UPDATE annotation SET played=MAX(COALESCE(played,0),?) WHERE user_id=? AND item_type='playlist' AND item_id=?",
+                                at, call.user.id, playlist)
                         }
                     } else {
                         execute(

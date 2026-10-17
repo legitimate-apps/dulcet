@@ -7782,7 +7782,9 @@ Dulcet API v1 adds `dulcet.home` version 1 and `GET /recommendations/home` (§30
 `docs/dulcet-api/openapi.yaml`); the Home conformance profile covers its bounded, per-user shelves.
 Dulcet Server computes them from live and imported annotations (§29.4). The same picks are
 available to current OpenSubsonic-authenticated apps through advertised `dulcetHome` version 1,
-`getDulcetHome(shelf,size)`. Core `ListenNowShelf` queries use the persistent reader seen-cache,
+`getDulcetHome(shelf,size)`. Submitted REST scrobbles may carry the actual playlist source via
+`dulcetContextType=playlist` and `dulcetContextId` when that extension is advertised; visible
+member plays update only the playlist's last-played timestamp. Core `ListenNowShelf` queries use the persistent reader seen-cache,
 including cached first paint, freshness, account binding and failure retention. Plain servers use
 only recent/frequent/newest/random album lists and starred content; unsupported personal shelves
 are empty and hidden. Listen Now is a first destination beside Library and Browse. Track shelves
@@ -13543,6 +13545,14 @@ catalog access before selection; no other user's annotations participate.
 Its `dulcetHome` response contains normal `album`, `playlist` and `song` arrays. Both contracts use the same
 selection function. Unknown shelf ids fail with 70. Reading recommendations changes no user data.
 The core's public shelf ids are available to shells and future system surfaces.
+
+The same extension accepts optional `dulcetContextType=playlist` and `dulcetContextId` on
+`scrobble` submissions. Clients attach only the actual playlist queue source, after negotiating
+`dulcetHome` v1. For a visible playlist containing the submitted song, the server stores
+`MAX(previous played, submitted timestamp)` in the user's playlist annotation; no playlist play
+count is manufactured. Invalid, private, deleted and non-member contexts are ignored without
+rejecting the ordinary song scrobble. Playlist reads and now-playing reports do not create
+history. API playlist contexts and these REST annotations merge into one deduplicated shelf.
 
 ### 29.5 Lyrics
 
