@@ -105,13 +105,23 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
     }
 }
 
+/** Keep the publication alive outside lazy content that can measure zero before it arrives. */
 @Composable
-internal fun LibraryPins(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
+internal fun rememberPinnedItems(session: LibrarySession): List<AndroidLibraryItem> {
     val depth by session.depth.collectAsState()
-    if (depth?.pinCount == 0 || depth == null) return
+    if (depth?.pinCount == 0 || depth == null) return emptyList()
     val surface = rememberSurface(session, "pinned") { openPinned() }
     val publication by surface.state.collectAsState()
-    val items = publication?.items.orEmpty()
+    return publication?.items.orEmpty()
+}
+
+@Composable
+internal fun LibraryPins(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
+    LibraryPins(account, session, actions, rememberPinnedItems(session))
+}
+
+@Composable
+internal fun LibraryPins(account: SearchAccount, session: LibrarySession, actions: PhoneActions, items: List<AndroidLibraryItem>) {
     if (items.isEmpty()) return
     Column(Modifier.fillMaxWidth().testTag("library.pinned")) {
         Text(stringResource(SharedR.string.library_pinned), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.titleLarge)

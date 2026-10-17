@@ -93,6 +93,29 @@ class PhoneLibraryDepthTest {
         await { session.depth.value?.pinCount == 0 && !exists("library.pinned.item.0") }
     }
 
+    @Test fun aPinArrivingAfterHomeRowsAreLaidOutBecomesVisibleAtTheTop() {
+        host()
+        await { session.depth.value?.pinCount == 0 && exists("library.home.0.item.0") }
+        val albums = session.openAlbums(AndroidAlbumListType.AlphabeticalByName)
+        try {
+            await { albums.state.value?.items?.isNotEmpty() == true }
+            compose.runOnIdle { session.togglePin(albums.state.value!!.items.first()) }
+            await { session.depth.value?.pinCount == 1 }
+            await { exists("library.pinned.item.0") }
+            compose.onNodeWithTag("library.pinned.item.0").assertIsDisplayed()
+            assertTrue(text("library.pinned.item.0").contains("Album 1"))
+            compose.onNodeWithTag("library.home").performScrollToIndex(2)
+            val scrolled = compose.onNodeWithTag("library.home").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+            assertTrue(scrolled > 0f)
+            val before = session.depth.value
+            compose.runOnIdle { session.refreshDepth() }
+            await { session.depth.value !== before }
+            compose.waitForIdle()
+            assertEquals(scrolled, compose.onNodeWithTag("library.home").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value(),
+                "Refreshing pin metadata must retain the user's position")
+        } finally { albums.close() }
+    }
+
     @Test fun rapidCategoryAndPinChangesKeepTheLastIntentBeforeSnapshotsReturn() {
         host()
         val surface = session.openAlbums(AndroidAlbumListType.AlphabeticalByName)

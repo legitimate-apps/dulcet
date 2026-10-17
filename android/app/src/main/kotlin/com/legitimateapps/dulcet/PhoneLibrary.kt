@@ -201,9 +201,15 @@ internal fun LibraryHome(
 @Composable
 private fun HomeRows(account: SearchAccount, session: LibrarySession, actions: PhoneActions, myLibrary: MyLibrarySession? = null) {
     val rows = rememberHomeRows(session)
-    LazyColumn(Modifier.fillMaxSize().testTag("library.home"), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { LibraryPins(account, session, actions) }
-        itemsIndexed(rows) { index, row -> HomeRow(account, index, row, session, actions, myLibrary) }
+    val pins = rememberPinnedItems(session)
+    val list = rememberLazyListState()
+    val hasPins = pins.isNotEmpty()
+    // A header that arrives after the first layout belongs at the top. Metadata refreshes and
+    // changes within an existing pins row must retain the user's scroll position.
+    LaunchedEffect(hasPins) { if (hasPins) list.scrollToItem(0) }
+    LazyColumn(Modifier.fillMaxSize().testTag("library.home"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (hasPins) item(key = "pins") { LibraryPins(account, session, actions, pins) }
+        itemsIndexed(rows, key = { _, row -> row.row.titleResource() }) { index, row -> HomeRow(account, index, row, session, actions, myLibrary) }
     }
 }
 
