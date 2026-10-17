@@ -419,15 +419,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // Choosing a label-based Cell fallback before it exists leaves the wait on cells
             // with no label; SwiftUI exposes the destination label on their StaticText child.
             let identifier = "dulcet.sidebar.\(section)"
-            return app.staticTexts.allElementsBoundByIndex.first(where: { $0.identifier == identifier })
-                ?? app.staticTexts[identifier].firstMatch
+            // Filter in the query instead of enumerating a potentially large Songs tree.
+            // Bound elements can go stale while an offline list refreshes after reconnecting.
+            return app.staticTexts.matching(NSPredicate(format: "identifier == %@", identifier)).firstMatch
         }
         let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
     @MainActor private func awaitDestination(_ section: String) -> Bool {
-        // Re-resolve after publication: the initial iPad name-index query can miss a bound
+        // Re-resolve after publication: the initial iPad name-index query can miss a visible
         // sidebar Text even while the same snapshot contains the visible Browse label.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             self.destination(section).exists
