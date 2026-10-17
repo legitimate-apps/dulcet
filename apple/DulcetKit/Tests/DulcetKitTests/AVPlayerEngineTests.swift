@@ -10,6 +10,280 @@ import CoreAudio
 import Network
 #endif
 
+/// Real decoded PCM drives the boundary; these fail if overlap is merely reported without
+/// running both players, if the gain ignores master volume, or if a tail leaks playback events.
+@Suite(.serialized)
+struct AVPlayerCrossfadeTests {
+    @Test
+    func crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds() async throws {
+        let fixture = try await CrossfadeFixture.start()
+        let engine = fixture.engine
+        defer {
+            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
+            try? FileManager.default.removeItem(at: fixture.localURL)
+        }
+        try await waitUntil("crossfade did not start", engine: engine, timeout: 30) {
+            guard let state = engine.crossfadeStateForTesting() else { return false }
+            return state.incomingRate > 0 && state.outgoingRate > 0 &&
+                state.incomingVolume > 0.05 && state.outgoingVolume > 0.05
+        }
+        let state = try #require(engine.crossfadeStateForTesting())
+        #expect(state.outgoingPosition < 6, "the old decoder must still be before its physical end")
+        #expect(abs(state.incomingVolume + state.outgoingVolume - 1) < 0.02)
+        #expect(fixture.controls.publications.last?.sessionID == fixture.next.playbackSessionID)
+        #expect(await execute(engine, .setVolume(commandID: .init("fade-master"), volume: 0.4)) ==
+            .completed(commandID: .init("fade-master"), result: .withoutData))
+        let faded = try #require(engine.crossfadeStateForTesting())
+        #expect(abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02)
+        let boundary = fixture.events.snapshot
+        let endIndex = try #require(boundary.firstIndex {
+            if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
+        })
+        if case let .endedNaturally(_, position) = boundary[endIndex] {
+            // The 50 ms media observer allows 250 ms for decoder/queue scheduling on loaded hosts.
+            #expect(abs(position - 4) < 0.25)
+        }
+        #expect(boundary[endIndex + 1] == .advancedToPreloaded(
+            oldAttemptID: fixture.first.attemptID, newAttemptID: fixture.next.attemptID))
+        try await waitUntil("tail was not disposed after its fade", engine: engine, timeout: 10) {
+            engine.crossfadeStateForTesting() == nil
+        }
+        let after = fixture.events.snapshot
+        #expect(after.filter { if case let .endedNaturally(id, _) = $0 {
+            id == fixture.first.attemptID
+        } else { false } }.count == 1)
+        #expect(after.filter { if case .advancedToPreloaded = $0 { true } else { false } }.count == 1)
+        #expect(!after.dropFirst(endIndex + 2).contains { $0.attemptID == fixture.first.attemptID })
+        #expect(fixture.originalPlayer.rate == 0)
+    }
+
+    @Test(arguments: ["pause", "stop", "seek", "replace", "release"])
+    func transportChangesDisposeTheOutgoingTail(action: String) async throws {
+        let fixture = try await CrossfadeFixture.start()
+        let engine = fixture.engine
+        defer {
+            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
+            try? FileManager.default.removeItem(at: fixture.localURL)
+        }
+        try await waitUntil("overlap never began", engine: engine, timeout: 30) {
+            engine.crossfadeStateForTesting()?.incomingVolume ?? 0 > 0.05
+        }
+        _ = try #require(engine.crossfadeStateForTesting())
+        let command: DulcetPlaybackCommand
+        switch action {
+        case "pause": command = .pause(commandID: .init(action))
+        case "stop": command = .stop(commandID: .init(action))
+        case "seek": command = .seek(commandID: .init(action), position: 0.5)
+        case "replace": command = .replaceCurrent(commandID: .init(action), plan: plan(
+            session: "crossfade-b", attempt: "replacement"))
+        default: command = .release(commandID: .init(action))
+        }
+        let outcome = await execute(engine, command)
+        #expect(!outcome.isRejectedForCrossfadeTest)
+        #expect(engine.crossfadeStateForTesting() == nil)
+        #expect(fixture.originalPlayer.rate == 0)
+        #expect(fixture.originalPlayer.items().isEmpty)
+        if ["pause", "stop", "release"].contains(action) {
+            #expect(engine.currentPlayerRateForTesting() == 0)
+        }
+    }
+
+    @Test
+    func seekingBackBeforeTheBoundaryKeepsTheCrossfadeArmed() async throws {
+        let fixture = try await CrossfadeFixture.start()
+        let engine = fixture.engine
+        defer {
+            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
+            try? FileManager.default.removeItem(at: fixture.localURL)
+        }
+        try await waitUntil("current item was not ready for seeking", engine: engine, timeout: 30) {
+            fixture.events.snapshot.contains {
+                if case let .ready(id, _, seekability) = $0 {
+                    id == fixture.first.attemptID && seekability == .seekable
+                } else { false }
+            }
+        }
+        #expect(await execute(engine, .seek(commandID: .init("forward"), position: 3)) ==
+            .completed(commandID: .init("forward"), result: .withoutData))
+        #expect(await execute(engine, .seek(commandID: .init("back"), position: 0)) ==
+            .completed(commandID: .init("back"), result: .withoutData))
+        #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        try await waitUntil("backward seek lost the armed boundary", engine: engine, timeout: 30) {
+            engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
+        }
+        let ended = try #require(fixture.events.snapshot.first {
+            if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
+        })
+        if case let .endedNaturally(_, position) = ended { #expect(abs(position - 4) < 0.25) }
+    }
+
+    @Test(arguments: [false, true])
+    func aBoundaryCallbackCannotOvertakeAPendingSeekOrReplayAfterIt(replaceDuringSeek: Bool) async throws {
+        let player = DeferredCrossfadeSeekPlayer()
+        let fixture = try await CrossfadeFixture.start(player: player)
+        let engine = fixture.engine
+        defer {
+            engine.execute(.release(commandID: .init("cleanup"))) { _ in }
+            try? FileManager.default.removeItem(at: fixture.localURL)
+        }
+        try await waitUntil("both real items were not ready", engine: engine, timeout: 30) {
+            player.items().count == 2 && player.items().allSatisfy { $0.status == .readyToPlay }
+        }
+        player.holdSeek()
+        let seeking = Task { await execute(engine, .seek(commandID: .init("held-seek"), position: 0)) }
+        try await waitUntil("seek was not held", engine: engine) { player.hasHeldSeek }
+        // Supply the same boundary timestamp AVFoundation can enqueue while seek completion
+        // is outstanding. The stored callback remains the pre-seek observer after rearming.
+        player.deliverOriginalTimestamp(4.1)
+        #expect(engine.crossfadeStateForTesting() == nil)
+        #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        if replaceDuringSeek {
+            let replacement = plan(resource: DulcetLocalFilePlaybackResource(
+                fileURL: fixture.localURL, exactByteLength: Int64(makePCMWave(duration: 6).count)),
+                session: "crossfade-a", attempt: "replacement-during-seek")
+            #expect(await execute(engine, .replaceCurrent(commandID: .init("replace-seeking"), plan: replacement)) ==
+                .accepted(commandID: .init("replace-seeking")))
+            _ = await execute(engine, .setCrossfade(commandID: .init("rearm-replacement"),
+                attemptID: replacement.attemptID, duration: 2))
+        }
+        player.finishSeek()
+        let expected: DulcetPlaybackCommandOutcome = replaceDuringSeek
+            ? .rejected(commandID: .init("held-seek"), reason: .invalidState)
+            : .completed(commandID: .init("held-seek"), result: .withoutData)
+        #expect(await seeking.value == expected)
+        player.deliverOriginalTimestamp(4.1)
+        #expect(engine.crossfadeStateForTesting() == nil)
+        #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        try await waitUntil("seek did not rearm a fresh observer", engine: engine, timeout: 30) {
+            engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
+        }
+    }
+
+    @Test
+    func staleAndInvalidCrossfadeCommandsAreRejectedAndZeroKeepsGapless() async throws {
+        let player = AVQueuePlayer()
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
+        defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let first = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)))
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
+        #expect(await execute(engine, .setCrossfade(commandID: .init("stale"),
+            attemptID: .init("stale"), duration: 1)) ==
+            .rejected(commandID: .init("stale"), reason: .invalidState))
+        #expect(await execute(engine, .setCrossfade(commandID: .init("invalid"),
+            attemptID: first.attemptID, duration: .nan)) ==
+            .rejected(commandID: .init("invalid"), reason: .invalidState))
+        _ = await execute(engine, .setCrossfade(commandID: .init("arm"), attemptID: first.attemptID, duration: 1))
+        #expect(await execute(engine, .setCrossfade(commandID: .init("zero"),
+            attemptID: first.attemptID, duration: 0)) ==
+            .completed(commandID: .init("zero"), result: .withoutData))
+        let next = plan(session: "next", attempt: "next")
+        _ = await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        try await waitUntil("gapless item never advanced", engine: engine, timeout: 30) {
+            events.containsAdvance(old: first.attemptID, new: next.attemptID)
+        }
+        #expect(engine.crossfadeStateForTesting() == nil)
+        #expect(player.currentItem != nil, "gapless continues on the original queue")
+        let ended = try #require(events.snapshot.first {
+            if case let .endedNaturally(id, _) = $0 { id == first.attemptID } else { false }
+        })
+        if case let .endedNaturally(_, position) = ended { #expect(abs(position - 2) < 0.1) }
+    }
+}
+
+/// Retains real AVFoundation decoding while controlling only the interleaving of a seek
+/// completion and an already-created media observer. Callbacks always run on the engine queue.
+private final class DeferredCrossfadeSeekPlayer: AVQueuePlayer, @unchecked Sendable {
+    private nonisolated let seekLock = NSLock()
+    private nonisolated(unsafe) var shouldHold = false
+    private nonisolated(unsafe) var heldSeek: (CMTime, CMTime, CMTime, @Sendable (Bool) -> Void)?
+    private nonisolated(unsafe) var originalCallback: (@Sendable (CMTime) -> Void)?
+    private nonisolated(unsafe) var callbackQueue: DispatchQueue?
+
+    nonisolated func holdSeek() { seekLock.withLock { shouldHold = true } }
+    nonisolated var hasHeldSeek: Bool { seekLock.withLock { heldSeek != nil } }
+
+    nonisolated override func seek(
+        to time: CMTime, toleranceBefore: CMTime, toleranceAfter: CMTime,
+        completionHandler: @escaping @Sendable (Bool) -> Void
+    ) {
+        let hold = seekLock.withLock {
+            if shouldHold {
+                heldSeek = (time, toleranceBefore, toleranceAfter, completionHandler)
+                shouldHold = false
+                return true
+            }
+            return false
+        }
+        if !hold {
+            super.seek(to: time, toleranceBefore: toleranceBefore, toleranceAfter: toleranceAfter,
+                       completionHandler: completionHandler)
+        }
+    }
+
+    nonisolated func finishSeek() {
+        let held = seekLock.withLock { let value = heldSeek; heldSeek = nil; return value }
+        guard let (time, before, after, completion) = held else { return }
+        super.seek(to: time, toleranceBefore: before, toleranceAfter: after, completionHandler: completion)
+    }
+
+    nonisolated override func addPeriodicTimeObserver(
+        forInterval interval: CMTime, queue: DispatchQueue?, using block: @escaping @Sendable (CMTime) -> Void
+    ) -> Any {
+        seekLock.withLock {
+            if originalCallback == nil { originalCallback = block; callbackQueue = queue }
+        }
+        return super.addPeriodicTimeObserver(forInterval: interval, queue: queue, using: block)
+    }
+
+    nonisolated func deliverOriginalTimestamp(_ seconds: Double) {
+        let (queue, callback) = seekLock.withLock { (callbackQueue, originalCallback) }
+        queue?.sync { callback?(CMTime(seconds: seconds, preferredTimescale: 1_000)) }
+    }
+}
+
+private extension DulcetPlaybackCommandOutcome {
+    var isRejectedForCrossfadeTest: Bool {
+        if case .rejected = self { return true }
+        return false
+    }
+}
+
+private struct CrossfadeFixture {
+    let localURL: URL
+    let engine: DulcetAVPlayerEngine
+    let originalPlayer: AVQueuePlayer
+    let events: PlaybackEventRecorder
+    let controls: RecordingSystemMediaControls
+    let first: DulcetPlaybackPlan
+    let next: DulcetPlaybackPlan
+
+    static func start(player: AVQueuePlayer = AVQueuePlayer()) async throws -> CrossfadeFixture {
+        let controls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: controls)
+        let events = PlaybackEventRecorder()
+        engine.setEventListener { events.append($0) }
+        let bytes = makePCMWave(duration: 6)
+        let localURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        try bytes.write(to: localURL)
+        let first = plan(resource: DulcetLocalFilePlaybackResource(
+            fileURL: localURL, exactByteLength: Int64(bytes.count)),
+            session: "crossfade-a", attempt: "crossfade-a")
+        let next = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 6)),
+                        session: "crossfade-b", attempt: "crossfade-b")
+        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
+        _ = await execute(engine, .preloadNext(commandID: .init("preload"), plan: next))
+        #expect(await execute(engine, .setCrossfade(commandID: .init("crossfade"),
+            attemptID: first.attemptID, duration: 2)) ==
+            .completed(commandID: .init("crossfade"), result: .withoutData))
+        _ = await execute(engine, .play(commandID: .init("play")))
+        return Self(localURL: localURL, engine: engine, originalPlayer: player, events: events, controls: controls,
+                    first: first, next: next)
+    }
+}
+
 @Suite(.serialized)
 struct AVPlayerResourceLoaderIntegrationTests {
     @Test

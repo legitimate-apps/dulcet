@@ -13,6 +13,33 @@
   ],
   "features": [
     {
+      "id": "playback.crossfade",
+      "title": "Crossfade at the preloaded playback boundary",
+      "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#128-gapless-and-preload",
+      "gates": [],
+      "conformance": [],
+      "platforms": {
+        "macos": {
+          "status": "partial",
+          "reason": "Apple engine implements complementary gains on simultaneous players, with the incoming session owning system controls from the early boundary. AVPlayerCrossfadeTests/crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds exercises local-file and resource-loader PCM; transportChangesDisposeTheOutgoingTail covers pause, stop, seek, replacement and release. Runtime results pending; production controller policy and speaker output are not claimed."
+        },
+        "ios": {
+          "status": "partial",
+          "reason": "Same Apple engine and AVPlayerCrossfadeTests as macOS. iPhone simulator runtime results pending; controller policy and speaker output are not claimed."
+        },
+        "ipados": {
+          "status": "partial",
+          "reason": "Shared Apple engine implementation and AVPlayerCrossfadeTests; no iPad runtime execution yet. iPhone evidence does not stand for iPad."
+        },
+        "tvos": {
+          "status": "partial",
+          "reason": "Shared Apple engine implementation and AVPlayerCrossfadeTests; tvOS compilation pending and no TV runtime execution yet."
+        },
+        "android": {"status": "planned", "reason": "Android engine crossfade is tracked separately from the Apple engine implementation."},
+        "androidtv": {"status": "planned", "reason": "Android TV engine crossfade is tracked separately from the Apple engine implementation."}
+      }
+    },
+    {
       "id": "account.connect",
       "title": "Connect an OpenSubsonic server",
       "spec": "docs/superpowers/specs/2026-08-18-dulcet-design.md#102-the-login-sequence",
