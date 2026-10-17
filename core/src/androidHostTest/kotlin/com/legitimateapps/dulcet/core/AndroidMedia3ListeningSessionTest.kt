@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.seconds
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 @OptIn(ExperimentalCoroutinesApi::class)
-class AndroidListeningSessionTest {
+class AndroidMedia3ListeningSessionTest {
     @Before fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         RuntimeEnvironment.getApplication().getSharedPreferences("listening-session", Context.MODE_PRIVATE).edit().clear().commit()
@@ -31,7 +31,7 @@ class AndroidListeningSessionTest {
             f.controller.setSleepTimer(SleepTimerChoice.Minutes15)
             ShadowSystemClock.advanceBy(java.time.Duration.ofMillis(895_000))
             f.controller.tickSleepTimer()
-            assertEquals(5_000, f.controller.state.value.sleepRemainingMilliseconds)
+            assertEquals(5_000L, f.controller.state.value.sleepRemainingMilliseconds)
             assertEquals(0.5f, f.probe.volume)
             assertTrue(f.controller.state.value.playWhenReady)
             f.controller.setSleepTimer(null)
@@ -160,8 +160,8 @@ class AndroidListeningSessionTest {
         val incoming = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
         val bridge = AndroidSwitchingSessionPlayer(outgoing)
         try {
-            outgoing.setMediaItem(androidx.media3.common.MediaItem.Builder().setMediaId("outgoing").build())
-            incoming.setMediaItem(androidx.media3.common.MediaItem.Builder().setMediaId("incoming").build())
+            outgoing.setMediaItem(androidx.media3.common.MediaItem.Builder().setMediaId("outgoing").setUri("dulcet://fixture/outgoing").build())
+            incoming.setMediaItem(androidx.media3.common.MediaItem.Builder().setMediaId("incoming").setUri("dulcet://fixture/incoming").build())
             incoming.playWhenReady = true
             bridge.switchTo(incoming)
             assertEquals("incoming", bridge.currentMediaItem?.mediaId)

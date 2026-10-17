@@ -346,7 +346,7 @@ internal class AndroidMedia3Engine(
     internal fun sample() {
         val plan = current ?: return
         if (released || terminal || !ready || !player.isPlaying || interrupted) return
-        applyGains()
+        if (tail != null) applyGains()
         val now = player.currentPosition.coerceAtLeast(0)
         if (now > lastPosition) {
             if (!began) {

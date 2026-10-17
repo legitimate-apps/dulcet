@@ -265,6 +265,7 @@ public class AndroidPlaybackController internal constructor(
     private var preloadJob: Job? = null
     private var preloadAttempt: AttemptId? = null
     private var preloadTriedBoundary: String? = null
+    private var progressedAttempt: AttemptId? = null
     private var preloadBlockedUntilMillis = 0L
     private val initialPlayer: Player = boundaries?.player ?: newPlayer()
     private fun newPlayer(handleFocus: Boolean = true): Player = ExoPlayer.Builder(playbackContext).build().apply {
@@ -361,6 +362,7 @@ public class AndroidPlaybackController internal constructor(
         }
         engine.setEventListener { event ->
             if (closed) return@setEventListener
+            if (event is PlaybackEngineEvent.PlaybackProgressBegan) progressedAttempt = event.attemptId
             if (event is PlaybackEngineEvent.FailedBeforeStart) failure = event.error
             if (event is PlaybackEngineEvent.FailedAfterPartial) failure = event.error
             if (event is PlaybackEngineEvent.EndedNaturally && !engine.isAdvancingOverlap)
@@ -1248,6 +1250,7 @@ public class AndroidPlaybackController internal constructor(
             activePlan = null; pendingResume = null
         }
         val outcome = engine.executeOnPlayerThread(command)
+        if (command !is PlaybackCommand.Release) sessionBridge?.refresh()
         if (outcome is PlaybackCommandOutcome.CommandRejected) {
             val reason = outcome.reason
             // A refused transport verb (seek while not seekable, pause with nothing prepared, a
@@ -1331,7 +1334,7 @@ public class AndroidPlaybackController internal constructor(
         if (boundaries?.player != null && boundaries.overlapPlayer == null) return
         val snapshot = queue.snapshot()
         val session = snapshot.currentSession ?: return
-        if (session.currentAttempt.phase != PlaybackAttemptPhase.Progressing) return
+        if (progressedAttempt != session.currentAttempt.attemptId) return
         val next = snapshot.entries.getOrNull((snapshot.currentIndex ?: -1) + 1)
             ?: snapshot.entries.firstOrNull()
         val boundary = "${session.currentAttempt.attemptId}:${next?.queueEntryId}:${snapshot.crossfadeIntoNext}"

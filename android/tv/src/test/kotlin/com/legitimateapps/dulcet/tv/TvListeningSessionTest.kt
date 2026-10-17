@@ -38,7 +38,7 @@ class TvListeningSessionTest {
         key("tv.listening.sleep", Key.DirectionCenter)
         compose.onNodeWithTag("tv.listening.sleep.15m").assertIsFocused()
         key("tv.listening.sleep.15m", Key.DirectionCenter)
-        assertEquals(listOf(SleepTimerChoice.Minutes15), sleeps)
+        assertEquals(listOf<SleepTimerChoice?>(SleepTimerChoice.Minutes15), sleeps)
         // Reopen, move down to End of queue using only the remote, then cancel it.
         key("tv.listening.sleep", Key.DirectionCenter)
         repeat(5) { compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionDown) } }
@@ -55,6 +55,37 @@ class TvListeningSessionTest {
         compose.onNodeWithTag("tv.listening.crossfade.12").assertIsFocused()
         key("tv.listening.crossfade.12", Key.DirectionCenter)
         assertEquals(listOf(12), fades)
+    }
+
+    @Test fun fullPlayerKeepsListeningOptionsReachableWithLongTitleRatingAndQueue() {
+        val state = AndroidPlaybackState(title = "A long album performance title that takes two lines on a television",
+            artist = "Artist", album = "Album", playbackSessionId = "session", currentIndex = 0,
+            queue = listOf(AndroidQueueEntry("one", AndroidTrack("provider", "one", "Your song")),
+                AndroidQueueEntry("two", AndroidTrack("provider", "two", "Similar song"), true)))
+        val actions = object : TvPlayerActions {
+            override fun togglePlayPause() {}
+            override fun previous() {}
+            override fun next() {}
+            override fun setShuffle(enabled: Boolean) {}
+            override fun cycleRepeatMode() {}
+            override fun seek(positionMilliseconds: Long) {}
+            override fun jumpTo(queueEntryId: String) {}
+            override fun moveEntry(queueEntryId: String, toIndex: Int) = true
+            override fun removeEntry(queueEntryId: String) = true
+            override fun clearUpcoming() = true
+        }
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) {
+            TvNowPlayingScreen(null, state, actions, rating = TvPlayerRating(4) {},
+                listening = { TvListeningSessionButton(state, {}, {}, {}) })
+        } }
+        compose.onNodeWithTag("tv.listening.open").assertIsDisplayed()
+        focus("tv.listening.open")
+        key("tv.listening.open", Key.DirectionCenter)
+        compose.onNodeWithTag("tv.listening.autoplay").assertIsFocused()
+        key("tv.listening.autoplay", Key.DirectionDown)
+        compose.onNodeWithTag("tv.listening.sleep").assertIsFocused()
+        key("tv.listening.sleep", Key.DirectionDown)
+        compose.onNodeWithTag("tv.listening.crossfade").assertIsFocused()
     }
 
     @Test fun remoteQueueEditsSayPlayingNextAndAddedToQueueOnce() {
