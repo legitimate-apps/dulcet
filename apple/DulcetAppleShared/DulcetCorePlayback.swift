@@ -354,3 +354,66 @@ final class DulcetCoreListeningSettings: DulcetListeningSetting {
         onChange?()
     }
 }
+
+/// A library track as the shells show it. Shared by the library browser and the playback
+/// controller (AutoPlay's answers), which the playback integration tests compile without the
+/// production composition.
+enum DulcetCoreLibraryTrackCopy {
+    static func track(
+        _ track: AppleLibraryTrackDto,
+        fallbackArtworkKey: String? = nil,
+        carriesAlbumID: Bool = true
+    ) -> DulcetTrack {
+        DulcetTrack(
+            id: DulcetProviderItemID(
+                providerInstanceID: track.providerInstanceId,
+                rawID: track.rawId
+            ),
+            title: track.title,
+            credits: track.credits.map(credit),
+            albumTitle: track.albumTitle,
+            discNumber: track.discNumber?.intValue,
+            trackNumber: track.trackNumber?.intValue,
+            duration: .milliseconds(track.durationMilliseconds),
+            sourceContainer: track.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
+            mediaSourceID: track.mediaSourceId,
+            artwork: artwork(
+                fallbackSeed: track.rawId,
+                providerInstanceID: track.providerInstanceId,
+                artworkKey: track.artworkKey ?? fallbackArtworkKey
+            ),
+            albumID: track.albumRawId.flatMap { carriesAlbumID ? $0 : nil }.map {
+                DulcetProviderItemID(providerInstanceID: track.providerInstanceId, rawID: $0)
+            }
+        )
+    }
+
+    static func credit(_ credit: AppleLibraryCreditDto) -> DulcetCredit {
+        let role: DulcetCreditRole = credit.role == "AlbumArtist" ? .albumArtist : .artist
+        let id: DulcetProviderItemID? = if let providerInstanceID = credit.providerInstanceId,
+                    let rawID = credit.rawId {
+            DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: rawID)
+        } else {
+            nil
+        }
+        return DulcetCredit(role: role, name: credit.name, id: id)
+    }
+
+    private static func artwork(
+        fallbackSeed: String,
+        providerInstanceID: String,
+        artworkKey: String?
+    ) -> DulcetArtwork {
+        let palettes = DulcetArtworkPalette.allCases
+        let index = fallbackSeed.unicodeScalars.reduce(0) {
+            ($0 + Int($1.value)) % palettes.count
+        }
+        return DulcetArtwork(
+            seed: fallbackSeed,
+            palette: palettes[index],
+            remoteReference: artworkKey.map {
+                DulcetArtworkReference(serverID: providerInstanceID, artworkKey: $0)
+            }
+        )
+    }
+}

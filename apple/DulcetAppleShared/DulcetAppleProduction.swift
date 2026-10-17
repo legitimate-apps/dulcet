@@ -490,39 +490,11 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
         fallbackArtworkKey: String? = nil,
         carriesAlbumID: Bool = true
     ) -> DulcetTrack {
-        DulcetTrack(
-            id: DulcetProviderItemID(
-                providerInstanceID: track.providerInstanceId,
-                rawID: track.rawId
-            ),
-            title: track.title,
-            credits: track.credits.map(copyCredit),
-            albumTitle: track.albumTitle,
-            discNumber: track.discNumber?.intValue,
-            trackNumber: track.trackNumber?.intValue,
-            duration: .milliseconds(track.durationMilliseconds),
-            sourceContainer: track.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
-            mediaSourceID: track.mediaSourceId,
-            artwork: artwork(
-                fallbackSeed: track.rawId,
-                providerInstanceID: track.providerInstanceId,
-                artworkKey: track.artworkKey ?? fallbackArtworkKey
-            ),
-            albumID: track.albumRawId.flatMap { carriesAlbumID ? $0 : nil }.map {
-                DulcetProviderItemID(providerInstanceID: track.providerInstanceId, rawID: $0)
-            }
-        )
+        DulcetCoreLibraryTrackCopy.track(track, fallbackArtworkKey: fallbackArtworkKey, carriesAlbumID: carriesAlbumID)
     }
 
     private static func copyCredit(_ credit: AppleLibraryCreditDto) -> DulcetCredit {
-        let role: DulcetCreditRole = credit.role == "AlbumArtist" ? .albumArtist : .artist
-        let id: DulcetProviderItemID? = if let providerInstanceID = credit.providerInstanceId,
-                    let rawID = credit.rawId {
-            DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: rawID)
-        } else {
-            nil
-        }
-        return DulcetCredit(role: role, name: credit.name, id: id)
+        DulcetCoreLibraryTrackCopy.credit(credit)
     }
 
     private static func artwork(

@@ -878,7 +878,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private func receiveAutoplay(key: String, _ outcome: AppleAutoplayOutcome) {
         guard autoplayOperation != nil else { return } // cancelled by configure or disconnect
         autoplayOperation = nil
-        let tracks = (outcome.tracks ?? []).map { DulcetCoreLibraryBrowser.copyTrack($0) }
+        let tracks = (outcome.tracks ?? []).map { DulcetCoreLibraryTrackCopy.track($0) }
         autoplayLog.append(outcome.tracks == nil ? "failed" : "answered:\(tracks.count)")
         catalog.merge(
             Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest }),
