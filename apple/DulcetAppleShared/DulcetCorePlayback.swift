@@ -322,3 +322,35 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
         }
     }
 }
+
+/// The device's listening settings (spec §14.4 AutoPlay, §12.8 crossfade), saved on this device.
+/// AutoPlay is on until the person turns it off; crossfade is off until they choose a length.
+@MainActor
+final class DulcetCoreListeningSettings: DulcetListeningSetting {
+    static let autoplayKey = "dulcet.autoplay"
+    static let crossfadeKey = "dulcet.crossfadeSeconds"
+
+    private let defaults: UserDefaults
+    /// Called after the person changes either setting.
+    var onChange: (@MainActor () -> Void)?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var listeningPreference: DulcetListeningPreference {
+        DulcetListeningPreference(
+            autoplayEnabled: defaults.object(forKey: Self.autoplayKey) as? Bool ?? true,
+            crossfadeSeconds: Int(PlaybackCrossfade.shared.decodeSeconds(
+                stored: (defaults.object(forKey: Self.crossfadeKey) as? Int).map { KotlinInt(int: Int32($0)) }
+            ))
+        )
+    }
+
+    func setListeningPreference(_ preference: DulcetListeningPreference) {
+        guard preference != listeningPreference else { return }
+        defaults.set(preference.autoplayEnabled, forKey: Self.autoplayKey)
+        defaults.set(preference.crossfadeSeconds, forKey: Self.crossfadeKey)
+        onChange?()
+    }
+}

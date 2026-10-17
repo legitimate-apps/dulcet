@@ -163,21 +163,128 @@ public struct DulcetUpNextSection: View {
     }
 }
 
+/// The AutoPlay switch as Up Next shows it (spec §14.4).
+public struct DulcetAutoplayToggle {
+    public let isOn: Bool
+    /// False while Shuffle or Repeat is on: AutoPlay then adds nothing, and says why.
+    public let isActive: Bool
+    public let set: (Bool) -> Void
+
+    public init(isOn: Bool, isActive: Bool, set: @escaping (Bool) -> Void) {
+        self.isOn = isOn
+        self.isActive = isActive
+        self.set = set
+    }
+}
+
+/// AutoPlay, after everything the person queued: the switch, and the tracks it has queued. A row
+/// plays that track now; a swipe or Remove takes it out.
+struct DulcetAutoplaySection: View {
+    private let model: DulcetUpNextModel
+    private let toggle: DulcetAutoplayToggle
+    private let onEdit: (DulcetQueueEditIntent) -> Void
+
+    init(nowPlaying: DulcetNowPlaying?, toggle: DulcetAutoplayToggle, onEdit: @escaping (DulcetQueueEditIntent) -> Void) {
+        model = DulcetUpNextModel(nowPlaying: nowPlaying)
+        self.toggle = toggle
+        self.onEdit = onEdit
+    }
+
+    var body: some View {
+        Section {
+            if toggle.isOn {
+                autoplayRows
+            }
+        } header: {
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle(isOn: Binding(get: { toggle.isOn }, set: toggle.set)) {
+                    Text(DulcetStrings.autoplay).font(.headline)
+                }
+                .accessibilityIdentifier("dulcet.upNext.autoplay.toggle")
+                Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplayFootnote)
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(nil)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("dulcet.upNext.autoplay")
+    }
+
+    @ViewBuilder
+    private var autoplayRows: some View {
+        #if os(tvOS)
+        ForEach(Array(model.autoplay.enumerated()), id: \.element.id) { offset, entry in
+            row(entry, offset: offset)
+        }
+        #else
+        ForEach(Array(model.autoplay.enumerated()), id: \.element.id) { offset, entry in
+            row(entry, offset: offset)
+        }
+        .onDelete { offsets in
+            model.removeAutoplayIntents(atOffsets: offsets).forEach(onEdit)
+        }
+        #endif
+    }
+
+    private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
+        Button {
+            onEdit(model.jumpIntent(to: entry))
+        } label: {
+            HStack(spacing: DulcetSpacing.xs) {
+                DulcetArtworkView(artwork: entry.track.artwork, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.track.title)
+                        .lineLimit(1)
+                    Text(DulcetStrings.artistNames(entry.track.artistNames))
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .dulcetHoverEffect()
+        .accessibilityIdentifier("dulcet.upNext.autoplay.row.\(offset)")
+        .accessibilityActions {
+            #if !os(iOS)
+            Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
+            #endif
+        }
+        .contextMenu {
+            Button(DulcetQueueStrings.playNow) { onEdit(model.jumpIntent(to: entry)) }
+            Button(DulcetQueueStrings.remove, role: .destructive) { onEdit(.remove(entry.id)) }
+        }
+    }
+}
+
 /// A standalone Up Next list, for a sheet or a column. Rows stay tappable: on iOS a long press
 /// drags a row and a swipe removes it without entering edit mode, which would disable the tap.
 public struct DulcetUpNextList: View {
     private let nowPlaying: DulcetNowPlaying?
     private let onEdit: (DulcetQueueEditIntent) -> Void
+    private let autoplay: DulcetAutoplayToggle?
 
-    public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void) {
+    public init(
+        nowPlaying: DulcetNowPlaying?,
+        onEdit: @escaping (DulcetQueueEditIntent) -> Void,
+        autoplay: DulcetAutoplayToggle? = nil
+    ) {
         self.nowPlaying = nowPlaying
         self.onEdit = onEdit
+        self.autoplay = autoplay
     }
 
     public var body: some View {
         List {
             DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit)
                 .listRowBackground(Color.clear)
+            if let autoplay {
+                DulcetAutoplaySection(nowPlaying: nowPlaying, toggle: autoplay, onEdit: onEdit)
+                    .listRowBackground(Color.clear)
+            }
 #if !os(tvOS)
             DulcetQueueHistorySection(nowPlaying: nowPlaying, onEdit: onEdit)
                 .listRowBackground(Color.clear)
@@ -273,6 +380,8 @@ extension View {
 struct DulcetPlaybackNotices: Equatable {
     var showingRefusal = false
     var skipMessage: String?
+    /// Play Next or Add to Queue took (the brief confirmation).
+    var confirmation: DulcetQueueEditConfirmation?
 }
 
 private struct DulcetPlaybackNoticesKey: EnvironmentKey {
@@ -294,9 +403,15 @@ private struct DulcetPlaybackFeedback: ViewModifier {
     @State private var refusalHideTask: Task<Void, Never>?
     @State private var skipMessage: String?
     @State private var skipHideTask: Task<Void, Never>?
+    @State private var confirmation: DulcetQueueEditConfirmation?
+    @State private var confirmationHideTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
-        let notices = DulcetPlaybackNotices(showingRefusal: showingRefusal, skipMessage: skipMessage)
+        let notices = DulcetPlaybackNotices(
+            showingRefusal: showingRefusal,
+            skipMessage: skipMessage,
+            confirmation: confirmation
+        )
         content
             // Drawn here, nothing beneath draws them again.
             .environment(\.dulcetPlaybackNotices, drawsNotices ? DulcetPlaybackNotices() : notices)
@@ -316,6 +431,18 @@ private struct DulcetPlaybackFeedback: ViewModifier {
                     try? await Task.sleep(for: .seconds(3))
                     guard !Task.isCancelled else { return }
                     withAnimation(.easeInOut(duration: 0.2)) { showingRefusal = false }
+                }
+            }
+            .onChange(of: store.snapshot.queueEditConfirmation) { previous, current in
+                guard isActive, let current, current.sequence != previous?.sequence else { return }
+                DulcetUIProofMarkers.record("queue-confirmed:\(current.sequence)")
+                AccessibilityNotification.Announcement(current.message).post()
+                withAnimation(.easeInOut(duration: 0.2)) { confirmation = current }
+                confirmationHideTask?.cancel()
+                confirmationHideTask = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(2))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) { confirmation = nil }
                 }
             }
             .onChange(of: store.snapshot.playbackSkipNotice) { previous, current in
@@ -376,6 +503,7 @@ struct DulcetPlaybackNoticeRegion: Layout {
 struct DulcetPlaybackNoticeStack: View {
     static let largestTextSize = DynamicTypeSize.accessibility2
     static let skipIdentifier = "dulcet.playback.skipped-notice"
+    static let confirmationIdentifier = "dulcet.queue.edit-confirmed"
     let notices: DulcetPlaybackNotices
 
     var body: some View {
@@ -383,6 +511,13 @@ struct DulcetPlaybackNoticeStack: View {
             if notices.showingRefusal {
                 DulcetPlaybackNotice(text: DulcetStrings.queueEditRefused, systemImage: "exclamationmark.circle")
                     .accessibilityIdentifier("dulcet.queue.edit-refused")
+            }
+            if let confirmation = notices.confirmation {
+                DulcetPlaybackNotice(
+                    text: confirmation.message,
+                    systemImage: confirmation.placement == .playNext ? "text.line.first.and.arrowtriangle.forward" : "text.append"
+                )
+                .accessibilityIdentifier(Self.confirmationIdentifier)
             }
             if let skipMessage = notices.skipMessage {
                 ViewThatFits(in: .vertical) {

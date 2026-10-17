@@ -55,6 +55,7 @@ public class AppleLibraryTrackDto internal constructor(
     public val sourceContainer: String?,
     public val mediaSourceId: String?,
     public val artworkKey: String?,
+    public val albumRawId: String? = null,
 )
 
 /**
@@ -130,7 +131,7 @@ public class AppleLibraryBrowseClient internal constructor(
     }
 }
 
-private class AppleLibraryOperationImpl<T>(
+internal class AppleLibraryOperationImpl<T>(
     private val scope: CoroutineScope,
     private val completion: (T) -> Unit,
     private val cancelledOutcome: () -> T,
@@ -202,7 +203,7 @@ private fun AppleLibraryOperationImpl(
     work = work,
 )
 
-private fun AppleLibraryBrowseRequest.toCoreRequest(): LibraryBrowseRequest = LibraryBrowseRequest(
+internal fun AppleLibraryBrowseRequest.toCoreRequest(): LibraryBrowseRequest = LibraryBrowseRequest(
     providerInstanceId = providerInstanceId,
     normalizedBaseUrl = normalizedBaseUrl,
     username = username,
@@ -263,21 +264,22 @@ private fun LibraryAlbum.toAppleDto(): AppleLibraryAlbumDto = AppleLibraryAlbumD
     artworkKey = artworkKey,
     trackCount = trackCount,
     tracksLoaded = tracksLoaded,
-    tracks = tracks.map { track ->
-        AppleLibraryTrackDto(
-            providerInstanceId = track.id.providerInstanceId,
-            rawId = track.id.rawId,
-            title = track.title,
-            credits = track.credits.map(Credit::toAppleDto),
-            albumTitle = track.albumTitle,
-            discNumber = track.discNumber,
-            trackNumber = track.trackNumber,
-            durationMilliseconds = track.duration.inWholeMilliseconds,
-            sourceContainer = track.sourceContainer?.name,
-            mediaSourceId = track.mediaSourceId,
-            artworkKey = track.artworkKey,
-        )
-    },
+    tracks = tracks.map(LibraryTrack::toAppleDto),
+)
+
+internal fun LibraryTrack.toAppleDto(): AppleLibraryTrackDto = AppleLibraryTrackDto(
+    providerInstanceId = id.providerInstanceId,
+    rawId = id.rawId,
+    title = title,
+    credits = credits.map(Credit::toAppleDto),
+    albumTitle = albumTitle,
+    discNumber = discNumber,
+    trackNumber = trackNumber,
+    durationMilliseconds = duration.inWholeMilliseconds,
+    sourceContainer = sourceContainer?.name,
+    mediaSourceId = mediaSourceId,
+    artworkKey = artworkKey,
+    albumRawId = albumRawId,
 )
 
 private fun Credit.toAppleDto(): AppleLibraryCreditDto = AppleLibraryCreditDto(
@@ -287,7 +289,7 @@ private fun Credit.toAppleDto(): AppleLibraryCreditDto = AppleLibraryCreditDto(
     rawId = id?.rawId,
 )
 
-private fun DomainError.appleLibraryKind(): String = when (this) {
+internal fun DomainError.appleLibraryKind(): String = when (this) {
     DomainError.Transport.Cancelled -> "cancelled"
     DomainError.Transport.Timeout -> "timeout"
     DomainError.Transport.Unreachable -> "unreachable"

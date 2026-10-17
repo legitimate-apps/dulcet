@@ -10,6 +10,11 @@ internal fun interface PlaybackIdentitySource {
 internal data class PlaybackQueueItem(
     val itemId: ProviderItemId,
     val duration: Duration?,
+    /**
+     * The item's album, when the owner knows it. Two consecutive entries of one album never
+     * crossfade: the album may be gapless, and OpenSubsonic says nothing about which ones are.
+     */
+    val albumRawId: String? = null,
 )
 
 internal data class PlaybackQueueRequest(
@@ -44,6 +49,8 @@ internal data class PlaybackQueueEntrySnapshot(
     val queueEntryId: QueueEntryId,
     val itemId: ProviderItemId,
     val sourceDisplayName: String,
+    /** AutoPlay added this entry when the person's own queue ran low; Up Next lists it apart. */
+    val isAutoplay: Boolean = false,
 )
 
 internal data class PlaybackQueueSnapshot(
@@ -58,6 +65,44 @@ internal data class PlaybackQueueSnapshot(
      * automatic skip travelling forward asks the same question.
      */
     val canSkipPastCurrent: Boolean = false,
+    /** The person's AutoPlay setting, as the owner last pushed it. */
+    val autoplayEnabled: Boolean = false,
+    /**
+     * Whether AutoPlay can run now: it is on, and neither repeat nor shuffle is (each of those
+     * already says what plays after the queue). Up Next shows its section only then.
+     */
+    val autoplayActive: Boolean = false,
+    /** Where the sleep timer stops playback, when it waits for a track or the queue to end. */
+    val stopPoint: PlaybackStopPoint? = null,
+    /**
+     * How long the current entry overlaps the next one at their boundary: zero for a gapless
+     * boundary. The owner hands it to the engine for the current attempt (§12.8).
+     */
+    val crossfadeIntoNext: Duration = Duration.ZERO,
+)
+
+/** Where a sleep timer that waits for the music stops it. */
+internal enum class PlaybackStopPoint {
+    /** When the entry playing now ends: the next one is selected, paused. */
+    EndOfCurrentEntry,
+
+    /**
+     * When the person's own queue ends: no repeat-all wrap and no AutoPlay entry plays. Under
+     * repeat-one the queue never ends, so it stops when the repeated track does.
+     */
+    EndOfQueue,
+}
+
+/**
+ * The queue wants AutoPlay entries (§14.4). The owner fetches up to [count] tracks like [seed],
+ * none of them in [excludedRawIds], and answers with [PlaybackQueueController.appendAutoplay]
+ * under the same [key] -- with an empty list when it found nothing or the fetch failed.
+ */
+internal data class PlaybackAutoplayRequest(
+    val key: String,
+    val seed: ProviderItemId,
+    val excludedRawIds: Set<String>,
+    val count: Int,
 )
 
 internal data class PlaybackQueueTransition(
@@ -80,6 +125,11 @@ internal data class PlaybackQueueTransition(
      * The owner tells the person, naming the track; the start directive is the entry after it.
      */
     val skippedAfterFailure: QueueEntryId? = null,
+    /**
+     * The sleep timer's stop point was reached at this natural end, and playback stopped there
+     * (the next entry, if any, starts paused). The owner ends its sleep timer.
+     */
+    val stopPointReached: Boolean = false,
 )
 
 /** Which way the queue travelled to reach the current entry (§12.12). */
@@ -119,6 +169,19 @@ internal class PlaybackQueueController(
     )
 
     private val knownDurations = mutableMapOf<QueueEntryId, Duration?>()
+    private val knownAlbums = mutableMapOf<QueueEntryId, String>()
+    private var autoplayEnabled = false
+    /** Bumped whenever an outstanding AutoPlay request stops describing what the queue wants. */
+    private var autoplayGeneration = 0L
+    /** The AutoPlay request last handed out; it is not handed out again ([takeAutoplayRequest]). */
+    private var takenAutoplayKey: String? = null
+    /**
+     * The queue finished at a natural end while an AutoPlay request was outstanding: when its
+     * entries arrive, the first of them starts, as if they had been there in time.
+     */
+    private var finishedAwaitingAutoplay = false
+    private var stopPoint: PlaybackStopPoint? = null
+    private var crossfade: Duration = Duration.ZERO
     private var registeredPreload: RegisteredPreload? = null
     /**
      * The current attempt ended naturally and the core deliberately started nothing, because the
@@ -168,13 +231,15 @@ internal class PlaybackQueueController(
         val serverId = ServerId(request.items.first().itemId.providerInstanceId)
         val previousRepeatMode = queues.load(serverId).repeatMode
         knownDurations.clear()
+        knownAlbums.clear()
+        autoplayGeneration++
         val entries = request.items.map { item ->
             QueueEntry(
                 queueEntryId = nextQueueEntryId(),
                 providerItemId = item.itemId,
                 sourceContext = request.sourceContext,
                 addedBy = QueueAddedBy.PlayNow,
-            ).also { knownDurations[it.queueEntryId] = item.duration }
+            ).also { remember(it, item) }
         }
         queues.replaceQueue(
             QueueState(
@@ -225,7 +290,7 @@ internal class PlaybackQueueController(
                     QueueInsertionMode.PlayNext -> QueueAddedBy.PlayNext
                     QueueInsertionMode.Append -> QueueAddedBy.AddToQueue
                 },
-            ).also { knownDurations[it.queueEntryId] = item.duration }
+            ).also { remember(it, item) }
         }
         // Each PlayNext insert lands directly after the current entry, so inserting in reverse
         // keeps the caller's order: the first item given is the first one heard.
@@ -236,8 +301,136 @@ internal class PlaybackQueueController(
         } else {
             entries
         }
-        ordered.forEach { queues.insert(serverId, it, insertion.mode) }
+        // Add to Queue appends to the person's own queue, which ends where AutoPlay begins: the
+        // entries go in before the first upcoming AutoPlay entry, in the order given.
+        val before = queues.load(serverId)
+        val firstAutoplay = before.firstUpcomingAutoplayIndex()
+            ?.takeIf { insertion.mode == QueueInsertionMode.Append }
+        ordered.forEachIndexed { offset, entry ->
+            queues.insert(serverId, entry, insertion.mode)
+            if (firstAutoplay != null) queues.move(serverId, entry.queueEntryId, firstAutoplay + offset)
+        }
         return editedTransition()
+    }
+
+    /**
+     * The person's AutoPlay setting (§14.4). Turning it off removes the AutoPlay entries that
+     * have not played yet; the current one, if AutoPlay chose it, plays on.
+     */
+    fun setAutoplay(enabled: Boolean): PlaybackQueueTransition {
+        if (autoplayEnabled == enabled) return emptyTransition()
+        autoplayEnabled = enabled
+        autoplayGeneration++
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        if (!enabled) removeUpcomingAutoplay(serverId)
+        return editedTransition()
+    }
+
+    /**
+     * The AutoPlay request the queue wants answered now, or null. Each request is handed out
+     * once: the owner answers it with [appendAutoplay], and a request that found nothing is not
+     * repeated until the queue changes at its end.
+     */
+    fun takeAutoplayRequest(): PlaybackAutoplayRequest? {
+        val serverId = queues.activeServerId() ?: return null
+        val state = queues.load(serverId)
+        val key = state.autoplayKey() ?: return null
+        if (key == takenAutoplayKey) return null
+        takenAutoplayKey = key
+        return PlaybackAutoplayRequest(
+            key = key,
+            seed = state.entries.last().providerItemId,
+            excludedRawIds = state.entries.mapTo(mutableSetOf()) { it.providerItemId.rawId },
+            count = AUTOPLAY_BATCH,
+        )
+    }
+
+    /**
+     * The answer to the AutoPlay request [key]. Items already in the queue are dropped. A stale
+     * answer -- the queue changed at its end, or AutoPlay stopped being active -- changes nothing.
+     */
+    fun appendAutoplay(key: String, items: List<PlaybackQueueItem>): PlaybackQueueTransition {
+        val serverId = queues.activeServerId() ?: return emptyTransition()
+        val state = queues.load(serverId)
+        if (key != takenAutoplayKey || state.autoplayKey() != key) return emptyTransition()
+        val present = state.entries.mapTo(mutableSetOf()) { it.providerItemId.rawId }
+        val fresh = items
+            .filter { it.itemId.providerInstanceId == serverId.value }
+            .filter { present.add(it.itemId.rawId) }
+        if (fresh.isEmpty()) return emptyTransition()
+        val entries = fresh.map { item ->
+            QueueEntry(
+                queueEntryId = nextQueueEntryId(),
+                providerItemId = item.itemId,
+                sourceContext = QueueSourceContext(QueueSourceKind.Library, null, AUTOPLAY_SOURCE_NAME),
+                addedBy = QueueAddedBy.Autoplay,
+            ).also { remember(it, item) }
+        }
+        entries.forEach { queues.insert(serverId, it, QueueInsertionMode.Append) }
+        if (finishedAwaitingAutoplay && playback.currentSession == null) {
+            finishedAwaitingAutoplay = false
+            val updated = queues.load(serverId)
+            val current = updated.currentIndex
+            if (current != null && current + 1 in updated.entries.indices) {
+                return startAt(updated, current + 1)
+            }
+        }
+        return editedTransition()
+    }
+
+    /**
+     * Sets or clears where the sleep timer stops playback. A preload for the boundary the stop
+     * point now owns is discarded: that boundary no longer hands over.
+     */
+    fun setStopPoint(point: PlaybackStopPoint?): PlaybackQueueTransition {
+        if (stopPoint == point) return emptyTransition()
+        stopPoint = point
+        return editedTransition()
+    }
+
+    /**
+     * The person's crossfade length; zero is off. It applies at the next boundary that may
+     * crossfade (see [PlaybackQueueSnapshot.crossfadeIntoNext]).
+     */
+    fun setCrossfade(duration: Duration): PlaybackQueueTransition {
+        require(duration >= Duration.ZERO && duration <= PlaybackCrossfade.MAXIMUM)
+        crossfade = duration
+        return emptyTransition()
+    }
+
+    private fun remember(entry: QueueEntry, item: PlaybackQueueItem) {
+        knownDurations[entry.queueEntryId] = item.duration
+        item.albumRawId?.let { knownAlbums[entry.queueEntryId] = it }
+    }
+
+    private fun QueueState.firstUpcomingAutoplayIndex(): Int? {
+        if (shuffleState == QueueShuffleState.Enabled) return null
+        val from = (currentIndex ?: return null) + 1
+        return (from until entries.size).firstOrNull { entries[it].addedBy == QueueAddedBy.Autoplay }
+    }
+
+    private fun QueueState.autoplayIsActive(): Boolean =
+        autoplayEnabled && repeatMode == QueueRepeatMode.Off &&
+            shuffleState == QueueShuffleState.Disabled
+
+    /** The key of the AutoPlay request this queue wants, or null when it wants none. */
+    private fun QueueState.autoplayKey(): String? {
+        if (!autoplayIsActive() || stopPoint == PlaybackStopPoint.EndOfQueue) return null
+        val current = currentIndex ?: return null
+        if (entries.size - 1 - current >= AUTOPLAY_LOW_WATER) return null
+        return "$autoplayGeneration:${entries.last().queueEntryId.value}"
+    }
+
+    private fun removeUpcomingAutoplay(serverId: ServerId) {
+        val state = queues.load(serverId)
+        val current = state.currentIndex ?: -1
+        state.entries.drop(current + 1)
+            .filter { it.addedBy == QueueAddedBy.Autoplay }
+            .forEach {
+                queues.remove(serverId, it.queueEntryId)
+                knownDurations.remove(it.queueEntryId)
+                knownAlbums.remove(it.queueEntryId)
+            }
     }
 
     /** Moves an entry to [toIndex] in the listener-visible order. The current session continues. */
@@ -542,7 +735,10 @@ internal class PlaybackQueueController(
     fun setShuffle(enabled: Boolean): PlaybackQueueTransition {
         val serverId = queues.activeServerId() ?: return emptyTransition()
         skippedPastFailures.clear()
+        autoplayGeneration++
         if (enabled) {
+            // A shuffled queue says what plays after it; AutoPlay's own picks do not belong in it.
+            removeUpcomingAutoplay(serverId)
             queues.enableShuffle(serverId, shuffleRandom)
         } else {
             queues.disableShuffle(serverId)
@@ -560,6 +756,9 @@ internal class PlaybackQueueController(
             QueueRepeatMode.One -> QueueRepeatMode.Off
         }
         queues.setRepeatMode(serverId, next)
+        autoplayGeneration++
+        // Repeat already says what plays after the queue, so AutoPlay's picks leave it.
+        if (next != QueueRepeatMode.Off) removeUpcomingAutoplay(serverId)
         return editedTransition()
     }
 
@@ -652,6 +851,8 @@ internal class PlaybackQueueController(
                 shuffleState = QueueShuffleState.Disabled,
                 currentSession = playback.currentSession,
                 canSkipPastCurrent = false,
+                autoplayEnabled = autoplayEnabled,
+                stopPoint = stopPoint,
             )
         return queues.load(serverId).snapshot()
     }
@@ -716,6 +917,8 @@ internal class PlaybackQueueController(
 
     private fun upcomingEntry(state: QueueState): QueueEntry? {
         val current = state.currentIndex ?: return null
+        // A stop point owns this boundary: nothing hands over at it (§12.8).
+        stopPoint?.let { if (state.stopsAfterCurrent(it)) return null }
         if (state.repeatMode == QueueRepeatMode.One) return null
         val next = current + 1
         return when {
@@ -793,6 +996,26 @@ internal class PlaybackQueueController(
         val serverId = queues.activeServerId() ?: return emptyTransition(terminalEffects)
         val state = queues.load(serverId)
         val current = state.currentIndex ?: return emptyTransition(terminalEffects)
+        val point = stopPoint
+        if (point != null && state.stopsAfterCurrent(point)) {
+            // The sleep timer stops here. The entry that would have played next is selected,
+            // paused, so Play carries on from it; with nothing after it the queue finishes.
+            stopPoint = null
+            val target = when (point) {
+                PlaybackStopPoint.EndOfCurrentEntry -> state.otherEntryIndex(QueueTravel.Forward)
+                PlaybackStopPoint.EndOfQueue -> (current + 1).takeIf {
+                    it in state.entries.indices && state.repeatMode != QueueRepeatMode.One
+                }
+            }
+            val stopped = if (target == null) {
+                finishQueue(terminalEffects)
+            } else {
+                val started = startAt(state, target, terminalEffects)
+                pausedStartAttempt = started.startDirective?.attemptId
+                started.copy(startDirective = started.startDirective?.copy(shouldAutoPlay = false))
+            }
+            return stopped.copy(stopPointReached = true)
+        }
         if (state.repeatMode == QueueRepeatMode.One) {
             val entry = state.entries[current]
             val start = newStart(entry)
@@ -813,7 +1036,50 @@ internal class PlaybackQueueController(
         if (state.repeatMode == QueueRepeatMode.All && state.entries.isNotEmpty()) {
             return startAt(state, 0, terminalEffects)
         }
+        // AutoPlay was asked for more and has not answered yet: its first entry starts on arrival.
+        finishedAwaitingAutoplay = takenAutoplayKey != null && state.autoplayKey() == takenAutoplayKey
         return finishQueue(terminalEffects)
+    }
+
+    /** Whether [point] stops playback at the end of the current entry. */
+    private fun QueueState.stopsAfterCurrent(point: PlaybackStopPoint): Boolean = when (point) {
+        PlaybackStopPoint.EndOfCurrentEntry -> true
+        PlaybackStopPoint.EndOfQueue -> {
+            val next = (currentIndex ?: -1) + 1
+            repeatMode == QueueRepeatMode.One || next !in entries.indices ||
+                entries[next].addedBy == QueueAddedBy.Autoplay
+        }
+    }
+
+    /**
+     * How long the current entry overlaps the next at their boundary. Zero -- gapless -- when
+     * crossfade is off, when nothing different follows, when a stop point owns the boundary, for
+     * a track too short to overlap, and between two entries of one album: OpenSubsonic does not
+     * say which albums are gapless, so an album played through keeps every join it was mastered
+     * with.
+     */
+    private fun QueueState.crossfadeIntoNext(): Duration {
+        if (crossfade == Duration.ZERO) return Duration.ZERO
+        val current = currentIndex?.let(entries::get) ?: return Duration.ZERO
+        val next = upcomingEntry(this) ?: return Duration.ZERO
+        if (next.queueEntryId == current.queueEntryId) return Duration.ZERO
+        if (sameAlbum(current, next)) return Duration.ZERO
+        val duration = knownDurations[current.queueEntryId]
+            ?: playback.currentSession?.takeIf { it.queueEntryId == current.queueEntryId }
+                ?.currentAttempt?.duration
+        if (duration != null && duration < crossfade * PlaybackCrossfade.MINIMUM_TRACK_MULTIPLE) {
+            return Duration.ZERO
+        }
+        return crossfade
+    }
+
+    private fun sameAlbum(a: QueueEntry, b: QueueEntry): Boolean {
+        val albumA = knownAlbums[a.queueEntryId]
+        val albumB = knownAlbums[b.queueEntryId]
+        if (albumA != null && albumB != null) return albumA == albumB
+        return a.sourceContext.kind == QueueSourceKind.Album &&
+            a.sourceContext.sourceId != null &&
+            a.sourceContext.sourceId == b.sourceContext.sourceId
     }
 
     private fun startAt(
@@ -852,6 +1118,7 @@ internal class PlaybackQueueController(
         registeredPreload?.let { playback.discardPreloaded(it.start.attemptId) }
         registeredPreload = null
         endHeldForPreload = false
+        finishedAwaitingAutoplay = false
         val start = newStart(entry)
         val coreTransition = when {
             playback.currentSession == null -> playback.startPlaying(start)
@@ -902,6 +1169,7 @@ internal class PlaybackQueueController(
                 it.queueEntryId,
                 it.providerItemId,
                 it.sourceContext.displayName,
+                isAutoplay = it.addedBy == QueueAddedBy.Autoplay,
             )
         },
         currentIndex = currentIndex,
@@ -909,6 +1177,10 @@ internal class PlaybackQueueController(
         shuffleState = shuffleState,
         currentSession = playback.currentSession,
         canSkipPastCurrent = otherEntryIndex(QueueTravel.Forward) != null,
+        autoplayEnabled = autoplayEnabled,
+        autoplayActive = autoplayIsActive(),
+        stopPoint = stopPoint,
+        crossfadeIntoNext = crossfadeIntoNext(),
     )
 
     private fun emptyTransition(
@@ -921,5 +1193,14 @@ internal class PlaybackQueueController(
          * the server than about the tracks, and each automatic skip costs a request (§12.12).
          */
         const val MAX_CONSECUTIVE_FAILED_ENTRIES = 5
+
+        /** AutoPlay asks for more when fewer entries than this follow the current one. */
+        const val AUTOPLAY_LOW_WATER = 2
+
+        /** How many tracks one AutoPlay request asks for. */
+        const val AUTOPLAY_BATCH = 10
+
+        /** The source name AutoPlay entries carry; shells present their own localized label. */
+        const val AUTOPLAY_SOURCE_NAME = "AutoPlay"
     }
 }

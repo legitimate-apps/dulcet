@@ -58,7 +58,8 @@ private struct DulcetPreloadInFlight {
 }
 
 @MainActor
-final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueueEditing {
+final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueueEditing,
+    DulcetSleepTimerControlling {
     private let queueClient: ApplePlaybackQueueClient
     private let engine: any DulcetCorePlaybackEngine
     private let configureOfflineDelivery: () -> ApplePlaybackDeliveryConfigurationOutcomeDto
@@ -94,6 +95,22 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// surface sees a new one exactly once, by its sequence, whatever is published after it.
     private var skipNotice: DulcetSkippedTrackNotice?
     private var skipNoticeSequence = 0
+    /// AutoPlay's track search (spec §14.4), one at a time.
+    private lazy var autoplayClient = AppleAutoplayClient()
+    private var autoplayOperation: (any AppleLibraryBrowseOperation)?
+    /// The crossfade last told to the engine, per attempt (spec §12.8). Nothing is sent while
+    /// every boundary is gapless, so an engine that never crossfades sees no new command.
+    private var sentCrossfade: (attemptID: String, milliseconds: Int64)?
+    /// The sleep timer (spec §12.13). A timed choice counts down on the continuous clock, which
+    /// keeps counting while the device sleeps; the other two are the queue's stop point.
+    private var sleepChoice: DulcetSleepTimerChoice?
+    private var sleepEndsAt: Date?
+    private let sleepCountdown = SleepTimerCountdown(fadeMilliseconds: DulcetCorePlaybackController.sleepFadeMilliseconds)
+    private lazy var sleepEpoch = clock.now
+    private var sleepTicker: Task<Void, Never>?
+    /// The gain the sleep fade last set; 1 is the engine's own level.
+    private var sleepGain = 1.0
+    static let sleepFadeMilliseconds: Int64 = 10_000
 
     convenience init(
         databaseName: String = "dulcet.db",
@@ -138,6 +155,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     var streamingQuality: DulcetCoreStreamingQuality? {
         didSet {
             streamingQuality?.onQualityChange = { [weak self] in self?.streamingQualityChanged() }
+        }
+    }
+
+    /// The device's AutoPlay and crossfade settings (spec §14.4, §12.8). Without one AutoPlay is
+    /// off and every boundary is gapless.
+    var listeningSettings: DulcetCoreListeningSettings? {
+        didSet {
+            listeningSettings?.onChange = { [weak self] in self?.applyListeningPreference(publishing: true) }
+            applyListeningPreference(publishing: account != nil)
         }
     }
 
@@ -232,6 +258,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 return
             }
         }
+        autoplayOperation?.cancel()
+        autoplayOperation = nil
+        sentCrossfade = nil
+        applyListeningPreference(publishing: false)
         publish(queueClient.snapshot())
     }
 
@@ -246,11 +276,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         )
         let transition = queueClient.replaceAndStart(request: ApplePlaybackQueueRequestDto(
             items: intent.tracks.map { track in
-                ApplePlaybackQueueItemDto(
-                    providerInstanceId: track.id.providerInstanceID,
-                    rawId: track.id.rawID,
-                    durationMilliseconds: track.duration.playbackMilliseconds
-                )
+                Self.queueItem(track)
             },
             sourceKind: intent.sourceKind.rawValue,
             sourceRawId: intent.sourceID?.rawID,
@@ -527,11 +553,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         )
         return applyEdit(queueClient.enqueue(insertion: ApplePlaybackQueueInsertionDto(
             items: addition.tracks.map { track in
-                ApplePlaybackQueueItemDto(
-                    providerInstanceId: track.id.providerInstanceID,
-                    rawId: track.id.rawID,
-                    durationMilliseconds: track.duration.playbackMilliseconds
-                )
+                Self.queueItem(track)
             },
             sourceKind: addition.sourceKind.rawValue,
             sourceRawId: addition.sourceID?.rawID,
@@ -571,6 +593,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         restoredPausedSessions = []
         activeDirectiveIdentity = nil
         pendingStarts = [:]
+        autoplayOperation?.cancel()
+        autoplayOperation = nil
+        sentCrossfade = nil
+        cancelSleepTimer()
         execute(.stop(commandID: commandID("disconnect")))
         // A notice names a track of the queue just left, so it goes with it: signing out must not
         // show the previous account's track. Reaching another server withdraws it in `configure`.
@@ -774,6 +800,175 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             requestPreloadIfNeeded()
         }
     }
+
+    // MARK: Listening session: AutoPlay, crossfade, sleep timer (spec §14.4, §12.8, §12.13)
+
+    private static func queueItem(_ track: DulcetTrack) -> ApplePlaybackQueueItemDto {
+        ApplePlaybackQueueItemDto(
+            providerInstanceId: track.id.providerInstanceID,
+            rawId: track.id.rawID,
+            durationMilliseconds: track.duration.playbackMilliseconds,
+            albumRawId: track.albumID?.rawID
+        )
+    }
+
+    /// Hands the settings to the queue. AutoPlay switched off removes what it queued; the
+    /// crossfade length applies from the next boundary.
+    private func applyListeningPreference(publishing: Bool) {
+        let preference = listeningSettings?.listeningPreference
+        let autoplay = queueClient.setAutoplay(enabled: preference?.autoplayEnabled ?? false)
+        let crossfade = queueClient.setCrossfadeSeconds(seconds: Int32(preference?.crossfadeSeconds ?? 0))
+        handleDiscardedPreload(autoplay.discardedPreloadAttemptId)
+        handleDiscardedPreload(crossfade.discardedPreloadAttemptId)
+        guard publishing, account != nil else { return }
+        publish(queueClient.snapshot())
+        requestPreloadIfNeeded()
+    }
+
+    private func afterPublishing(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        sendCrossfadeIfChanged(snapshot)
+        serviceAutoplay()
+    }
+
+    /// Tells the engine how long the current item's end overlaps the next one. Zero -- the same
+    /// album, a short track, a stop point, crossfade off -- is gapless, and is sent only to undo
+    /// an overlap already sent for this attempt.
+    private func sendCrossfadeIfChanged(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        guard let session = snapshot.currentSession else { return }
+        let milliseconds = snapshot.crossfadeIntoNextMilliseconds
+        let previous = sentCrossfade
+        if previous?.attemptID == session.attemptId, previous?.milliseconds == milliseconds { return }
+        sentCrossfade = (session.attemptId, milliseconds)
+        let undoes = previous?.attemptID == session.attemptId && (previous?.milliseconds ?? 0) > 0
+        guard milliseconds > 0 || undoes else { return }
+        execute(.setCrossfade(
+            commandID: commandID("crossfade"),
+            attemptID: DulcetPlaybackAttemptID(session.attemptId),
+            duration: TimeInterval(milliseconds) / 1_000
+        ))
+    }
+
+    /// Answers the queue's AutoPlay request, if it has one: similar music from the person's own
+    /// server, never anywhere else. Offline there is nothing to ask, and the request waits.
+    private func serviceAutoplay() {
+        guard autoplayOperation == nil, wireClient != nil, let account,
+              let request = queueClient.takeAutoplayRequest() else { return }
+        let key = request.key
+        autoplayOperation = autoplayClient.startCandidates(
+            request: AppleLibraryBrowseRequest(
+                providerInstanceId: account.providerInstanceId,
+                normalizedBaseUrl: account.normalizedBaseUrl,
+                username: account.username,
+                password: account.password,
+                allowLocalHttp: account.allowLocalHttp
+            ),
+            seedRawId: request.seedRawId,
+            excludedRawIds: request.excludedRawIds,
+            count: request.count
+        ) { [weak self] outcome in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { self?.receiveAutoplay(key: key, outcome) }
+            } else {
+                DispatchQueue.main.async { self?.receiveAutoplay(key: key, outcome) }
+            }
+        }
+    }
+
+    private func receiveAutoplay(key: String, _ outcome: AppleAutoplayOutcome) {
+        guard autoplayOperation != nil else { return } // cancelled by configure or disconnect
+        autoplayOperation = nil
+        let tracks = (outcome.tracks ?? []).map { DulcetCoreLibraryBrowser.copyTrack($0) }
+        autoplayLog.append(outcome.tracks == nil ? "failed" : "answered:\(tracks.count)")
+        catalog.merge(
+            Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest }),
+            uniquingKeysWith: { current, _ in current }
+        )
+        // An answer to a request the queue has moved past (AutoPlay switched off and on, the
+        // queue replaced) is ignored by the core; this republishes either way.
+        applyEdit(queueClient.appendAutoplay(key: key, items: tracks.map(Self.queueItem)))
+    }
+
+    private var sleepTimerState: DulcetSleepTimerState? {
+        sleepChoice.map { DulcetSleepTimerState(choice: $0, endsAt: sleepEndsAt) }
+    }
+
+    func setSleepTimer(_ choice: DulcetSleepTimerChoice?) {
+        guard account != nil else { return }
+        let hadStopPoint = sleepChoice == .endOfTrack || sleepChoice == .endOfQueue
+        cancelSleepTimer()
+        sleepChoice = choice
+        switch choice {
+        case .endOfTrack, .endOfQueue:
+            applyEdit(queueClient.setStopPoint(stopPoint: choice?.rawValue))
+        case let timed?:
+            if hadStopPoint { _ = queueClient.setStopPoint(stopPoint: nil) }
+            let length = Int64(timed.minutes ?? 0) * 60_000
+            sleepCountdown.start(lengthMilliseconds: length, nowMilliseconds: monotonicMilliseconds())
+            sleepEndsAt = Date().addingTimeInterval(TimeInterval(length) / 1_000)
+            startSleepTicker()
+            applyEdit(queueClient.snapshot())
+        case nil:
+            applyEdit(hadStopPoint ? queueClient.setStopPoint(stopPoint: nil) : queueClient.snapshot())
+        }
+    }
+
+    /// Forgets the timer and puts the engine's level back. The queue's stop point is the
+    /// caller's to clear.
+    private func cancelSleepTimer() {
+        sleepTicker?.cancel()
+        sleepTicker = nil
+        sleepCountdown.cancel()
+        sleepChoice = nil
+        sleepEndsAt = nil
+        restoreSleepGain()
+    }
+
+    private func restoreSleepGain() {
+        guard sleepGain != 1 else { return }
+        sleepGain = 1
+        execute(.setVolume(commandID: commandID("sleep-restore"), volume: 1))
+    }
+
+    private func monotonicMilliseconds() -> Int64 {
+        let elapsed = sleepEpoch.duration(to: clock.now)
+        return elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000
+    }
+
+    private func startSleepTicker() {
+        sleepTicker = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let wait = self?.sleepTick() else { return }
+                try? await Task.sleep(for: wait)
+            }
+        }
+    }
+
+    /// One reading of the countdown: the fade's gain, or the pause at the deadline. Returns how
+    /// long to wait before the next reading, or nil once the timer is over.
+    private func sleepTick() -> Duration? {
+        let now = monotonicMilliseconds()
+        if sleepCountdown.expire(nowMilliseconds: now) {
+            sleepTicker = nil
+            sleepChoice = nil
+            sleepEndsAt = nil
+            send(.pause)
+            restoreSleepGain()
+            applyEdit(queueClient.snapshot())
+            return nil
+        }
+        guard sleepCountdown.isRunning else { return nil }
+        let gain = sleepCountdown.gain(nowMilliseconds: now)
+        if abs(gain - sleepGain) >= 0.01 {
+            sleepGain = gain
+            execute(.setVolume(commandID: commandID("sleep-fade"), volume: min(max(gain, 0), 1)))
+        }
+        let remaining = sleepCountdown.remainingMilliseconds(nowMilliseconds: now)?.int64Value ?? 0
+        let untilFade = remaining - Self.sleepFadeMilliseconds
+        return untilFade > 0 ? .milliseconds(min(untilFade, 30_000)) : .milliseconds(200)
+    }
+
+    /// Every AutoPlay answer, in order, for tests and diagnostics. Content-free.
+    private(set) var autoplayLog: [String] = []
 
     // MARK: Gapless preload (spec §12.8)
 
@@ -1150,6 +1345,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             publishFailure()
             return
         }
+        if transition.stopPointReached, sleepChoice == .endOfTrack || sleepChoice == .endOfQueue {
+            // The queue carried the timer out (§12.13): it stopped, so the timer is spent.
+            sleepChoice = nil
+        }
+        defer { afterPublishing(snapshot) }
         guard let session = snapshot.currentSession else {
             publishWithoutSession(snapshot)
             return
@@ -1237,7 +1437,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 ),
                 canGoPrevious: index > 0 || repeatMode == .all,
                 queueEntries: queueEntries,
-                currentEntryIndex: currentEntryIndex
+                currentEntryIndex: currentEntryIndex,
+                autoplayActive: snapshot.autoplayActive,
+                sleepTimer: sleepTimerState
             )
         )
         emitPresentation()
@@ -1264,7 +1466,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 rawID: entry.rawId
             )] else { continue }
             if offset == Int(snapshot.currentIndex) { currentEntryIndex = entries.count }
-            entries.append(DulcetQueueEntry(id: DulcetQueueEntryID(entry.queueEntryId), track: track))
+            entries.append(DulcetQueueEntry(
+                id: DulcetQueueEntryID(entry.queueEntryId),
+                track: track,
+                isAutoplay: entry.isAutoplay
+            ))
         }
         return (entries, currentEntryIndex)
     }
@@ -1335,7 +1541,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 canGoNext: Self.hasEntryAfterCurrent(snapshot),
                 canGoPrevious: true,
                 queueEntries: queueEntries,
-                currentEntryIndex: currentEntryIndex
+                currentEntryIndex: currentEntryIndex,
+                autoplayActive: snapshot.autoplayActive,
+                sleepTimer: sleepTimerState
             )
         )
         emitPresentation()

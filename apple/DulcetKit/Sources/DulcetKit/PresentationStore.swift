@@ -22,6 +22,8 @@ public enum DulcetPresentationAction: Sendable, Hashable {
     case showArtist(DulcetProviderItemID)
     case playbackControl(DulcetPlaybackControlIntent)
     case editQueue(DulcetQueueEditIntent)
+    /// Sets the sleep timer, or cancels it with nil (spec §12.13).
+    case setSleepTimer(DulcetSleepTimerChoice?)
     /// An edit the person tried that could not be made before it reached the queue -- a drop
     /// carrying nothing -- said out loud as a refused edit is.
     case reportRefusedQueueEdit
@@ -201,6 +203,13 @@ public final class DulcetPresentationStore {
     }
     /// The streaming-quality choice as saved; nil where the setting is not installed.
     public private(set) var streamingQuality: DulcetStreamingQualityPreference?
+    /// The device's AutoPlay and crossfade settings, installed by the production composition.
+    /// Without one neither the AutoPlay toggle nor the crossfade choice is offered.
+    @ObservationIgnored public var listeningSetting: (any DulcetListeningSetting)? {
+        didSet { listening = listeningSetting?.listeningPreference }
+    }
+    /// The listening settings as saved; nil where they are not installed.
+    public private(set) var listening: DulcetListeningPreference?
     /// The failure the person dismissed from the now-playing bar. Only that failure stays away:
     /// it is forgotten when playback does anything else -- however that was started, the lock
     /// screen and a headset included -- and whenever the person starts something through the
@@ -361,6 +370,28 @@ public final class DulcetPresentationStore {
         guard let streamingQualitySetting else { return }
         streamingQualitySetting.setPreference(preference)
         streamingQuality = streamingQualitySetting.preference
+    }
+
+    /// Turns AutoPlay on or off. Off removes the tracks it queued; what is playing goes on.
+    public func setAutoplay(_ enabled: Bool) {
+        guard let listeningSetting, var preference = listening else { return }
+        preference.autoplayEnabled = enabled
+        listeningSetting.setListeningPreference(preference)
+        listening = listeningSetting.listeningPreference
+    }
+
+    /// Chooses the crossfade length; 0 is off. It applies from the next boundary.
+    public func setCrossfadeSeconds(_ seconds: Int) {
+        guard let listeningSetting, let current = listening else { return }
+        listeningSetting.setListeningPreference(
+            DulcetListeningPreference(autoplayEnabled: current.autoplayEnabled, crossfadeSeconds: seconds)
+        )
+        listening = listeningSetting.listeningPreference
+    }
+
+    /// Sets the sleep timer, or cancels it with nil.
+    public func setSleepTimer(_ choice: DulcetSleepTimerChoice?) {
+        source.send(.setSleepTimer(choice))
     }
 
     public func removeAccount() {

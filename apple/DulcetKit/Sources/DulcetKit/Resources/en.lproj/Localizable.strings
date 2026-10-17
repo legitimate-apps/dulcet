@@ -385,3 +385,19 @@
 
 "myLibrary.refresh" = "Refresh Library";
 "myLibrary.refreshFailed" = "Couldn’t refresh your library. %@";
+
+"player.sleepTimer" = "Sleep Timer";
+"player.sleepTimer.off" = "Off";
+"player.sleepTimer.endOfTrack" = "End of Track";
+"player.sleepTimer.endOfQueue" = "End of Queue";
+"player.sleepTimer.until" = "Sleep timer until %@";
+"player.sleepTimer.set.endOfTrack" = "Sleep timer at the end of this track";
+"player.sleepTimer.set.endOfQueue" = "Sleep timer at the end of the queue";
+"player.autoplay" = "AutoPlay";
+"player.autoplay.footnote" = "When your queue ends, keep playing similar music from your server.";
+"player.autoplay.inactive" = "AutoPlay is paused while Shuffle or Repeat is on.";
+"settings.crossfade.title" = "Crossfade";
+"settings.crossfade.off" = "Off";
+"settings.crossfade.footnote" = "Overlaps the end of one song with the start of the next. Songs of the same album always play gaplessly, and short songs are never overlapped.";
+"queue.confirm.playNext" = "“%@” will play next";
+"queue.confirm.addToQueue" = "Added “%@” to Up Next";

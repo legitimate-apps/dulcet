@@ -62,6 +62,8 @@ internal data class LibraryTrack(
     val sourceContainer: AudioContainer?,
     val mediaSourceId: String?,
     val artworkKey: String?,
+    /** The track's album, when the server named it. */
+    val albumRawId: String? = null,
 )
 
 /**
@@ -427,7 +429,7 @@ internal class LibraryBrowser private constructor(
     }
 }
 
-private fun Throwable.asLibraryError(): DomainError = when (this) {
+internal fun Throwable.asLibraryError(): DomainError = when (this) {
     // TimeoutCancellationException IS a CancellationException, so it has to be answered first or
     // a deadline that fired reads as "the user cancelled".
     is TimeoutCancellationException -> DomainError.Transport.Timeout
@@ -647,18 +649,7 @@ internal fun parseAlbum(
     if (rawId != summary.id.rawId) malformed()
     val tracks = album.arrayOrEmpty("song").map { element ->
         val track = element as? JsonObject ?: malformed()
-        LibraryTrack(
-            id = ProviderItemId(providerInstanceId, track.requiredOpaqueId("id")),
-            title = track.requiredString("title"),
-            credits = track.credit(providerInstanceId, CreditRole.Artist),
-            albumTitle = track.string("album"),
-            discNumber = track.int("discNumber"),
-            trackNumber = track.int("track"),
-            duration = track.duration(),
-            sourceContainer = track.libraryAudioContainer(),
-            mediaSourceId = null,
-            artworkKey = track.optionalOpaqueId("coverArt"),
-        )
+        track.libraryTrack(providerInstanceId)
     }
     return LibraryAlbum(
         id = summary.id,
@@ -676,6 +667,21 @@ internal fun parseAlbum(
         tracksLoaded = true,
     )
 }
+
+/** One OpenSubsonic `song` object as a track; a song without an id or title is malformed. */
+internal fun JsonObject.libraryTrack(providerInstanceId: String): LibraryTrack = LibraryTrack(
+    id = ProviderItemId(providerInstanceId, requiredOpaqueId("id")),
+    title = requiredString("title"),
+    credits = credit(providerInstanceId, CreditRole.Artist),
+    albumTitle = string("album"),
+    discNumber = int("discNumber"),
+    trackNumber = int("track"),
+    duration = duration(),
+    sourceContainer = libraryAudioContainer(),
+    mediaSourceId = null,
+    artworkKey = optionalOpaqueId("coverArt"),
+    albumRawId = optionalOpaqueId("albumId"),
+)
 
 private fun JsonObject.libraryAudioContainer(): AudioContainer? {
     string("suffix")?.lowercase()?.let { suffix ->
