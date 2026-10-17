@@ -141,7 +141,15 @@ struct AVPlayerCrossfadeTests {
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
-        try await waitUntil("current item was not ready for seeking", engine: engine, timeout: 30) {
+        // Keep the six-second fixture before its boundary while AVFoundation finishes both
+        // seeks. A loaded host can otherwise naturally advance during the forward seek, before
+        // the back command is submitted. Overlap also requires the incoming item to be ready;
+        // an unready preload is correctly allowed to fall back to the gapless boundary.
+        #expect(await execute(engine, .pause(commandID: .init("pause-for-seeks"))) ==
+            .completed(commandID: .init("pause-for-seeks"), result: .withoutData))
+        try await waitUntil("both items were not ready for seeking", engine: engine, timeout: 30) {
+            fixture.originalPlayer.items().count == 2 &&
+            fixture.originalPlayer.items().allSatisfy { $0.status == .readyToPlay } &&
             fixture.events.snapshot.contains {
                 if case let .ready(id, _, seekability) = $0 {
                     id == fixture.first.attemptID && seekability == .seekable
@@ -153,6 +161,8 @@ struct AVPlayerCrossfadeTests {
         #expect(await execute(engine, .seek(commandID: .init("back"), position: 0)) ==
             .completed(commandID: .init("back"), result: .withoutData))
         #expect(!fixture.events.containsAdvance(old: fixture.first.attemptID, new: fixture.next.attemptID))
+        #expect(await execute(engine, .play(commandID: .init("play-after-seeks"))) ==
+            .accepted(commandID: .init("play-after-seeks")))
         try await waitUntil("backward seek lost the armed boundary", engine: engine, timeout: 30) {
             engine.crossfadeStateForTesting()?.incomingRate ?? 0 > 0
         }
