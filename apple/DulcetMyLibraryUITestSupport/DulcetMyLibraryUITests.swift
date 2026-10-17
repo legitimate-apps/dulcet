@@ -232,9 +232,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
                        "The Mac window must remain on screen after every launch: \(window.frame)")
 #elseif os(iOS)
         if connect {
-            let connected = server == navidrome
-                ? app.buttons["dulcet.library.album"].firstMatch
-                : destination("browse")
+            // Browse is inserted as soon as capability discovery publishes. On a cold
+            // connection its tab can precede the Home landing and catalog publication;
+            // tapping during that handoff can leave Home selected. Wait for actual reader
+            // content, as the ordinary-server path does, before choosing another destination.
+            let connected = app.buttons["dulcet.library.album"].firstMatch
             if !connected.waitForExistence(timeout: 30) {
                 let welcome = app.buttons["Connect a Server"]
                 if welcome.exists { welcome.tap() }
@@ -297,6 +299,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("Remote could not reach \(section)")
 #else
         activate(control)
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in control.isSelected }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 10), .completed,
+                           "The tab tap must select \(section): \(app.debugDescription)")
+        }
+#endif
 #if os(macOS)
         // A macOS List does not write its selection binding when its selected row is clicked
         // again. Return through the visible navigation controls, just as Menu pops on tvOS,

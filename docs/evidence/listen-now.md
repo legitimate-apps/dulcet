@@ -201,6 +201,14 @@ light/dark/largest-text navigation (82.436), and ordinary-server navigation (9.2
 The compact helper enters Browse's Albums section; regular iPad/Mac use Recently Added's See All.
 Individual xcresult execution guards required all four methods before JUnit emission.
 
+The cold iPhone largest-text control in [run 39012368296](https://github.com/legitimate-apps/dulcet/actions/runs/39012368296)
+then caught a readiness gap: the Browse tab existed and was tapped, but the retained failure
+tree still showed Home selected. The other three My Library controls passed. The launch helper
+now waits for a real album publication before navigating and asserts the compact tab's selected
+state after its tap. On a fresh leased iPhone simulator, the corrected largest-text control
+passed 1/1 in 43.588 seconds; the individual xcresult execution guard and JUnit both confirmed
+the passing method. Hosted execution of that correction remains pending.
+
 The TV helper now enters Browse's visible Albums section before finding a named album; the
 horizontal Browse shelf does not instantiate offscreen cards. The light/dark/largest-text
 control passed in 53.667 seconds and ordinary-server navigation in 6.861 seconds. Its membership
