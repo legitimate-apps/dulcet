@@ -1103,7 +1103,32 @@ final class DulcetTVUITests: XCTestCase {
         let artistPage = try XCTUnwrap(
             restCall("getArtist", [URLQueryItem(name: "id", value: artists[artistIndex].id)], server: server)?["artist"] as? [String: Any],
             "The server must read \(artistName)")
-        let artistAlbums = (artistPage["album"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+        let artistAlbumRecords = try XCTUnwrap(artistPage["album"] as? [[String: Any]])
+        // This corpus has one release year, only the Albums group and no more precise original
+        // dates. Prove those conditions before using title order as the newest-first tie break;
+        // getArtist's raw response order is no longer the artist-page ordering contract.
+        let artistYears = artistAlbumRecords.compactMap { $0["year"] as? Int }
+        XCTAssertFalse(artistYears.isEmpty)
+        XCTAssertEqual(artistYears.count, artistAlbumRecords.count)
+        XCTAssertEqual(Set(artistYears).count, 1, "This proof needs albums tied on release year")
+        for album in artistAlbumRecords {
+            XCTAssertTrue((album["releaseTypes"] as? [String] ?? []).allSatisfy { $0.lowercased() == "album" },
+                "This proof needs only the Albums group, including the untyped fallback")
+            let original = album["originalReleaseDate"] as? [String: Any] ?? [:]
+            let year = original["year"] as? Int ?? 0
+            XCTAssertTrue(year == 0 || year == artistYears.first,
+                "Original release year must not change this fixture's date order")
+            XCTAssertEqual(original["month"] as? Int ?? 0, 0, "This proof needs year-only dates")
+            XCTAssertEqual(original["day"] as? Int ?? 0, 0, "This proof needs year-only dates")
+            XCTAssertEqual(album["artistId"] as? String, artists[artistIndex].id,
+                "This proof needs this artist's own albums, with no Appears On group")
+        }
+        let artistAlbums = artistAlbumRecords.sorted { lhs, rhs in
+            let left = (lhs["name"] as? String ?? "").lowercased()
+            let right = (rhs["name"] as? String ?? "").lowercased()
+            return left == right ? (lhs["id"] as? String ?? "") < (rhs["id"] as? String ?? "") : left < right
+        }.compactMap { $0["name"] as? String }
+        XCTAssertEqual(artistAlbums.count, artistAlbumRecords.count)
         // An album whose name is its own on this page, and not the first, so the label that has
         // focus after Back can name only it.
         let artistAlbumIndex = try XCTUnwrap(
@@ -1254,11 +1279,24 @@ final class DulcetTVUITests: XCTestCase {
         }
         let artistRowLabel = try XCTUnwrap(focusedElement(app)?.label)
 
-        // The artist's page: the server's albums for that artist, in its order, walked to one.
+        // The artist's page: Top Songs precedes the lazy discography. Reach the albums by
+        // remote before counting them; waiting at the header cannot instantiate an offscreen grid.
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts[artistName].firstMatch.waitForExistence(timeout: 30),
             "Select must open \(artistName)'s page: " + app.debugDescription)
         let artistTiles = app.buttons.matching(identifier: "dulcet.library.album")
+        let initiallyRealizedArtistAlbums = artistTiles.count
+        var artistAlbumDownPresses = 0
+        while !awaitFocus(app, timeout: 1.5, { $0.id == "dulcet.library.album" }), artistAlbumDownPresses < 6 {
+            XCUIRemote.shared.press(.down)
+            artistAlbumDownPresses += 1
+        }
+        XCTAssertTrue(awaitFocus(app, timeout: 1.5) { $0.id == "dulcet.library.album" },
+            "Down must reach the artist's albums through Top Songs: " + app.debugDescription)
+        if initiallyRealizedArtistAlbums == 0 {
+            XCTAssertGreaterThan(artistAlbumDownPresses, 0,
+                "An initially unrealized discography must be reached by an actual remote press")
+        }
         let artistDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline { Thread.sleep(forTimeInterval: 0.25) }
         let artistTileLabels = artistTiles.allElementsBoundByIndex.map(\.label)
@@ -1267,8 +1305,6 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertTrue(Self.names(artistTileLabels[index], name),
                 "Artist album \(index) is \(artistTileLabels[index].debugDescription); the server's is \(name)")
         }
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 6) { $0.id == "dulcet.library.album" },
-            "Down must reach the artist's albums: " + app.debugDescription)
         pressToTheStart(app)
         for index in 0...artistAlbumIndex {
             let focus = try XCTUnwrap(focusedElement(app))
@@ -1301,6 +1337,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
         print("DULCET TV LIBRARY PASS shelf=\(shelfLabels) grid-walk=\(gridWalk) album=\(albumName) tracks=\(rowLabels.count)"
             + " played=\(playedTrack.debugDescription) progress=\(initialProgress)->\(observedProgress)"
+            + " artist-albums-initial=\(initiallyRealizedArtistAlbums) artist-album-down=\(artistAlbumDownPresses) artist-date-tie=true"
             + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
     }
 

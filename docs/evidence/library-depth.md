@@ -819,7 +819,8 @@ UI pass to claim.
 The combined full-conformance gate for these repaired sources is
 [run 39062783989 at `1ca0a17e`](https://github.com/legitimate-apps/dulcet/actions/runs/39062783989).
 The handoff requires successful platform, core, iPad and iPhone legs and the aggregate;
-the local focused passes do not replace that gate. No feature cell is promoted by this
+the local focused passes do not replace that gate. The current terminal full-run receipt
+is maintained in [repair PR #340](https://github.com/legitimate-apps/dulcet/pull/340). No feature cell is promoted by this
 test repair.
 
 
@@ -835,7 +836,7 @@ each with a four-minute bound and the same DerivedData, scheme, serial execution
 JUnit export. The test-execution allowance and job bound remain unchanged.
 Local CI policy validation passes across 13 workflows, and the planner control passes
 28,135 checks over 700 Apple-affecting files. Runtime validation must still require
-actual executed native test counts in the subsequent required platform run.
+actual executed native test counts in the subsequent full gate, recorded in PR #340.
 
 The combined dispatch above subsequently fails two other checks, so it is **not** an
 all-green gate. Its iPhone My Library xcresult executes all seven methods: six pass,
@@ -849,7 +850,8 @@ method did not first reveal a catalog tile. It now uses the same two-stage navig
 and proves that the catalog begins offscreen, an actual touch scroll occurs and a
 catalog tile becomes hittable before looking for the named album. The existing eight
 plus six gesture bounds and all Add-action visibility assertions are retained. All
-five UI-test source directories type-check after this correction; runtime is pending.
+five UI-test source directories type-check after this correction. Its runtime requirement
+is a terminal Passed result in the full gate recorded in PR #340.
 
 The platform failure is a separate **native iPhone** crossfade integration assertion:
 `crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds` sees no overlap in
@@ -859,3 +861,40 @@ but no playback-progress or preload-advance event; the engine queue responds in
 The complete log and result bundle were retained and the playback owner received the
 evidence for diagnosis. No passing retry or responsive-queue measurement is treated
 as proof of a playback correction.
+
+The same dispatch completes the **whole iPad conformance leg successfully**. Its Library
+suite executes five methods with zero failures in 335.194 seconds, with the execution
+guard confirming all five terminal Passed results. The complete lyrics method also passes
+its guard after the real `1→0`, relaunch `0→0`, cleanup `0→1` sequence and observed failed
+read/retry counts of one each. The hosted Mac Library suite likewise executes five
+methods with zero failures in 225.926 seconds; cold Pinned, Artists `1 result` plus one
+Outline row, recent query and relaunch controls all pass. These passing sub-suites do not
+turn the red combined dispatch into a green gate.
+
+**OBSERVED — the final core failure is the older TV artist navigation proof.** Its
+recording shows Top Songs above a Discography heading clipped at the viewport's bottom.
+The test waits at the header for seven lazy album tiles, sees zero and never attempts to
+move down to them. The corrected proof reaches the discography by real remote Down
+presses before counting it, retains the six-press bound and logs the initial count and
+actual presses. If the grid starts unrealized, it requires an actual press and focused
+album before the seven-album check. Its ordering oracle also changes from raw `getArtist`
+response order to the current newest-first contract: it positively requires this
+disposable fixture's single release year, no month/day precision, only the Albums group
+and this artist's own album IDs before checking the title tie-break. It still walks to
+a uniquely named non-first album and checks both Back destinations and focus restoration.
+The earlier TV footer method passes in this dispatch with `sleep-timer-traversed=true`;
+the later plain/none/failure lyrics proof is not reached by this failed core leg.
+
+The newer required platform run at `f2248960` passes both native Mac build/execution
+phases and native iPhone testing with identical application and native-test sources to
+the failed combined dispatch. The crossfade startup cause above therefore remains an
+explicitly unestablished follow-up; a subsequent pass alone is not called a correction.
+
+The revised TV fixture preconditions are also checked through the real OpenSubsonic API
+on an owned, finite loopback Navidrome copy (port 14533, terminated afterwards): seven
+albums, all year 2026, only the Albums group and no finer original-release date. The
+raw server order differs from the required title tie-break: the latter begins Unknown
+Album, Double Lines, the two Dulcet Conformance releases, Long Titles, Paging Atlas and
+Threshold Boundary. This is a backend precondition receipt, not a TV UI pass. Final
+source type-checking passes all five covered UI-test directories with both navigation
+corrections in place.
