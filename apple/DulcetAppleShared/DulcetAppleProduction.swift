@@ -125,6 +125,9 @@ enum DulcetAppleProduction {
         // One streaming-quality setting: the settings screen writes it, playback reads it (§12.5).
         let streamingQuality = DulcetCoreStreamingQuality()
         playbackController.streamingQuality = streamingQuality
+        // One set of listening settings: Settings and Up Next write it, playback reads it.
+        let listening = DulcetCoreListeningSettings()
+        playbackController.listeningSettings = listening
         let store = DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
@@ -152,6 +155,7 @@ enum DulcetAppleProduction {
         DulcetSurfacePublisher.shared.attach(store)
         store.likeCommandDriver = DulcetLikeCommandDriver(store: store)
         store.streamingQualitySetting = streamingQuality
+        store.listeningSetting = listening
         return store
     }
 }
@@ -475,41 +479,24 @@ final class DulcetCoreLibraryBrowser: DulcetLibraryBrowsing, DulcetCommittedLibr
                 providerInstanceID: album.providerInstanceId,
                 artworkKey: album.artworkKey
             ),
-            tracks: album.tracks.map { track in
-                DulcetTrack(
-                    id: DulcetProviderItemID(
-                        providerInstanceID: track.providerInstanceId,
-                        rawID: track.rawId
-                    ),
-                    title: track.title,
-                    credits: track.credits.map(copyCredit),
-                    albumTitle: track.albumTitle,
-                    discNumber: track.discNumber?.intValue,
-                    trackNumber: track.trackNumber?.intValue,
-                    duration: .milliseconds(track.durationMilliseconds),
-                    sourceContainer: track.sourceContainer.flatMap(DulcetAudioContainer.init(coreName:)),
-                    mediaSourceID: track.mediaSourceId,
-                    artwork: artwork(
-                        fallbackSeed: track.rawId,
-                        providerInstanceID: track.providerInstanceId,
-                        artworkKey: track.artworkKey ?? album.artworkKey
-                    )
-                )
-            },
+            tracks: album.tracks.map { copyTrack($0, fallbackArtworkKey: album.artworkKey, carriesAlbumID: false) },
             trackCount: Int(album.trackCount),
             areTracksLoaded: album.tracksLoaded
         )
     }
 
+    /// One track as the core read it. An album's tracks fall back to the album's artwork, and
+    /// keep the album list's shape (no album identity of their own) they have always had.
+    static func copyTrack(
+        _ track: AppleLibraryTrackDto,
+        fallbackArtworkKey: String? = nil,
+        carriesAlbumID: Bool = true
+    ) -> DulcetTrack {
+        DulcetCoreLibraryTrackCopy.track(track, fallbackArtworkKey: fallbackArtworkKey, carriesAlbumID: carriesAlbumID)
+    }
+
     private static func copyCredit(_ credit: AppleLibraryCreditDto) -> DulcetCredit {
-        let role: DulcetCreditRole = credit.role == "AlbumArtist" ? .albumArtist : .artist
-        let id: DulcetProviderItemID? = if let providerInstanceID = credit.providerInstanceId,
-                    let rawID = credit.rawId {
-            DulcetProviderItemID(providerInstanceID: providerInstanceID, rawID: rawID)
-        } else {
-            nil
-        }
-        return DulcetCredit(role: role, name: credit.name, id: id)
+        DulcetCoreLibraryTrackCopy.credit(credit)
     }
 
     private static func artwork(

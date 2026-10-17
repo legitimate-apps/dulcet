@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Looper
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.ForwardingSimpleBasePlayer
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.playback.PlaybackService
@@ -163,8 +165,14 @@ class SwitchableAccountStore {
 }
 
 /** Whether the controller's player has been released, which only its close does. */
-private fun AndroidPlaybackController.isClosed(): Boolean =
-    ((sessionPlayer as ForwardingPlayer).wrappedPlayer as ExoPlayer).isReleased
+private fun AndroidPlaybackController.isClosed(): Boolean {
+    val bridge = (sessionPlayer as ForwardingPlayer).wrappedPlayer
+    // Keep checking the real resource, including through the stable overlap session bridge.
+    val active = if (bridge is ForwardingSimpleBasePlayer)
+        ForwardingSimpleBasePlayer::class.java.getDeclaredMethod("getPlayer").apply { isAccessible = true }
+            .invoke(bridge) as Player else bridge
+    return (active as ExoPlayer).isReleased
+}
 
 /** Creates the service on a bind, as the platform does for a service not yet running, and connects it. */
 private class CreatingBindingContext(base: Context) : ContextWrapper(base) {

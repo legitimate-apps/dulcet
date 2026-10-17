@@ -129,8 +129,9 @@ class PlayBeforeBindTest {
         // the full suite, immediate in isolation).
         compose.runOnIdle { Snapshot.withMutableSnapshot { bound = controller } }
         await("the held Play made once the service binds") { server.requests("getSong").isNotEmpty() }
-        assertEquals(setOf("jazz-song-1"), server.requests("getSong").map { it["id"] }.toSet(),
-            "the genre's first song, as Play asked")
+        assertEquals("jazz-song-1", server.requests("getSong").first()["id"],
+            "the genre's first song is requested first; AutoPlay may also read its seed")
+        assertEquals("jazz-song-1", controller.state.value.queue[checkNotNull(controller.state.value.currentIndex)].track.rawId)
     }
 
     /** With the service bound, the same Play is made at once, as it always was. */
@@ -144,7 +145,8 @@ class PlayBeforeBindTest {
         await("Jazz's songs and Play") { exists("genre.track.1") && exists("genre.play") }
         click("genre.play")
         await("the Play made") { server.requests("getSong").isNotEmpty() }
-        assertEquals(setOf("jazz-song-1"), server.requests("getSong").map { it["id"] }.toSet())
+        assertEquals("jazz-song-1", server.requests("getSong").first()["id"])
+        assertEquals("jazz-song-1", controller.state.value.queue[checkNotNull(controller.state.value.currentIndex)].track.rawId)
     }
 
     // ---- Dropped additions -------------------------------------------------------------------------

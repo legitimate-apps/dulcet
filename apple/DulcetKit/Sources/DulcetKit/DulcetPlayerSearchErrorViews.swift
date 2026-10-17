@@ -416,6 +416,8 @@ struct DulcetNowPlayingView: View {
         /// The playing track's stars, always directly after the heart (§16.20).
         case rating
         case airPlay
+        /// The sleep timer's menu (§12.13).
+        case sleepTimer
         case lyrics
         case upNext
     }
@@ -428,11 +430,11 @@ struct DulcetNowPlayingView: View {
     static func footerControls(offersFavourite: Bool, showsQueueToggle: Bool) -> [FooterControl] {
         let marks: [FooterControl] = offersFavourite ? [.favourite, .rating] : []
 #if os(tvOS)
-        return marks + [.lyrics]
+        return marks + [.sleepTimer, .lyrics]
 #elseif os(macOS)
-        return [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+        return [.airPlay, .sleepTimer, .lyrics] + (showsQueueToggle ? [.upNext] : [])
 #else
-        return marks + [.airPlay, .lyrics] + (showsQueueToggle ? [.upNext] : [])
+        return marks + [.airPlay, .sleepTimer, .lyrics] + (showsQueueToggle ? [.upNext] : [])
 #endif
     }
 
@@ -624,6 +626,49 @@ struct DulcetNowPlayingView: View {
         DulcetNowPlayingRatingControl(track: player.current, size: .title3, minimumSide: Self.footerControlSide)
     }
 
+    /// The sleep timer: a length, the end of this track or of the queue, or off. While one is set
+    /// the moon is filled, and its label says until when.
+    private var sleepTimerMenu: some View {
+        let timer = player.sleepTimer
+        return Menu {
+            Picker(DulcetStrings.sleepTimer, selection: Binding(
+                get: { timer?.choice },
+                set: { store.setSleepTimer($0) }
+            )) {
+                Text(DulcetStrings.sleepTimerOff).tag(DulcetSleepTimerChoice?.none)
+                ForEach(DulcetSleepTimerChoice.allCases) { choice in
+                    Text(choice.label).tag(Optional(choice))
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: timer == nil ? "moon.zzz" : "moon.zzz.fill")
+                .font(.title3)
+                .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
+                .contentShape(Rectangle())
+        }
+        .menuIndicator(.hidden)
+        .dulcetMediaButtonStyle()
+#if os(tvOS)
+        .focused($focusedFooterControl, equals: .sleepTimer)
+#endif
+        .accessibilityLabel(DulcetStrings.sleepTimer)
+        .accessibilityValue(Self.sleepTimerValue(timer))
+        .accessibilityIdentifier("dulcet.now-playing.sleep-timer")
+    }
+
+    /// What the sleep timer's control says it is set to.
+    static func sleepTimerValue(_ timer: DulcetSleepTimerState?) -> String {
+        guard let timer else { return DulcetStrings.sleepTimerOff }
+        switch timer.choice {
+        case .endOfTrack: return DulcetStrings.sleepTimerAfterTrack
+        case .endOfQueue: return DulcetStrings.sleepTimerAfterQueue
+        default:
+            guard let endsAt = timer.endsAt else { return timer.choice.label }
+            return DulcetStrings.sleepTimerUntil(endsAt.formatted(date: .omitted, time: .shortened))
+        }
+    }
+
     private var upNextToggle: some View {
         Button {
             withAnimation(reduceMotion ? nil : .snappy) {
@@ -646,6 +691,7 @@ struct DulcetNowPlayingView: View {
         switch control {
         case .favourite: favouriteButton
         case .rating: ratingControl
+        case .sleepTimer: sleepTimerMenu
         case .lyrics: lyricsToggle
         case .upNext: upNextToggle
         case .airPlay:
@@ -675,7 +721,17 @@ struct DulcetNowPlayingView: View {
             if player.queueEntries.isEmpty {
                 ScrollView { queuePanel.padding(DulcetSpacing.lg) }
             } else {
-                DulcetUpNextList(nowPlaying: player, onEdit: onEdit)
+                DulcetUpNextList(
+                    nowPlaying: player,
+                    onEdit: onEdit,
+                    autoplay: store.listening.map { listening in
+                        DulcetAutoplayToggle(
+                            isOn: listening.autoplayEnabled,
+                            isActive: player.autoplayActive,
+                            set: { store.setAutoplay($0) }
+                        )
+                    }
+                )
                     .scrollContentBackground(.hidden)
                     .dulcetQueueDropTarget(store: store, cornerRadius: 12)
             }
@@ -980,6 +1036,11 @@ struct DulcetNowPlayingView: View {
             )
             : player.audioFormat.codec)
             .font(.caption.monospaced())
+            // One line, scaled down rather than wrapped: at accessibility sizes the row's
+            // controls leave it little width, and a badge wrapped over several lines pushed the
+            // footer below a phone's window.
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
             .dulcetForeground(.secondaryTextOnRegularMaterial)
             .padding(.horizontal, DulcetSpacing.xs)
             .padding(.vertical, DulcetSpacing.xxs)
