@@ -195,6 +195,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let artistAlbum = app.buttons["dulcet.library.album"].firstMatch
         try reveal(artistAlbum)
         XCTAssertTrue(artistAlbum.exists, "Artist discography contains the fixture's albums")
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(artistAlbum.isHittable, "The discography can be brought fully into the compact viewport")
         try capture("Library-Depth-Artist-Discography")
         try select("library")
         let songs = app.buttons["dulcet.library.songs"].firstMatch
