@@ -55,7 +55,10 @@ data class Config(
     val testMode: Boolean = false,
     val webhookAllowPrivateTargets: Boolean = false,
     val webhookAllowOtherPorts: Boolean = false,
+    val trustedProxies: List<String> = emptyList(),
 ) {
+    internal val clientAddresses = com.legitimateapps.dulcet.server.auth.ClientAddresses(trustedProxies)
+
     companion object {
         fun load(args: Map<String, String>, env: Map<String, String> = System.getenv()): Config {
             fun value(name: String, default: String? = null): String? =
@@ -75,6 +78,7 @@ data class Config(
                 testMode = value("test-mode", "false")=="true",
                 webhookAllowPrivateTargets = value("webhook-allow-private-targets", "false")=="true",
                 webhookAllowOtherPorts = value("webhook-allow-other-ports", "false")=="true",
+                trustedProxies = value("trusted-proxies")?.trim()?.takeIf(String::isNotEmpty)?.split(',') ?: emptyList(),
                 publicUrl = value("public-url")?.trimEnd('/')?.also { url ->
                     val uri = java.net.URI(url)
                     require(uri.scheme in setOf("https", "http") && uri.host != null && uri.userInfo == null && uri.query == null && uri.fragment == null && uri.path.isNullOrEmpty()) { "public-url must be an origin" }
@@ -133,7 +137,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
         { call -> com.legitimateapps.dulcet.server.api.authorizeRest(this, call); handler(call) }
     }
 
-    fun restApi() = RestApi(users, handlers(), open = setOf("getOpenSubsonicExtensions"))
+    fun restApi() = RestApi(users, handlers(), open = setOf("getOpenSubsonicExtensions"), clientAddresses = config.clientAddresses)
 }
 
 fun Application.dulcetModule(ctx: ServerContext) {

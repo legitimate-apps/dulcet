@@ -143,7 +143,7 @@ class DulcetApi(private val ctx: ServerContext) {
                     if(call.request.headers[HttpHeaders.Authorization]==null) throw ApiProblem(401,"unauthenticated")
                     throw ApiProblem(400,"invalid-request","Credentials require an Authorization header")
                 }
-                if(!isTest) limiter.check("ip:"+call.request.local.remoteHost)
+                if(!isTest) limiter.check("ip:"+ctx.config.clientAddresses.resolve(call))
                 if(!isTest) call.request.headers[HttpHeaders.Authorization]?.let { h -> ctx.apiAuth.authenticate(h)?.let { limiter.check("user:"+it.user.id) } }
                 call.request.headers["Dulcet-Device-Id"]?.let { device -> ctx.apiAuth.authenticate(call.request.headers[HttpHeaders.Authorization])?.let { p -> ctx.apiQueue.seen(p.user.id,device) } }
                 val key = call.request.headers["Idempotency-Key"].takeIf { call.request.httpMethod==HttpMethod.Post }
