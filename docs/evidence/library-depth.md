@@ -898,3 +898,33 @@ Album, Double Lines, the two Dulcet Conformance releases, Long Titles, Paging At
 Threshold Boundary. This is a backend precondition receipt, not a TV UI pass. Final
 source type-checking passes all five covered UI-test directories with both navigation
 corrections in place.
+
+**Native iPhone follow-up — observed bootstrap window loss.** The normal
+[PR run 39071372229](https://github.com/legitimate-apps/dulcet/actions/runs/39071372229)
+at `b4374580` executes 330 native iPhone tests: 329 pass, one fails, zero skip.
+Its first crossfade proof reports its first media position as **8.039928334 seconds
+on a six-second item**, then a normal advance; the two-second overlap is never
+observed. The recorded Ready event follows the outgoing end. The queue probe responds
+in 0.006 seconds after the failed 30-second wait, which cannot establish its
+responsiveness during the earlier media window. The xcresult and event sequence were
+examined before changing the harness.
+
+The retained host-pressure samples show **load1 155–195 on three CPUs**, with swap
+growing from 178.56 to 467.25 MB during that failure. The earlier no-progress failure
+in run 39062783989 likewise runs at load1 107–182. **OBSERVED:** the platform leg
+leaves the iPhone's first boot inside `xcodebuild test`, while the conformance legs
+already boot and settle before their timed proofs. **INFERENCE:** the bootstrap burst
+delays decoder/observer delivery past the short overlap window. The same-source full
+run 39071376612 passes native iPhone testing; that pass alone is not a correction.
+
+The platform correction performs the existing bounded simulator isolation, first boot
+and settling before the native test phase, without launching Dulcet. It positively
+requires `settled=true` and `isolated=true` for the same valid UUID, then passes that
+exact destination to native, Keychain, full-display and first-run-title tests. The
+native tests, six-second clip, real two-second overlap assertions and existing test
+budgets remain unchanged. `tools/test-platform-iphone-startup` executes the actual
+workflow acknowledgment parser: its positive case passes, while unsettled,
+non-isolated, stale-phase, mismatched-device, duplicate, missing and malformed
+acknowledgments are rejected. It also checks all four test invocations use the verified
+destination. The next full gate must show the actual positive startup marker and all
+planned legs passing; its terminal receipt is maintained in PR #340.
